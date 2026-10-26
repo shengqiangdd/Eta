@@ -347,36 +347,56 @@ internal class AgentLocalTools(
                 in AgentVirtualDisplayTools.names -> virtualDisplayTool(toolCall.name, args)
                 in AgentAcpTools.names -> acpTool(toolCall.name, args, toolCall.id)
                 in AgentPluginTools.names -> pluginTool(toolCall.name, args)
-                "tap" -> afterAction(tap(args))
-                "tap_area" -> afterAction(tapArea(args))
+                "tap" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(tap(args, displayId), displayId)
+                }
+                "tap_area" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(tapArea(args, displayId), displayId)
+                }
                 "tap_element" -> afterAction(tapElement(args))
-                "long_press" -> afterAction(longPress(args))
+                "long_press" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(longPress(args, displayId), displayId)
+                }
                 "long_press_element" -> afterAction(longPressElement(args))
-                "swipe" -> afterAction(swipe(args))
-                "scroll" -> afterAction(
-                    deviceController.scroll(
-                        direction = args.optString("direction"),
-                        amount = args.optString("amount"),
-                        displayId = resolveDisplayId(args),
+                "swipe" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(swipe(args, displayId), displayId)
+                }
+                "scroll" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(
+                        deviceController.scroll(
+                            direction = args.optString("direction"),
+                            amount = args.optString("amount"),
+                            displayId = displayId,
+                        ),
+                        displayId,
                     )
-                )
+                }
                 "scroll_element" -> afterAction(scrollElement(args))
-                "type_text" -> afterAction(typeText(args))
+                "type_text" -> afterAction(typeText(args), actionDisplayOrSnapshot(args))
                 // 旧会话或旧入口仍可能请求这些工具名；保留执行路径，但不再出现在模型目录里。
-                "input_text" -> afterAction(inputText(args))
-                "replace_text" -> afterAction(replaceText(args))
-                "clear_text" -> afterAction(clearText(args))
+                "input_text" -> afterAction(inputText(args), actionDisplayOrSnapshot(args))
+                "replace_text" -> afterAction(replaceText(args), actionDisplayOrSnapshot(args))
+                "clear_text" -> afterAction(clearText(args), actionDisplayOrSnapshot(args))
                 "set_clipboard" -> textResult(setClipboard(args))
                 "get_clipboard" -> textResult(getClipboard())
-                "paste_text" -> afterAction(pasteText(args))
-                "press_key" -> afterAction(
-                    deviceController.pressKey(
-                        button = args.optString("button"),
-                        // 这里原先没传 display_id：虚拟屏上按 BACK/HOME 会作用到**主屏**，
-                        // 而返回值仍是 ok —— 模型完全看不出动错了屏。实测缺陷。
-                        displayId = resolveDisplayId(args),
+                "paste_text" -> afterAction(pasteText(args), actionDisplayOrSnapshot(args))
+                "press_key" -> {
+                    val displayId = resolveDisplayId(args)
+                    afterAction(
+                        deviceController.pressKey(
+                            button = args.optString("button"),
+                            // 这里原先没传 display_id：虚拟屏上按 BACK/HOME 会作用到**主屏**，
+                            // 而返回值仍是 ok —— 模型完全看不出动错了屏。实测缺陷。
+                            displayId = displayId,
+                        ),
+                        displayId,
                     )
-                )
+                }
                 "wait" -> textResult(deviceController.waitMs(args.optInt("duration_ms", 1_000)))
                 "wait_for_text" -> textResult(waitForText(args))
                 "wait_for_package" -> textResult(waitForPackage(args))
@@ -834,6 +854,20 @@ internal class AgentLocalTools(
     }
 
     /**
+     * 动作已经执行过之后，再确认它作用在哪块屏上（给 afterAction 用）。
+     *
+     * 解析会重新校验「屏还在、上面还有任务」，而动作本身可能刚刚把任务迁走或把屏用空了 ——
+     * 那时不能报错（动作已经生效），退回快照屏即可。注意主屏解析成功时返回 null，
+     * 所以不能用 `?:` 合并，必须靠异常区分。
+     */
+    private fun actionDisplayOrSnapshot(args: JSONObject): Int? =
+        try {
+            resolveDisplayId(args)
+        } catch (_: InvalidToolArgumentException) {
+            publishedObservation.get().displayId
+        }
+
+    /**
      * 解析本次动作要作用的显示。
      *
      * 显式传了 display_id 就用它（0 表示主屏）；没传时沿用**最近一次观察**所在的屏。
@@ -1005,13 +1039,26 @@ internal class AgentLocalTools(
      * 模型据此确认动作生效并直接用新的 observation_id 继续操作，不必再单独 observe_screen；
      * 失败或结果未知的动作不附带，保持"先重新观察"的既有约束。
      */
-    private fun afterAction(raw: String): AgentModelClient.ToolResult {
+    /**
+     * 动作后观察 + 差异摘要。
+     *
+     * @param displayId 本次动作**实际作用的屏**（主屏为 null）；省略时沿用快照屏。
+     *   坐标动作允许跨屏（先看主屏、再点虚拟屏），拿「快照屏」去观察会把反馈换到
+     *   另一块屏上（fix165 真机取证：动作写主屏、after 却是虚拟屏的账号页）。
+     */
+    private fun afterAction(
+        raw: String,
+        displayId: Int? = publishedObservation.get().displayId,
+    ): AgentModelClient.ToolResult {
         val result = runCatching { JSONObject(raw) }.getOrNull()
         if (result == null || !result.optBoolean("ok")) return textResult(raw)
-        val before = publishedObservation.get().elements
-        val observedDisplayId = publishedObservation.get().displayId
+        val snapshot = publishedObservation.get()
+        val plan = AfterActionScopePolicy.plan(displayId, snapshot.displayId)
+        // 跨屏时没有可比性：旧快照属于另一块屏，拿来 diff 会把「换了一块屏」
+        // 渲染成「屏上所有东西都变了」。
+        val before = if (plan.compareWithPrevious) snapshot.elements else null
         val after = runCatching {
-            if (observedDisplayId == null) {
+            if (plan.observeDisplayId == null && plan.compareWithPrevious) {
                 screenObservationProvider?.invoke(AFTER_ACTION_OPTIONS)
                     ?: deviceController.observe(
                         includeScreenshot = false,
@@ -1020,12 +1067,12 @@ internal class AgentLocalTools(
                         displayId = null,
                     )
             } else {
-                // 虚拟屏不能用只观察默认屏的 provider，否则 after 会拿主屏界面来比较。
+                // 显式指定屏（含跨屏回主屏）：不能走只观察默认屏的 provider。
                 deviceController.observe(
                     includeScreenshot = false,
                     includeUiTree = true,
                     maxNodes = AFTER_ACTION_OPTIONS.maxNodes,
-                    displayId = observedDisplayId,
+                    displayId = plan.observeDisplayId,
                 )
             }
         }.getOrElse { throwable ->
@@ -1034,14 +1081,30 @@ internal class AgentLocalTools(
         }
         val elements = after.elementObservation ?: return textResult(raw)
         // 新快照取代动作前的快照：旧 index 在界面变化后本就不可靠，继续保留只会让模型误用。
-        publishedObservation.set(publishedObservation.get().copy(elements = elements))
-        result.put("after", AgentAfterActionSummary.build(before, elements))
+        // 跨屏时必须连 displayId 一起换掉，否则快照会「属于 A 屏、节点来自 B 屏」——
+        // 那样的快照会让 fix163 的同屏校验误通过。
+        publishedObservation.set(
+            PublishedObservation(
+                elements = elements,
+                coordinateSpace = if (plan.keepScreenshotSpace) snapshot.coordinateSpace else null,
+                displayId = plan.snapshotDisplayId,
+            ),
+        )
+        result.put(
+            "after",
+            AgentAfterActionSummary.build(
+                before = before,
+                after = elements,
+                displayId = plan.observeDisplayId,
+                crossDisplay = !plan.compareWithPrevious,
+            ),
+        )
         return textResult(result.toString())
     }
 
-    private fun tap(args: JSONObject): String {
-        // 先定「点哪块屏」，再按那块屏的尺寸校验坐标：顺序反了就会拿主屏尺寸校验虚拟屏坐标（fix161）。
-        val displayId = resolveDisplayId(args)
+    private fun tap(args: JSONObject, displayId: Int?): String {
+        // 屏先由调用方定好（它还要把同一个值传给 afterAction），再按那块屏的尺寸校验坐标：
+        // 顺序反了就会拿主屏尺寸校验虚拟屏坐标（fix161）。
         val point = convertPoint(
             x = args.getInt("x"),
             y = args.getInt("y"),
@@ -1057,13 +1120,12 @@ internal class AgentLocalTools(
         }
     }
 
-    private fun tapArea(args: JSONObject): String {
+    private fun tapArea(args: JSONObject, displayId: Int?): String {
         val x1 = args.getInt("x1")
         val y1 = args.getInt("y1")
         val x2 = args.getInt("x2")
         val y2 = args.getInt("y2")
         val coordinateSpace = args.optString("coordinate_space")
-        val displayId = resolveDisplayId(args)
         val first = convertPoint(x1, y1, coordinateSpace, displayId)
         val second = convertPoint(x2, y2, coordinateSpace, displayId)
         val point = ScreenPoint(
@@ -1156,8 +1218,7 @@ internal class AgentLocalTools(
         return result
     }
 
-    private fun longPress(args: JSONObject): String {
-        val displayId = resolveDisplayId(args)
+    private fun longPress(args: JSONObject, displayId: Int?): String {
         val point = convertPoint(
             x = args.getInt("x"),
             y = args.getInt("y"),
@@ -1173,8 +1234,7 @@ internal class AgentLocalTools(
         }
     }
 
-    private fun swipe(args: JSONObject): String {
-        val displayId = resolveDisplayId(args)
+    private fun swipe(args: JSONObject, displayId: Int?): String {
         val start = convertPoint(
             x = args.getInt("x1"),
             y = args.getInt("y1"),

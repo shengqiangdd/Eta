@@ -164,7 +164,8 @@ class AgentAccessibilityService : AccessibilityService() {
         val root = if (displayId != null && displayId != Display.DEFAULT_DISPLAY) {
             virtualDisplayRoot(displayId)
         } else {
-            rootInActiveWindow
+            // 主屏不能用 rootInActiveWindow：它是跨屏的活跃窗口（fix165）。
+            mainDisplayRoot()
         } ?: return@runOnMainSync null
         val nodeLimit = maxNodes.coerceIn(1, 120)
         val indexedNodes = mutableListOf<IndexedNode>()
@@ -198,6 +199,40 @@ class AgentAccessibilityService : AccessibilityService() {
                     "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}"
             }
         }
+    }
+
+    /**
+     * 主屏窗口根节点。
+     *
+     * `rootInActiveWindow` 是**跨屏的活跃窗口**：虚拟屏上有应用时（尤其刚在上面点过东西），
+     * 它会变成虚拟屏那个窗口 —— 于是「观察主屏」返回的是虚拟屏界面，
+     * `after` 反馈也跟着指向另一块屏（fix165 真机取证）。
+     * 这里用 `windowsOnAllDisplays` 的主屏分组校正：活跃窗口不在主屏上时，
+     * 改取主屏的应用窗口（没有应用窗口就用主屏任意有根节点的窗口）。
+     *
+     * 选择规则本身在 [AccessibleWindowSelection] 里，纯 JVM 单测覆盖。
+     */
+    private fun mainDisplayRoot(): AccessibilityNodeInfo? {
+        val active = rootInActiveWindow
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return active
+        val perDisplay = windowsOnAllDisplays ?: return active
+        val mainWindows = perDisplay[Display.DEFAULT_DISPLAY].orEmpty().filter { it.root != null }
+        if (mainWindows.isEmpty()) return active
+        val choice = AccessibleWindowSelection.chooseMain(
+            activeWindowId = active?.windowId ?: -1,
+            mainDisplayWindowIds = mainWindows.map { it.id },
+            mainDisplayApplicationWindowIds = mainWindows
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .map { it.id },
+        )
+        val chosen = mainWindows.firstOrNull { it.id == choice.windowId }
+        if (choice.replacedActive) {
+            AndroidAgentLogger.debug {
+                "main-display-tree: active=${active?.windowId ?: -1} 不在主屏上，" +
+                    "改用 window=${choice.windowId}（${chosen?.root?.packageName}）"
+            }
+        }
+        return chosen?.root ?: active
     }
 
     /**

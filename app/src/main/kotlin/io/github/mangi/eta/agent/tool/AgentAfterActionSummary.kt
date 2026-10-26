@@ -23,7 +23,12 @@ internal object AgentAfterActionSummary {
      */
     private const val NODES_BUDGET_CHARS = 5_000
 
-    fun build(before: ElementObservation?, after: ElementObservation): JSONObject {
+    fun build(
+        before: ElementObservation?,
+        after: ElementObservation,
+        displayId: Int? = null,
+        crossDisplay: Boolean = false,
+    ): JSONObject {
         val changed = before == null || signature(before.nodes) != signature(after.nodes)
         val diff = before?.let { diff(it.nodes, after.nodes) }
         val nodes = UiNodeWire.toArray(
@@ -34,9 +39,19 @@ internal object AgentAfterActionSummary {
             budgetChars = NODES_BUDGET_CHARS,
         )
         val nodesTruncated = nodes.shown < after.nodes.size
+        // 0 与 null 都表示主屏：resolveDisplayId 会把 0 归一成 null，但调用方也可能直接传 0。
+        val mainScreen = displayId == null || displayId == 0
         return JSONObject()
             .put("observation_id", after.id)
             .put("package", after.packageName)
+            // 反馈属于哪块屏必须写出来（fix165）：主屏与虚拟屏可以同时在看，
+            // 只说 package 与节点列表，模型无从核对这份反馈是不是自己要操作的那块屏。
+            .put(
+                "display",
+                JSONObject()
+                    .put("scope", if (mainScreen) "main" else "virtual")
+                    .put("id", displayId ?: 0),
+            )
             .put("screen_changed", changed)
             .put("package_changed", before != null && before.packageName != after.packageName)
             .put("window_changed", before != null && before.windowId != after.windowId)
@@ -47,8 +62,14 @@ internal object AgentAfterActionSummary {
             .put("ui_nodes_truncated", nodesTruncated)
             .put(
                 "note",
-                if (changed) "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
-                else "界面没有可见变化，动作可能未生效；请换目标或方式，不要原样重复",
+                when {
+                    crossDisplay ->
+                        "这份反馈来自${if (mainScreen) "主屏" else "display $displayId"}，" +
+                            "与动作前观察的不是同一块屏：这次没有做前后比较（跨屏差异没有意义）；" +
+                            "要刚才那块屏请重新 observe_screen"
+                    changed -> "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
+                    else -> "界面没有可见变化，动作可能未生效；请换目标或方式，不要原样重复"
+                },
             )
             .apply {
                 if (nodesTruncated) {

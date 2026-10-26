@@ -1314,6 +1314,45 @@ internal object VirtualDisplayDebugHost {
                                     else -> "OK_OTHER_REJECTION:" + typedWithIndex.optString("code")
                                 },
                             )
+                            // STEP15（fix165）：动作在哪块屏，after 就必须是哪块屏的反馈。
+                            // 修复前：after 跟着「最近一次观察的屏」走 —— 快照在 A 屏、动作在 B 屏时，
+                            // 反馈来自 A 屏，而 after 里连屏信息都没有，模型完全无从察觉。
+                            val scopeObs = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", id).put("max_nodes", 20),
+                            )
+                            val crossDisplayId = inputDisplay.optInt("display_id", -1)
+                            val crossTap = call(
+                                "tap",
+                                JSONObject()
+                                    .put("display_id", crossDisplayId)
+                                    .put("coordinate_space", "normalized")
+                                    .put("x", 500)
+                                    .put("y", 900),
+                            )
+                            val crossAfter = crossTap.optJSONObject("after")
+                            val crossAfterDisplay = crossAfter?.optJSONObject("display")
+                            val crossAfterId = crossAfterDisplay?.optInt("id", -1) ?: -1
+                            val crossDiffAvailable = crossAfter
+                                ?.optJSONObject("changes")?.optBoolean("available", true) ?: true
+                            report.appendLine(
+                                "STEP15 snapshot=${scopeObs.optString("observation_id")} session=$id " +
+                                    "actionDisplay=$crossDisplayId " +
+                                    "code=${crossTap.optString("code")} ok=${crossTap.optBoolean("ok")} " +
+                                    "afterScope=${crossAfterDisplay?.optString("scope").orEmpty()} " +
+                                    "afterId=$crossAfterId package=${crossAfter?.optString("package").orEmpty()} " +
+                                    "diffAvailable=$crossDiffAvailable",
+                            )
+                            report.appendLine(
+                                "STEP15 verdict=" + when {
+                                    !crossTap.optBoolean("ok") ->
+                                        "OK_NOT_ATTEMPTED:" + crossTap.optString("code")
+                                    crossAfterDisplay == null -> "FAIL_AFTER_WITHOUT_DISPLAY"
+                                    crossAfterId != crossDisplayId -> "FAIL_AFTER_OTHER_DISPLAY"
+                                    crossDiffAvailable -> "FAIL_CROSS_DISPLAY_DIFF"
+                                    else -> "OK"
+                                },
+                            )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
                         call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))

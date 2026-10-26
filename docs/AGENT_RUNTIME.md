@@ -7232,3 +7232,92 @@ STEP14 verdict=OK
 - `clear_text` 的跨屏拒绝共用同一个 helper，端到端只验了 `type_text`（单测覆盖策略对象本身）。
 - 「主屏带 index 正常写入」没有独立真机样本（STEP1~13 的主屏步骤不带 index）。
 - 工具描述文案改动只核对了 schema 输出，没有做「模型看到新描述后行为是否改变」的对照。
+
+## fix165：动作在一块屏、反馈来自另一块屏（2026-10-27 凌晨，fix164 之后）
+
+### 一、缺陷本身
+
+`after` 是模型判断「这一下到底生效了没」的**唯一证据**。它原先用
+「最近一次观察的屏」去观察：
+
+```kotlin
+val observedDisplayId = publishedObservation.get().displayId
+// …用 observedDisplayId 去 observe，从不看这次动作的 display_id
+```
+
+坐标动作**允许跨屏**（先看主屏、再点虚拟屏），那时动作屏 ≠ 快照屏，
+反馈就整份换成了另一块屏的界面 —— 而 `after` 里连「这是哪块屏」都没有，
+模型完全无从察觉。
+
+### 二、真机取证（本机 PKX110，主包，修复前）
+
+```text
+observe_screen(148)                    → 快照属于虚拟屏 148
+press_key(button=BACK, display_id=0)   → 动作在**主屏**
+  after.package=com.oplus.account, after.window_id=w2848   ← 虚拟屏 148 的账号页
+```
+
+同一轮里反向也错：先观察主屏、再 `tap(display_id=148)`，`after` 同样来自 2848 ——
+因为主屏分支用的是 `rootInActiveWindow`（**跨屏的活跃窗口**），刚点过虚拟屏，
+活跃窗口就变成了虚拟屏那个。两层缺陷叠在一起：
+
+1. **`after` 的屏选错**：跟快照屏走，而不是跟动作屏走；
+2. **主屏观察本身会被劫持**：`rootInActiveWindow` 会返回虚拟屏窗口，
+   于是「观察主屏」拿到的是虚拟屏界面。
+
+### 三、修法
+
+**第一层（反馈跟动作走）**
+
+- 新增 `AfterActionScopePolicy.plan(actionDisplayId, snapshotDisplayId)`（纯 JVM）：
+  `observeDisplayId` = 动作屏；同屏才允许比较与复用截图坐标系；跨屏时新快照的
+  `displayId` 也换成动作屏（否则快照会「属于 A 屏、节点来自 B 屏」，
+  让 fix163 的同屏校验误通过）。
+- `afterAction(raw, displayId)` 接受目标屏；同屏走原路径（provider 优先），
+  跨屏一律用 `deviceController.observe(displayId=动作屏)`；跨屏时 `before` 传 null，
+  `changes.available=false`（跨屏 diff 会把「换了一块屏」渲染成「屏上所有东西都变了」）。
+- 调用方按实际动作屏传入：`tap` / `tap_area` / `swipe` / `long_press` 把
+  `resolveDisplayId` 提到分支里做一次（顺带避免重复的 `dumpsys` 校验），
+  `press_key` / `scroll` 同样；`type_text` 系列用 `actionDisplayOrSnapshot()`
+  —— 动作已执行，二次解析失败不能把整次调用判成失败。
+- `AgentAfterActionSummary.build` 新增 `display` 段（`scope: main|virtual` + `id`）
+  与跨屏说明，让模型能核对「这份反馈是哪块屏的」。
+
+**第二层（主屏观察不被劫持）**
+
+- `AgentAccessibilityService.mainDisplayRoot()`：主屏分支不再直接用 `rootInActiveWindow`，
+  而是先看 `windowsOnAllDisplays` 的主屏分组 —— 活跃窗口不在主屏上时改取主屏的应用窗口。
+  规则抽到 `AccessibleWindowSelection.chooseMain()`（纯 JVM，5 例单测），
+  日志写 `main-display-tree: active=… 不在主屏上，改用 window=…` 便于复查。
+
+### 四、真机取证（修复后，探针 STEP15）
+
+```text
+STEP15 snapshot=o69 session=vdmvphw7t1 actionDisplay=155 code= ok=true
+       afterScope=virtual afterId=155 package=com.coloros.note diffAvailable=false
+STEP15 verdict=OK
+```
+
+探针用例的设计：快照取设置在 153，动作显式打到笔记屏 155 ——
+修复前该步要么没有 `after.display`（判 `FAIL_AFTER_WITHOUT_DISPLAY`），
+要么 `afterId` 仍是 153。现在 `afterId` 跟动作屏一致，且跨屏不给 diff。
+整份探针 **18 项 verdict 全 OK**（STEP1~15），无回归（含 STEP8/9/9b 输入、
+STEP11c 三条跨屏 screenshot 拒绝、STEP13 跨屏节点拒绝、STEP14 index 拒绝）。
+
+### 五、门禁
+
+`AfterActionScopePolicyTest`（6 例，含「主屏 0 与 null 等价」）与
+`AccessibleWindowSelectionTest`（5 例）第一件事进 `FAST_TEST_FILTERS`：
+用例数 **515 → 526，0 失败**；`assemble` 成功
+（`Eta-v3.3.1-debug.apk` 96,398,389 字节，sha256 `466d9b8d…`）。
+
+中途被自己写的用例拦过一次：`plan(0, null)` 原先判成跨屏（`sameScreen` 只有
+requested 为 null 时才把 0 当主屏），已改为在 `plan` 里先归一化 0 → null。
+
+### 六、仍未验证
+
+- 「动作在主屏、`after` 也在主屏」只由单测与主屏采集逻辑覆盖，
+  真机探针刻意不碰主屏（BACK 会让前台应用退出）。
+- `mainDisplayRoot()` 的替换分支只在跨屏场景间接走到，
+  没有单独打印那条日志做对照实验。
+- 分屏/画中画（同一 display 多个应用窗口）不在本轮范围。
