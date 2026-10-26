@@ -916,33 +916,73 @@ internal class RootShellDeviceController(
         val node = observation.nodes.firstOrNull { candidate -> candidate.index == index } ?: return null
         if (node.bounds.isEmpty) return null
         val displayId = observation.accessibilitySnapshot?.displayId ?: return null
-        // 盲点前的安全判定：中心点若落在别的节点上，那个「中心」其实是别人的落点
-        // （真机事故：设置首页根 ScrollView 的中心正好落在快捷开关行，把飞行模式打开了，
-        //  设备当场断网）。这种情况不发手势，直接把真正会被点到的节点报回去。
-        val unsafeHit = BlindTapSafetyPolicy.centerHitOnOtherNode(
-            targetIndex = index,
-            target = node.bounds.toBlindTapBox(),
-            candidates = observation.nodes.map { candidate ->
-                BlindTapSafetyPolicy.Candidate(
-                    index = candidate.index,
-                    box = candidate.bounds.toBlindTapBox(),
-                    interactive = candidate.clickable || candidate.editable || candidate.checked != null,
+        // 盲点前的安全判定，两层：
+        // 1) 中心点落在别的（更小的）节点上 —— 那个「中心」其实是别人的落点
+        //    （真机事故：设置首页根 ScrollView 的中心正好压在快捷开关行，把飞行模式打开了，
+        //     设备当场断网）；
+        // 2) 目标区域内含开关（整行可点、行内是 Switch）—— 中心没压中也可能拨到它。
+        // 命中任一层都不发手势，直接回「会点到谁」，模型按提示改点一步即可。
+        val target = node.bounds.toBlindTapBox()
+        val candidates = observation.nodes.map { candidate ->
+            BlindTapSafetyPolicy.Candidate(
+                index = candidate.index,
+                box = candidate.bounds.toBlindTapBox(),
+                interactive = candidate.clickable || candidate.editable || candidate.checked != null,
+                toggles = candidate.checked != null,
+            )
+        }
+        // 0) 树本身可信吗：只有 2 个节点时「中心点上没别的东西」并不说明那里是空的，
+        //    而是还没看到。这种情况直接不发手势，让模型先重新观察。
+        if (!BlindTapSafetyPolicy.hasEnoughEvidence(candidates)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("method", "ROOT_COORDINATE_FALLBACK")
+                .put("code", BlindTapSafetyPolicy.INSUFFICIENT_TREE_CODE)
+                .put("fallback_reason", VirtualDisplayFallbackPolicy.GESTURE_UNSUPPORTED)
+                .put("node_count", candidates.size)
+                .put(
+                    "message",
+                    "这次观察只有 ${candidates.size} 个节点（界面多半还在加载），无法确认落点上有什么：" +
+                        "已取消盲点，请先 observe_screen 再点",
                 )
-            },
+        }
+        val centerHit = BlindTapSafetyPolicy.centerHitOnOtherNode(
+            targetIndex = index,
+            target = target,
+            candidates = candidates,
         )
-        if (unsafeHit != null) {
+        val toggleHit = if (centerHit == null) {
+            BlindTapSafetyPolicy.toggleInsideTarget(
+                targetIndex = index,
+                target = target,
+                targetToggles = node.checked != null,
+                candidates = candidates,
+            )
+        } else {
+            null
+        }
+        val blocked = centerHit ?: toggleHit
+        if (blocked != null) {
+            val why = if (centerHit != null) {
+                "中心点落在节点 #${blocked.index} 上" +
+                    (if (blocked.interactive) "（那是可交互控件）" else "")
+            } else {
+                "区域内含开关 #${blocked.index}"
+            }
             return JSONObject()
                 .put("ok", false)
                 .put("method", "ROOT_COORDINATE_FALLBACK")
                 .put("code", BlindTapSafetyPolicy.UNSAFE_CODE)
                 .put("fallback_reason", VirtualDisplayFallbackPolicy.GESTURE_UNSUPPORTED)
-                .put("blocked_target_index", unsafeHit.index)
-                .put("blocked_target_interactive", unsafeHit.interactive)
+                .put("blocked_target_index", blocked.index)
+                .put("blocked_target_interactive", blocked.interactive)
+                .put("blocked_target_toggles", blocked.toggles)
+                .put("blocked_by", if (centerHit != null) "center_hit" else "toggle_inside")
+                .put("node_count", candidates.size)
                 .put(
                     "message",
-                    "节点 #$index 的中心点落在节点 #${unsafeHit.index} 上" +
-                        (if (unsafeHit.interactive) "（那是可交互控件，盲点可能误触开关）" else "") +
-                        "：已取消这次盲点，请改点 #${unsafeHit.index} 或它的文本子节点",
+                    "已取消这次盲点：节点 #$index 的$why，盲点可能误触开关。" +
+                        "请改点 #${blocked.index} 或它的文本子节点",
                 )
         }
         // 页面还在切换时打进去的坐标动作会落在过渡中的窗口上（点了/滑了都没反应），

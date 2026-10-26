@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.device
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,8 +10,15 @@ class BlindTapSafetyPolicyTest {
     private fun box(left: Int, top: Int, right: Int, bottom: Int) =
         BlindTapSafetyPolicy.Box(left, top, right, bottom)
 
-    private fun candidate(index: Int, left: Int, top: Int, right: Int, bottom: Int, interactive: Boolean) =
-        BlindTapSafetyPolicy.Candidate(index, box(left, top, right, bottom), interactive)
+    private fun candidate(
+        index: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        interactive: Boolean,
+        toggles: Boolean = false,
+    ) = BlindTapSafetyPolicy.Candidate(index, box(left, top, right, bottom), interactive, toggles)
 
     @Test
     fun `root container whose center lands on a switch is rejected`() {
@@ -96,5 +104,92 @@ class BlindTapSafetyPolicyTest {
             ),
         )
         assertEquals(9, hit?.index)
+    }
+
+    @Test
+    fun `toggle inside the target area is blocked even when the center misses it`() {
+        // 真实形态：整行可点、行内是 Switch；目标节点中心压在行内空白处，
+        // 第一层（中心命中）不触发，但一个盲点就拨动了开关。
+        val hit = BlindTapSafetyPolicy.toggleInsideTarget(
+            targetIndex = 9,
+            target = box(0, 640, 720, 871),
+            targetToggles = false,
+            candidates = listOf(
+                candidate(9, 0, 640, 720, 871, interactive = true),
+                candidate(11, 475, 717, 608, 801, interactive = true, toggles = true),
+            ),
+        )
+        assertEquals(11, hit?.index)
+    }
+
+    @Test
+    fun `the toggle itself is always allowed`() {
+        assertNull(
+            BlindTapSafetyPolicy.toggleInsideTarget(
+                targetIndex = 11,
+                target = box(475, 717, 608, 801),
+                targetToggles = true,
+                candidates = listOf(candidate(11, 475, 717, 608, 801, true, toggles = true)),
+            ),
+        )
+    }
+
+    @Test
+    fun `toggle outside the target area is not a reason to block`() {
+        assertNull(
+            BlindTapSafetyPolicy.toggleInsideTarget(
+                targetIndex = 1,
+                target = box(0, 0, 720, 316),
+                targetToggles = false,
+                candidates = listOf(
+                    candidate(1, 0, 0, 720, 316, interactive = false),
+                    candidate(11, 475, 717, 608, 801, interactive = true, toggles = true),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a plain clickable row without toggles never blocks`() {
+        // 只导航的行（可点、没有开关）：盲点后果可逆，不该拦。
+        assertNull(
+            BlindTapSafetyPolicy.toggleInsideTarget(
+                targetIndex = 4,
+                target = box(0, 317, 720, 1280),
+                targetToggles = false,
+                candidates = listOf(
+                    candidate(4, 0, 317, 720, 1280, interactive = false),
+                    candidate(6, 0, 341, 720, 608, interactive = true),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a two node tree is not enough evidence to blind tap`() {
+        // 真机：应用刚启动时无障碍只回 2 个容器节点；此时「中心点上没别的东西」
+        // 只说明「还没看到」，不能当成落点是空的。
+        assertFalse(
+            BlindTapSafetyPolicy.hasEnoughEvidence(
+                listOf(
+                    candidate(0, 0, 0, 720, 1280, interactive = false),
+                    candidate(1, 0, 0, 720, 400, interactive = false),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a normal settings home tree is enough evidence`() {
+        assertTrue(
+            BlindTapSafetyPolicy.hasEnoughEvidence(
+                listOf(
+                    candidate(0, 0, 0, 720, 1280, false),
+                    candidate(4, 0, 317, 720, 1280, false),
+                    candidate(9, 0, 640, 720, 871, true),
+                    candidate(11, 475, 717, 608, 801, true, toggles = true),
+                ),
+            ),
+        )
     }
 }

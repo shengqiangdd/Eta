@@ -2204,12 +2204,16 @@ internal class AgentLocalTools(
                 last = content
                 lastObservation = observation
                 if (launchObservationReady(content)) {
+                    content.put("tree_ready", true)
                     publishObservation(observation, displayId)
                     return content
                 }
             }
             if (SystemClock.elapsedRealtime() >= deadline) {
                 // 超时也要登记最后一次：它可能已经能用，只是没达到「就绪」判据。
+                // 但必须标明「这棵树可能还没画完」：否则模型会把「没看到」当成「那里没东西」——
+                // 真机上就出现过「只有 2 个节点时盲点坐标，点到不该点的地方」。
+                last?.put("tree_ready", false)
                 lastObservation?.let { publishObservation(it, displayId) }
                 return last
             }
@@ -2260,6 +2264,7 @@ internal class AgentLocalTools(
             .put("ui_tree_truncated", content.optBoolean("ui_tree_truncated"))
             .put("ui_nodes_truncated", content.optBoolean("ui_nodes_truncated"))
             .put("node_limit", content.optInt("node_limit", 0))
+            .put("tree_ready", content.optBoolean("tree_ready", true))
             .put("ui_nodes", content.optJSONArray("ui_nodes") ?: JSONArray())
             .put(
                 "note",
@@ -3197,8 +3202,14 @@ private val AFTER_ACTION_OPTIONS = AgentScreenObservationContract.Options(
 /** append 超过该长度改走粘贴路径；逐字键入的增量重建对长文本既慢又容易被输入法打断。 */
 private const val TYPE_TEXT_INCREMENTAL_CHARS = 200
 
-/** 虚拟屏启动后自动观察首屏的时间预算：够冷启动应用画完首屏，又不会把 launch 拖成「卡住」。 */
-private const val LAUNCH_OBSERVE_TIMEOUT_MS = 5_000L
+/**
+ * 虚拟屏启动后自动观察首屏的时间预算：够冷启动应用画完首屏，又不会把 launch 拖成「卡住」。
+ *
+ * 从 5s 调到 8s：设备忙（比如本机正在编译）时，设置首页 5 秒内只画出 2 个容器节点，
+ * 旧预算会把这种半成品树当成首屏交出去（真机上随即拿它做过一次盲点）。
+ * 就绪时照样提前返回，常态没有额外成本。
+ */
+private const val LAUNCH_OBSERVE_TIMEOUT_MS = 8_000L
 
 /** 自动观察的轮询间隔；比无障碍整树 dump 一次（约 300ms）略短，避免白等。 */
 private const val LAUNCH_OBSERVE_POLL_MS = 250L

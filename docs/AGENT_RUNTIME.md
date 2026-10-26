@@ -6301,7 +6301,7 @@ reasoning_capabilities_override_json =
 | `virtual_display_launch` 成功后自动观察首屏，结果带 `first_observation` | 省掉「等 → observe_screen」2 次 |
 | `tap_element` / `long_press_element`：节点动作被「手势只作用于默认屏」挡住时，用该节点 `center` 走 `input -d` | 省掉「模型自己换算坐标 + 补一次 tap」1~2 次 |
 | `scroll_element`：节点只支持手势时，退回 `scroll` 已验证过的 `input -d` 坐标滑动 | 同上 |
-| `tap_element` / `long_press_element` 的**盲点安全判定** | 事故防线：中心点落在更小节点上就不发手势，直接报出「会点到谁」 |
+| `tap_element` / `long_press_element` 的**盲点安全判定**（三层） | 事故防线：落点会压到别的控件、区域内有开关、树太小 —— 任一成立就不发手势并报出原因 |
 
 兜底不是无条件的：`VirtualDisplayFallbackPolicy` 要求**错误码正好是那条虚拟屏硬限制 + 目标不是默认屏 + Root 可用**，
 三条同时成立才兜底，避免「兜底兜到用户主屏」。
@@ -6358,17 +6358,21 @@ fallback_attempt: {"ok":false,"code":"ACTION_OUTCOME_UNKNOWN","method":"INPUT_SW
 也就是说：**容器的「中心」不是这个容器的中心，而是容器内部随机某个控件。**
 盲点在没有语义的地方等于随机拨开关。两处都改了：
 
-1. **探针**：STEP2 只在上 1/5 屏里选节点，且要求「中心点没有被更小的节点覆盖」；
-2. **工具层**（更要紧）：新增 `BlindTapSafetyPolicy` —— 盲点前先算中心点会不会落到
-   别的节点上；会就**不发手势**，回 `COORDINATE_FALLBACK_UNSAFE_TARGET` +
-   `blocked_target_index` + 一句「请改点 #N」。
+1. **探针**：STEP2 只在「不可点 + 中心点没压着更小的节点 + 区域内没有开关」的节点里挑，
+   按面积降序取第一个（面积大才可能是纯容器，才会真的走到要验证的兜底路径）；界面没画完就跳过。
+2. **工具层**（更要紧）：新增 `BlindTapSafetyPolicy`，盲点前**三层**判定，任一成立都不发手势：
+   - `center_hit`：中心点落在**更小的**节点上 → `COORDINATE_FALLBACK_UNSAFE_TARGET` + `blocked_target_index`；
+   - `toggle_inside`：目标区域内含开关（整行可点、行内是 Switch，中心恰好压在空白处）→ 同一个错误码；
+   - `insufficient_tree`：整棵树不到 4 个节点（多半还在加载）→ `COORDINATE_FALLBACK_INSUFFICIENT_TREE`。
+     这条是后来补的：真机出现过「首屏只有 2 个节点时盲点坐标」——**「没看到」被当成了「没有」**。
 
 判据里有一个容易写错的地方：只能把**面积比目标小**的节点算作命中。全屏根容器覆盖一切，
 它本身不是被点到的东西；若也算命中，任何节点都会被判成「被覆盖」，盲点就永久被禁掉。
 第一版就是这么写的 —— 探针 STEP2 全程 `skipped`，才在真机上暴露出来。
 
-判据是纯函数（不碰 android 类型），6 个单测覆盖：根节点中心落在开关上被抓、标题栏空白放行、
-祖先全屏容器不拦、空 bounds 放行、面积最小者胜出。
+判据是纯函数（不碰 android 类型），10 个单测覆盖：根节点中心落在开关上被抓、标题栏空白放行、
+祖先全屏容器不拦、空 bounds 放行、面积最小者胜出、区域内开关拦截、开关自身放行、
+区域外开关不算、纯导航行不拦、2 节点树不算证据。
 
 滚动侧另外两层（本轮同时落地）：`awaitStableTree()` 在发手势前等 UI 树连续两次一致；
 `RootScrollResendPolicy` 只在「锚点都在、一个都没动」时补发一次；
@@ -6377,17 +6381,23 @@ fallback_attempt: {"ok":false,"code":"ACTION_OUTCOME_UNKNOWN","method":"INPUT_SW
 
 ### 六、复测（2026-10-26，canary，本机 PKX110 / Android 16）
 
+最终一轮（display 71 / 72 / 73，三次一致）：
+
 ```
-run 2 / run 3 一致（display 60 / 61）：
 STEP1 launched=true first_nodes=20
-STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK     # 标题栏空白 → 放行
+STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK  after_package=com.android.settings
 STEP3 index=0 ok=true method=ROOT_SCROLL_FALLBACK
-      └ fallback.verified_by=anchor_motion_partial（11/12 锚点在动，方向未确认 → 如实标注）
 STEP3b scroll ok=true method=INPUT_SWIPE
-airplane=0                                                # 全程没有再次被拨动
+airplane=0 wifi=1
 ```
 
-`run 1` 的 `first_nodes=0` 属已知时序：覆盖安装后首次建屏时无障碍还没连上，同一次调用拿不到节点。
+- 四项在**同一次运行**里同时绿，说明「兜底可用」与「安全层不过度拦截」并存。
+- `STEP2` 选中的是标题栏（候选里面积最大），走的是真正的坐标兜底，没被安全层误拦。
+- 过程里顺带修了两处真问题：`first_nodes=2`（半成品树）→ 首屏预算 5s→8s，并给出 `tree_ready` 标志；
+  `STEP2` 后无条件 `BACK` 会把设置整个退到后台（STEP3 找不到可滚节点）→ 改成只在下级页面才 `BACK`。
+
+更早一轮（display 60 / 61）里 `STEP3` 的 `verified_by=anchor_motion_partial`：11/12 个锚点在动、
+方向未确认，工具如实标了 `direction_confirmed=false`，没有像旧版那样误报 `ACTION_OUTCOME_UNKNOWN`。
 
 ### 七、仍未完善（诚实清单）
 
@@ -6399,8 +6409,10 @@ airplane=0                                                # 全程没有再次�
   把该服务**短暂关掉再打开**即可恢复（恢复后 `Bound services` 出现两项）。
   这是测试环境现象，已在收尾时把 `enabled_accessibility_services` 还原成原值。
 - `step_probe` 的 `STEP3b` 是**对照探针**，只为证明「兜底与 scroll 同源」，不参与判定。
-- **建屏那一次可能拿不到首屏节点**（复测 run 1/3）：无障碍刚好还没连上，`first_nodes=0`。
+- **建屏那一次可能拿不到首屏节点**：无障碍刚好还没连上，`first_nodes=0`。
   再 `observe_screen` 一次即可；没有自动重试，是不想把建屏动作拖长。
-- **安全判定只覆盖「中心点落在更小节点上」这一种危险落点**。若落点上没有更小节点、
-  但整行可点（语义是开关），仍会盲点 —— 探针侧另用「上 1/5 屏」限制兜底，
-  真实任务里这一步没有额外护栏，属于已知残余风险。
+- **`toggle_inside` 拦截只在单测与离线真实数据上验过**，没在真机上主动触发：
+  主动触发就是「故意往开关区域盲点」，一旦判据失效会再拨一次设备开关。
+  按「宁可少测一次，也不拿用户设备冒险」处理。
+- 探针已不会在未就绪的树上乱点，但真实任务里模型仍可能拿半成品树操作 ——
+  工具层靠 `insufficient_tree` 挡住并让它先观察。

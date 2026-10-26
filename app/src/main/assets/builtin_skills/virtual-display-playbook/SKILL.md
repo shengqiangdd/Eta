@@ -34,6 +34,7 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
 - 拿到 `first_observation` 就**直接 `tap_element`**，不要再 `wait` 或补一次 `observe_screen`。
 - 它同时把这个观察登记成「当前观察」，之后漏传 `display_id` 的动作也不会跑到主屏。
 - 首屏若是加载动画（`ui_nodes` 为空或只有占位），再 `observe_screen(display_id=…)` 刷新一次即可。
+  `first_observation` 里 `tree_ready=false` 就是这个意思（等了 8 秒仍没画完），别拿它当完整界面。
 - **更省一步**：`virtual_display_create` 直接带 `package_name`（可再带 `activity`、`force`），
   建屏＋启动＋首屏观察一次做完，返回里同样有 `first_observation`。
   启动失败时 `ok` 仍为 `true` —— 屏已经建好了，真实原因在 `launch_error` 里，别以为屏没建成又去 create。
@@ -51,6 +52,9 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
    设备当场断网。此时返回 `code=COORDINATE_FALLBACK_UNSAFE_TARGET` 并带
    `blocked_target_index`：**手势没有发出**，下一步直接点那个 index（或它的文本子节点），
    不要换个坐标硬点。
+   同一层还有两条：`blocked_by=toggle_inside`（节点区域内含开关，中心没压中也可能拨到它）、
+   `code=COORDINATE_FALLBACK_INSUFFICIENT_TREE`（整棵树不到 4 个节点，界面还没画完）。
+   后者的正确反应是**先 `observe_screen`**，不是换个节点再试 —— 那时你看到的本来就不全。
 2. **`type_text(submit=true)` 仍不可靠**：文本写进去了但没提交，界面不动。
    改为写入文本后点击发送按钮；发送后到消息列表里确认新消息真的出现。
 3. **应用内跳页时任务可能被系统迁走**（本机 `DisplayInfo.canHostTasks=false`）。

@@ -18,6 +18,17 @@ internal object BlindTapSafetyPolicy {
     /** 目标节点的中心点落在别处时返回该错误码，而不是把动作发出去。 */
     const val UNSAFE_CODE: String = "COORDINATE_FALLBACK_UNSAFE_TARGET"
 
+    /** 节点树太小、不足以判断落点上有什么时的错误码。 */
+    const val INSUFFICIENT_TREE_CODE: String = "COORDINATE_FALLBACK_INSUFFICIENT_TREE"
+
+    /**
+     * 可信判定所需的最少节点数。
+     *
+     * 真机教训：应用刚启动时无障碍只回 2 个容器节点，此时「中心点上没有别的节点」不是
+     * 「那里没东西」，而是「我们还没看到」—— 拿这种树去盲点，等于把未知当成安全。
+     */
+    const val MIN_TRUSTED_NODES: Int = 4
+
     data class Box(val left: Int, val top: Int, val right: Int, val bottom: Int) {
         val centerX: Int get() = (left + right) / 2
         val centerY: Int get() = (top + bottom) / 2
@@ -34,7 +45,12 @@ internal object BlindTapSafetyPolicy {
         val box: Box,
         /** 可点 / 可勾选 / 可输入：命中这类节点风险最高，提示里要点明。 */
         val interactive: Boolean,
+        /** 开关类（Switch / CheckBox）：盲点落进它的区域 = 可能直接拨动一个设置。 */
+        val toggles: Boolean = false,
     )
+
+    /** 树够不够大、能不能拿来做安全判定。 */
+    fun hasEnoughEvidence(candidates: List<Candidate>): Boolean = candidates.size >= MIN_TRUSTED_NODES
 
     /**
      * @return 中心点命中的那个节点；null 表示这个落点上没有别的节点（盲点安全）。
@@ -57,6 +73,32 @@ internal object BlindTapSafetyPolicy {
             .filter { it.box.area < target.area }
             .filter { it.box.contains(x, y) }
             // 取面积最小者：那才是「点下去真正会被按到」的控件，提示也最具体。
+            .minByOrNull { it.box.area }
+    }
+
+    /**
+     * 第二层判据：目标区域里有没有**开关**（Switch / CheckBox）。
+     *
+     * 为什么还要这一层：第一层只看「中心点落在更小的节点上」。设置类页面常见「整行可点、
+     * 行内是开关」，而目标节点的中心恰好压在行内空白处 —— 第一层不触发，但一个盲点就会
+     * 拨动那个开关。这里按「开关的中心落在目标区域内」判，不要求中心点本身命中。
+     *
+     * 目标自己就是开关时不拦：点开关正是对的。
+     *
+     * @return 区域内的开关节点；null 表示区域内没有开关。
+     */
+    fun toggleInsideTarget(
+        targetIndex: Int,
+        target: Box,
+        targetToggles: Boolean,
+        candidates: List<Candidate>,
+    ): Candidate? {
+        if (targetToggles || target.isEmpty) return null
+        return candidates
+            .asSequence()
+            .filter { it.index != targetIndex && it.toggles && !it.box.isEmpty }
+            .filter { it.box.area < target.area }
+            .filter { target.contains(it.box.centerX, it.box.centerY) }
             .minByOrNull { it.box.area }
     }
 }

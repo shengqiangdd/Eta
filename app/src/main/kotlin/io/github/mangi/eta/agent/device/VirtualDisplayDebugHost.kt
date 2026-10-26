@@ -302,21 +302,13 @@ internal object VirtualDisplayDebugHost {
                 )
                 val nodes = first?.optJSONArray("ui_nodes")
                 val observationId = first?.optString("observation_id").orEmpty()
-                fun firstIndex(predicate: (JSONObject) -> Boolean): Int? {
-                    if (nodes == null) return null
-                    for (i in 0 until nodes.length()) {
-                        val node = nodes.optJSONObject(i) ?: continue
-                        if (predicate(node)) return node.optInt("index", -1).takeIf { it >= 0 }
-                    }
-                    return null
-                }
                 // 找一个「不可点」的节点：线格式只在 clickable=true 时输出该键，所以 !optBoolean 就是不可点。
                 //
-                // **必须限制在顶部标题栏区域**：探针启动的是系统设置，首页那把开关（包含飞行模式）
-                // 就在屏幕中部，盲点中心坐标会真的把它们拨动。实测就是靠这一点把设备反复切进
-                // 飞行模式、把网络搞掉。所以只允许点「上 1/5 屏」的不可点节点（标题栏），
-                // 找不到就跳过该步 —— 不为了凑一个结果去乱点。
-                val screenHeight = create.optInt("height", 0)
+                // 安全背景：探针启动的是系统设置，首页那把开关（含飞行模式）就在屏幕中部。
+                // 早先版本盲点根容器的中心，真把飞行模式拨开了、设备当场断网。所以目标必须满足：
+                // 中心点没压着更小的节点（否则盲点其实点到别人）、区域内没有开关、也没有可点控件
+                // （盲点才既不会拨开关，也不会跳进下级页面）。
+                // 找不到「完全无副作用」的就退一步：只要求区域内没有开关。
                 val boundsPattern = Regex("-?\\d+")
                 fun boundsOf(node: JSONObject): IntArray? {
                     val raw = node.optString("bounds")
@@ -358,28 +350,80 @@ internal object VirtualDisplayDebugHost {
                     }
                     return false
                 }
-                fun safeArea(node: JSONObject): Boolean {
-                    if (screenHeight <= 0) return false
-                    val center = centerOf(node) ?: return false
-                    if (center[1] >= screenHeight / 5) return false
-                    return !centerCoveredByOther(node)
+                fun areaOfNode(node: JSONObject): Long {
+                    val box = boundsOf(node) ?: return 0L
+                    return areaOf(box)
                 }
-                val nonClickable = firstIndex { node ->
-                    !node.optBoolean("clickable") && node.has("bounds") && safeArea(node)
+                /** other 的中心是否落在 target 的范围内。 */
+                fun centerInside(target: JSONObject, other: JSONObject): Boolean {
+                    val box = boundsOf(target) ?: return false
+                    val center = centerOf(other) ?: return false
+                    return center[0] >= box[0] && center[0] < box[2] &&
+                        center[1] >= box[1] && center[1] < box[3]
                 }
-                if (displayId > 0 && observationId.isNotBlank() && nonClickable != null) {
+                /** 目标区域内有没有满足条件的节点；只算比目标更小的（祖先容器不算）。 */
+                fun containsMatching(target: JSONObject, predicate: (JSONObject) -> Boolean): Boolean {
+                    val ownArea = areaOfNode(target)
+                    if (ownArea <= 0L) return true
+                    val total = nodes?.length() ?: 0
+                    for (i in 0 until total) {
+                        val other = nodes?.optJSONObject(i) ?: continue
+                        if (!predicate(other)) continue
+                        if (areaOfNode(other) >= ownArea) continue
+                        if (centerInside(target, other)) return true
+                    }
+                    return false
+                }
+                // 按面积降序挑：面积越大越可能是纯容器（没有 ACTION_CLICK），
+                // 才会真正走到「坐标兜底」这条要验证的路径；小 TextView 往往能直接 click 成功。
+                fun pickTarget(): Int? {
+                    var best: Int? = null
+                    var bestArea = 0L
+                    val total = nodes?.length() ?: 0
+                    for (i in 0 until total) {
+                        val node = nodes?.optJSONObject(i) ?: continue
+                        val index = node.optInt("index", -1)
+                        if (index < 0) continue
+                        if (node.optBoolean("clickable")) continue
+                        if (!node.has("bounds")) continue
+                        if (centerCoveredByOther(node)) continue
+                        // 区域内有开关 → 盲点可能直接拨动它，绝不选。
+                        if (containsMatching(node) { other -> other.has("checked") }) continue
+                        val area = areaOfNode(node)
+                        if (area > bestArea) {
+                            best = index
+                            bestArea = area
+                        }
+                    }
+                    return best
+                }
+                val nonClickable = pickTarget()
+                val readyNodes = nodes?.length() ?: 0
+                var tapAfterPackage = ""
+                if (readyNodes < 4) {
+                    // 树太小说明界面还没画完：此时任何「中心点上没东西」都不作数，不乱点。
+                    report.appendLine("STEP2 skipped（首屏只有 $readyNodes 个节点，未就绪）observation=$observationId")
+                } else if (displayId > 0 && observationId.isNotBlank() && nonClickable != null) {
                     val tap = call(
                         "tap_element",
                         JSONObject().put("observation_id", observationId).put("index", nonClickable),
                     )
+                    tapAfterPackage = tap.optJSONObject("after")?.optString("package").orEmpty()
                     report.appendLine(
                         "STEP2 index=$nonClickable ok=${tap.optBoolean("ok")} " +
-                            "method=${tap.optString("method")} code=${tap.optString("code")}",
+                            "method=${tap.optString("method")} code=${tap.optString("code")} " +
+                            "after_package=$tapAfterPackage",
                     )
                 } else {
                     report.appendLine(
-                        "STEP2 skipped（顶部安全区里没有不可点节点）observation=$observationId index=$nonClickable",
+                        "STEP2 skipped（没有既不可点、区域内又无开关的节点）" +
+                            "observation=$observationId index=$nonClickable",
                     )
+                }
+                if (displayId > 0 && tapAfterPackage.isNotEmpty() && tapAfterPackage != PROBE_PACKAGE) {
+                    // 只在下级页面才退回来。无条件 BACK 会把设置整个退到后台 ——
+                    // 那一步之后 STEP3 找不到可滚节点、STEP3b 直接 INVALID_ARGUMENT（真机踩过）。
+                    call("press_key", JSONObject().put("button", "BACK").put("display_id", displayId))
                 }
                 if (displayId > 0) {
                     val observation = call(
