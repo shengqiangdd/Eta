@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.model
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -33,15 +34,16 @@ class AgentContextCompactionTest {
             messages.put(AgentConversationCodec.userTextMessage("第 $index 问"))
             messages.put(JSONObject().put("role", "assistant").put("content", "历史事实 ".repeat(30_000)))
         }
-        var requests = 0
+        // 分批现在是并行的：计数必须用原子类，否则可能丢更新，断言会偶发变红。
+        val requests = AtomicInteger()
         val batchLines = mutableListOf<String>()
         val result = AgentContextCompactor(config, provider { _, _ ->
-            requests++
+            requests.incrementAndGet()
             response("此前任务已完成。")
         }, AgentRunController(), onBatch = batchLines::add).compact(messages, 1, emptySet())
         // 批次必须真的发生，并且能被外面看见：以前只返回正文，批次数无从验证。
-        assertTrue("应发生分批：requests=$requests", result.batches >= 2)
-        assertEquals("每批一次请求，最后再合并一次", result.batches + 1, requests)
+        assertTrue("应发生分批：requests=${requests.get()}", result.batches >= 2)
+        assertEquals("每批一次请求，最后再合并一次", result.batches + 1, requests.get())
         // 分批进度只能走注入的出口，不能直接调 android.util.Log（纯 JVM 单测里它没实现）。
         assertEquals("每批一行 + 合并一行", result.batches + 1, batchLines.size)
         assertTrue("进度要带批号：$batchLines", batchLines.any { it.contains("第 1/") })

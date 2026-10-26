@@ -2,6 +2,9 @@ package io.github.mangi.eta.agent.model
 
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -107,6 +110,8 @@ internal class AgentContextSummarizer(
      */
     private val onUsage: (AgentTokenUsage) -> Unit = {},
 ) {
+    /** 分批日志的锁：并行时保证每行日志完整，不会两条拼在一起。 */
+    private val batchLogLock = Any()
     /** 单次摘要尝试的结果；失败时保留原因与原文，供重试和兜底复用。 */
     private sealed interface Attempt {
         data class Valid(val text: String) : Attempt
@@ -120,20 +125,7 @@ internal class AgentContextSummarizer(
             "更早的约 $it 字符历史因体量限制未纳入本次摘要，请在摘要中注明这一点。"
         }
         val startedAt = System.currentTimeMillis()
-        var batchIndex = 0
-        val parts = plan.batches.map { batch ->
-            batchIndex++
-            val batchStartedAt = System.currentTimeMillis()
-            val text = summarizeOnce(batch, omittedNote)
-            // 分批以前在日志里没有任何痕迹：跑了几批、每批多大、慢在哪，只能靠猜。
-            onBatch(
-                "上下文摘要分批：第 $batchIndex/${plan.batches.size} 批，" +
-                    "输入 ${AgentContextBudget.messagesChars(batch)} 字符，" +
-                    "本批 ${System.currentTimeMillis() - batchStartedAt}ms，" +
-                    "累计 ${System.currentTimeMillis() - startedAt}ms",
-            )
-            text
-        }
+        val parts = summarizeBatches(plan.batches, omittedNote, startedAt)
         val text = if (parts.size == 1) {
             parts.first()
         } else {
@@ -149,6 +141,75 @@ internal class AgentContextSummarizer(
             mergedText
         }
         return SummaryOutcome(text = text, batches = parts.size, omittedChars = plan.omittedChars)
+    }
+
+    /**
+     * 逐批（必要时并行）生成摘要。
+     *
+     * 各批之间**互不依赖**：它们是从老到新切出来的不同片段，各自独立摘要，只有最后的合并
+     * 阶段才需要全部结果。原来串行跑 3~4 批，墙钟就是三个请求之和，而真机上单次摘要请求
+     * 就要 20 秒量级 —— 这是压缩慢的主要结构性原因。
+     *
+     * 实测（PKX110 / Android 16，中转端点 `myc.sq6.top:7863`，同一段 3,000 字历史）：
+     * 3 个并发请求全部 200，墙钟 **10.43 s ≈ 最慢的单请求**（串行时是三者之和）；
+     * 2 并发墙钟 8.02 s。所以并行能把这一段的耗时从 O(批数) 降到 O(1)（加一次合并）。
+     *
+     * 默认只开 [MAX_PARALLEL_BATCHES]=2：并发越高越容易撞上中转站的限流，
+     * 而压缩**失败**比慢更糟（用户点压缩就是要省，不是要重试）。
+     */
+    private fun summarizeBatches(
+        batches: List<List<AgentModelClient.ConversationMessage>>,
+        omittedNote: String?,
+        startedAt: Long,
+    ): List<String> {
+        if (batches.size <= 1) {
+            return batches.mapIndexed { index, batch ->
+                runBatch(index, batches.size, batch, omittedNote, startedAt)
+            }
+        }
+        val pool = Executors.newFixedThreadPool(minOf(batches.size, MAX_PARALLEL_BATCHES)) { runnable ->
+            Thread(runnable, "eta-summary-batch").apply { isDaemon = true }
+        }
+        return try {
+            val futures = batches.mapIndexed { index, batch ->
+                pool.submit(Callable { runBatch(index, batches.size, batch, omittedNote, startedAt) })
+            }
+            // 按批次顺序取结果：合并阶段依赖「老 → 新」的顺序，不能按完成先后拼。
+            futures.map { future ->
+                try {
+                    future.get()
+                } catch (failure: ExecutionException) {
+                    // 把 worker 里的 AgentModelFailure 原样抛出去：压缩事件的 reasonCode 依赖它，
+                    // 包一层 ExecutionException 会让界面只剩「CONTEXT_SUMMARY_FAILED」，
+                    // 真实原因（例如 CONTEXT_SUMMARY_INVALID）就丢了。
+                    throw failure.cause ?: failure
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    /** 单批（含重试与兜底）的完整执行；日志串行化，避免并行时把进度写成乱序。 */
+    private fun runBatch(
+        index: Int,
+        total: Int,
+        batch: List<AgentModelClient.ConversationMessage>,
+        omittedNote: String?,
+        startedAt: Long,
+    ): String {
+        val batchStartedAt = System.currentTimeMillis()
+        val text = summarizeOnce(batch, omittedNote)
+        val chars = AgentContextBudget.messagesChars(batch)
+        // 分批以前在日志里没有任何痕迹：跑了几批、每批多大、慢在哪，只能靠猜。
+        synchronized(batchLogLock) {
+            onBatch(
+                "上下文摘要分批：第 ${index + 1}/$total 批完成，" +
+                    "输入 $chars 字符，本批 ${System.currentTimeMillis() - batchStartedAt}ms，" +
+                    "累计 ${System.currentTimeMillis() - startedAt}ms",
+            )
+        }
+        return text
     }
 
     private fun summarizeOnce(
@@ -274,6 +335,14 @@ internal class AgentContextSummarizer(
 
     companion object {
         const val CODE_INVALID = "CONTEXT_SUMMARY_INVALID"
+
+        /**
+         * 单次压缩里并行执行的分批摘要数。
+         *
+         * 实测依据见 [summarizeBatches]：2 并发已能把 3~4 批的墙钟从「三者之和」降到「约两倍」；
+         * 不再往上加是因为中转站的限流策略无法预估，而压缩失败比慢更糟。
+         */
+        const val MAX_PARALLEL_BATCHES = 2
 
         /** 第一次摘要的目标长度：比硬上限低一半，给模型留出「写多几百字」的余量。 */
         const val SUMMARY_TARGET_CHARS = 6_000

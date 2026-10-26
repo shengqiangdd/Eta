@@ -89,6 +89,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.device.UiNodeWireTest
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
+  --tests io.github.mangi.eta.agent.model.AgentContextSummarizerParallelTest
   --tests io.github.mangi.eta.agent.tool.AgentAfterActionSummaryVolumeTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
