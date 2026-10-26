@@ -1238,6 +1238,7 @@ internal class AgentLocalTools(
         // 漏传 display_id 时还可能把文本打到主屏焦点上。
         val displayIdArg = resolveDisplayId(args)
         if (displayIdArg != null) {
+            rejectIndexOnVirtualDisplay(args, displayIdArg, "type_text")
             if (mode != "replace" && mode != "append") {
                 return errorResult("INVALID_ARGUMENT", "mode 只能是 replace 或 append")
             }
@@ -1329,6 +1330,7 @@ internal class AgentLocalTools(
     private fun clearText(args: JSONObject): String {
         val displayId = resolveDisplayId(args)
         if (displayId != null) {
+            rejectIndexOnVirtualDisplay(args, displayId, "clear_text")
             return deviceController.textOnDisplay(
                 context = requireContext(),
                 displayId = displayId,
@@ -1416,6 +1418,29 @@ internal class AgentLocalTools(
                 "节点 index 只在它被观察的那块屏上有意义。请先对目标屏 observe_screen 一次，" +
                 "或用坐标工具（tap / tap_area）",
             code = ObservationScopeErrors.OTHER_DISPLAY,
+            retryable = false,
+        )
+    }
+
+    /**
+     * 虚拟屏写入不接受节点 index（fix164）。
+     *
+     * 这条通路是进程内注入，只写该屏当前焦点输入框；以前 index 被默默丢掉，
+     * 文本会落到另一个框里而结果仍报 ok —— 模型以为写到了 index 那个框。
+     */
+    private fun rejectIndexOnVirtualDisplay(args: JSONObject, displayId: Int, toolName: String) {
+        val hasIndex = args.optNullableInt("index") != null
+        if (DisplayTextTargetPolicy.resolve(hasIndex, displayId) !=
+            DisplayTextTargetPolicy.Target.REJECTED_INDEX
+        ) {
+            return
+        }
+        throw InvalidToolArgumentException(
+            message = "$toolName 不能同时带 index 与 display_id=$displayId：" +
+                "虚拟屏写入是进程内注入，只作用于该屏**当前焦点输入框**，index 会被忽略" +
+                "（以前还会静默写进别的输入框）。要写指定输入框，先 tap_element 把它点成焦点再不带 index 调用；" +
+                "要写主屏的那个 index，请不要传 display_id",
+            code = DisplayTextErrors.INDEX_ON_VIRTUAL_DISPLAY,
             retryable = false,
         )
     }

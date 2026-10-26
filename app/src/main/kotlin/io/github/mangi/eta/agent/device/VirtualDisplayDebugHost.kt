@@ -5,6 +5,7 @@ import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.tool.AgentLocalTools
 import io.github.mangi.eta.agent.tool.CoordinateSpaceErrors
+import io.github.mangi.eta.agent.tool.DisplayTextErrors
 import io.github.mangi.eta.agent.tool.ObservationScopeErrors
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.io.File
@@ -765,6 +766,10 @@ internal object VirtualDisplayDebugHost {
                             "STEP7a verdict=" + when {
                                 blindVerification == "verified" -> "FAIL_CLAIMED_VERIFIED"
                                 blindNote.isNotBlank() -> "OK_HONEST"
+                                // 参数／屏校验就拒了（虚拟屏没窗口、已释放…）：压根没尝试输入，
+                                // “没 verification”是诚实的，不是静默成功。
+                                blind.optString("code").isNotEmpty() ->
+                                    "OK_NOT_ATTEMPTED:" + blind.optString("code")
                                 else -> "FAIL_SILENT"
                             },
                         )
@@ -781,6 +786,8 @@ internal object VirtualDisplayDebugHost {
                                 blindClear.optString("input_verification") == "unknown" &&
                                     blindClear.optString("note").isNotBlank() -> "OK_HONEST"
                                 blindClear.optString("input_verification") == "verified" -> "FAIL_CLAIMED_CLEARED"
+                                blindClear.optString("code").isNotEmpty() ->
+                                    "OK_NOT_ATTEMPTED:" + blindClear.optString("code")
                                 else -> "FAIL_SILENT"
                             },
                         )
@@ -1080,6 +1087,42 @@ internal object VirtualDisplayDebugHost {
                                     else -> "FAIL_UNEXPECTED"
                                 },
                             )
+                            // STEP11c：同一把尺子也要用在 tap_area / swipe / long_press 上
+                            // （它们共用 convertPoint，但这轮只端到端验过 tap）。
+                            val areaTap = call(
+                                "tap_area",
+                                JSONObject()
+                                    .put("x1", 10).put("y1", 10)
+                                    .put("x2", 900).put("y2", 1200)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            val swipeCall = call(
+                                "swipe",
+                                JSONObject()
+                                    .put("x1", 100).put("y1", 100)
+                                    .put("x2", 900).put("y2", 1200)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            val longCall = call(
+                                "long_press",
+                                JSONObject()
+                                    .put("x", 900).put("y", 1200)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            report.appendLine(
+                                "STEP11c area=${areaTap.optString("code")} swipe=${swipeCall.optString("code")} " +
+                                    "long=${longCall.optString("code")}",
+                            )
+                            report.appendLine(
+                                "STEP11c verdict=" + if (
+                                    listOf(areaTap, swipeCall, longCall).all {
+                                        it.optString("code") == CoordinateSpaceErrors.SCREENSHOT_OTHER_DISPLAY
+                                    }
+                                ) "OK" else "FAIL_UNEXPECTED",
+                            )
                             // STEP11b：同一块屏的整屏截图坐标必须照旧可用（别修成“截图全废”）。
                             val sameShot = call(
                                 "observe_screen",
@@ -1207,6 +1250,68 @@ internal object VirtualDisplayDebugHost {
                                     sameScopeTap.optString("code") ==
                                         ObservationScopeErrors.OTHER_DISPLAY -> "FAIL_REJECTED_SAME_SCREEN"
                                     else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            // STEP14（fix164）：虚拟屏写入到底认不认 index。
+                            // schema 写着「index 指定 editable 节点」，但虚拟屏分支直接走 input -d，
+                            // index 被完全忽略 → 会静默写进当前焦点输入框（可能是完全另一处）。
+                            val mainObs = call("observe_screen", JSONObject().put("max_nodes", 40))
+                            val mainNodes = mainObs.optJSONArray("ui_nodes")
+                            var mainIndex = -1
+                            for (i in 0 until (mainNodes?.length() ?: 0)) {
+                                val node = mainNodes?.optJSONObject(i) ?: continue
+                                mainIndex = node.optInt("index", -1)
+                                if (mainIndex >= 0) break
+                            }
+                            val searchObs = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", shotDisplayId).put("max_nodes", 40),
+                            )
+                            val searchNodes = searchObs.optJSONArray("ui_nodes")
+                            var searchIndex = -1
+                            for (i in 0 until (searchNodes?.length() ?: 0)) {
+                                val node = searchNodes?.optJSONObject(i) ?: continue
+                                val label = node.optString("view_id") + node.optString("desc")
+                                if (label.contains("searchView") || label.contains("搜索")) {
+                                    searchIndex = node.optInt("index", -1)
+                                    if (searchIndex >= 0) break
+                                }
+                            }
+                            if (searchIndex >= 0) {
+                                call(
+                                    "tap_element",
+                                    JSONObject()
+                                        .put("index", searchIndex)
+                                        .put("observation_id", searchObs.optString("observation_id"))
+                                        .put("display_id", shotDisplayId),
+                                )
+                            }
+                            val typedWithIndex = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("text", "fix164probe")
+                                    .put("index", mainIndex)
+                                    .put("observation_id", mainObs.optString("observation_id"))
+                                    .put("display_id", shotDisplayId),
+                            )
+                            val afterType = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", shotDisplayId).put("max_nodes", 40),
+                            )
+                            val leaked = afterType.optString("ui_nodes").isNotEmpty() &&
+                                afterType.toString().contains("fix164probe")
+                            report.appendLine(
+                                "STEP14 mainIndex=$mainIndex searchIndex=$searchIndex " +
+                                    "code=${typedWithIndex.optString("code")} ok=${typedWithIndex.optBoolean("ok")} " +
+                                    "verification=${typedWithIndex.optString("input_verification")} leaked=$leaked",
+                            )
+                            report.appendLine(
+                                "STEP14 verdict=" + when {
+                                    mainIndex < 0 -> "SKIPPED_NO_NODE"
+                                    typedWithIndex.optBoolean("ok") -> "FAIL_INDEX_SILENTLY_IGNORED"
+                                    typedWithIndex.optString("code") ==
+                                        DisplayTextErrors.INDEX_ON_VIRTUAL_DISPLAY -> "OK"
+                                    else -> "OK_OTHER_REJECTION:" + typedWithIndex.optString("code")
                                 },
                             )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))

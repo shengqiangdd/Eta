@@ -53,7 +53,8 @@ internal object AgentTextSystemToolCatalog {
                                             "description",
                                             "可选，虚拟屏的 displayId（来自 virtual_display_create）。" +
                                                 "指定后文本经 input -d 注入到该屏，不会写到主屏；" +
-                                                "虚拟屏统一走这条注入通路，节点 index 仍只用于定位。",
+                                                "这条通路只作用于该屏**当前焦点输入框**，不能与 index 同时使用" +
+                                                "（要写指定输入框，先 tap_element 点中它）。",
                                         ),
                                 )
                         )

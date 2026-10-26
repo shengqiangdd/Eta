@@ -7159,3 +7159,76 @@ STEP1~STEP12 全部照旧（含 STEP8/9/9b/10 的输入路径，`type_text` 走�
   端到端只验了 `tap_element`（单测覆盖策略对象本身）。
 - 若模型「先观察主屏、再 `display_id=虚拟屏` 用坐标工具」，那是 fix161/162 管的范围；
   这里只管节点动作。
+
+## fix164：虚拟屏上的 `index` 被整个吞掉（2026-10-27 凌晨，fix163 之后）
+
+### 一、缺陷本身
+
+`type_text` / `clear_text` 的参数里既有 `index`（写哪个输入框）也有 `display_id`（哪块屏）。
+实现是「`display_id != null` 就直接走虚拟屏通道」：
+
+```kotlin
+if (displayId != null) {
+    val result = deviceController.textOnDisplay(displayId, text, ...)   // 提前 return
+    ...
+}
+val editable = resolveEditableNode(args)   // index 只在这里出现
+```
+
+`index` 因此**完全没被读过，也没被抱怨过**：调用方写「往虚拟屏上第 2 个输入框写字」，
+实际写进的是那块屏**当前焦点**的输入框；只要 `input -d` 退出码是 0，就回 `ok=true`。
+fix163 只拦「快照属于别的屏」，同屏带 `index` 时它照样放行 —— 因为快照确实属于这块屏。
+
+真机取证（本机 PKX110，canary 修复前）：
+
+```text
+STEP14 mainIndex=0 searchIndex=2 code= ok=true verification=unknown leaked=false
+STEP14 verdict=FAIL_INDEX_SILENTLY_IGNORED
+```
+
+### 二、修法
+
+- 新增 `DisplayTextTargetPolicy.decide(hasIndex, displayId)` → `REJECTED_INDEX` / `FOCUS_ONLY`；
+  新增 `DisplayTextErrors.INDEX_NOT_SUPPORTED_ON_VIRTUAL_DISPLAY`。
+- `AgentLocalTools.rejectIndexOnVirtualDisplay()` 在 `type_text`、`clear_text` 的虚拟屏分支
+  **进入设备调用之前**抛出 `InvalidToolArgumentException(retryable=false)`，
+  消息写明「虚拟屏的 `type_text` 只写当前焦点输入框，不支持 index；要指定控件请先观察这块屏，
+  改用 `tap_element` 聚焦后再输入」。
+- `AgentTextSystemToolCatalog` 里 `type_text.display_id` 的描述同步改正（原文暗示可配合 index 用）。
+
+选择「拒绝」而不是「在虚拟屏上按 index 找节点」：虚拟屏通道走 `input -d` 注入，
+它拿不到节点句柄来确认写入落点（写入结果只能事后读回文本），
+真要按 index 写就得改走「先 tap 聚焦再注入」，那是另一条路径、另一批验证 ——
+先把「静默写错地方」变成「明确报错」是这一轮的最小正确改动。
+
+### 三、真机取证（修复后，STEP14）
+
+```text
+STEP14 mainIndex=0 searchIndex=2 code=INDEX_NOT_SUPPORTED_ON_VIRTUAL_DISPLAY ok=false verification= leaked=false
+STEP14 verdict=OK
+```
+
+同轮带 index 的主屏路径、以及虚拟屏不带 index 的路径都仍然正常：
+`STEP8`（虚拟屏 `input -d` 写入 note）`verification=verified`，
+`STEP9` 清空 `verified`、`STEP9b` 追加 `verified`（`[et]` → `[eta]`）。
+
+### 四、这一轮还顺手修了探针自己
+
+`STEP7a` / `STEP7b` 原先只认 `note` / `input_verification` 两个字段判「诚实降级」，
+当工具返回的是**别的错误码**（本轮虚拟屏 144 已无可见窗口 → `DISPLAY_NO_VISIBLE_WINDOW`）时
+会被记成 `FAIL_SILENT` —— 是**探针判据写错**，不是工具出错。
+改为「返回非空 `code` 即记 `OK_NOT_ATTEMPTED:<code>`」，并额外加了 `STEP11c`
+（`tap_area` / `swipe` / `long_press` 三条跨屏 screenshot 坐标一并验）：
+本轮三条都回 `SCREENSHOT_SPACE_OTHER_DISPLAY` ✓。
+
+### 五、门禁
+
+`DisplayTextTargetPolicyTest`（4 例）第一件事进 `FAST_TEST_FILTERS`：
+用例数 **511 → 515，0 失败**；`assemble` 成功
+（`Eta-v3.3.1-debug.apk` 96,396,433 字节，sha256 `7d3c6f36…`）。
+
+### 六、仍未验证
+
+- `clear_text` 的跨屏拒绝共用同一个 helper，端到端只验了 `type_text`（单测覆盖策略对象本身）。
+- 「主屏带 index 正常写入」没有独立真机样本（STEP1~13 的主屏步骤不带 index）。
+- 工具描述文案改动只核对了 schema 输出，没有做「模型看到新描述后行为是否改变」的对照。
