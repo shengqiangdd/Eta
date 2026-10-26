@@ -71,6 +71,10 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
 
 - `scroll_element(节点)` 优先用节点的滚动动作；节点只支持手势时，工具层会自动
   退回 `input -d` 坐标滚动（`method=ROOT_SCROLL_FALLBACK`），**不需要**自己换算 swipe。
+- 兜底结果里的 `fallback.region_from` 告诉你到底滑了哪块区域：`preferred_node` = 你指定的
+  那个节点（`scroll_element` 总是如此）；`largest_scrollable` = 按面积挑的最大滚动区
+  （整屏 `scroll` 的行为）。所以界面上有多个列表时，要滑特定的那个就用 `scroll_element`，
+  别用整屏 `scroll` —— 后者滑的是面积最大的容器，很可能不是你要的。
 - 只有它仍报错时才手动 `swipe`：从边缘空白起手，避免落在输入框上被吞。
 - 返回 `code=ACTION_OUTCOME_UNKNOWN`（带 `fallback_from=GESTURE_UNSUPPORTED_ON_VIRTUAL_DISPLAY`）
   时：**滑动已经发出去了**，只是没能确认位移（常见于紧跟一次点击、页面还在切换）。

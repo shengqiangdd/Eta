@@ -480,8 +480,63 @@ internal object VirtualDisplayDebugHost {
                     )
                     report.appendLine(
                         "STEP3b scroll ok=${scrollTool.optBoolean("ok")} " +
-                            "method=${scrollTool.optString("method")} code=${scrollTool.optString("code")}",
+                            "method=${scrollTool.optString("method")} code=${scrollTool.optString("code")} " +
+                            "region_from=${scrollTool.optString("region_from")}",
                     )
+                    // STEP3c（fix158）：指定「面积较小的那个」可滚动节点来滚。
+                    // 兜底以前会重新挑面积最大的节点，于是指了内层列表却滑了外层容器（且回 moved=true）。
+                    // 现在应看到 fallback.region_from=preferred_node；若仍是 largest_scrollable，
+                    // 说明「指东滑西」回来了。方向用 up + small：不把列表滑到底，也不改变后续步骤看到的内容。
+                    val preferredState = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    val preferredObservationId = preferredState.optString("observation_id")
+                    val nodesPreferred = preferredState.optJSONArray("ui_nodes")
+                    var smallestScrollable = -1
+                    var smallestArea = Long.MAX_VALUE
+                    var scrollableCount = 0
+                    if (nodesPreferred != null) {
+                        for (i in 0 until nodesPreferred.length()) {
+                            val node = nodesPreferred.optJSONObject(i) ?: continue
+                            if (!node.optBoolean("scrollable")) continue
+                            scrollableCount++
+                            val area = areaOfNode(node)
+                            if (area > 0 && area < smallestArea) {
+                                smallestArea = area
+                                smallestScrollable = node.optInt("index", -1)
+                            }
+                        }
+                    }
+                    if (preferredObservationId.isNotBlank() && scrollableCount >= 2 && smallestScrollable >= 0) {
+                        val preferredScroll = call(
+                            "scroll_element",
+                            JSONObject()
+                                .put("observation_id", preferredObservationId)
+                                .put("index", smallestScrollable)
+                                .put("direction", "up")
+                                .put("amount", "small"),
+                        )
+                        val fallbackBody = preferredScroll.optJSONObject("fallback")
+                        val regionFrom = fallbackBody?.optString("region_from").orEmpty()
+                        report.appendLine(
+                            "STEP3c index=$smallestScrollable scrollables=$scrollableCount " +
+                                "ok=${preferredScroll.optBoolean("ok")} " +
+                                "method=${preferredScroll.optString("method")} region_from=$regionFrom",
+                        )
+                        report.appendLine(
+                            "STEP3c verdict=" + when {
+                                regionFrom == "preferred_node" -> "OK"
+                                regionFrom == "largest_scrollable" -> "FAIL_IGNORED_PREFERENCE"
+                                !preferredScroll.optBoolean("ok") -> "FAIL_SCROLL_ERROR"
+                                else -> "FAIL_NO_REGION_SOURCE"
+                            },
+                        )
+                    } else {
+                        report.appendLine(
+                            "STEP3c skipped（可滚动节点 $scrollableCount 个，需要至少 2 个才能区分「指定的」与「最大的」）",
+                        )
+                    }
                     // STEP4：拦截后是否给出「可直接点」的替代目标（suggestion_index）。
                     // 注意：STEP3 / 3b 刚滚过一屏，前面那次 observe 的 observation_id 已经过期
                     // （真机上先报了 STALE_OBSERVATION）—— 这里必须重新观察一次再点。

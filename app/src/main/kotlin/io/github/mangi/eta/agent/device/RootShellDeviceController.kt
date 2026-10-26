@@ -479,7 +479,19 @@ internal class RootShellDeviceController(
         return inputCommand("input swipe $x1 $y1 $x2 $y2 $duration", "swipe", displayId)
     }
 
-    fun scroll(direction: String, amount: String = "", displayId: Int? = null): String {
+    /**
+     * 整屏 / 指定区域的滚动。
+     *
+     * @param preferBounds 调用方已经确认要滚的节点区域（`scroll_element` 的兜底路径）。
+     *   给了它就**只滚这块区域**，不再按「面积最大的可滚动节点」重选 ——
+     *   界面上一有两个列表，那就会「指东滑西」。
+     */
+    fun scroll(
+        direction: String,
+        amount: String = "",
+        displayId: Int? = null,
+        preferBounds: Rect? = null,
+    ): String {
         val parsed = ScrollDirection.parse(direction)
             ?: return scrollErrorJson(
                 "scroll",
@@ -508,6 +520,21 @@ internal class RootShellDeviceController(
         if (!rootAvailable()) return accessibilityUnavailable()
         val beforeNodes = dumpUiNodes(120, displayId)
         val scrollableNodes = beforeNodes.filter(UiNode::scrollable)
+        // 调用方指定了区域：目标已经确定，不再跑「有没有可滚节点」那套判定，
+        // 因为它指的节点本身就是滚动容器；再挑一次只会指东滑西。
+        preferBounds?.let { bounds ->
+            return rootScroll(
+                tool = "scroll",
+                direction = parsed,
+                bounds = bounds,
+                beforeNodes = beforeNodes,
+                maxNodes = 120,
+                targetIndex = null,
+                amount = parsedAmount,
+                displayId = displayId,
+                regionFrom = ScrollRegionPolicy.SOURCE_PREFERRED,
+            )
+        }
         // 「能不能滚」先判定再动手：以前取不到可滚动节点就退回整屏盲滑，
         // 在没有滚动容器的界面上等于把一次全屏滑动随机丢给页面（可能翻页 / 下拉刷新），
         // 而且事后无法证明滑到了哪里。判定逻辑见 ScrollTargetPolicy。
@@ -526,20 +553,21 @@ internal class RootShellDeviceController(
                 retryable = false,
             )
         }
-        val targetBounds = scrollableNodes
-            .maxByOrNull { node -> node.bounds.width().toLong() * node.bounds.height().toLong() }
-            ?.bounds
-            ?: return scrollErrorJson(
-                tool = "scroll",
-                direction = parsed,
-                code = ScrollTargetPolicy.NO_TARGET_CODE,
-                message = ScrollTargetPolicy.messageFor(
-                    ScrollTargetPolicy.Decision.NO_TARGET,
-                    beforeNodes.size,
-                    scrollableNodes.size,
-                ),
-                retryable = false,
-            )
+        val pick = ScrollRegionPolicy.pick(
+            preferred = null,
+            candidates = scrollableNodes.map { node -> node.bounds.toScrollBox() },
+        ) ?: return scrollErrorJson(
+            tool = "scroll",
+            direction = parsed,
+            code = ScrollTargetPolicy.NO_TARGET_CODE,
+            message = ScrollTargetPolicy.messageFor(
+                ScrollTargetPolicy.Decision.NO_TARGET,
+                beforeNodes.size,
+                scrollableNodes.size,
+            ),
+            retryable = false,
+        )
+        val targetBounds = pick.bounds.toRect()
         return rootScroll(
             tool = "scroll",
             direction = parsed,
@@ -549,6 +577,7 @@ internal class RootShellDeviceController(
             targetIndex = null,
             amount = parsedAmount,
             displayId = displayId,
+            regionFrom = ScrollRegionPolicy.SOURCE_LARGEST,
         )
     }
 
@@ -1093,7 +1122,14 @@ internal class RootShellDeviceController(
             // 这样 scroll_element 在虚拟屏上也能真正滚起来，而不是让模型自己换算坐标再补一次 swipe。
             // 页面切换动画期间发出去的滑动会打在过渡上（发了也不动），先等这屏刷稳。
             awaitStableTree(snapshot.displayId)
-            val attempt = runCatching { JSONObject(scroll(direction, amount, snapshot.displayId)) }
+            // 兜底也要滑「模型指的那个节点」：整屏 scroll() 会挑面积最大的可滚动节点，
+            // 界面上有两个列表时就会指东滑西（模型看到 moved=true 还会以为滑对了）。
+            // 只有该节点确实可滚动、且能在观察里找到时才指定区域，否则仍走原来的判定。
+            val targetNode = observation.nodes.firstOrNull { it.index == index }
+            val preferBounds = targetNode?.takeIf { it.scrollable }?.bounds
+            val attempt = runCatching {
+                JSONObject(scroll(direction, amount, snapshot.displayId, preferBounds))
+            }
             val fallback = attempt.getOrNull()
             if (fallback != null && fallback.optBoolean("ok")) {
                 return JSONObject()
@@ -1740,6 +1776,11 @@ internal class RootShellDeviceController(
             ?: error("无法读取屏幕尺寸：${result.output.take(160)}")
     }
 
+    private fun Rect.toScrollBox(): ScrollRegionPolicy.Box =
+        ScrollRegionPolicy.Box(left, top, right, bottom)
+
+    private fun ScrollRegionPolicy.Box.toRect(): Rect = Rect(left, top, right, bottom)
+
     private fun rootScroll(
         tool: String,
         direction: ScrollDirection,
@@ -1749,6 +1790,7 @@ internal class RootShellDeviceController(
         targetIndex: Int?,
         amount: ScrollAmount = ScrollAmount.PAGE,
         displayId: Int? = null,
+        regionFrom: String? = null,
     ): String {
         val startedAt = SystemClock.elapsedRealtime()
         val gesture = direction.gestureWithin(bounds, amount)
@@ -1825,6 +1867,9 @@ internal class RootShellDeviceController(
             .put("method", "INPUT_SWIPE")
             .put("verified_by", if (moved) "ui_node_motion" else "none")
             .put("elapsed_ms", SystemClock.elapsedRealtime() - startedAt)
+        // 让模型（和事后核对的我）能看到这块区域是怎么选出来的：
+        // preferred_node = 按调用指定的节点；largest_scrollable = 拿面积最大的那个。
+        regionFrom?.let { json.put("region_from", it) }
         if (!directionConfirmed) {
             json.put("verified_by", "anchor_motion_partial")
                 .put("direction_confirmed", false)

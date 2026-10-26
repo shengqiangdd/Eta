@@ -91,6 +91,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.device.RootScrollResendPolicyTest
   --tests io.github.mangi.eta.agent.device.BlindTapSafetyPolicyTest
   --tests io.github.mangi.eta.agent.device.ScrollTargetPolicyTest
+  --tests io.github.mangi.eta.agent.device.ScrollRegionPolicyTest
   --tests io.github.mangi.eta.agent.device.ScrollEvidenceContractTest
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
@@ -107,6 +108,8 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 2026-10-26 又踩一次同一类事：`UiNodeWireTest`（纯 JVM，守着 ui_nodes 体积不可回涨）
 # 2026-10-26 同一天第三次（差点第三次放过）：`ScrollTargetPolicyTest`（新增，守 scroll 的
 # 「先判定再动手」）也没进列表：门禁报 473 例全绿，它一例都没跑。已补（预计 479 例）。
+# 2026-10-26 深夜第四次（这次是写完先说一句才加）：`ScrollRegionPolicyTest`（守「指了哪个节点就滑
+# 哪个区域」，防指东滑西）同样必须先加进来，否则用例数不变、绿灯来自「没跑到」。
 # **结论：新增任何能在本机跑的测试类，第一件事就是把它加到这个列表里。**
 run_test() {
   echo "==== [1/3] 单测 ===="

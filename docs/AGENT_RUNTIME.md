@@ -6608,3 +6608,84 @@ airplane=0 wifi=1
 - `terminal_job` 的 Android 任务看不到 `/workspace`（那是 Linux guest 的路径），
   装包要用宿主侧路径 `/data/local/tmp/eta/eta-v2/app/build/outputs/...`。
 
+## fix158：`scroll_element` 不再「指东滑西」（2026-10-26 深夜，fix157 的下一轮）
+
+### 一、缺陷本身
+
+`scroll_element(index)` 在虚拟屏上会走 Root 兜底（节点只支持手势 → `input -d swipe`）。
+兜底原先直接调用**整屏** `scroll()`，而 `scroll()` 自己挑「面积最大的可滚动节点」。
+于是：模型指了内层列表（例如设置页的 `RecyclerView`），实际被滑的却是外层容器
+（`ScrollView`，面积 921,600 vs 693,360）—— 而且返回 `ok=true moved=true`。
+模型看到「滑成功了」，用户看到的是另一个列表在动。这跟 fix156/fix157 是同一类错：
+**结果说成功，但说的不是模型要的那件事**。
+
+### 二、修法：把「滑哪块区域」抽成纯函数，调用方指定的优先
+
+新增 `ScrollRegionPolicy`（不引用 `android.graphics.Rect`，可被纯 JVM 单测覆盖）：
+
+```kotlin
+pick(preferred: Box?, candidates: List<Box>): Pick?   // Pick = (bounds, source)
+```
+
+- `preferred` 可用（宽高 > 0）→ 用它，`source=preferred_node`；
+- 否则取面积最大的可滚动节点，`source=largest_scrollable`；
+- 一个可用区域都没有 → null（调用方报「没有可滚动目标」）。
+
+`scroll()` 新增可选参数 `preferBounds`：给了它就**只滚这块区域**，也不再跑
+「有没有可滚节点」那套判定（调用方指的节点本身已是滚动容器）。
+`scroll_element` 兜底时传自己的节点 bounds；**只有该节点确实 `scrollable`、且能在观察里找到时才传**，
+否则保持原判定（宁可取消，也不要替模型改选目标）。
+
+结果里新增 `region_from`，把「这块区域怎么选出来的」写进响应：模型能核对，我事后也能对账。
+
+### 三、怎么证明它真的生效（真机 STEP3c）
+
+探针新增 **STEP3c**：在设置首页（两个可滚动节点）里挑**面积较小**的那个 `scroll_element`。
+若退回旧行为，会看到 `region_from=largest_scrollable`。
+
+```text
+STEP3  index=0 ok=true method=ROOT_SCROLL_FALLBACK
+STEP3b scroll ok=true method=INPUT_SWIPE region_from=largest_scrollable      ← 整屏 scroll 的对照
+STEP3c index=4 scrollables=2 ok=true method=ROOT_SCROLL_FALLBACK region_from=preferred_node
+STEP3c verdict=OK
+```
+
+同一块屏、同一次运行：整屏 `scroll` 仍然是「挑最大的」（这是它的职责），
+而 `scroll_element` 已经落回模型指的那一个。
+
+### 四、本轮其余步骤（display 91，未锁屏，20 节点）
+
+```text
+STEP1 launched=true display_id=91 first_nodes=20
+STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK after_package=com.android.settings
+STEP4 index=0 expected=9 code=COORDINATE_FALLBACK_UNSAFE_TARGET blocked_by=center_hit
+      suggestion=13 retryable=false            verdict=OK_INDEX_SHIFTED
+STEP5 display=92 code=DISPLAY_NO_VISIBLE_WINDOW retryable=false   verdict=OK
+STEP6 display=92 code=DISPLAY_RELEASED retryable=false            verdict=OK
+```
+
+### 五、门禁（同一类坑第四次差点重演）
+
+`ScrollRegionPolicyTest`（5 例）写完的第一件事就是加进 `tools/gate.sh` 的 `FAST_TEST_FILTERS`——
+否则会重演「用例数不变、绿灯来自没跑到」。实测：**480 → 485 例，0 失败**，
+`TEST-…ScrollRegionPolicyTest.xml` 里 `tests="5" failures="0"`。
+其中一例专门守着本条缺陷：
+
+```text
+把「内层列表（0,600,720,1200）」与「外层容器（0,0,720,1920）」一起给 →
+必须选内层，source=preferred_node
+```
+
+### 六、仍然是「未验证」的
+
+- `region_from=preferred_node` 证明「区域用的是指定节点」，但**没有做反向实验**
+  （临时把 `preferBounds` 传 null 重跑看是否回到 `largest_scrollable`）——那样要再装一次包，
+  而单测 + STEP3b/3c 的对照已经能区分。这条如实记为「未做反向验证」。
+- `suggestion_index` 可点性依旧不点（同 fix157）。
+
+### 七、环境（又一条）
+
+- `am start -W` 在本机偶尔**直接卡住**（超过 90 秒无返回，导致整条脚本超时）。
+  改成不带 `-W`、外层加 `timeout 15 am start ...`，再轮询 `pidof` 确认起来。
+
+
