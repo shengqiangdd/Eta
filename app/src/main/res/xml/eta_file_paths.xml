@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 导出物只放缓存目录：分享出去之后系统可以随时清理，不占用户存储。 -->
+    <cache-path name="exports" path="exports/" />
+</paths>

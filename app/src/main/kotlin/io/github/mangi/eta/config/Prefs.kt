@@ -1,0 +1,222 @@
+package io.github.mangi.eta.config
+
+import android.content.Context
+import android.content.SharedPreferences
+import io.github.libxposed.service.XposedService
+
+/**
+ * 模块配置中枢。
+ *
+ * - Hook 进程（system_server / SystemUI / Google / 系统助手等）在模块加载时调用
+ *   [attachRemote]，缓存框架提供的只读 [SharedPreferences]；之后所有拦截回调用 [isEnabled]
+ *   读取当前进程持有的 remote preferences。
+ * - Eta Runtime 自己消费的开关保存在 App 私有配置中，不依赖 Xposed Service。
+ * - Hook 消费的开关通过 [remotePreferencesForUi] 写入 RemotePreferences；
+ *   XposedService 未就绪时不提供本地假 fallback。
+ *
+ * 基于 libxposed API 102 的 [io.github.libxposed.api.XposedInterface.getRemotePreferences]
+ * 与 service 102 的 [XposedService.getRemotePreferences]，两端共用同一 group。
+ */
+internal object Prefs {
+
+    /** 远程配置组名，UI 写入与 Hook 读取必须一致。 */
+    const val GROUP = "eta_prefs"
+
+    private const val LOCAL_AGENT_GROUP = "eta_agent_preferences"
+
+    /** 所有功能开关 key。默认值按功能风险独立定义。 */
+    object Keys {
+        const val POWER_KEY_ASSISTANT_TARGET = "power_key_assistant_target"
+        // 兼容旧版布尔协议；新 UI 不再写入，缺少三态配置时 true 仍表示 Gemini。
+        const val POWER_KEY_TAKEOVER = "power_key_takeover"
+        const val ASSISTANT_AUTO_CONFIG = "assistant_auto_config"
+        const val HOTWORD_SELF_HEAL = "hotword_self_heal"
+        const val GESTURE_BAR_CIRCLE_TO_SEARCH = "gesture_bar_circle_to_search"
+        const val DOUBLE_FINGER_CIRCLE_TO_SEARCH = "double_finger_circle_to_search"
+        const val LOCKSCREEN_VOICE_COMMAND = "lockscreen_voice_command"
+        const val SCREEN_ON_VOICE_COMMAND = "screen_on_voice_command"
+        const val AGENT_CUSTOM_MODEL = "agent_custom_model"
+        const val AGENT_REQUIRE_PREFIX = "agent_require_prefix"
+        const val AGENT_TERMINAL_TOOLS = "agent_terminal_tools"
+        const val AGENT_BROWSER_TOOLS = "agent_browser_tools"
+        const val AGENT_DEVICE_DIRECT_TOOLS = "agent_device_direct_tools"
+        const val AGENT_DEVICE_SENSITIVE_READ_TOOLS = "agent_device_sensitive_read_tools"
+        const val AGENT_DEVICE_SENSITIVE_ACTION_TOOLS = "agent_device_sensitive_action_tools"
+        const val AGENT_THINKING_ENABLED = "agent_thinking_enabled"
+        const val AGENT_AUTO_COMPACTION_ENABLED = "agent_auto_compaction_enabled"
+        /** 会话运行期间保持屏幕唤醒；只在前台查看运行中的会话时生效。 */
+        const val AGENT_KEEP_SCREEN_ON = "agent_keep_screen_on"
+        /** 运行中是否显示状态栏下方的思考胶囊；关掉只是不画胶囊，任务照常执行，边缘流光仍可提示正在接管。 */
+        const val AGENT_OVERLAY_CAPSULE_ENABLED = "agent_overlay_capsule_enabled"
+        /** 运行中是否显示屏幕边缘流光；它不遮挡内容，只提示 Agent 正在操作前台界面。 */
+        const val AGENT_OVERLAY_GLOW_ENABLED = "agent_overlay_glow_enabled"
+        /**
+         * 计划模式：只暴露只读工具并要求先出计划再等确认。
+         * 它是临时模式——用户忘了关会一直只能计划，所以设置页文案要提醒。
+         *
+         * 2026-10-21 起由 [AGENT_MODE] 取代；此键保留为**兼容回退**：
+         * 升级用户没有 AGENT_MODE 时仍按它工作，设置页切换模式时也会同步写它，
+         * 这样回退到旧版本 App 时行为一致。
+         */
+        const val AGENT_PLAN_MODE = "agent_plan_mode"
+
+        /** 工作模式 id（standard / plan / creator）；见 AgentMode。 */
+        const val AGENT_MODE = "agent_mode"
+        const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
+
+        /** 全部布尔开关及其默认值。 */
+        val BOOLEAN_DEFAULTS: Map<String, Boolean> = mapOf(
+            POWER_KEY_TAKEOVER to false,
+            ASSISTANT_AUTO_CONFIG to false,
+            HOTWORD_SELF_HEAL to false,
+            GESTURE_BAR_CIRCLE_TO_SEARCH to true,
+            DOUBLE_FINGER_CIRCLE_TO_SEARCH to false,
+            LOCKSCREEN_VOICE_COMMAND to false,
+            SCREEN_ON_VOICE_COMMAND to false,
+            AGENT_CUSTOM_MODEL to true,
+            AGENT_REQUIRE_PREFIX to false,
+            AGENT_TERMINAL_TOOLS to true,
+            AGENT_BROWSER_TOOLS to true,
+            AGENT_DEVICE_DIRECT_TOOLS to true,
+            AGENT_DEVICE_SENSITIVE_READ_TOOLS to true,
+            AGENT_DEVICE_SENSITIVE_ACTION_TOOLS to true,
+            AGENT_THINKING_ENABLED to true,
+            AGENT_AUTO_COMPACTION_ENABLED to true,
+            AGENT_KEEP_SCREEN_ON to false,
+            AGENT_OVERLAY_CAPSULE_ENABLED to true,
+            AGENT_OVERLAY_GLOW_ENABLED to true,
+            AGENT_PLAN_MODE to false,
+        )
+
+        /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
+        val LOCAL_AGENT_KEYS: Set<String> = setOf(
+            AGENT_TERMINAL_TOOLS,
+            AGENT_BROWSER_TOOLS,
+            AGENT_DEVICE_DIRECT_TOOLS,
+            AGENT_DEVICE_SENSITIVE_READ_TOOLS,
+            AGENT_DEVICE_SENSITIVE_ACTION_TOOLS,
+            AGENT_THINKING_ENABLED,
+            AGENT_AUTO_COMPACTION_ENABLED,
+            AGENT_KEEP_SCREEN_ON,
+            AGENT_OVERLAY_CAPSULE_ENABLED,
+            AGENT_OVERLAY_GLOW_ENABLED,
+            AGENT_PLAN_MODE,
+        )
+    }
+
+    /** Hook 进程缓存的只读 remote preferences，由 ModuleMain 在 onModuleLoaded 注入。 */
+    @Volatile
+    private var remote: SharedPreferences? = null
+
+    @Volatile
+    private var localAgent: SharedPreferences? = null
+
+    /** App 进程调用：初始化不依赖 Xposed Service 的 Agent 配置。 */
+    /** 供 UI 监听本地 Agent 开关变化；内部初始化与 [isEnabled] 使用同一份配置。 */
+    internal fun localAgentPreferences(context: Context): SharedPreferences {
+        initLocal(context)
+        return checkNotNull(localAgent)
+    }
+
+    fun initLocal(context: Context) {
+        if (localAgent == null) {
+            synchronized(this) {
+                if (localAgent == null) {
+                    localAgent = context.applicationContext.getSharedPreferences(
+                        LOCAL_AGENT_GROUP,
+                        Context.MODE_PRIVATE,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Hook 进程调用：缓存框架提供的只读 SharedPreferences。 */
+    fun attachRemote(prefs: SharedPreferences?) {
+        remote = prefs
+    }
+
+    /** Hook 进程监听框架下发的配置变化；listener 必须由调用方在进程生命周期内强引用。 */
+    fun registerRemoteListener(listener: SharedPreferences.OnSharedPreferenceChangeListener): Boolean {
+        val preferences = remote ?: return false
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        return true
+    }
+
+    /**
+     * 读取布尔开关。remote 不可用（框架未注入或调用失败）时回退各功能自己的默认值；
+     * 默认值与设置页展示保持一致。
+     */
+    fun isEnabled(key: String): Boolean {
+        val default = Keys.BOOLEAN_DEFAULTS[key] ?: true
+        val preferences = if (key in Keys.LOCAL_AGENT_KEYS) localAgent ?: remote else remote
+        return preferences?.getBoolean(key, default) ?: default
+    }
+
+    fun getString(key: String): String {
+        return remote?.getString(key, "") ?: ""
+    }
+
+    /**
+     * 读取本地 Agent 字符串配置（模式等非布尔值）。
+     *
+     * 与 [getString] 的区别：Agent 配置的事实源是本地 prefs（[LOCAL_AGENT_KEYS] 那套），
+     * 远端只用于回写；没有值返回 null，由调用方决定默认值。
+     */
+    fun getLocalAgentString(key: String): String? =
+        runCatching { (localAgent ?: remote)?.getString(key, null) }.getOrNull()
+
+    fun powerAssistantTarget(): PowerAssistantTarget = powerAssistantTarget(remote)
+
+    fun powerAssistantTarget(preferences: SharedPreferences?): PowerAssistantTarget {
+        val persistedValue = runCatching {
+            preferences?.getString(Keys.POWER_KEY_ASSISTANT_TARGET, null)
+        }.getOrNull()
+        val legacyDefault = Keys.BOOLEAN_DEFAULTS.getValue(Keys.POWER_KEY_TAKEOVER)
+        val legacyTakeover = runCatching {
+            preferences?.getBoolean(Keys.POWER_KEY_TAKEOVER, legacyDefault)
+        }.getOrNull() ?: legacyDefault
+        return PowerAssistantTarget.resolve(persistedValue, legacyTakeover)
+    }
+
+    /**
+     * UI 进程获取可写的 RemotePreferences。
+     *
+     * [XposedService.getRemotePreferences] 的 commit 会同步等待 binder 提交到 LSPosed
+     * 数据库，失败返回 false；service 未就绪时返回 null，让 UI 保持不可写。
+     */
+    fun remotePreferencesForUi(service: XposedService?): SharedPreferences? =
+        runCatching { service?.getRemotePreferences(GROUP) }.getOrNull()
+
+    /** Eta 设置页与 Runtime 使用的本地 Agent 配置，不依赖 LSPosed。 */
+    fun localAgentPreferences(): SharedPreferences? = localAgent
+
+    /**
+     * 首次升级优先把已有 RemotePreferences 值迁入本地；之后本地值是事实源，并在框架
+     * 可用时回写远端，让仍在目标进程中组装请求的 Hook 入口拿到一致的初始配置。
+     */
+    fun reconcileAgentPreferences(service: XposedService?) {
+        val local = localAgent ?: return
+        val remotePreferences = remotePreferencesForUi(service) ?: return
+        val localEditor = local.edit()
+        val remoteEditor = remotePreferences.edit()
+        var updateLocal = false
+        var updateRemote = false
+
+        Keys.LOCAL_AGENT_KEYS.forEach { key ->
+            val default = Keys.BOOLEAN_DEFAULTS.getValue(key)
+            when {
+                local.contains(key) -> {
+                    remoteEditor.putBoolean(key, local.getBoolean(key, default))
+                    updateRemote = true
+                }
+                remotePreferences.contains(key) -> {
+                    localEditor.putBoolean(key, remotePreferences.getBoolean(key, default))
+                    updateLocal = true
+                }
+            }
+        }
+        if (updateLocal) localEditor.commit()
+        if (updateRemote) runCatching { remoteEditor.commit() }
+    }
+}

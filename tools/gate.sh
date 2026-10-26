@@ -1,0 +1,204 @@
+#!/bin/sh
+# 完整门禁：单测 / lint / 打包。
+#
+# 为什么要有这个脚本：把 testDebugUnitTest 和 :app:lintDebug 写进同一条 Gradle 命令时，
+# 测试失败后 Gradle 不再调度 lint（日志里连 :app:lintDebug 都没有），而已经进队列的
+# packageDebug / assembleDebug 照跑。事后只看到 BUILD FAILED 和一个变新的 APK，
+# 很容易把「lint 根本没跑」读成「lint 通过」——2026-10-24 就踩了一次。
+# 所以这里每个阶段单独起一次 Gradle：一个阶段红，后面的阶段照样跑完并各自给结论。
+#
+# 用法（必须在 Linux 环境：JDK / SDK 在 /workspace 下）：
+#   sh tools/gate.sh                    # 全部三个阶段
+#   STAGES=test sh tools/gate.sh        # 只跑单测
+#   STAGES=lint,assemble sh tools/gate.sh
+#   STAGES=test-all sh tools/gate.sh    # 全量单测（不只终端包），很慢
+# 退出码：0 = 全绿；1 = 有阶段失败。
+set -u
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT" || exit 2
+
+if [ ! -d /workspace ]; then
+  echo "请在 Linux 环境运行（Android 侧没有 gradle / JDK）"
+  exit 2
+fi
+
+export ANDROID_HOME=${ANDROID_HOME:-/workspace/.tooling/android/sdk}
+export ANDROID_SDK_ROOT=$ANDROID_HOME
+export JAVA_HOME=${JAVA_HOME:-/workspace/.tooling/jdk17}
+LOGDIR=${LOGDIR:-/tmp/eta-gate}
+mkdir -p "$LOGDIR"
+STAGES=${STAGES:-test,lint,assemble}
+
+gw() {
+  # 默认值留给受限环境。本机 2026-10-24 实测：metaspace 只给 512m 时，
+  # :app:testDebugUnitTest / :app:lintDebug 跑到一半 Gradle 自己把 daemon 停掉
+  # （日志：`Gradle build daemon has been stopped: stop command received`），
+  # 表现成「测试 / lint 失败」，其实是 JVM 元空间耗尽。内存充足的机器可覆盖：
+  #   ETA_GATE_JVMARGS="-Xmx3g -XX:MaxMetaspaceSize=1g" STAGES=test sh tools/gate.sh
+  # canary 包名透传：默认打 io.github.mangi.eta，而手机侧并行安装的是
+  # io.github.mangi.eta.canary。包名不同时 `pm install -r` 会报 Success 却根本不生效
+  # （2026-10-25 实测踩到，误判成「装了旧版」）。要装 canary：
+  #   ETA_APP_ID_SUFFIX=.canary STAGES=assemble sh tools/gate.sh
+  ./gradlew --offline \
+    ${ETA_APP_ID_SUFFIX:+-Peta.applicationIdSuffix="$ETA_APP_ID_SUFFIX"} \
+    -Dorg.gradle.jvmargs="${ETA_GATE_JVMARGS:--Xmx2000m -XX:MaxMetaspaceSize=512m}" \
+    -Pkotlin.compiler.execution.strategy=in-process \
+    --console=plain "$@"
+}
+
+fail=0
+has_stage() {
+  case ",$STAGES," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
+# ---- 单测 ---------------------------------------------------------------
+# 只检查「有没有失败」是不够的：白名单必须精确比对 —— 失败集合不等于白名单就是红。
+# **白名单现在是空的**（2026-10-24 收尾时清空）。
+# 最后一条曾经挂在这里：
+#   RootShellTerminalControllerCancellationTest.completedBackgroundJobCleansGrandchildProcess
+#   原因：用 python3 写 setsid 包装起后台任务，报 PROCESS_START_FAILED（此环境起不来进程）。
+#   清空依据：2026-10-24 用 `--rerun-tasks` 连跑两轮（每轮 3 个用例，强制真跑而不是 UP-TO-DATE），
+#   两轮都是 0 失败；门禁整体 366 例也全绿。留着它反而危险 —— 这条路径将来真坏时会被当成
+#   「已知环境问题」放过，正是白名单最容易骗人的方式。
+# 另外两个曾经挂在这里的用例（Robolectric 不支持 Linux/aarch64、root 无法造只读父目录）
+# 已改成「平台不支持就 assume 跳过」：跳过比失败更诚实，也不该再占白名单。
+#
+# 工作区的几个纯 JVM 测试必须一起跑：2026-10-24 新增的 WorkspaceRootCommandTest /
+# WorkspaceMessagesTest 就是为了在这台机器上能真跑；只跑终端包 = 新门禁永远不执行。
+# 注意不能写 `Workspace*`：WorkspaceFileStoreTest 是 Robolectric，在 aarch64 上必红。
+#
+# AgentRunRecoveryCoordinatorTest 是纯 JVM（只用 data class + 纯函数 plan()），
+# 2026-10-24 多会话事故后补上：它守着「primary 结束不能把后台 run 判成中断」这条不变量。
+#
+# LocaleResourceParityTest 是纯 JVM（只读 res 下的 XML），2026-10-25 补上：
+# 它守着「英文资源里不能有中文」「三语键集一致」「占位符一致」这三条。
+#
+# ConversationHistoryExportTest 是纯 JVM（假数据源 + StringWriter），2026-10-25 补上：
+# 它守着「完整历史导出逐块流式写、没有被当成整串拼进内存」和「正常结束必有 end 行」——
+# 大会话 journal 有 3100 万字符，任意一处退化成都行拼接都会让导出在真机上 OOM。
+FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
+  --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
+  --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
+  --tests io.github.mangi.eta.ui.app.LocaleResourceParityTest
+  --tests io.github.mangi.eta.ui.app.WorkspaceRootCommandTest
+  --tests io.github.mangi.eta.ui.app.WorkspaceMessagesTest
+  --tests io.github.mangi.eta.ui.app.WorkspaceExportNameTest
+  --tests io.github.mangi.eta.ui.app.WorkspaceDirectoryBrowserTest
+  --tests io.github.mangi.eta.ui.app.WorkspacePickerHistoryTest'
+
+# 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
+# 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆
+# 不属于本次快速子集的测试类（RoleplayConversationReducer、ShareIntent、SkillZipImport…），
+# 它们从来就不在这个阶段跑（那要 `STAGES=test-all`），恒红会把人逼着把红色当背景。
+# 也没法用「最近改动过的文件」当判据：本仓库源码会被 rsync 刷新 mtime，会频繁误报。
+# 所以这轮**没有**自动机制拦住「写了测试却没加进过滤列表」，只能靠这行提醒：
+# **新增 `ui/app` 下能本机跑的测试，必须同时加进上面的列表；漏加的表现是「用例数不变」。**
+run_test() {
+  echo "==== [1/3] 单测 ===="
+  rm -rf app/build/test-results/testDebugUnitTest
+  if has_stage test-all; then
+    gw :app:testDebugUnitTest > "$LOGDIR/test.log" 2>&1
+  else
+    # shellcheck disable=SC2086  # 故意按空格拆成多个 --tests 参数
+    gw :app:testDebugUnitTest $FAST_TEST_FILTERS > "$LOGDIR/test.log" 2>&1
+  fi
+  code=$?
+  python3 - "$LOGDIR/test.log" <<'PY'
+import glob, sys, xml.etree.ElementTree as ET
+
+# 白名单为空：任何失败都是红。要加回临时豁免，必须同时写清「为什么」和「怎么撤」。
+KNOWN = set()
+
+files = glob.glob("app/build/test-results/testDebugUnitTest/TEST-*.xml")
+if not files:
+    print("  ✗ 没有测试结果文件（多半是编译失败），见 " + sys.argv[1])
+    sys.exit(2)
+
+tests, failed = 0, set()
+for f in files:
+    r = ET.parse(f).getroot()
+    tests += int(r.get("tests") or 0)
+    for c in r.iter("testcase"):
+        if c.find("failure") is not None or c.find("error") is not None:
+            failed.add("%s.%s" % (c.get("classname"), c.get("name")))
+
+new = sorted(failed - KNOWN)
+fixed = sorted(KNOWN - failed)
+print("  用例 %d 个，失败 %d 个（白名单 %d 个）" % (tests, len(failed), len(KNOWN)))
+if new:
+    print("  ✗ 白名单之外还有失败：")
+    for n in new:
+        print("    - " + n.rsplit(".", 2)[-2] + "." + n.rsplit(".", 1)[-1])
+    sys.exit(1)
+if fixed:
+    print("  提示：这些已知环境用例这次通过了，可以从白名单移除：")
+    for n in fixed:
+        print("    - " + n)
+sys.exit(0)
+PY
+  case $? in
+    0) echo "  ✓ 单测通过" ;;
+    1) echo "  ✗ 单测失败，见 $LOGDIR/test.log" ; fail=1 ;;
+    *) echo "  ✗ 单测没有可判定的结果，见 $LOGDIR/test.log" ; fail=1 ;;
+  esac
+}
+
+# ---- lint ---------------------------------------------------------------
+# 两个坑都在这里踩过：
+# 1. 退出码 0 不代表 lint 跑了：把 test 和 lint 写进同一条 gradle 命令时，测试失败后 lint
+#    根本不会被调度，而日志里只留下 BUILD FAILED。
+# 2. 退出码 0 也不代表有结论输出：lintReportDebug 复用缓存（UP-TO-DATE）时
+#    Gradle 不会打印「Lint found ...」，只看日志行会把正常的 lint 误判成失败。
+# 所以判据改成读 lint 自己的报告文件（app/build/reports/lint-results-debug.xml），
+# 不依赖 Gradle 打印什么。
+run_lint() {
+  echo "==== [2/3] lint ===="
+  gw :app:lintDebug > "$LOGDIR/lint.log" 2>&1
+  code=$?
+  if [ "$code" -ne 0 ]; then
+    echo "  ✗ lint 失败（退出码 $code），见 $LOGDIR/lint.log"
+    tail -5 "$LOGDIR/lint.log"
+    fail=1
+    return
+  fi
+  # 判断逻辑抽到 tools/lint_baseline_audit.py：它可以用「喂已知会失败的输入」来验，
+  # 而整跑一次 lint 要十分钟，埋在 heredoc 里就等于不可验证。
+  python3 tools/lint_baseline_audit.py \
+    app/build/reports/lint-results-debug.xml app/lint-baseline.xml
+  [ $? -eq 0 ] || fail=1
+}
+
+# ---- 打包 ---------------------------------------------------------------
+run_assemble() {
+  echo "==== [3/3] 打包 ===="
+  gw :app:assembleDebug > "$LOGDIR/assemble.log" 2>&1
+  code=$?
+  if [ "$code" -ne 0 ]; then
+    echo "  ✗ 打包失败（退出码 $code），见 $LOGDIR/assemble.log"
+    tail -5 "$LOGDIR/assemble.log"
+    fail=1
+    return
+  fi
+  APK=$(ls -t app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
+  if [ -z "$APK" ]; then
+    echo "  ✗ 打包成功但没有找到 APK"
+    fail=1
+    return
+  fi
+  echo "  ✓ 打包成功：$APK"
+  echo "    大小 $(stat -c %s "$APK") 字节 ｜ sha256 $(sha256sum "$APK" | cut -c1-16)…"
+}
+
+[ -n "$STAGES" ] || echo "STAGES 为空，什么都不会跑"
+
+if has_stage test || has_stage test-all; then run_test; fi
+if has_stage lint; then run_lint; fi
+if has_stage assemble; then run_assemble; fi
+
+if [ "$fail" -eq 0 ]; then
+  echo "==== 门禁通过 ===="
+  exit 0
+fi
+echo "==== 门禁失败 ===="
+exit 1

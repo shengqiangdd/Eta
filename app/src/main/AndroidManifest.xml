@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <uses-permission android:name="android.permission.READ_ASSIST_STRUCTURE_SCREEN_CONTENT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 息屏后 CPU 仍要能把 Agent / 终端任务跑完：仅靠前台服务只能保证进程不被杀，
+         深度睡眠会挂起 CPU，表现为「亮屏才继续」。执行期间持有 PARTIAL_WAKE_LOCK。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Agent run 期间把执行通知提升为 Live Update，显示在状态栏胶囊与锁屏；普通权限，用户可在通知设置中关闭。 -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Agent 的应用发现与可见性自检需要完整应用列表，launcher queries 不能覆盖该能力。 -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <permission
+        android:name="${applicationId}.permission.CONTROL_ACCESSIBILITY_PROTECTION"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="${applicationId}.permission.CONTROL_ACCESSIBILITY_PROTECTION" />
+
+    <queries>
+        <package android:name="com.google.android.googlequicksearchbox" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".EtaApp"
+        android:allowBackup="false"
+        android:description="@string/xposed_description"
+        android:enableOnBackInvokedCallback="true"
+        android:hasCode="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Eta"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 系统分享：文本、图片、文件都收。接收后只落成新会话的待发送草稿，不自动提交。
+                 用 */* 而不是逐类型列举：分享方给的 mime 千奇百怪，漏一个类型就会
+                 “分享列表里没有 Eta”，而具体分类交给解析器按每个 uri 的真实类型决定。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <!-- 选中文本菜单：在别的应用里选中文字后可以直接“用 Eta 处理”。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".agent.voice.EtaVoiceAssistActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:process=":voice"
+            android:showWhenLocked="true"
+            android:theme="@style/Theme.EtaVoiceAssistBridge">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".agent.voice.EtaVoiceInteractionService"
+            android:exported="true"
+            android:label="@string/voice_interaction_service_label"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:process=":voice">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+
+        <service
+            android:name=".agent.voice.EtaVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <service
+            android:name=".agent.voice.EtaRecognitionService"
+            android:exported="true"
+            android:label="@string/recognition_service_label"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
+            android:process=":recognition">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
+        <service
+            android:name=".agent.voice.EtaAssistantOverlayService"
+            android:foregroundServiceType="microphone|mediaPlayback"
+            android:exported="false" />
+
+        <service
+            android:name=".agent.voice.ReadAloudPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name=".agent.runtime.AgentRuntimeService"
+            android:exported="true"
+            tools:ignore="ExportedService" />
+
+        <service
+            android:name=".agent.runtime.AgentExecutionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-initiated interactive terminals, local Linux services and device automation tasks" />
+        </service>
+
+        <!-- 无 UI 输入法：虚拟屏操作期间临时启用，避免主屏被弹键盘。 -->
+        <service
+            android:name=".agent.ime.EtaSilentImeService"
+            android:label="Eta 静默输入"
+            android:exported="true"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method_silent" />
+        </service>
+
+        <service
+            android:name=".agent.accessibility.AgentAccessibilityService"
+            android:exported="true"
+            android:label="@string/agent_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/agent_accessibility_service" />
+        </service>
+
+        <service
+            android:name=".agent.device.AgentNotificationHistoryService"
+            android:exported="false"
+            android:label="@string/notification_history_service_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/eta_file_paths" />
+        </provider>
+
+        <provider
+            android:name=".agent.accessibility.AgentAccessibilityHealthProvider"
+            android:authorities="${applicationId}.accessibility.health"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:permission="android.permission.MANAGE_ACCESSIBILITY" />
+    </application>
+
+</manifest>
