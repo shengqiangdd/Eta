@@ -121,7 +121,10 @@ class MainActivity : ComponentActivity() {
             )
             "step_probe" -> android.util.Log.i(
                 "EtaVirtualDisplayDebug",
-                VirtualDisplayDebugHost.stepProbe(this),
+                VirtualDisplayDebugHost.stepProbe(
+                    this,
+                    intent.getStringExtra(EXTRA_DEBUG_INPUT_PKG),
+                ),
             )
             else -> return
         }
@@ -337,6 +340,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEBUG_PROBE_ACTION = "eta.debug.probe_action"
         /** 探针的 max_nodes，默认 60；验证体积预算时用 120。 */
         const val EXTRA_DEBUG_MAX_NODES = "eta.debug.max_nodes"
+        /** STEP8 的输入验证目标包（默认便签）：要证明 input_verification=verified，得换一个有真 EditText 的页面。 */
+        const val EXTRA_DEBUG_INPUT_PKG = "eta.debug.input_pkg"
         /** 虚拟屏文本注入：把文本直接写进本进程焦点输入框，不碰系统剪贴板。 */
         const val EXTRA_INJECT_TEXT = "eta.inject.text"
         const val EXTRA_RUN_ID = "eta.run_id"

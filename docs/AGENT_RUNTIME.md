@@ -6689,3 +6689,131 @@ STEP6 display=92 code=DISPLAY_RELEASED retryable=false            verdict=OK
   改成不带 `-W`、外层加 `timeout 15 am start ...`，再轮询 `pidof` 确认起来。
 
 
+## fix159：`type_text` 不再把「命令退出 0」当成「文本写进去了」（2026-10-26 深夜，fix158 的下一轮）
+
+### 一、缺陷本身
+
+虚拟屏上的 ASCII 输入走 `input -d N text ...`。这条命令有个要命的性质：
+**当前屏没有聚焦输入框时，文本被静默丢弃，而退出码仍然是 0。**
+
+于是工具层只看退出码就回 `ok=true`，模型以为字已经打进去了，接着去点「搜索」，
+页面上却什么都没有；它还会因为「明明成功了」反复重试同一步。这跟 fix156 / fix157 / fix158
+是同一类错：**结果说成功，但没确认是不是要的那件事**。
+
+### 二、修法：输入前后各读一次「聚焦的可编辑节点」
+
+新增 `TextInputVerification`（不引用 android 类型，纯 JVM 可测）：
+
+```kotlin
+data class Field(val text: String, val password: Boolean)
+enum class Verdict { VERIFIED, NOT_APPLIED, UNKNOWN }
+judge(before: Field?, after: Field?, typed: String): Verdict
+noteFor(verdict, typed, hadFocusedField): String?
+```
+
+判据：
+
+| 情况 | 结论 |
+|---|---|
+| `typed` 为空（纯清空操作） | `UNKNOWN`（没有可比的东西，也不该报警） |
+| 前后任一读不到（无障碍断开 / 屏上没有聚焦输入框） | `UNKNOWN` |
+| 密码框 | 只比**长度**：变了 `VERIFIED`，没变 `UNKNOWN`（遮蔽文本读出来是等长占位，不能当内容比） |
+| 普通输入框 | 文本变了 `VERIFIED`，一字未变 `NOT_APPLIED` |
+
+`RootShellDeviceController.textOnDisplay` 在**真正要输入文本时**才付这份读树代价
+（`beforeField` 先取；清空操作不读），收尾统一走 `textInputResult(...)`：
+响应里写 `input_verification`，判不准时再附一条能直接照做的 `note`。
+
+### 三、自查抓到的一个 bug：最该说的话永远说不出来
+
+第一版 `noteFor` 写的是：
+
+```kotlin
+verdict != Verdict.NOT_APPLIED -> null      // 先短路
+```
+
+看起来合理，实际把**最常见的那种组合**排除掉了：屏上没有聚焦输入框时
+`before == null` → `judge` 必然返回 `UNKNOWN` → 于是「文本可能被直接丢弃」这句提示
+一次都不会出现。真实流程里 `NOT_APPLIED` 几乎碰不到（它要求前后都读到了聚焦框且文本没变）。
+
+改成先判 `typed.isEmpty() || VERIFIED` 才返回 null，其余情况一律给提示：
+
+```kotlin
+typed.isEmpty() -> null
+verdict == VERIFIED -> null
+!hadFocusedField -> "没有看到聚焦的输入框：`input text` 在这种情况下会静默丢弃文本…"
+verdict == UNKNOWN -> "看到了输入框，但读不出它的文本…请 observe_screen 核对"
+else -> "…输入「eta」之后，聚焦输入框里的文本一字未变，多半是被页面吞掉了…"
+```
+
+单测里专门留了一例 `the reachable unknown case still explains what to do` 守着它。
+
+### 四、真机取证：两段，缺一不可
+
+**反向（unknown 要说实话）**：目标仍是系统设置。它的「搜索编辑框」在无障碍树里是
+`ViewGroup`、`editable=false`，点进去三轮轮询也拿不到可编辑节点，所以正好是
+「会静默丢弃」的场景：
+
+```text
+STEP1 launched=true display_id=100 first_nodes=20
+STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK
+STEP3 index=0 ok=true method=ROOT_SCROLL_FALLBACK
+STEP3b scroll ok=true method=INPUT_SWIPE region_from=largest_scrollable
+STEP3c index=4 scrollables=2 ok=true method=ROOT_SCROLL_FALLBACK region_from=preferred_node
+STEP3c verdict=OK
+STEP4 index=0 expected=9 code=COORDINATE_FALLBACK_UNSAFE_TARGET blocked_by=center_hit
+      suggestion=13 retryable=false            verdict=OK_INDEX_SHIFTED
+STEP5 display=101 code=DISPLAY_NO_VISIBLE_WINDOW retryable=false   verdict=OK
+STEP6 display=101 code=DISPLAY_RELEASED retryable=false            verdict=OK
+STEP7a ok=true verification=unknown note=没有看到聚焦的输入框：`input text` 在这种情况下会静默丢弃文
+STEP7a verdict=OK_HONEST
+STEP7  skipped（没有可编辑节点：editable=-1 search=2）
+STEP7  tree=0:ScrollView 1:FrameLayout:设置 2:ViewGroup:搜索编辑框 3:FrameLayout:focused 4:RecyclerView …
+```
+
+**正向（verified 要能成立）**：新增 **STEP8** —— 另建一块屏，打开一个**真有 EditText** 的页面。
+默认目标是便签（`com.coloros.note`）的搜索框：`AutoCompleteTextView`、
+`view_id=search_src_text`、`focused=true`、`editable=true`，而且**输入只做本地检索、不产生任何数据**。
+目标包可用 `--es eta.debug.input_pkg <包名>` 换，换机型不必改代码。
+
+```text
+STEP8 pkg=com.coloros.note display=102 index=29 focused=true ok=true verification=verified method=INPUT_TEXT
+STEP8 verdict=OK
+```
+
+同期 `type_text` 原始响应：
+
+```json
+{"ok":true,"tool":"type_text","display_id":102,"executor":"root","method":"INPUT_TEXT",
+ "chars":3,"cleared":true,"submitted":false,"input_verification":"verified"}
+```
+
+### 五、门禁
+
+`TextInputVerificationTest`（6 例 + 1 例后补）写完第一件事就是进 `tools/gate.sh` 的
+`FAST_TEST_FILTERS`。实测 `STAGES=test` **491 例 0 失败**，
+XML 里 `tests="6" failures="0"`；加上本轮末尾的 `assemble` 是 **492 例 0 失败**，
+APK 91,557,837 字节（sha256 `2c374f6d…`）。
+
+### 六、这一步教我的（比缺陷本身更重要）
+
+**「装了新代码的进程」和「正在跟你说话的那个进程」可以是两个应用。**
+第一次验证时我直接在本会话说：`type_text` 到虚拟屏上的便签搜索框 ——
+文本确实进去了（`after` 里 `text="eta"`），但响应里**根本没有 `input_verification` 字段**。
+原因不是代码没写，而是这条工具调用跑在**主包**（装的是旧 APK）上，而新代码只编进了 **canary**。
+所以凡是要证明「某个字段/某条判据生效」，必须在**装了该构建的那个进程**里跑，
+探针（`step_probe`）就是为此存在的 —— 它跑在 canary 自己进程里，走的是同一套 `AgentLocalTools`。
+
+### 七、仍然是「未验证」的
+
+- 密码框分支只有单测（真机上没有既安全又可直接输入的密码框页面）。
+- `input_verification=not_applied` 这条几乎碰不到（需要「读到聚焦框且文本一字未变」），
+  真机没命中过，只有单测。
+- 非 ASCII 路径（走无障碍 `ACTION_SET_TEXT`）的 `verified` 也没有真机样本。
+
+### 八、环境
+
+- 覆盖安装 canary 后首次 `am start` 仍可能拉不起进程（本轮 try=1/2 空、try=3 才起来），
+  必须轮询 `pidof` 有输出**再**去拨无障碍开关，否则是空拨。
+- `input_pkg` 这类「只影响探针目标」的参数走 intent extra，比改常量好：
+  探针换机型不用重新编译。

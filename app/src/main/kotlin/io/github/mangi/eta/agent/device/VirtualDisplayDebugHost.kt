@@ -255,7 +255,7 @@ internal object VirtualDisplayDebugHost {
      *    （工具层自己兜底，模型不必再换算坐标补一次）；
      * 3. `scroll_element` 滚滚动容器：节点只支持手势时应回 `method=ROOT_SCROLL_FALLBACK`。
      */
-    fun stepProbe(context: Context): String {
+    fun stepProbe(context: Context, inputProbePackage: String? = null): String {
         if (!probeRunning.compareAndSet(false, true)) return "step probe already running"
         Thread({
             val report = StringBuilder()
@@ -664,6 +664,227 @@ internal object VirtualDisplayDebugHost {
                         )
                     } else {
                         report.appendLine("STEP5 skipped create_empty_display_failed")
+                    }
+                    // STEP7（fix159）：文本到底有没有写进去。
+                    // `input -d N text ...` 在没有聚焦输入框时会静默丢弃文本、退出码却是 0；
+                    // 现在响应里必须带 input_verification，而不是只靠「命令成功」就说 ok。
+                    val inputState = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    var inputObservationId = inputState.optString("observation_id")
+                    var editableIndex = -1
+                    var focusedEditable = false
+                    var searchIndex = -1
+                    fun scanInputs(raw: org.json.JSONArray?) {
+                        if (raw == null) return
+                        for (i in 0 until raw.length()) {
+                            val node = raw.optJSONObject(i) ?: continue
+                            val index = node.optInt("index", -1)
+                            if (node.optBoolean("editable")) {
+                                if (editableIndex < 0) editableIndex = index
+                                if (node.optBoolean("focused")) {
+                                    editableIndex = index
+                                    focusedEditable = true
+                                    return
+                                }
+                            }
+                            if (searchIndex < 0 && node.optString("desc").contains("搜索")) searchIndex = index
+                        }
+                    }
+                    // 点搜索框后不一定立刻出输入框（真机第一次就是 1200ms 不够 / 页面还在加载），
+                    // 最多再等两轮；并把当时看到的树存下来，免得「没找到」时无法判断是页面没到还是
+                    // 页面到了但这个输入框在无障碍里不可编辑。
+                    var treeDigest = ""
+                    fun describeTree(raw: org.json.JSONArray?) {
+                        if (raw == null) return
+                        val parts = ArrayList<String>()
+                        for (i in 0 until minOf(raw.length(), 10)) {
+                            val node = raw.optJSONObject(i) ?: continue
+                            parts += "${node.optInt("index")}:${node.optString("class")}" +
+                                (if (node.optBoolean("editable")) ":editable" else "") +
+                                (if (node.optBoolean("focused")) ":focused" else "") +
+                                (if (node.optString("desc").isNotBlank()) ":${node.optString("desc").take(8)}" else "")
+                        }
+                        treeDigest = parts.joinToString(" ")
+                    }
+                    scanInputs(inputState.optJSONArray("ui_nodes"))
+                    describeTree(inputState.optJSONArray("ui_nodes"))
+                    // STEP7a：当前页面上没有任何可编辑节点时，`input text` 会静默丢弃文本。
+                    // 工具必须说「不确定」，不能因为命令退出 0 就假装成功 —— 这段就是那条回归。
+                    if (editableIndex < 0) {
+                        val blind = call("type_text", JSONObject().put("text", "eta"))
+                        val blindVerification = blind.optString("input_verification")
+                        val blindNote = blind.optString("note")
+                        report.appendLine(
+                            "STEP7a ok=${blind.optBoolean("ok")} verification=$blindVerification " +
+                                "note=${blindNote.take(36)}",
+                        )
+                        report.appendLine(
+                            "STEP7a verdict=" + when {
+                                blindVerification == "verified" -> "FAIL_CLAIMED_VERIFIED"
+                                blindNote.isNotBlank() -> "OK_HONEST"
+                                else -> "FAIL_SILENT"
+                            },
+                        )
+                    }
+                    if (editableIndex < 0 && searchIndex >= 0) {
+                        // 设置首页没有输入框：点它的「搜索框」进搜索页（那里有真的输入框）。
+                        call(
+                            "tap_element",
+                            JSONObject().put("observation_id", inputObservationId).put("index", searchIndex),
+                        )
+                        var attempt = 0
+                        while (editableIndex < 0 && attempt < 3) {
+                            attempt++
+                            call("wait", JSONObject().put("duration_ms", if (attempt == 1) 1800 else 1200))
+                            val searchState = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                            )
+                            inputObservationId = searchState.optString("observation_id")
+                            scanInputs(searchState.optJSONArray("ui_nodes"))
+                            describeTree(searchState.optJSONArray("ui_nodes"))
+                            if (editableIndex < 0 && attempt < 3) {
+                                // 第一下常常只是聚焦 / 展开搜索栏，再点一次才会真正进搜索页。
+                                call(
+                                    "tap_element",
+                                    JSONObject().put("observation_id", inputObservationId).put("index", searchIndex),
+                                )
+                            }
+                        }
+                    }
+                    if (editableIndex >= 0 && !focusedEditable) {
+                        // 没聚焦就点它一下（input text 只往焦点里打）。
+                        call(
+                            "tap_element",
+                            JSONObject().put("observation_id", inputObservationId).put("index", editableIndex),
+                        )
+                        call("wait", JSONObject().put("duration_ms", 600))
+                    }
+                    if (editableIndex >= 0 && inputObservationId.isNotBlank()) {
+                        val typed = call("type_text", JSONObject().put("text", "eta"))
+                        val verification = typed.optString("input_verification")
+                        report.appendLine(
+                            "STEP7 index=$editableIndex focused=$focusedEditable ok=${typed.optBoolean("ok")} " +
+                                "verification=$verification method=${typed.optString("method")} note=${typed.optString("note").take(30)}",
+                        )
+                        report.appendLine(
+                            "STEP7 verdict=" + when (verification) {
+                                "verified" -> "OK"
+                                "not_applied" -> "FAIL_NOT_APPLIED"
+                                "unknown" -> "OK_UNVERIFIABLE"
+                                else -> "FAIL_NO_VERIFICATION_FIELD"
+                            },
+                        )
+                    } else {
+                        report.appendLine(
+                            "STEP7 skipped（没有可编辑节点：editable=$editableIndex search=$searchIndex）",
+                        )
+                        report.appendLine("STEP7 tree=$treeDigest")
+                    }
+                    // STEP8（fix159 正向）：STEP7 只能证明「unknown + 诚实提示」，因为系统设置的
+                    // 搜索框在无障碍里根本不是 editable。要证明 verified 分支真的能成立，必须换一个
+                    // 真有 EditText 的页面：默认用便签的搜索框（它只做本地检索，输入不产生任何数据）。
+                    // 目标包可用 `--es eta.debug.input_pkg <包名>` 换，换机型时不必改代码。
+                    val probePkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: "com.coloros.note"
+                    val inputDisplay = call(
+                        "virtual_display_create",
+                        JSONObject()
+                            .put("width", 720)
+                            .put("height", 1280)
+                            .put("density_dpi", 320)
+                            .put("purpose", "text input probe")
+                            .put("package_name", probePkg),
+                    )
+                    val inputDisplayId = inputDisplay.optInt("display_id", -1)
+                    if (inputDisplayId <= 0) {
+                        report.appendLine("STEP8 skipped create_failed pkg=$probePkg")
+                    } else {
+                        var inputState = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                        )
+                        var inputSnapshot = inputState.optString("observation_id")
+                        var editIndex = -1
+                        var editFocused = false
+                        fun scanEditable(raw: org.json.JSONArray?) {
+                            if (raw == null) return
+                            for (i in 0 until raw.length()) {
+                                val node = raw.optJSONObject(i) ?: continue
+                                if (!node.optBoolean("editable")) continue
+                                if (node.optBoolean("focused")) {
+                                    editIndex = node.optInt("index", -1)
+                                    editFocused = true
+                                    return
+                                }
+                                if (editIndex < 0) editIndex = node.optInt("index", -1)
+                            }
+                        }
+                        fun searchButtonIn(raw: org.json.JSONArray?): Int {
+                            if (raw == null) return -1
+                            for (i in 0 until raw.length()) {
+                                val node = raw.optJSONObject(i) ?: continue
+                                if (!node.optBoolean("clickable")) continue
+                                val label = node.optString("desc") + node.optString("text")
+                                if (label.contains("搜索")) return node.optInt("index", -1)
+                            }
+                            return -1
+                        }
+                        scanEditable(inputState.optJSONArray("ui_nodes"))
+                        // 首页没有输入框（便签就是列表页）：先点搜索入口，进去才有 EditText。
+                        var inputRound = 0
+                        while (editIndex < 0 && inputRound < 3) {
+                            inputRound++
+                            val searchButton = searchButtonIn(inputState.optJSONArray("ui_nodes"))
+                            if (searchButton >= 0 && inputSnapshot.isNotBlank()) {
+                                call(
+                                    "tap_element",
+                                    JSONObject()
+                                        .put("observation_id", inputSnapshot)
+                                        .put("index", searchButton),
+                                )
+                            }
+                            call("wait", JSONObject().put("duration_ms", 1500))
+                            inputState = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            inputSnapshot = inputState.optString("observation_id")
+                            scanEditable(inputState.optJSONArray("ui_nodes"))
+                        }
+                        if (editIndex >= 0 && !editFocused && inputSnapshot.isNotBlank()) {
+                            call(
+                                "tap_element",
+                                JSONObject().put("observation_id", inputSnapshot).put("index", editIndex),
+                            )
+                            call("wait", JSONObject().put("duration_ms", 600))
+                        }
+                        if (editIndex >= 0) {
+                            val typed = call(
+                                "type_text",
+                                JSONObject().put("text", "eta").put("display_id", inputDisplayId),
+                            )
+                            val verification = typed.optString("input_verification")
+                            report.appendLine(
+                                "STEP8 pkg=$probePkg display=$inputDisplayId index=$editIndex " +
+                                    "focused=$editFocused ok=${typed.optBoolean("ok")} " +
+                                    "verification=$verification method=${typed.optString("method")} " +
+                                    "note=${typed.optString("note").take(30)}",
+                            )
+                            report.appendLine(
+                                "STEP8 verdict=" + when (verification) {
+                                    "verified" -> "OK"
+                                    "not_applied" -> "FAIL_NOT_APPLIED"
+                                    "unknown" -> "FAIL_STILL_UNVERIFIED"
+                                    else -> "FAIL_NO_VERIFICATION_FIELD"
+                                },
+                            )
+                        } else {
+                            report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
+                        }
+                        call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))
                     }
                     call("virtual_display_release", JSONObject().put("id", id))
                 }

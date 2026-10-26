@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.SystemClock
 import java.io.IOException
 import java.io.StringReader
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -704,6 +705,10 @@ internal class RootShellDeviceController(
         if (text.length > MAX_INPUT_TEXT_CHARS) {
             return errorJson("TEXT_TOO_LONG", "虚拟屏文本输入最多支持 $MAX_INPUT_TEXT_CHARS 个字符")
         }
+        // 输入前后各读一次「聚焦的可编辑节点」：`input -d N text ...` 在没有焦点时
+        // 会静默丢弃文本，却仍然退出 0（见 TextInputVerification 的说明）。
+        // 只在真的有文本要输时才付这份读树代价（清空操作不需要）。
+        val beforeField = if (text.isNotEmpty()) focusedFieldOn(displayId) else null
         val steps = ArrayList<String>(4)
         if (clearFirst) {
             // CTRL+A 全选后 DEL。尽力而为：部分自绘输入框不实现全选。
@@ -729,16 +734,15 @@ internal class RootShellDeviceController(
                     }
                 }
                 waitForUiSettle("type_text")
-                return JSONObject()
-                    .put("ok", true)
-                    .put("tool", "type_text")
-                    .put("display_id", displayId)
-                    .put("executor", "accessibility")
-                    .put("method", injected.method)
-                    .put("chars", text.length)
-                    .put("cleared", clearFirst)
-                    .put("submitted", submit)
-                    .toString()
+                return textInputResult(
+                    displayId = displayId,
+                    executor = "accessibility",
+                    method = injected.method,
+                    typed = text,
+                    cleared = clearFirst,
+                    submitted = submit,
+                    before = beforeField,
+                )
             }
             // 无障碍不通时只有本应用还能自救：进程内注入同样不碰 IME/剪贴板。
             val foreground = runCatching { foregroundPackageOn(displayId) }.getOrDefault("")
@@ -775,16 +779,55 @@ internal class RootShellDeviceController(
             }
         }
         if (steps.isNotEmpty()) waitForUiSettle("type_text")
-        return JSONObject()
+        return textInputResult(
+            displayId = displayId,
+            executor = "root",
+            method = method,
+            typed = text,
+            cleared = clearFirst,
+            submitted = submit,
+            before = beforeField,
+        )
+    }
+
+    /** 当前聚焦的可编辑节点（读不到就返回 null，上层的判断会因此落到 UNKNOWN）。 */
+    private fun focusedFieldOn(displayId: Int): TextInputVerification.Field? {
+        val node = dumpUiNodesReported(60, displayId).nodes
+            .firstOrNull { candidate -> candidate.focused && candidate.editable }
+            ?: return null
+        return TextInputVerification.Field(text = node.text, password = node.password)
+    }
+
+    /**
+     * 文本输入的统一收尾：读回一次，把「到底有没有输进去」写进响应。
+     *
+     * 为什么必须读回：虚拟屏的 ASCII 输入是 `input text`，它**不告诉我们有没有人接**。
+     * 只看命令退出码就回 `ok=true`，等于把「命令发出去了」假装成「文本写进去了」。
+     */
+    private fun textInputResult(
+        displayId: Int,
+        executor: String,
+        method: String,
+        typed: String,
+        cleared: Boolean,
+        submitted: Boolean,
+        before: TextInputVerification.Field?,
+    ): String {
+        val after = if (typed.isEmpty()) null else focusedFieldOn(displayId)
+        val verdict = TextInputVerification.judge(before, after, typed)
+        val json = JSONObject()
             .put("ok", true)
             .put("tool", "type_text")
             .put("display_id", displayId)
-            .put("executor", "root")
+            .put("executor", executor)
             .put("method", method)
-            .put("chars", text.length)
-            .put("cleared", clearFirst)
-            .put("submitted", submit)
-            .toString()
+            .put("chars", typed.length)
+            .put("cleared", cleared)
+            .put("submitted", submitted)
+            .put("input_verification", verdict.name.lowercase(Locale.ROOT))
+        TextInputVerification.noteFor(verdict, typed, hadFocusedField = before != null)
+            ?.let { note -> json.put("note", note) }
+        return json.toString()
     }
 
     /**
