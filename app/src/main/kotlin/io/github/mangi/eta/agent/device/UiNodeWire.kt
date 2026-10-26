@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.device
 
 import io.github.mangi.eta.agent.device.RootShellDeviceController.UiNode
+import io.github.mangi.eta.agent.model.AgentToolSpill
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,9 +37,12 @@ internal object UiNodeWire {
      * `observe_screen` 给 `ui_nodes` 留的字符预算。
      *
      * 总预算（12,000）里还要放 `focus`、`coordinate_contract`、`capabilities`、
-     * `ui_diagnostics`、`screenshot` 等字段，实测合计约 2.5KB，这里留 9,000 有安全余量。
+     * `ui_diagnostics`、`screenshot` 等字段（真机实测合计约 2~3KB，虚拟屏的 display.note 更长），
+     * 所以节点部分只给 8,000，留 4,000 余额。
+     * 这个数不是拍脑袋：`AgentAfterActionSummaryVolumeTest` 用最坏情况（每节点文本满 200 字）
+     * 实测过剩余空间——第一版给 9,000 时余量只剩 274 字，一遇到长 note 就会溢出。
      */
-    const val OBSERVE_NODES_BUDGET_CHARS = 9_000
+    const val OBSERVE_NODES_BUDGET_CHARS = 8_000
 
     fun toArray(
         nodes: List<UiNode>,
@@ -52,7 +56,10 @@ internal object UiNodeWire {
         var shown = 0
         for (node in nodes) {
             val projected = node.toWireJson(foregroundPackage, includeNodeId, includeBounds)
-            val cost = projected.toString().length + 1
+            // 与溢写判定同口径：按「转义后真正进入上下文的字符数」算。
+            // 用 JSON 长度估算会低估含大量引号/反斜杠的界面（代码、JSON 查看器），
+            // 表现为「以为在预算内」但 spill 仍判超 → 白裁了节点还是被落盘。
+            val cost = AgentToolSpill.contextCost(projected.toString()) + 1
             if (used + cost > budgetChars) break
             used += cost
             array.put(projected)
@@ -71,8 +78,15 @@ internal object UiNodeWire {
         .put("index", index)
         .apply {
             if (includeNodeId && nodeId.isNotBlank()) put("node_id", nodeId)
-            truncate(text, MAX_TEXT_CHARS)?.let { put("text", it) }
-            truncate(desc, MAX_TEXT_CHARS)?.let { put("desc", it) }
+            clipped(text, MAX_TEXT_CHARS)?.let { (value, cut) ->
+                put("text", value)
+                // 截断必须显式标记：不说的话模型会以为那就是全部内容（聊天/日志/正文节点尤其危险）。
+                if (cut) put("text_clipped", true)
+            }
+            clipped(desc, MAX_TEXT_CHARS)?.let { (value, cut) ->
+                put("desc", value)
+                if (cut) put("desc_clipped", true)
+            }
             if (className.isNotBlank()) put("class", className.substringAfterLast('.'))
             if (viewId.isNotBlank()) put("view_id", viewId.substringAfterLast('/'))
             // 多窗口 / 系统弹窗里会出现同屏他包节点，那种情况才值得多写 20 个字符。
@@ -95,20 +109,23 @@ internal object UiNodeWire {
             if (!enabled) put("enabled", false)
             checked?.let { put("checked", it) }
             if (selected) put("selected", true)
-            truncate(hint, MAX_HINT_CHARS)?.let { put("hint", it) }
+            clipped(hint, MAX_HINT_CHARS)?.let { (value, cut) ->
+                put("hint", value)
+                if (cut) put("hint_clipped", true)
+            }
         }
 
     /**
-     * 空白返回 null（不输出空字段）；超长按码点截断并补省略号。
+     * 空白返回 null（不输出空字段）；超长按码点截断并补省略号，同时告诉调用方「被截了」。
      *
      * 截断点不能落在 UTF-16 代理对中间，否则序列化出孤立代理，模型看到乱码。
      */
-    private fun truncate(raw: String, limit: Int): String? {
+    private fun clipped(raw: String, limit: Int): Pair<String, Boolean>? {
         val text = raw.trim()
         if (text.isEmpty()) return null
-        if (text.length <= limit) return text
+        if (text.length <= limit) return text to false
         var end = limit
         if (Character.isHighSurrogate(text[end - 1])) end -= 1
-        return text.substring(0, end) + "…"
+        return (text.substring(0, end) + "…") to true
     }
 }

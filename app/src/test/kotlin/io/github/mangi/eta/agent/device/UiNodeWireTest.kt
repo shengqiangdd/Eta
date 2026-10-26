@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.device
 
 import android.graphics.Rect
 import io.github.mangi.eta.agent.device.RootShellDeviceController.UiNode
+import io.github.mangi.eta.agent.model.AgentToolSpill
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -63,6 +64,8 @@ class UiNodeWireTest {
         val text = json.getString("text")
         assertTrue(text.length <= UiNodeWire.MAX_TEXT_CHARS + 1)
         assertTrue(text.endsWith("…"))
+        // 截断必须有显式标记：静默截断会让模型以为看到的是全文。
+        assertTrue(json.getBoolean("text_clipped"))
         assertFalse(
             "截断后不能留孤立代理",
             Character.isHighSurrogate(text[text.length - 2]) && !Character.isLowSurrogate(text[text.length - 1]),
@@ -104,6 +107,20 @@ class UiNodeWireTest {
         assertTrue(
             "旧格式同规模约 13~15KB，投影至少要省一半",
             projected < legacy / 2,
+        )
+    }
+
+    @Test
+    fun observeBudgetLeavesRoomForTheOuterEnvelope() {
+        // 60 个节点、每个文本都顶到 200 字截断上限：节点部分必须留在 8,000 内，
+        // 外层（focus / coordinate_contract / capabilities / ui_diagnostics / 虚拟屏 note）
+        // 才有余量——真机实测这层约 2~3KB，这里按 3,500 保守算。
+        val nodes = (0 until 60).map { node(index = it, text = "长文本".repeat(80)) }
+        val projection = project(nodes, "app")
+        val nodesCost = AgentToolSpill.contextCost(projection.nodes.toString())
+        assertTrue(
+            "节点部分 $nodesCost + 外层 3,500 已越过 12,000，观察结果会被落盘",
+            nodesCost + 3_500 <= AgentToolSpill.DEFAULT_CONTEXT_BUDGET,
         )
     }
 

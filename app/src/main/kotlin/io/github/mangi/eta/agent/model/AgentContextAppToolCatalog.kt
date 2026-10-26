@@ -99,7 +99,7 @@ internal object AgentContextAppToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "observe_screen",
-                    description = "观察当前手机屏幕，默认只返回前台应用、屏幕尺寸、observation_id 与可见 UI 节点，不附截图。节点为空、目标无法唯一识别、界面以 Canvas/地图/图片/二维码等视觉内容为主，或任务依赖颜色、图像、空间布局时，显式设置 include_screenshot=true；补截图时保持 include_ui_tree=true，以同一次新观察刷新节点和 observation_id，禁止把新截图与旧节点混用。节点动作必须原样携带同一次观察的 observation_id；树被截断但节点语义仍有效时，优先把 max_nodes 提高到 120 后重试，不要仅因截断请求截图。",
+                    description = "观察当前手机屏幕，默认只返回前台应用、屏幕尺寸、observation_id 与可见 UI 节点，不附截图。节点为空、目标无法唯一识别、界面以 Canvas/地图/图片/二维码等视觉内容为主，或任务依赖颜色、图像、空间布局时，显式设置 include_screenshot=true；补截图时保持 include_ui_tree=true，以同一次新观察刷新节点和 observation_id，禁止把新截图与旧节点混用。节点动作必须原样携带同一次观察的 observation_id。结果里的 ui_nodes_shown 是真正带回的节点数：ui_nodes_truncated=true 表示已按上下文体积裁掉尾部（此时把 max_nodes 调到 120 也拿不到更多，应先 scroll 让目标进入视野再观察）；ui_tree_truncated=true 才是无障碍层的截断。不要仅因截断请求截图。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -126,7 +126,7 @@ internal object AgentContextAppToolCatalog {
                                         .put("minimum", AgentScreenObservationContract.MIN_MAX_NODES)
                                         .put("maximum", AgentScreenObservationContract.MAX_MAX_NODES)
                                         .put("default", AgentScreenObservationContract.DEFAULT_MAX_NODES)
-                                        .put("description", "最多返回 1 到 120 个 UI 节点，默认 60")
+                                        .put("description", "最多返回 1 到 120 个 UI 节点，默认 60；实际带回数量见结果的 ui_nodes_shown，超出上下文体积预算时会裁剪尾部")
                                 )
                                 .put(
                                     "display_id",

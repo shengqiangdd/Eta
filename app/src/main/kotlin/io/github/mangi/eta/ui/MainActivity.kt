@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                     this,
                     intent.getIntExtra(EXTRA_DEBUG_DISPLAY_ID, -1),
                     intent.getStringExtra(EXTRA_DEBUG_PROBE_ACTION),
+                    intent.getIntExtra(EXTRA_DEBUG_MAX_NODES, 60),
                 ),
             )
             "tool_probe" -> android.util.Log.i(
@@ -330,6 +331,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEBUG_VIRTUAL_DISPLAY = "eta.debug.virtual_display"
         const val EXTRA_DEBUG_DISPLAY_ID = "eta.debug.display_id"
         const val EXTRA_DEBUG_PROBE_ACTION = "eta.debug.probe_action"
+        /** 探针的 max_nodes，默认 60；验证体积预算时用 120。 */
+        const val EXTRA_DEBUG_MAX_NODES = "eta.debug.max_nodes"
         /** 虚拟屏文本注入：把文本直接写进本进程焦点输入框，不碰系统剪贴板。 */
         const val EXTRA_INJECT_TEXT = "eta.inject.text"
         const val EXTRA_RUN_ID = "eta.run_id"

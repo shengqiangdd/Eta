@@ -5952,3 +5952,80 @@ fix149 §五 的表格和更早那条「真冷启动 10,385 ms」都取自**同�
 
 **收尾**：canary 已 force-stop、虚拟屏已释放；主包当前 APK 备份到
 `/data/local/tmp/eta/main-fix147d-rollback.apk`（88,520,719 B）供回滚。
+
+## fix151：ui_nodes 线格式收窄 —— 观察结果不再落盘（2026-10-26）
+
+### 一、问题
+
+`observe_screen` 默认 60 节点时，整份结果 19,221 字符，超过 12,000 的上下文预算 →
+**整份工具结果被溢写落盘**，模型下一步只能 `read_file` 把内容读回来。一次观察变成两次往返，
+虚拟屏上点一个按钮的成本被放大一倍。
+
+### 二、改法
+
+新增 `agent/device/UiNodeWire.kt`，`observe_screen`、动作后摘要、`wait_for_text` 的
+`matched_node` 共用同一套紧凑投影：
+
+- `class` / `view_id` 取简名（`AppCompatButton`、`btn_ok`）
+- 包名只在**异包节点**（多窗口 / 系统弹窗）时输出
+- `false` 布尔一律省略
+- `text` / `desc` / `hint` 超长按码点截断（不切断代理对）
+- 几何位置输出 `center` 数组 + `bounds`
+- `index` **不重编号**：裁剪后仍与原始树一致，节点动作照旧能用
+
+### 三、首次真机实测（PKX110 / Android 16，canary + 虚拟屏探针）
+
+| 场景 | 字符数 | 是否落盘 |
+|---|---|---|
+| 单测：60 节点 | 19,221 → **8,661** | — |
+| 真机：60 节点 | **8,601** | 否 |
+| 真机：30 节点 | 5,406 | 否 |
+| 真机：23 节点 | 4,606 | 否 |
+
+### 四、同日第二轮：预算重定（9,000/7,000 → 8,000/5,000）
+
+第一版给节点 9,000、动作后摘要 7,000，数值上看着够，但**最坏情况几乎顶到天花板**：
+每节点文本满 200 字、30 个节点全部变化时，整体 cost 实测 **11,726**，离 12,000 只剩 **274**。
+多一个长 `display.note`（虚拟屏会带）就越界 → 又回到落盘。
+
+于是把三处一起收紧：
+
+1. `UiNodeWire.OBSERVE_NODES_BUDGET_CHARS` 9,000 → **8,000**
+2. `AgentAfterActionSummary.NODES_BUDGET_CHARS` 7,000 → **5,000**
+3. **预算口径统一**：改用 `AgentToolSpill.contextCost(...)` 而不是 `toString().length`
+
+第 3 条是真缺陷：`toString().length` 数的是**转义前**的字符，而进上下文的是转义后文本。
+含大量引号 / 反斜杠的界面（代码编辑器、JSON 查看器、日志页）会被系统性低估，
+表现为「算着在预算内，spill 仍判超」→ 白裁了节点还没躲过落盘。
+
+顺带补两处**语义诚实**：
+
+- 截断显式标记 `text_clipped` / `desc_clipped` / `hint_clipped`。
+  原来只补一个 `…`，模型容易把半句话当成全文（聊天 / 日志 / 正文节点尤其危险）。
+- `AgentAfterActionSummary` 的几何键改为自行拼接的 `boundsKey(node)`，不再调
+  `Rect.toShortString()`，让体积测试能在纯 JVM 跑（Robolectric 在 aarch64 本机跑不起来）。
+
+**调整后实测**（`STAGES=test,assemble`）：
+
+- 最坏情况 cost **9,542**（余量约 2,300）
+- 单测 60 节点 **6,776**
+- 门禁 **426 例 0 失败**，APK 96,153,281 B
+
+### 五、工具文案与系统提示同步
+
+原文案写着「树被截断就提高 max_nodes 到 120 重试」—— 这句话在按体积裁剪之后是**错的指导**：
+提高 `max_nodes` 只会让裁剪更早发生。改成三个字段的准确语义：
+
+| 字段 | 含义 | 正确应对 |
+|---|---|---|
+| `ui_nodes_shown` | 真正带回的节点数 | 用它判断拿到了多少 |
+| `ui_nodes_truncated` | 已按上下文体积裁掉尾部 | 提高 `max_nodes` 无效，先 `scroll` 把目标带入视野再观察 |
+| `ui_tree_truncated` | 无障碍层本身截断 | 才是提高 `max_nodes` 的场景 |
+
+### 六、未验证
+
+- **新预算（8,000/5,000）下的真机数据**：探针已加 `--ei eta.debug.max_nodes 120`，
+  但那一轮真机跑的是旧预算版本；本轮只做了门禁与单测。
+- `AgentAfterActionSummaryTest` 的 4 例仍是 Robolectric，本机 aarch64 不支持，仍未真跑。
+- 主包 `io.github.mangi.eta` 仍是旧代码，改动只在 canary 生效。
+

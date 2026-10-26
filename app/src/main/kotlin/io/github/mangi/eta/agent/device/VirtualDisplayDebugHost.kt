@@ -58,7 +58,7 @@ internal object VirtualDisplayDebugHost {
      * 把结果写到应用外部目录的 vd-probe.txt。用来验证「虚拟屏 UI 树 + 节点动作」闭环，
      * 不需要模型凭据，也不影响正式包。
      */
-    fun probe(context: Context, displayId: Int, action: String? = null): String {
+    fun probe(context: Context, displayId: Int, action: String? = null, maxNodes: Int = 60): String {
         val existing = controller ?: return "no controller"
         if (existing.findByDisplayId(displayId) == null) return "unknown display $displayId"
         // 工具调用在后台线程执行；探针也必须离开主线程，否则 dispatchGesture 无法同步等待。
@@ -69,12 +69,13 @@ internal object VirtualDisplayDebugHost {
             )
             val report = StringBuilder()
             report.appendLine("display=$displayId")
+            report.appendLine("max_nodes=$maxNodes")
             if (action == "scroll") {
                 report.appendLine("scroll=" + device.scroll("down", "small", displayId))
                 val observation = device.observe(
                     includeScreenshot = false,
                     includeUiTree = true,
-                    maxNodes = 40,
+                    maxNodes = maxNodes,
                     displayId = displayId,
                 )
                 report.appendLine("observe=${observation.content}")
@@ -82,7 +83,7 @@ internal object VirtualDisplayDebugHost {
                 val observation = device.observe(
                     includeScreenshot = false,
                     includeUiTree = true,
-                    maxNodes = 60,
+                    maxNodes = maxNodes,
                     displayId = displayId,
                 )
                 report.appendLine("observe=${observation.content}")

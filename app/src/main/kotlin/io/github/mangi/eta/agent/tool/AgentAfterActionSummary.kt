@@ -16,9 +16,12 @@ internal object AgentAfterActionSummary {
     /**
      * 动作后附带节点也要守体积预算：这份摘要与前面的工具结果进的是同一条上下文，
      * 超了同样会被溢写落盘（模型的下一步就只能去 read_file，而不是直接点）。
-     * 7,000 给 `changes`（最多 8×3 个节点）与结论字段留了余量。
+     *
+     * 5,000 是实测值：给 7,000 时，最坏情况（30 个节点全部变化、每节点文本满 200 字）
+     * 总体积 11,726，离 12,000 只剩 274 字—— `changes` 里最多还有 8×2 个节点副本，
+     * 稍长一点就会越过预算。降到 5,000 后余量约 2,300 字。
      */
-    private const val NODES_BUDGET_CHARS = 7_000
+    private const val NODES_BUDGET_CHARS = 5_000
 
     fun build(before: ElementObservation?, after: ElementObservation): JSONObject {
         val changed = before == null || signature(before.nodes) != signature(after.nodes)
@@ -117,11 +120,19 @@ internal object AgentAfterActionSummary {
             ?: "sig:${node.className}|${node.viewId}|${node.text}|${node.desc}"
 
     private fun visual(node: UiNode): String = listOf(
-        node.text, node.desc, node.className, node.viewId, node.bounds.toShortString(),
+        node.text, node.desc, node.className, node.viewId, boundsKey(node),
         node.clickable, node.longClickable, node.scrollable, node.focused,
         node.editable, node.password, node.enabled, node.checked, node.selected, node.hint,
     ).joinToString("|")
 
     private fun signature(nodes: List<UiNode>): List<String> =
-        nodes.map { "${it.className}|${it.viewId}|${it.text}|${it.desc}|${it.bounds.toShortString()}" }
+        nodes.map { "${it.className}|${it.viewId}|${it.text}|${it.desc}|${boundsKey(it)}" }
+
+    /**
+     * 位置键：与 `Rect.toShortString()` 输出相同，但只用字段自行拼接。
+     * 原因有两层：一是纯 JVM 单测里 `Rect` 方法未 mock 会直接抛，
+     * 二是变化判定本来只依赖几何值，没有必要调 Android 方法。
+     */
+    private fun boundsKey(node: UiNode): String =
+        "[${node.bounds.left},${node.bounds.top}][${node.bounds.right},${node.bounds.bottom}]"
 }
