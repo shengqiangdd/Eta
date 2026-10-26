@@ -6916,3 +6916,88 @@ clear 之后字段仍有文本           → NOT_APPLIED，且提示里点明「
 `input -d <display> text` 在 EditText 上确实是**光标处插入**（实测 `et` + `a` → `eta`），
 所以「替换」必须依赖前面的 CTRL+A + DEL；这也解释了为什么自绘输入框上替换会变成追加 ——
 清空失败 + 插入 = 越写越长。清空有结论之后，这条链路才算闭环。
+## fix161：坐标校验拿的是「上次看的那块屏」的尺寸（2026-10-26 深夜，fix160 之后）
+
+### 一、缺陷本身
+
+`convertPoint`（`AgentLocalTools`）只读「最近一次观察」的尺寸来换算/校验坐标，
+**完全不看本次操作的 `display_id`**：
+
+```kotlin
+val space = publishedObservation.get().coordinateSpace
+val (width, height) = space?.let { it.screenWidth to it.screenHeight }
+    ?: deviceController.screenDimensions()      // ← 主屏
+```
+
+而 `tap` / `longPress` / `swipe` / `tapArea` 都是**先** `convertPoint`、**后** `resolveDisplayId`，
+连「这次点哪块屏」都还没解析。于是常见的顺序（先在主屏观察过，再去虚拟屏按坐标点）
+就是拿主屏的 1216x2640 去校验虚拟屏的 720x1280。
+
+真机证据（本机 PKX110，display 112 = 720x1280，便签）：
+
+| 调用 | 返回 |
+|---|---|
+| `tap(x=9999,y=10,screen,display_id=112)`（屏上还没应用） | `INVALID_ARGUMENT` / `屏幕坐标超出范围：(9999,10) not in **1216x2640**` |
+| `tap(x=900,y=1200,screen,display_id=112)`（屏上已有应用） | `TOOL_ERROR` / `坐标超出屏幕范围：(900,1200) not in **720x1280**` |
+
+两条都是「屏不对」，但表现不同：
+
+1. **越界坐标被放行** —— 1216x2640 的尺子认为 (900,1200) 合法，直到控制器
+   `validatePoint` 才拦住。错误码从 `INVALID_ARGUMENT`（模型会去改参数）
+   退化成 `TOOL_ERROR`（模型会当成内部故障重试）。
+2. **提示里的尺寸是错的** —— 报的是主屏尺寸，模型据此「修正」坐标会继续撞墙。
+3. 反向更糟（这一轮没造出真机样本）：虚拟屏比主屏**大**时（虚拟屏最长可到 3840），
+   虚拟屏里合法的坐标会被判越界，模型去改一个本来就对的参数。
+
+### 二、修法：尺寸跟着「这次点哪块屏」走
+
+- 新增 `CoordinateDimensionPolicy.pick(requested, published, publishedDisplayId, requestedDisplayId)`
+  （不引用 android 类型，纯 JVM 可测）：
+  1. 目标屏自己的尺寸优先；
+  2. 其次才用「最近一次观察」的尺寸，且**必须同屏**（主屏的 null 与 0 视为同一块屏）；
+  3. 都没有 → null，交给调用方回退主屏尺寸。
+- 新增 `RootShellDeviceController.displayDimensions(displayId)`：虚拟屏取会话记录的宽高，
+  **取不到就返回 null，绝不拿主屏尺寸顶替**（拿错尺子比拿不到尺子更危险）。
+- `convertPoint` 增加 `displayId` 参数；`tap` / `tapArea` / `longPress` / `swipe`
+  一律**先** `resolveDisplayId`、**后**换算坐标。
+  顺带把错误优先级也改对了：屏已释放 / 屏上没有窗口会先报出来，
+  而不是先抱怨坐标超范围（屏不对，坐标怎么算都没意义）。
+- `normalized` 换算也走同一个尺寸，保证「校验用的尺子」和「换算用的尺子」是同一把。
+
+### 三、真机取证（canary 本次构建）
+
+```text
+STEP8  pkg=com.coloros.note display=115 index=29 focused=true ok=true verification=verified
+STEP9  clear verification=verified mode=clear field=[]
+STEP9b base=[et] append verification=verified mode=append field=[eta]
+STEP10 code=INVALID_ARGUMENT message=屏幕坐标超出范围：(900,1200) not in 720x1280
+STEP10 verdict=OK
+```
+
+同一块 720x1280 的便签屏，同一个 (900,1200)：修复前是 `TOOL_ERROR` + 说成 1216x2640，
+修复后是 `INVALID_ARGUMENT` + 说成 720x1280 —— 错误码统一、尺寸正确、模型能据此改对参数。
+
+### 四、门禁
+
+`CoordinateDimensionPolicyTest`（5 例）第一件事就是进 `tools/gate.sh` 的 `FAST_TEST_FILTERS`，
+实测用例数 **496 → 501，0 失败**，`TEST-…CoordinateDimensionPolicyTest.xml` 里 `tests="5" failures="0"`。
+其中一例直接守着真机那个场景：
+
+```text
+requested=null（虚拟屏尺寸取不到）、published=主屏 1216x2640、requestedDisplayId=112
+→ pick 必须返回 null（不许把主屏尺寸当成虚拟屏的尺子）
+```
+
+### 五、仍然是「未验证」的
+
+- `normalized` 换算在跨屏场景下的实际落点（同一把尺子，但没造真机样本）。
+- `tapArea` 的归一化中心点（同上）。
+- 主屏与虚拟屏尺寸相同的情况（本机主屏 1216x2640、虚拟屏 720x1280，天然能区分；
+  同尺寸时这个缺陷根本看不出来，所以也没有反例）。
+
+### 六、顺带说明：这类缺陷为什么反复出现
+
+fix156/157/158/159/160/161 是同一个模式：**「动作发出去了」被当成「目的达到了」**。
+这轮的尺子是「屏幕尺寸」，下一轮可能是「刷新率」「语言」「分辨率」——
+凡是「同一个参数在不同对象上有不同含义」的地方，都要先问一句：
+**我现在用的是哪个对象的尺子？**

@@ -87,6 +87,19 @@ internal class RootShellDeviceController(
 
     fun screenDimensions(): Pair<Int, Int> = screenSize()
 
+    /**
+     * 某块屏自己的尺寸；虚拟屏取会话记录，拿不到就返回 null。
+     *
+     * 刻意**不**用主屏尺寸顶替：拿错尺子比拿不到尺子更危险（fix161 —— 用 1216x2640
+     * 校验 720x1280 的虚拟屏坐标，越界坐标会被放行，到下一层才报成 TOOL_ERROR）。
+     */
+    fun displayDimensions(displayId: Int?): Pair<Int, Int>? {
+        if (displayId == null) return null
+        val session = runCatching { virtualDisplays?.findByDisplayId(displayId) }.getOrNull()
+            ?: return null
+        return session.width to session.height
+    }
+
     data class UiNode(
         val index: Int,
         val text: String,

@@ -1005,6 +1005,32 @@ internal object VirtualDisplayDebugHost {
                                     },
                                 )
                             }
+                            // STEP10（fix161）：坐标校验必须用**这块屏**的尺寸。
+                            // 720x1280 的屏上报 (900,1200)：旧实现拿主屏 1216x2640 校验 → 放行 →
+                            // 直到控制器才拦，错误码变成 TOOL_ERROR。现在应直接 INVALID_ARGUMENT，
+                            // 且提示里写的就是 720x1280。
+                            val outOfScreen = call(
+                                "tap",
+                                JSONObject()
+                                    .put("x", 900)
+                                    .put("y", 1200)
+                                    .put("coordinate_space", "screen")
+                                    .put("display_id", inputDisplayId),
+                            )
+                            val outMessage = outOfScreen.optString("message")
+                            report.appendLine(
+                                "STEP10 code=${outOfScreen.optString("code")} " +
+                                    "message=${outMessage.take(40)}",
+                            )
+                            report.appendLine(
+                                "STEP10 verdict=" + when {
+                                    outOfScreen.optString("code") == "INVALID_ARGUMENT" &&
+                                        outMessage.contains("720x1280") -> "OK"
+                                    outMessage.contains("1216x2640") -> "FAIL_WRONG_SCREEN_SIZE"
+                                    outOfScreen.optString("code") == "TOOL_ERROR" -> "FAIL_LEAKED_TO_CONTROLLER"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
                         } else {
                             report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
                         }

@@ -1021,12 +1021,14 @@ internal class AgentLocalTools(
     }
 
     private fun tap(args: JSONObject): String {
+        // 先定「点哪块屏」，再按那块屏的尺寸校验坐标：顺序反了就会拿主屏尺寸校验虚拟屏坐标（fix161）。
+        val displayId = resolveDisplayId(args)
         val point = convertPoint(
             x = args.getInt("x"),
             y = args.getInt("y"),
-            coordinateSpace = args.optString("coordinate_space")
+            coordinateSpace = args.optString("coordinate_space"),
+            displayId = displayId,
         )
-        val displayId = resolveDisplayId(args)
         // 虚拟屏上不弹悬屏指示（那会打扰用户），也不做触感反馈。
         if (displayId != null) return deviceController.tap(point.x, point.y, displayId)
         return clearOverlay(point) {
@@ -1042,13 +1044,13 @@ internal class AgentLocalTools(
         val x2 = args.getInt("x2")
         val y2 = args.getInt("y2")
         val coordinateSpace = args.optString("coordinate_space")
-        val first = convertPoint(x1, y1, coordinateSpace)
-        val second = convertPoint(x2, y2, coordinateSpace)
+        val displayId = resolveDisplayId(args)
+        val first = convertPoint(x1, y1, coordinateSpace, displayId)
+        val second = convertPoint(x2, y2, coordinateSpace, displayId)
         val point = ScreenPoint(
             x = ((first.x.toLong() + second.x.toLong()) / 2L).toInt(),
             y = ((first.y.toLong() + second.y.toLong()) / 2L).toInt(),
         )
-        val displayId = resolveDisplayId(args)
         if (displayId != null) return deviceController.tap(point.x, point.y, displayId)
         return clearOverlay(point) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
@@ -1134,13 +1136,14 @@ internal class AgentLocalTools(
     }
 
     private fun longPress(args: JSONObject): String {
+        val displayId = resolveDisplayId(args)
         val point = convertPoint(
             x = args.getInt("x"),
             y = args.getInt("y"),
-            coordinateSpace = args.optString("coordinate_space")
+            coordinateSpace = args.optString("coordinate_space"),
+            displayId = displayId,
         )
         val durationMs = args.optInt("duration_ms", 800)
-        val displayId = resolveDisplayId(args)
         if (displayId != null) return deviceController.longPress(point.x, point.y, durationMs, displayId)
         return clearOverlay(point) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.LONG_PRESS)
@@ -1150,18 +1153,20 @@ internal class AgentLocalTools(
     }
 
     private fun swipe(args: JSONObject): String {
+        val displayId = resolveDisplayId(args)
         val start = convertPoint(
             x = args.getInt("x1"),
             y = args.getInt("y1"),
-            coordinateSpace = args.optString("coordinate_space")
+            coordinateSpace = args.optString("coordinate_space"),
+            displayId = displayId,
         )
         val end = convertPoint(
             x = args.getInt("x2"),
             y = args.getInt("y2"),
-            coordinateSpace = args.optString("coordinate_space")
+            coordinateSpace = args.optString("coordinate_space"),
+            displayId = displayId,
         )
         val durationMs = args.optInt("duration_ms", 500)
-        val displayId = resolveDisplayId(args)
         if (displayId != null) {
             return deviceController.swipe(start.x, start.y, end.x, end.y, durationMs, displayId)
         }
@@ -1366,8 +1371,22 @@ internal class AgentLocalTools(
      * 坐标系必须显式声明。旧版按"上一次观察是否带截图"隐式切换默认值，模型无从得知，
      * 经常把截图像素当成屏幕像素；缺省时直接报参数错误，让模型在下一步改正。
      */
-    private fun convertPoint(x: Int, y: Int, coordinateSpace: String): ScreenPoint {
-        val space = publishedObservation.get().coordinateSpace
+    private fun convertPoint(
+        x: Int,
+        y: Int,
+        coordinateSpace: String,
+        displayId: Int?,
+    ): ScreenPoint {
+        val published = publishedObservation.get()
+        val space = published.coordinateSpace
+        // 尺寸口径必须跟着「这次点哪块屏」：最近一次观察可能根本不在这块屏上。
+        // 真机缺陷：先看主屏、再点虚拟屏，会拿 1216x2640 去校验 720x1280 的坐标（fix161）。
+        val dimensions = CoordinateDimensionPolicy.pick(
+            requested = deviceController.displayDimensions(displayId),
+            published = space?.let { it.screenWidth to it.screenHeight },
+            publishedDisplayId = published.displayId,
+            requestedDisplayId = displayId,
+        )
         val requestedSpace = coordinateSpace.trim().lowercase(Locale.ROOT)
         if (requestedSpace.isBlank()) {
             throw InvalidToolArgumentException(
@@ -1378,16 +1397,14 @@ internal class AgentLocalTools(
             if (x !in 0..NORMALIZED_MAX || y !in 0..NORMALIZED_MAX) {
                 throw InvalidToolArgumentException("normalized 坐标必须在 0–$NORMALIZED_MAX 之间：($x,$y)")
             }
-            val (width, height) = space?.let { it.screenWidth to it.screenHeight }
-                ?: deviceController.screenDimensions()
+            val (width, height) = dimensions ?: deviceController.screenDimensions()
             return ScreenPoint(
                 x = (x.toLong() * (width - 1) / NORMALIZED_MAX).toInt(),
                 y = (y.toLong() * (height - 1) / NORMALIZED_MAX).toInt(),
             )
         }
         if (requestedSpace == "screen") {
-            val (width, height) = space?.let { it.screenWidth to it.screenHeight }
-                ?: deviceController.screenDimensions()
+            val (width, height) = dimensions ?: deviceController.screenDimensions()
             if (x !in 0 until width || y !in 0 until height) {
                 throw InvalidToolArgumentException(
                     "屏幕坐标超出范围：($x,$y) not in ${width}x$height",
