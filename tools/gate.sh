@@ -90,6 +90,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.device.VirtualDisplayFallbackPolicyTest
   --tests io.github.mangi.eta.agent.device.RootScrollResendPolicyTest
   --tests io.github.mangi.eta.agent.device.BlindTapSafetyPolicyTest
+  --tests io.github.mangi.eta.agent.device.ScrollTargetPolicyTest
   --tests io.github.mangi.eta.agent.device.ScrollEvidenceContractTest
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
@@ -104,7 +105,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 所以这轮**没有**自动机制拦住「写了测试却没加进过滤列表」，只能靠这行提醒：
 # **新增 `ui/app` 下能本机跑的测试，必须同时加进上面的列表；漏加的表现是「用例数不变」。**
 # 2026-10-26 又踩一次同一类事：`UiNodeWireTest`（纯 JVM，守着 ui_nodes 体积不可回涨）
-# 写好并单跑通过，但加进列表前 `STAGES=test` 仍是 417 例——「全绿」根本没跑到它。已补（423 例）。
+# 2026-10-26 同一天第三次（差点第三次放过）：`ScrollTargetPolicyTest`（新增，守 scroll 的
+# 「先判定再动手」）也没进列表：门禁报 473 例全绿，它一例都没跑。已补（预计 479 例）。
+# **结论：新增任何能在本机跑的测试类，第一件事就是把它加到这个列表里。**
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest

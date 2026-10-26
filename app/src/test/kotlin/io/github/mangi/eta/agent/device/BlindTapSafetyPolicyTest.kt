@@ -192,4 +192,77 @@ class BlindTapSafetyPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `blocked node that is itself interactive is the suggestion`() {
+        val blocked = candidate(11, 300, 600, 620, 690, interactive = true, toggles = true)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(blocked, listOf(blocked))
+        assertEquals(11, suggestion?.index)
+        assertEquals(BlindTapSafetyPolicy.Suggestion.Kind.BLOCKED_NODE, suggestion?.kind)
+        assertEquals("blocked_node", suggestion?.kindName)
+        assertTrue(suggestion!!.toggles)
+    }
+
+    @Test
+    fun `non interactive container suggests the clickable row inside it`() {
+        // 上一版提示“请改点 blocked 或它的文本子节点”，而 blocked 本身点不动：
+        // 模型会再去一次，然后被同一个判据拦住。suggestion 直接给出可执行的节点。
+        val blocked = candidate(4, 0, 317, 720, 1280, interactive = false)
+        val row = candidate(9, 0, 640, 720, 871, interactive = true)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(
+            blocked,
+            listOf(
+                blocked,
+                row,
+                // 行内小图标：面积更小 → 不是首选（整行比小图标好点）
+                candidate(10, 600, 700, 660, 760, interactive = true),
+            ),
+        )
+        assertEquals(9, suggestion?.index)
+        assertEquals("child_control", suggestion?.kindName)
+    }
+
+    @Test
+    fun `suggestion prefers the largest child control`() {
+        val blocked = candidate(4, 0, 300, 720, 900, interactive = false)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(
+            blocked,
+            listOf(
+                blocked,
+                candidate(20, 0, 320, 720, 520, interactive = true),
+                candidate(21, 0, 540, 720, 720, interactive = true),
+            ),
+        )
+        assertEquals(20, suggestion?.index)
+    }
+
+    @Test
+    fun `no interactive child means no suggestion instead of a guess`() {
+        // 纯文本标签：范围内没有任何可交互节点 → 不编 index，提示改为“先 observe_screen”。
+        val blocked = candidate(30, 0, 300, 720, 400, interactive = false)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(
+            blocked,
+            listOf(
+                blocked,
+                candidate(31, 0, 310, 300, 380, interactive = false),
+                // 中心在 blocked 之外的控件不算范围内
+                candidate(32, 0, 600, 720, 700, interactive = true),
+            ),
+        )
+        assertNull(suggestion)
+    }
+
+    @Test
+    fun `ancestor container is never mistaken for a child control`() {
+        // 面积不小于目标的（祖先）不算子控件，否则会建议去点一整屏根容器。
+        val blocked = candidate(40, 100, 100, 400, 400, interactive = false)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(
+            blocked,
+            listOf(
+                blocked,
+                candidate(41, 0, 0, 720, 1280, interactive = true),
+            ),
+        )
+        assertNull(suggestion)
+    }
 }

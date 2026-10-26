@@ -507,12 +507,37 @@ internal class RootShellDeviceController(
         }
         if (!rootAvailable()) return accessibilityUnavailable()
         val beforeNodes = dumpUiNodes(120, displayId)
-        val targetBounds = beforeNodes
-            .asSequence()
-            .filter(UiNode::scrollable)
+        val scrollableNodes = beforeNodes.filter(UiNode::scrollable)
+        // 「能不能滚」先判定再动手：以前取不到可滚动节点就退回整屏盲滑，
+        // 在没有滚动容器的界面上等于把一次全屏滑动随机丢给页面（可能翻页 / 下拉刷新），
+        // 而且事后无法证明滑到了哪里。判定逻辑见 ScrollTargetPolicy。
+        val decision = ScrollTargetPolicy.decide(
+            nodeCount = beforeNodes.size,
+            scrollableCount = scrollableNodes.size,
+        )
+        if (decision != ScrollTargetPolicy.Decision.PROCEED) {
+            return scrollErrorJson(
+                tool = "scroll",
+                direction = parsed,
+                code = ScrollTargetPolicy.codeFor(decision),
+                message = ScrollTargetPolicy.messageFor(decision, beforeNodes.size, scrollableNodes.size),
+                retryable = false,
+            )
+        }
+        val targetBounds = scrollableNodes
             .maxByOrNull { node -> node.bounds.width().toLong() * node.bounds.height().toLong() }
             ?.bounds
-            ?: screenContentBounds(displayId)
+            ?: return scrollErrorJson(
+                tool = "scroll",
+                direction = parsed,
+                code = ScrollTargetPolicy.NO_TARGET_CODE,
+                message = ScrollTargetPolicy.messageFor(
+                    ScrollTargetPolicy.Decision.NO_TARGET,
+                    beforeNodes.size,
+                    scrollableNodes.size,
+                ),
+                retryable = false,
+            )
         return rootScroll(
             tool = "scroll",
             direction = parsed,
@@ -940,6 +965,8 @@ internal class RootShellDeviceController(
                 .put("code", BlindTapSafetyPolicy.INSUFFICIENT_TREE_CODE)
                 .put("fallback_reason", VirtualDisplayFallbackPolicy.GESTURE_UNSUPPORTED)
                 .put("node_count", candidates.size)
+                // 同一棵树再点一次还是同样的结论，用 observe 才能改变判断依据。
+                .put("retryable", false)
                 .put(
                     "message",
                     "这次观察只有 ${candidates.size} 个节点（界面多半还在加载），无法确认落点上有什么：" +
@@ -969,6 +996,16 @@ internal class RootShellDeviceController(
             } else {
                 "区域内含开关 #${blocked.index}"
             }
+            // 光说「不能点」不够：模型还得自己猜该点谁，而 blocked 往往是个不可交互的容器
+            // （照着上一版提示去点它，会再次被同一个判据拦住）。这里把可执行的那个节点算出来。
+            val suggestion = BlindTapSafetyPolicy.suggestTarget(blocked, candidates)
+            val next = when {
+                suggestion == null -> "建议先 observe_screen，改点带文本的可交互节点"
+                suggestion.kind == BlindTapSafetyPolicy.Suggestion.Kind.BLOCKED_NODE ->
+                    "一次调用即可：直接按原参数改 index=${suggestion.index} 再调一次"
+                else -> "一次调用即可：改用 index=${suggestion.index}" +
+                    (if (suggestion.toggles) "（那是开关本身）" else "（那是范围内的可交互控件）")
+            }
             return JSONObject()
                 .put("ok", false)
                 .put("method", "ROOT_COORDINATE_FALLBACK")
@@ -979,10 +1016,19 @@ internal class RootShellDeviceController(
                 .put("blocked_target_toggles", blocked.toggles)
                 .put("blocked_by", if (centerHit != null) "center_hit" else "toggle_inside")
                 .put("node_count", candidates.size)
+                // 原样重试一定得到同样的拦截，所以显式标为不可重试。
+                .put("retryable", false)
+                .apply {
+                    suggestion?.let { candidate ->
+                        put("suggestion_index", candidate.index)
+                        put("suggestion_kind", candidate.kindName)
+                        put("suggestion_interactive", candidate.interactive)
+                        put("suggestion_toggles", candidate.toggles)
+                    }
+                }
                 .put(
                     "message",
-                    "已取消这次盲点：节点 #$index 的$why，盲点可能误触开关。" +
-                        "请改点 #${blocked.index} 或它的文本子节点",
+                    "已取消这次盲点：节点 #$index 的$why，盲点可能误触开关。$next",
                 )
         }
         // 页面还在切换时打进去的坐标动作会落在过渡中的窗口上（点了/滑了都没反应），
@@ -1682,17 +1728,6 @@ internal class RootShellDeviceController(
             ?: error("无法读取屏幕尺寸：${result.output.take(160)}")
     }
 
-    private fun screenContentBounds(displayId: Int? = null): Rect {
-        val virtual = displayId?.let { resolveVirtualSession(it) }
-        val (width, height) = if (virtual != null) virtual.width to virtual.height else screenSize()
-        return Rect(
-            0,
-            (height * 0.1f).toInt(),
-            width,
-            (height * 0.9f).toInt(),
-        )
-    }
-
     private fun rootScroll(
         tool: String,
         direction: ScrollDirection,
@@ -2278,6 +2313,7 @@ internal class RootShellDeviceController(
         direction: ScrollDirection?,
         code: String,
         message: String,
+        retryable: Boolean? = null,
     ): String = JSONObject()
         .put("ok", false)
         .put("tool", tool)
@@ -2286,6 +2322,9 @@ internal class RootShellDeviceController(
         .put("at_boundary", JSONObject.NULL)
         .put("code", code)
         .put("message", message.take(240))
+        // 明确标注「原样重试没用」：模型对 INVALID_ARGUMENT 的默认反应是改参数重来，
+        // 而这类失败与参数无关。false 是结论，不是建议。
+        .apply { retryable?.let { put("retryable", it) } }
         .toString()
 
     private fun nodeActionJson(

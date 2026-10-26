@@ -101,4 +101,53 @@ internal object BlindTapSafetyPolicy {
             .filter { target.contains(it.box.centerX, it.box.centerY) }
             .minByOrNull { it.box.area }
     }
+
+    /**
+     * 拦截之后给模型的「一步就能做完」的替代目标。
+     *
+     * 拦截本身只说明了「不能点这个」，模型仍要自己猜该点谁：上一版提示里写的是
+     * 「请改点 #blocked 或它的文本子节点」，而 #blocked 常常是个**不可交互的容器**
+     * —— 照着点会再次被同一个判据拦住，白费一轮。所以这里直接把「可执行的那个节点」
+     * 算出来：blocked 自己可交互就是它，否则在它范围内挑最合适的子控件。
+     */
+    data class Suggestion(
+        val index: Int,
+        /** [Kind.BLOCKED_NODE]：blocked 本身可交互；[Kind.CHILD_CONTROL]：范围内的子控件。 */
+        val kind: Kind,
+        val interactive: Boolean,
+        val toggles: Boolean,
+    ) {
+        enum class Kind { BLOCKED_NODE, CHILD_CONTROL }
+
+        /** 响应里用的短标识（`suggestion_kind`）。 */
+        val kindName: String
+            get() = when (kind) {
+                Kind.BLOCKED_NODE -> "blocked_node"
+                Kind.CHILD_CONTROL -> "child_control"
+            }
+    }
+
+    /**
+     * @return 可以真正点下去的那个节点；null 表示 blocked 范围内没有任何可交互控件
+     *   （那种情况只能先重新观察，提示里就不要编一个 index 出来）。
+     *
+     * 子控件取**面积最大**的：整行可点（Row 带 ACTION_CLICK）比行内的小图标更容易点中，
+     * 也更能表达「整行的语义」。这与 centerHitOnOtherNode 取最小面积的目标不同 ——
+     * 那里要回答「盲点实际会按到谁」，这里要回答「该点哪个」。
+     */
+    fun suggestTarget(blocked: Candidate, candidates: List<Candidate>): Suggestion? {
+        if (blocked.interactive) {
+            return Suggestion(blocked.index, Suggestion.Kind.BLOCKED_NODE, interactive = true, toggles = blocked.toggles)
+        }
+        if (blocked.box.isEmpty) return null
+        val child = candidates
+            .asSequence()
+            .filter { it.index != blocked.index && !it.box.isEmpty }
+            .filter { it.interactive || it.toggles }
+            .filter { it.box.area < blocked.box.area }
+            .filter { blocked.box.contains(it.box.centerX, it.box.centerY) }
+            .maxByOrNull { it.box.area }
+            ?: return null
+        return Suggestion(child.index, Suggestion.Kind.CHILD_CONTROL, child.interactive, child.toggles)
+    }
 }

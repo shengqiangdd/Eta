@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.SystemClock
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.device.DeviceControlUnavailableException
+import io.github.mangi.eta.agent.device.DisplayScopeErrors
 import io.github.mangi.eta.agent.device.RootShellDeviceController.Observation
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.RootShellDeviceController
@@ -436,16 +437,25 @@ internal class AgentLocalTools(
                 )
             }
         }.getOrElse { throwable ->
-            textResult(
+            val code = when (throwable) {
+                // 参数错与「屏不对」必须分开：原来两者都是 INVALID_ARGUMENT，
+                // 模型会去改参数重来（真机上反复发生），而真正的修法是 observe / launch。
+                is InvalidToolArgumentException -> throwable.code
+                is org.json.JSONException -> "INVALID_ARGUMENT"
+                is DeviceControlUnavailableException -> "ACCESSIBILITY_UNAVAILABLE"
+                else -> "TOOL_ERROR"
+            }
+            val body = JSONObject(
                 errorResult(
-                    code = when (throwable) {
-                        is InvalidToolArgumentException, is org.json.JSONException -> "INVALID_ARGUMENT"
-                        is DeviceControlUnavailableException -> "ACCESSIBILITY_UNAVAILABLE"
-                        else -> "TOOL_ERROR"
-                    },
-                    message = throwable.message ?: throwable.javaClass.simpleName
-                )
+                    code = code,
+                    message = throwable.message ?: throwable.javaClass.simpleName,
+                ),
             )
+            // 不可重试的错误必须说出来：只给错误码时，模型会把「屏不对」当成「参数不对」再试一次。
+            if (throwable is InvalidToolArgumentException && !throwable.retryable) {
+                body.put("retryable", false)
+            }
+            textResult(body.toString())
         }.let { result ->
             if (result.sensitive || !AgentSensitiveToolPolicy.isSensitive(toolCall.name)) {
                 result
@@ -840,7 +850,11 @@ internal class AgentLocalTools(
         // `input -d` 会回退到默认屏 —— 用户会看到自己的主屏被点。宁可报错，也不能动主屏。
         if (resolved != null && virtualDisplays.findByDisplayId(resolved) == null) {
             throw InvalidToolArgumentException(
-                "虚拟屏 $resolved 已释放或不存在；本次动作未执行。请重新 virtual_display_list 或 observe_screen",
+                message = "虚拟屏 $resolved 已释放或不存在；本次动作未执行。" +
+                    "请先 virtual_display_list 或 observe_screen 确认目标屏（需要时重新建屏 / 把应用拉回这块屏）；" +
+                    "不要原样重试这次调用",
+                code = DisplayScopeErrors.RELEASED,
+                retryable = false,
             )
         }
         // 屏还在、但应用可能已经迁回主屏（canHostTasks=false 的系统行为）：
@@ -862,7 +876,11 @@ internal class AgentLocalTools(
         }.getOrNull() ?: return
         if (count == 0) {
             throw InvalidToolArgumentException(
-                "虚拟屏 $displayId 上没有可见窗口（应用可能已迁回主屏）；本次动作未执行",
+                message = "虚拟屏 $displayId 上没有可见窗口（应用可能已迁回主屏或退到后台）；本次动作未执行。" +
+                    "请先 virtual_display_launch 把应用带回这块屏，或用 observe_screen 确认它还在；" +
+                    "不要原样重试这次调用",
+                code = DisplayScopeErrors.NO_VISIBLE_WINDOW,
+                retryable = false,
             )
         }
     }
@@ -3085,7 +3103,13 @@ internal class AgentLocalTools(
 
     private data class ScreenPoint(val x: Int, val y: Int)
 
-    private class InvalidToolArgumentException(message: String) : IllegalArgumentException(message)
+    private class InvalidToolArgumentException(
+        message: String,
+        /** 回给模型的错误码；与「参数非法」区分开，避免模型把设备状态问题当成参数问题。 */
+        val code: String = "INVALID_ARGUMENT",
+        /** 同样的调用再来一次会不会有不同的结果；屏不对这类情况恒为 false。 */
+        val retryable: Boolean = true,
+    ) : IllegalArgumentException(message)
 
     private data class PublishedObservation(
         val elements: RootShellDeviceController.ElementObservation? = null,

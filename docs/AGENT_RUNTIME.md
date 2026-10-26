@@ -6416,3 +6416,75 @@ airplane=0 wifi=1
   按「宁可少测一次，也不拿用户设备冒险」处理。
 - 探针已不会在未就绪的树上乱点，但真实任务里模型仍可能拿半成品树操作 ——
   工具层靠 `insufficient_tree` 挡住并让它先观察。
+
+## fix156：两种「不能动」的错误码别混成一个 INVALID_ARGUMENT（2026-10-26 夜）
+
+### 一、起因：一个错误码把两件事说成了一件
+
+`scroll` / `scroll_element` 在真机上出现过 `INVALID_ARGUMENT`，日志里看像是参数写错，
+实际原因是**屏上没有可见窗口**：`STEP2` 之后一条无条件 `BACK` 把设置退到后台，
+虚拟屏窗口数变 0，`ensureDisplayHasTask()` 抛 `InvalidToolArgumentException`，
+工具层 catch 时把它和 `JSONException` 合并映射成 `INVALID_ARGUMENT`。
+
+后果对模型是可观测的：`INVALID_ARGUMENT` 的语义是「你的参数不对」，于是它改 `direction`
+或 `amount` 再试 —— 而这条路与参数无关，每次都得到同样结果。同一轮里还有第二种
+「不能动」被混在别处：界面树里没有任何 `scrollable` 节点时，旧代码**退回整屏 10%~90%
+盲滑**（`screenContentBounds`），在没有滚动容器的页面上等于随机触发翻页 / 下拉刷新，
+而且事后只能报 `ACTION_OUTCOME_UNKNOWN`。
+
+### 二、改动（三处）
+
+1. **错误码分离**：`InvalidToolArgumentException` 新增 `code` 与 `retryable`（默认
+   `"INVALID_ARGUMENT"` / `true`），catch 时用 `throwable.code`；两个屏级情况各带编码且
+   `retryable=false`：
+   - `DISPLAY_RELEASED`：虚拟屏已释放或不存在；
+   - `DISPLAY_NO_VISIBLE_WINDOW`：屏还在、但上面没有可见窗口（应用迁回主屏 / 退到后台）。
+   两条 message 都写了「下一步该 observe / launch」与「不要原样重试这次调用」。
+   常量集中在 `DisplayScopeErrors`，编辑器不依赖 android 类型，便于单测与跨端对齐。
+2. **滚动先判定再动手**：新增 `ScrollTargetPolicy`（纯函数）：
+   `scrollableCount > 0 → PROCEED`；`nodeCount < 4 → SCROLL_TREE_UNREADABLE`；
+   否则 `NO_SCROLLABLE_TARGET`。两种取消都带 `retryable=false`，并在 message 里指明
+   「改用 swipe 指定起止点」或「先 observe_screen」。`screenContentBounds()` 随之删除 ——
+   整屏盲滑这条路不再存在（不是被关掉，是根本没有入口）。
+3. **拦截响应给出可直接点的目标**：盲点拦截原来只说「请改点 #blocked 或它的文本子节点」，
+   而 `blocked` 常常是不可交互的容器 —— 照着点会被同一判据再拦一次。新增
+   `BlindTapSafetyPolicy.suggestTarget()`：`blocked` 自身可交互就是它（`suggestion_kind=blocked_node`），
+   否则在它范围内挑**面积最大**的可交互子控件（`child_control`）；找不到就**不给** index，
+   提示改为「先 observe_screen」。响应新增 `suggestion_index` / `suggestion_kind` /
+   `suggestion_interactive` / `suggestion_toggles` / `retryable=false`。
+
+### 三、验证
+
+- **单测**：`ScrollTargetPolicyTest` 6 例（可滚优先、小树判不可读、整树无可滚判无目标、
+  两码不同、message 含下一步、PROCEED 不提失败）+ `BlindTapSafetyPolicyTest` 新增 5 例
+  （自身可交互、容器挑整行、取最大子控件、无子控件不给建议、祖先容器不算子控件）。
+  门禁 `STAGES=test,assemble` 全绿：**479 例 / 0 失败**，打包 91,535,025 字节。
+- **真机（canary，本机 PKX110 / Android 16，display 76 / 77）**：
+  ```
+  STEP3b scroll ok=false code=SCROLL_TREE_UNREADABLE retryable=false
+  STEP5 display=77 code=DISPLAY_NO_VISIBLE_WINDOW retryable=false   verdict=OK
+  airplane=0 wifi=1
+  ```
+  `STEP5` 用一块**空虚拟屏**（建屏不启动应用）复现旧缺陷的现场：窗口数 0。
+  修复前这条路径给 `INVALID_ARGUMENT`，修复后给带 `retryable=false` 的专属码。
+  `STEP3b` 是同一次运行里另一条新路径（节点数不足 → 取消盲滑），也如实带了下一步。
+
+### 四、未验证（诚实清单）
+
+- **`suggestion_index` 只在单测里验过**：真机验证需要「解锁屏幕 + 设置首页可点容器」，
+  而本轮复测时设备处于锁屏（`secure=true`，`device_policy` 有凭据），虚拟屏只能看到
+  `com.android.systemui` 的时钟/日期两个节点 —— 探针 STEP1 因此 `first_nodes=2`，
+  STEP2 / STEP3 / STEP4 全部 `skipped`。**没有绕过锁屏去做验证**（既不安全也不该做）。
+- **`NO_SCROLLABLE_TARGET` 没有真机样本**：锁屏状态下的树只有 2 个节点，命中的是
+  `SCROLL_TREE_UNREADABLE` 分支；`NO_SCROLLABLE_TARGET` 需要「节点很多但没有滚动容器」的页面。
+- **正常滚动回归（`INPUT_SWIPE`）本轮没在真机上复测**：同因（锁屏）。改动只是把
+  「取不到可滚节点 → 盲滑」换成「取不到 → 报错」，取到时可滚节点时行为不变，
+  但这句话目前只有代码与单测支撑，等解锁后需补一轮 `STEP3b scroll ok=true method=INPUT_SWIPE`。
+
+### 五、门禁自身的一个坑（同日第三次）
+
+新增 `ScrollTargetPolicyTest` 后，`STAGES=test` 报 **473 例全绿** —— 而那个新测试类
+**一例都没跑**：它没有加进 `tools/gate.sh` 的 `FAST_TEST_FILTERS`。
+`ui/app` 目录下已有同类注释警告两次（`UiNodeWireTest`、`LocaleResourceParityTest`），
+这是第三次。已补进列表（479 例），并把「新增能在本机跑的测试类，第一件事是加进列表」
+写进脚本注释 —— 因为**门禁的绿色在这种情况下来自「没跑到」，不是「跑过了」**。

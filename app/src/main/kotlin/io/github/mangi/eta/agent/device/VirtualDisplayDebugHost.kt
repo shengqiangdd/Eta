@@ -300,8 +300,22 @@ internal object VirtualDisplayDebugHost {
                     "STEP1 launched=${create.optBoolean("launched")} display_id=$displayId " +
                         "first_nodes=${first?.optInt("ui_nodes_shown", 0)}",
                 )
-                val nodes = first?.optJSONArray("ui_nodes")
-                val observationId = first?.optString("observation_id").orEmpty()
+                var nodes = first?.optJSONArray("ui_nodes")
+                var observationId = first?.optString("observation_id").orEmpty()
+                // 首屏时序（已知）：真机上首次建屏有时只回 2 个容器节点（界面还在画）。
+                // 探针不能因此判「没有可点目标」就结束 —— 模型会再 observe 一次，这里也照做。
+                if (displayId > 0 && (nodes?.length() ?: 0) < 4) {
+                    val again = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    val againNodes = again.optJSONArray("ui_nodes")
+                    if ((againNodes?.length() ?: 0) > (nodes?.length() ?: 0)) {
+                        nodes = againNodes
+                        observationId = again.optString("observation_id")
+                        report.appendLine("STEP1 retry nodes=${againNodes?.length() ?: 0} observation=$observationId")
+                    }
+                }
                 // 找一个「不可点」的节点：线格式只在 clickable=true 时输出该键，所以 !optBoolean 就是不可点。
                 //
                 // 安全背景：探针启动的是系统设置，首页那把开关（含飞行模式）就在屏幕中部。
@@ -468,6 +482,96 @@ internal object VirtualDisplayDebugHost {
                         "STEP3b scroll ok=${scrollTool.optBoolean("ok")} " +
                             "method=${scrollTool.optString("method")} code=${scrollTool.optString("code")}",
                     )
+                    // STEP4：拦截后是否给出「可直接点」的替代目标（suggestion_index）。
+                    // 只挑「中心落在**非开关**可交互节点上」的容器：即使判据哪天回归失效，
+                    // 最多打开一个设置子页；绝不用会拨开关的目标（fix155 事故就是拨到了飞行模式）。
+                    // 被拦下时不会发出任何手势，所以这一步本身不改设备状态。
+                    var blockedIndex = -1
+                    var expectedIndex = -1
+                    if (nodes2 != null) {
+                        outer@ for (i in 0 until nodes2.length()) {
+                            val container = nodes2.optJSONObject(i) ?: continue
+                            if (container.optBoolean("clickable")) continue
+                            val containerBox = boundsOf(container) ?: continue
+                            val containerArea = areaOf(containerBox)
+                            if (containerArea <= 0L) continue
+                            val center = centerOf(container) ?: continue
+                            var hit: JSONObject? = null
+                            var hitArea = Long.MAX_VALUE
+                            for (j in 0 until nodes2.length()) {
+                                val other = nodes2.optJSONObject(j) ?: continue
+                                if (!other.optBoolean("clickable")) continue
+                                // 开关一律跳过：拨动它就是改设备状态。
+                                if (other.has("checked")) continue
+                                val otherBox = boundsOf(other) ?: continue
+                                val otherArea = areaOf(otherBox)
+                                if (otherArea <= 0L || otherArea >= containerArea) continue
+                                if (center[0] < otherBox[0] || center[0] >= otherBox[2]) continue
+                                if (center[1] < otherBox[1] || center[1] >= otherBox[3]) continue
+                                if (otherArea < hitArea) {
+                                    hit = other
+                                    hitArea = otherArea
+                                }
+                            }
+                            val target = hit ?: continue
+                            blockedIndex = container.optInt("index", -1)
+                            expectedIndex = target.optInt("index", -1)
+                            if (blockedIndex >= 0 && expectedIndex >= 0) break@outer
+                        }
+                    }
+                    if (blockedIndex >= 0 && observationId2.isNotBlank()) {
+                        val blockedTap = call(
+                            "tap_element",
+                            JSONObject().put("observation_id", observationId2).put("index", blockedIndex),
+                        )
+                        val code = blockedTap.optString("code")
+                        val suggestion = blockedTap.optInt("suggestion_index", -1)
+                        report.appendLine(
+                            "STEP4 index=$blockedIndex expected=$expectedIndex code=$code " +
+                                "blocked_by=${blockedTap.optString("blocked_by")} suggestion=$suggestion " +
+                                "retryable=${blockedTap.optBoolean("retryable", true)} " +
+                                "ok=${blockedTap.optBoolean("ok")}",
+                        )
+                        report.appendLine(
+                            "STEP4 verdict=" + when {
+                                code != "COORDINATE_FALLBACK_UNSAFE_TARGET" -> "FAIL_NOT_BLOCKED"
+                                suggestion != expectedIndex -> "FAIL_SUGGESTION_MISMATCH"
+                                blockedTap.optBoolean("retryable", true) -> "FAIL_RETRYABLE"
+                                else -> "OK"
+                            },
+                        )
+                    } else {
+                        report.appendLine("STEP4 skipped（没有「中心落在非开关可交互节点上」的容器）")
+                    }
+                    // STEP5：屏上没有可见窗口时的错误码。
+                    // 回归点：以前这种情况被 catch 成 INVALID_ARGUMENT，模型会以为参数写错了去改参数重试；
+                    // 现在应是 DISPLAY_NO_VISIBLE_WINDOW（且 retryable=false）。
+                    val empty = call(
+                        "virtual_display_create",
+                        JSONObject()
+                            .put("width", 480)
+                            .put("height", 800)
+                            .put("density_dpi", 320)
+                            .put("purpose", "empty display probe"),
+                    )
+                    val emptyDisplay = empty.optInt("display_id", -1)
+                    if (emptyDisplay > 0) {
+                        val emptyScroll = call(
+                            "scroll",
+                            JSONObject().put("display_id", emptyDisplay).put("direction", "down"),
+                        )
+                        report.appendLine(
+                            "STEP5 display=$emptyDisplay code=${emptyScroll.optString("code")} " +
+                                "retryable=${emptyScroll.optBoolean("retryable", true)}",
+                        )
+                        report.appendLine(
+                            "STEP5 verdict=" +
+                                if (emptyScroll.optString("code") == "DISPLAY_NO_VISIBLE_WINDOW") "OK" else "FAIL",
+                        )
+                        call("virtual_display_release", JSONObject().put("id", empty.optString("id")))
+                    } else {
+                        report.appendLine("STEP5 skipped create_empty_display_failed")
+                    }
                     call("virtual_display_release", JSONObject().put("id", id))
                 }
             } catch (error: Throwable) {

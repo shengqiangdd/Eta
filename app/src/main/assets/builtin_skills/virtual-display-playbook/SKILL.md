@@ -50,11 +50,15 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
    还有一条**安全拦截**：若这个节点的中心点落在**更小的**节点上（典型是容器：根
    `ScrollView` 的中心正好压在快捷开关行），盲点等于随机拨开关 —— 实测把飞行模式打开过，
    设备当场断网。此时返回 `code=COORDINATE_FALLBACK_UNSAFE_TARGET` 并带
-   `blocked_target_index`：**手势没有发出**，下一步直接点那个 index（或它的文本子节点），
-   不要换个坐标硬点。
+   `blocked_target_index`，同时给出 **`suggestion_index`**：那是已算好的、真正能点的节点
+   （blocked 自己可交互就是它，`suggestion_kind=blocked_node`；否则是它范围内面积最大的
+   可交互子控件，`child_control`）。**手势没有发出**，下一步改用 `suggestion_index`
+   （响应里没有这个字段时，才需要 `observe_screen` 自己找一个带文本的可点节点），
+   不要换坐标硬点、也不要重复原 index。
    同一层还有两条：`blocked_by=toggle_inside`（节点区域内含开关，中心没压中也可能拨到它）、
    `code=COORDINATE_FALLBACK_INSUFFICIENT_TREE`（整棵树不到 4 个节点，界面还没画完）。
    后者的正确反应是**先 `observe_screen`**，不是换个节点再试 —— 那时你看到的本来就不全。
+   两者都带 `retryable=false`：同一棵树同一参数再来一次，结论不会变。
 2. **`type_text(submit=true)` 仍不可靠**：文本写进去了但没提交，界面不动。
    改为写入文本后点击发送按钮；发送后到消息列表里确认新消息真的出现。
 3. **应用内跳页时任务可能被系统迁走**（本机 `DisplayInfo.canHostTasks=false`）。
@@ -73,6 +77,22 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
 - 另一种：`ok=true` 但 `verified_by=anchor_motion_partial`。内容确实移位了，只是幅度不一致
   （例如头部正在展开/收起），所以 `direction_confirmed=false`。这说明**已经滚动了**；
   需要确认方向时再 `observe_screen` 一次，同样别直接重滚。
+- **没有任何可滚动节点时不会盲滑**（`retryable=false`）：
+  - `code=SCROLL_TREE_UNREADABLE`：只读到不到 4 个节点，界面还没画完 → 先 `observe_screen`；
+  - `code=NO_SCROLLABLE_TARGET`：节点够多但没有 `scrollable=true` 的容器 → 这条页面不用
+    `scroll`，要按方向滑就用 `swipe` 指定起止点（起手避开输入框）。
+  两个码都表示**手势一次都没发出**，所以不必担心「已经滑过又滑一次」；但换个参数重试同样
+  没用 —— 判据看的是界面树，不是参数。
+
+## 「屏不对」与「参数错」是两件事
+
+以下两种错误**不是**参数问题，改 `direction` / `amount` / `index` 永远不会成功：
+
+- `code=DISPLAY_NO_VISIBLE_WINDOW`：屏还在，但上面没有可见窗口（应用退到后台或被迁回主屏）。
+  先 `virtual_display_launch(force=true)` 把应用带回来（它能一次完成启动 + 首屏观察）；
+- `code=DISPLAY_RELEASED`：这块屏已经释放，`virtual_display_list` 确认后再新建 / 换屏。
+
+两者都带 `retryable=false`。看到它们就去修「屏」，别再修参数。
 
 ## 坐标参考（1080×2400 @420dpi，Eta 聊天页实测）
 
