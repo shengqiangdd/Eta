@@ -509,7 +509,10 @@ internal object VirtualDisplayDebugHost {
                         }
                     }
                     if (preferredObservationId.isNotBlank() && scrollableCount >= 2 && smallestScrollable >= 0) {
-                        val preferredScroll = call(
+                        // 设置页在滚动后仍可能有动画 / 异步重排，工具内部自动重试一次也可能仍是
+                        // STALE_CONTENT（真机 STEP3c 就撞上了）。这里再补一轮：等页面停稳、重新观察、
+                        // 重新取「最小可滚节点」，而不是把「没测到」当成「回归了」。
+                        var preferredScroll = call(
                             "scroll_element",
                             JSONObject()
                                 .put("observation_id", preferredObservationId)
@@ -517,6 +520,40 @@ internal object VirtualDisplayDebugHost {
                                 .put("direction", "up")
                                 .put("amount", "small"),
                         )
+                        var staleRetry = 0
+                        while (preferredScroll.optString("code") == "STALE_CONTENT" && staleRetry < 2) {
+                            staleRetry++
+                            call("wait", JSONObject().put("duration_ms", 1200))
+                            val again = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                            )
+                            val againId = again.optString("observation_id")
+                            val againNodes = again.optJSONArray("ui_nodes")
+                            var retryIndex = -1
+                            var retryArea = Long.MAX_VALUE
+                            if (againNodes != null) {
+                                for (i in 0 until againNodes.length()) {
+                                    val node = againNodes.optJSONObject(i) ?: continue
+                                    if (!node.optBoolean("scrollable")) continue
+                                    val area = areaOfNode(node)
+                                    if (area > 0 && area < retryArea) {
+                                        retryArea = area
+                                        retryIndex = node.optInt("index", -1)
+                                    }
+                                }
+                            }
+                            if (againId.isBlank() || retryIndex < 0) break
+                            smallestScrollable = retryIndex
+                            preferredScroll = call(
+                                "scroll_element",
+                                JSONObject()
+                                    .put("observation_id", againId)
+                                    .put("index", retryIndex)
+                                    .put("direction", "up")
+                                    .put("amount", "small"),
+                            )
+                        }
                         val fallbackBody = preferredScroll.optJSONObject("fallback")
                         val regionFrom = fallbackBody?.optString("region_from").orEmpty()
                         report.appendLine(
@@ -528,6 +565,8 @@ internal object VirtualDisplayDebugHost {
                             "STEP3c verdict=" + when {
                                 regionFrom == "preferred_node" -> "OK"
                                 regionFrom == "largest_scrollable" -> "FAIL_IGNORED_PREFERENCE"
+                                // 页面一直在动：这一轮没测到，不是「指东滑西」回来了。
+                                preferredScroll.optString("code") == "STALE_CONTENT" -> "INCONCLUSIVE_PAGE_STILL_MOVING"
                                 !preferredScroll.optBoolean("ok") -> "FAIL_SCROLL_ERROR"
                                 else -> "FAIL_NO_REGION_SOURCE"
                             },
@@ -727,6 +766,22 @@ internal object VirtualDisplayDebugHost {
                                 else -> "FAIL_SILENT"
                             },
                         )
+                        // STEP7b（fix160）：同一块「没有输入框」的屏上清空，同样必须说「不确定」。
+                        // 清空走 CTRL+A + DEL，与 input text 一样「退出 0 但可能什么都没做」。
+                        val blindClear = call("clear_text", JSONObject().put("display_id", displayId))
+                        report.appendLine(
+                            "STEP7b clear verification=${blindClear.optString("input_verification")} " +
+                                "mode=${blindClear.optString("input_mode")} " +
+                                "note=${blindClear.optString("note").take(30)}",
+                        )
+                        report.appendLine(
+                            "STEP7b verdict=" + when {
+                                blindClear.optString("input_verification") == "unknown" &&
+                                    blindClear.optString("note").isNotBlank() -> "OK_HONEST"
+                                blindClear.optString("input_verification") == "verified" -> "FAIL_CLAIMED_CLEARED"
+                                else -> "FAIL_SILENT"
+                            },
+                        )
                     }
                     if (editableIndex < 0 && searchIndex >= 0) {
                         // 设置首页没有输入框：点它的「搜索框」进搜索页（那里有真的输入框）。
@@ -881,6 +936,75 @@ internal object VirtualDisplayDebugHost {
                                     else -> "FAIL_NO_VERIFICATION_FIELD"
                                 },
                             )
+                            // STEP9（fix160）：清空与追加各自要有结论。
+                            // 两者都走「退出码 0 但可能什么都没做」的命令，只看退出码等于从不验证。
+                            fun editableTextIn(raw: org.json.JSONArray?): String? {
+                                if (raw == null) return null
+                                for (i in 0 until raw.length()) {
+                                    val node = raw.optJSONObject(i) ?: continue
+                                    if (!node.optBoolean("editable")) continue
+                                    return node.optString("text")
+                                }
+                                return null
+                            }
+                            val cleared = call("clear_text", JSONObject().put("display_id", inputDisplayId))
+                            val afterClear = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 40),
+                            )
+                            val afterClearText = editableTextIn(afterClear.optJSONArray("ui_nodes"))
+                            report.appendLine(
+                                "STEP9 clear verification=${cleared.optString("input_verification")} " +
+                                    "mode=${cleared.optString("input_mode")} field=[${afterClearText ?: "?"}] " +
+                                    "note=${cleared.optString("note").take(28)}",
+                            )
+                            report.appendLine(
+                                "STEP9 verdict=" + when {
+                                    cleared.optString("input_verification") == "verified" &&
+                                        afterClearText.isNullOrEmpty() -> "OK"
+                                    // 说清空了、页面里却还有字 —— 正是本轮要防的那种假成功。
+                                    cleared.optString("input_verification") == "verified" -> "FAIL_CLAIMED_CLEARED"
+                                    cleared.optString("input_verification") == "not_applied" -> "OK_DETECTED"
+                                    else -> "OK_UNVERIFIABLE"
+                                },
+                            )
+                            // 追加：先写入 et，再 append a；正确结果必须是 eta（不是 a）。
+                            call("type_text", JSONObject().put("text", "et").put("display_id", inputDisplayId))
+                            val baseState = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 40),
+                            )
+                            val baseText = editableTextIn(baseState.optJSONArray("ui_nodes"))
+                            report.appendLine("STEP9b base=[$baseText]")
+                            if (!baseText.isNullOrEmpty()) {
+                                val appended = call(
+                                    "type_text",
+                                    JSONObject().put("text", "a").put("display_id", inputDisplayId).put("mode", "append"),
+                                )
+                                val afterAppend = call(
+                                    "observe_screen",
+                                    JSONObject().put("display_id", inputDisplayId).put("max_nodes", 40),
+                                )
+                                val afterAppendText = editableTextIn(afterAppend.optJSONArray("ui_nodes"))
+                                val appendVerification = appended.optString("input_verification")
+                                report.appendLine(
+                                    "STEP9b append verification=$appendVerification " +
+                                        "mode=${appended.optString("input_mode")} field=[$afterAppendText] " +
+                                        "note=${appended.optString("note").take(28)}",
+                                )
+                                report.appendLine(
+                                    "STEP9b verdict=" + when {
+                                        appendVerification == "verified" &&
+                                            afterAppendText == baseText + "a" -> "OK"
+                                        // 判成 verified 但实际是整体替换：旧判据的漏洞。
+                                        appendVerification == "verified" -> "FAIL_CLAIMED_APPEND"
+                                        appendVerification == "not_applied" &&
+                                            afterAppendText == "a" -> "OK_DETECTED_REPLACED"
+                                        appendVerification == "not_applied" -> "OK_DETECTED"
+                                        else -> "OK_UNVERIFIABLE"
+                                    },
+                                )
+                            }
                         } else {
                             report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
                         }

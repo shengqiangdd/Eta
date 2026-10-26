@@ -117,4 +117,120 @@ class TextInputVerificationTest {
             ),
         )
     }
+
+    @Test
+    fun `clearing is verified only when the field is actually empty`() {
+        // 清空走 CTRL+A + DEL，同样会「退出 0 但什么都没做」；fix159 对清空直接给了 UNKNOWN，
+        // 等于从不验证。现在清空必须自己有一个结论。
+        assertEquals(
+            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.judge(
+                before = field("eta"),
+                after = field(""),
+                typed = "",
+                mode = TextInputVerification.Mode.CLEAR,
+            ),
+        )
+        assertNull(
+            TextInputVerification.noteFor(
+                TextInputVerification.Verdict.VERIFIED,
+                typed = "",
+                hadFocusedField = true,
+                mode = TextInputVerification.Mode.CLEAR,
+            ),
+        )
+    }
+
+    @Test
+    fun `a clear that left text behind is not applied`() {
+        val verdict = TextInputVerification.judge(
+            before = field("eta"),
+            after = field("eta"),
+            typed = "",
+            mode = TextInputVerification.Mode.CLEAR,
+        )
+        assertEquals(TextInputVerification.Verdict.NOT_APPLIED, verdict)
+        val note = TextInputVerification.noteFor(
+            verdict,
+            typed = "",
+            hadFocusedField = true,
+            mode = TextInputVerification.Mode.CLEAR,
+        )
+        assertNotNull(note)
+        assertTrue(note!!.contains("不生效"))
+        // 没有聚焦框时清空同样会静默失败，说法必须不同。
+        val noField = TextInputVerification.noteFor(
+            TextInputVerification.Verdict.UNKNOWN,
+            typed = "",
+            hadFocusedField = false,
+            mode = TextInputVerification.Mode.CLEAR,
+        )
+        assertNotNull(noField)
+        assertTrue(noField!!.contains("清空"))
+        assertTrue(noField != note)
+    }
+
+    @Test
+    fun `append must produce the original text plus the new part`() {
+        // 正确：原文 + 新增。
+        assertEquals(
+            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.judge(
+                before = field("et"),
+                after = field("eta"),
+                typed = "a",
+                mode = TextInputVerification.Mode.APPEND,
+            ),
+        )
+        // 「以为是追加、实际是整体替换」：文本确实变了，但不是追加 —— 旧判据会当成 VERIFIED。
+        assertEquals(
+            TextInputVerification.Verdict.NOT_APPLIED,
+            TextInputVerification.judge(
+                before = field("et"),
+                after = field("a"),
+                typed = "a",
+                mode = TextInputVerification.Mode.APPEND,
+            ),
+        )
+        // 根本没加进去。
+        assertEquals(
+            TextInputVerification.Verdict.NOT_APPLIED,
+            TextInputVerification.judge(
+                before = field("et"),
+                after = field("et"),
+                typed = "a",
+                mode = TextInputVerification.Mode.APPEND,
+            ),
+        )
+    }
+
+    @Test
+    fun `append that changed text in an unexpected way stays unknown`() {
+        // 文本变了，但不是「原文 + 新增」：可能是输入法改写、光标不在末尾。说不准就别报成功。
+        val verdict = TextInputVerification.judge(
+            before = field("et"),
+            after = field("etx"),
+            typed = "a",
+            mode = TextInputVerification.Mode.APPEND,
+        )
+        assertEquals(TextInputVerification.Verdict.UNKNOWN, verdict)
+        val note = TextInputVerification.noteFor(
+            verdict,
+            typed = "a",
+            hadFocusedField = true,
+            mode = TextInputVerification.Mode.APPEND,
+        )
+        assertNotNull(note)
+        assertTrue(note!!.contains("追加"))
+        // 与「被整体替换」那种说法必须区别开：两者该修的东西不一样。
+        val replaced = TextInputVerification.noteFor(
+            TextInputVerification.Verdict.NOT_APPLIED,
+            typed = "a",
+            hadFocusedField = true,
+            mode = TextInputVerification.Mode.APPEND,
+        )
+        assertNotNull(replaced)
+        assertTrue(replaced!!.contains("整体替换"))
+        assertTrue(replaced != note)
+    }
 }

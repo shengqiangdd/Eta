@@ -707,8 +707,17 @@ internal class RootShellDeviceController(
         }
         // 输入前后各读一次「聚焦的可编辑节点」：`input -d N text ...` 在没有焦点时
         // 会静默丢弃文本，却仍然退出 0（见 TextInputVerification 的说明）。
-        // 只在真的有文本要输时才付这份读树代价（清空操作不需要）。
-        val beforeField = if (text.isNotEmpty()) focusedFieldOn(displayId) else null
+        // 清空走的是 CTRL+A + DEL，同样是「退出 0 但可能什么都没做」，所以也要读前后（fix160）。
+        val mode = when {
+            text.isNotEmpty() && !clearFirst -> TextInputVerification.Mode.APPEND
+            text.isEmpty() && clearFirst -> TextInputVerification.Mode.CLEAR
+            else -> TextInputVerification.Mode.REPLACE
+        }
+        val beforeField = if (text.isNotEmpty() || mode == TextInputVerification.Mode.CLEAR) {
+            focusedFieldOn(displayId)
+        } else {
+            null
+        }
         val steps = ArrayList<String>(4)
         if (clearFirst) {
             // CTRL+A 全选后 DEL。尽力而为：部分自绘输入框不实现全选。
@@ -742,6 +751,7 @@ internal class RootShellDeviceController(
                     cleared = clearFirst,
                     submitted = submit,
                     before = beforeField,
+                    mode = mode,
                 )
             }
             // 无障碍不通时只有本应用还能自救：进程内注入同样不碰 IME/剪贴板。
@@ -787,6 +797,7 @@ internal class RootShellDeviceController(
             cleared = clearFirst,
             submitted = submit,
             before = beforeField,
+            mode = mode,
         )
     }
 
@@ -812,9 +823,15 @@ internal class RootShellDeviceController(
         cleared: Boolean,
         submitted: Boolean,
         before: TextInputVerification.Field?,
+        mode: TextInputVerification.Mode,
     ): String {
-        val after = if (typed.isEmpty()) null else focusedFieldOn(displayId)
-        val verdict = TextInputVerification.judge(before, after, typed)
+        // 清空也要读 after：不读就没有任何证据说明「真的空了」（fix160）。
+        val after = if (typed.isEmpty() && mode != TextInputVerification.Mode.CLEAR) {
+            null
+        } else {
+            focusedFieldOn(displayId)
+        }
+        val verdict = TextInputVerification.judge(before, after, typed, mode)
         val json = JSONObject()
             .put("ok", true)
             .put("tool", "type_text")
@@ -824,8 +841,9 @@ internal class RootShellDeviceController(
             .put("chars", typed.length)
             .put("cleared", cleared)
             .put("submitted", submitted)
+            .put("input_mode", mode.name.lowercase(Locale.ROOT))
             .put("input_verification", verdict.name.lowercase(Locale.ROOT))
-        TextInputVerification.noteFor(verdict, typed, hadFocusedField = before != null)
+        TextInputVerification.noteFor(verdict, typed, hadFocusedField = before != null, mode = mode)
             ?.let { note -> json.put("note", note) }
         return json.toString()
     }

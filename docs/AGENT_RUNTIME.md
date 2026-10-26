@@ -6817,3 +6817,102 @@ APK 91,557,837 字节（sha256 `2c374f6d…`）。
   必须轮询 `pidof` 有输出**再**去拨无障碍开关，否则是空拨。
 - `input_pkg` 这类「只影响探针目标」的参数走 intent extra，比改常量好：
   探针换机型不用重新编译。
+## fix160：输入验证只覆盖了「替换」的一半 —— 清空与追加各自要有结论（2026-10-26 深夜，fix159 之后）
+
+### 一、缺陷本身
+
+fix159 给 `type_text` 加了 `input_verification`，但判据只有一条：**文本变没变**。
+而同一个「变了」在三种语义下含义完全不同：
+
+| 工具调用 | 实际做的事 | fix159 的判据 | 后果 |
+|---|---|---|---|
+| `type_text(text="x")` | 整体替换 | 变没变 | 基本正确 |
+| `type_text(mode="append", text="x")` | 在原内容后插入 | 变没变 | **「以为追加、实际被整体替换」也判 verified** |
+| `clear_text()` / `type_text(text="")` | CTRL+A + DEL 清空 | `typed.isEmpty() -> UNKNOWN` | **从不验证清空**：连 after 都不读 |
+
+两处都是「结果说成功，但没确认是不是要的那件事」：
+
+1. **清空**走的是 `input keycombination 113 29` + `keyevent 67`，与 `input text` 一样
+   「退出码 0 但可能什么都没做」—— 自绘输入框根本不实现全选。fix159 直接给了 UNKNOWN，
+   等于告诉模型「我不知道有没有清掉」，而模型通常会当成「已经清了」继续往下走。
+2. **追加**只要文本变了就 VERIFIED。若页面把原内容整个换成了新内容（或先清后写），
+   响应仍然是「成功」，但用户的原文已经没了 —— 这类损坏比「没输进去」严重得多。
+
+### 二、修法：把「这次在做什么」显式化
+
+`TextInputVerification` 新增 `Mode { REPLACE, APPEND, CLEAR }`，`judge` / `noteFor` 都接收它：
+
+| 模式 | VERIFIED 的唯一条件 |
+|---|---|
+| REPLACE | 文本与 before 不同（密码框：长度不同） |
+| APPEND | `after.text == before.text + typed` |
+| CLEAR | `after.text` 为空（密码框：长度为 0） |
+
+- APPEND 的 `after == typed && typed != before` → `NOT_APPLIED`（被整体替换）；
+  `after == before` → `NOT_APPLIED`；其他变化 → `UNKNOWN`（说不准就别报成功）。
+- CLEAR 的 `before` / `after` 任一读不到 → `UNKNOWN` + 「CTRL+A + DEL 会静默失败」的提示。
+- 响应新增 `input_mode`（`replace` / `append` / `clear`），三态判据从此有上下文。
+
+`textOnDisplay` 相应调整：**清空也要读 before 与 after**（这正是 fix159 省掉的那次读树），
+mode 由参数推出（`text.isEmpty() && clearFirst` → CLEAR，`!clearFirst && text.isNotEmpty()` → APPEND）。
+
+### 三、真机取证（canary 本次构建）
+
+```text
+STEP7a ok=true verification=unknown note=没有看到聚焦的输入框：`input text` 在这种情况下会静默丢弃文
+STEP7a verdict=OK_HONEST
+STEP7b clear verification=unknown mode=clear note=没有读到聚焦的输入框：CTRL+A + DEL 在这种情况下
+STEP7b verdict=OK_HONEST
+STEP8 pkg=com.coloros.note display=111 index=29 focused=true ok=true verification=verified method=INPUT_TEXT
+STEP8 verdict=OK
+STEP9 clear verification=verified mode=clear field=[] note=
+STEP9 verdict=OK
+STEP9b base=[et]
+STEP9b append verification=verified mode=append field=[eta] note=
+STEP9b verdict=OK
+```
+
+- **STEP7b**：设置首页（没有任何可编辑节点）上清空 → `unknown` + 明说「CTRL+A + DEL 会静默失败」。
+  不谎报，是这一条的重点。
+- **STEP9**：便签搜索框输入 `eta` → 清空 → `verified`，且随后 observe 到的字段文本确实是空的 `[]`。
+  「说清空了」和「真的空了」第一次同时有证据。
+- **STEP9b**：先写 `et`，再 `mode=append` 追加 `a` → 字段变成 `eta`（不是 `a`）。
+  这条同时证明真机上 `input -d text` 是**插入**而不是替换。
+
+### 四、探针两处「我自己的假设错了」（比缺陷本身更值得记）
+
+1. **STEP9c 原设计是错的**：我设想「按 BACK 让焦点离开输入框 → 再清空应该是 unknown」，
+   结果 BACK 只是收起键盘、输入框仍聚焦，清空**真的**成功（`field=[]`），
+   而探针按「预期 unknown」判成 `FAIL_CLAIMED_CLEARED`。
+   **判据是对的，是探针的前提错了。** 正确做法是找一个「确实没有输入框」的屏
+   （设置首页）去验证 unknown —— 即现在的 STEP7b。
+   教训：验证「不确定」分支，前提必须是「真的不确定」，不能靠一次 BACK 猜。
+2. **STEP3c 撞上 `STALE_CONTENT`**：设置页滚过之后再 `scroll_element`，
+   工具内部已自动重试一次仍报「窗口内容已经变化」，探针却记成 `FAIL_SCROLL_ERROR`。
+   这既不是「指东滑西」回归，也不该算通过。改法：探针补一轮
+   「等 1.2s → 重新观察 → 重新取最小可滚节点」再试，并把结论细化为
+   `INCONCLUSIVE_PAGE_STILL_MOVING`。本轮重跑后 STEP3c 回到 `OK`。
+
+### 五、门禁
+
+`TextInputVerificationTest` 由 7 例扩到 11 例（清空 2 例、追加 3 例），
+`STAGES=test` **496 例 0 失败**；`test,assemble` 通过，APK 96,386,889 字节（sha256 `b26f5c5a…`）。
+新增用例里两条专门守着本轮缺陷：
+
+```text
+after == typed（"a"）而 before 是 "et" → 追加被整体替换 → NOT_APPLIED
+clear 之后字段仍有文本           → NOT_APPLIED，且提示里点明「全选 + DEL 不生效」
+```
+
+### 六、仍然是「未验证」的
+
+- **清空失败（NOT_APPLIED）**与**追加被整体替换（NOT_APPLIED）**的真机样本：
+  在便签搜索框上这两条都做不出来（它既支持全选、又确实是插入语义），只有单测。
+- 密码框（长度归零才算清空）仍只有单测。
+- 非 ASCII 路径（无障碍 `ACTION_SET_TEXT`）的三种模式都没有真机样本。
+
+### 七、顺带记下的一条环境事实
+
+`input -d <display> text` 在 EditText 上确实是**光标处插入**（实测 `et` + `a` → `eta`），
+所以「替换」必须依赖前面的 CTRL+A + DEL；这也解释了为什么自绘输入框上替换会变成追加 ——
+清空失败 + 插入 = 越写越长。清空有结论之后，这条链路才算闭环。
