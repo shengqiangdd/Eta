@@ -29,6 +29,16 @@
       "hasReferences": false,
       "hasAssets": false,
       "hasEvals": false
+    },
+    {
+      "id": "virtual-display-playbook",
+      "name": "virtual-display-playbook",
+      "description": "在独立虚拟屏上操作 Android 应用时，用最少工具调用定位并点中控件。适用于：需要在虚拟屏上打开/配置某应用、反复点不中控件、observe_screen 结果被落盘成文件、虚拟屏任务突然消失、虚拟屏上无法滚动。",
+      "assetPath": "builtin_skills/virtual-display-playbook",
+      "hasScripts": false,
+      "hasReferences": false,
+      "hasAssets": false,
+      "hasEvals": false
     }
   ]
 }
