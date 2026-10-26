@@ -52,7 +52,8 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
    设备当场断网。此时返回 `code=COORDINATE_FALLBACK_UNSAFE_TARGET` 并带
    `blocked_target_index`，同时给出 **`suggestion_index`**：那是已算好的、真正能点的节点
    （blocked 自己可交互就是它，`suggestion_kind=blocked_node`；否则是它范围内面积最大的
-   可交互子控件，`child_control`）。**手势没有发出**，下一步改用 `suggestion_index`
+   可交互子控件，`child_control`；blocked 只是个文本 label 时，是**包住它的那一行**，
+   `containing_control`）。**手势没有发出**，下一步改用 `suggestion_index`
    （响应里没有这个字段时，才需要 `observe_screen` 自己找一个带文本的可点节点），
    不要换坐标硬点、也不要重复原 index。
    同一层还有两条：`blocked_by=toggle_inside`（节点区域内含开关，中心没压中也可能拨到它）、

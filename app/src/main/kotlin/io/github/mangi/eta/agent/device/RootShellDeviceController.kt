@@ -996,6 +996,13 @@ internal class RootShellDeviceController(
             } else {
                 "区域内含开关 #${blocked.index}"
             }
+            // 风险描述必须与实际命中对象一致：blocked 常常只是个文本 label，
+            // 以前一律写「盲点可能误触开关」—— 文案在说假话，模型会误判成“这里有个开关”。
+            val risk = when {
+                blocked.toggles -> "盲点会直接拨动那个控件"
+                blocked.interactive -> "盲点会点到那个控件，而不是这个容器"
+                else -> "盲点会落在那个节点上，而不是这个容器"
+            }
             // 光说「不能点」不够：模型还得自己猜该点谁，而 blocked 往往是个不可交互的容器
             // （照着上一版提示去点它，会再次被同一个判据拦住）。这里把可执行的那个节点算出来。
             val suggestion = BlindTapSafetyPolicy.suggestTarget(blocked, candidates)
@@ -1003,6 +1010,9 @@ internal class RootShellDeviceController(
                 suggestion == null -> "建议先 observe_screen，改点带文本的可交互节点"
                 suggestion.kind == BlindTapSafetyPolicy.Suggestion.Kind.BLOCKED_NODE ->
                     "一次调用即可：直接按原参数改 index=${suggestion.index} 再调一次"
+                suggestion.kind == BlindTapSafetyPolicy.Suggestion.Kind.CONTAINING_CONTROL ->
+                    "一次调用即可：改用 index=${suggestion.index}" +
+                        (if (suggestion.toggles) "（那是包住它的开关）" else "（那是包住它的可点击行）")
                 else -> "一次调用即可：改用 index=${suggestion.index}" +
                     (if (suggestion.toggles) "（那是开关本身）" else "（那是范围内的可交互控件）")
             }
@@ -1028,7 +1038,7 @@ internal class RootShellDeviceController(
                 }
                 .put(
                     "message",
-                    "已取消这次盲点：节点 #$index 的$why，盲点可能误触开关。$next",
+                    "已取消这次盲点：节点 #$index 的$why，$risk。$next",
                 )
         }
         // 页面还在切换时打进去的坐标动作会落在过渡中的窗口上（点了/滑了都没反应），

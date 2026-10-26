@@ -237,6 +237,19 @@ class BlindTapSafetyPolicyTest {
     }
 
     @Test
+    fun `a plain text label inside a clickable row suggests the row`() {
+        // 真机实证（display 82）：被拦住的其实是那个**文本 label**，它自己的范围里没有可点控件，
+        // 而 expected 的“可点行”比它大 —— 只找子控件时 suggestion 会是空。
+        val label = candidate(13, 40, 660, 300, 700, interactive = false)
+        val row = candidate(9, 0, 640, 720, 871, interactive = true)
+        // 真实树里总有根容器（面积最大）；它不是候选的答案，只是背景。
+        val root = candidate(0, 0, 0, 720, 1280, interactive = false)
+        val suggestion = BlindTapSafetyPolicy.suggestTarget(label, listOf(root, label, row))
+        assertEquals(9, suggestion?.index)
+        assertEquals("containing_control", suggestion?.kindName)
+    }
+
+    @Test
     fun `no interactive child means no suggestion instead of a guess`() {
         // 纯文本标签：范围内没有任何可交互节点 → 不编 index，提示改为“先 observe_screen”。
         val blocked = candidate(30, 0, 300, 720, 400, interactive = false)

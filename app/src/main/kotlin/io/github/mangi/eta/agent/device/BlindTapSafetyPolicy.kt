@@ -112,18 +112,28 @@ internal object BlindTapSafetyPolicy {
      */
     data class Suggestion(
         val index: Int,
-        /** [Kind.BLOCKED_NODE]：blocked 本身可交互；[Kind.CHILD_CONTROL]：范围内的子控件。 */
+        /** 目标节点的性质，见 [Kind]。 */
         val kind: Kind,
         val interactive: Boolean,
         val toggles: Boolean,
     ) {
-        enum class Kind { BLOCKED_NODE, CHILD_CONTROL }
+        enum class Kind {
+            /** blocked 自己可交互。 */
+            BLOCKED_NODE,
+
+            /** blocked 范围内的子控件。 */
+            CHILD_CONTROL,
+
+            /** 包住 blocked 的那个可交互容器（典型：文本 label 所在的可点行）。 */
+            CONTAINING_CONTROL,
+        }
 
         /** 响应里用的短标识（`suggestion_kind`）。 */
         val kindName: String
             get() = when (kind) {
                 Kind.BLOCKED_NODE -> "blocked_node"
                 Kind.CHILD_CONTROL -> "child_control"
+                Kind.CONTAINING_CONTROL -> "containing_control"
             }
     }
 
@@ -147,7 +157,29 @@ internal object BlindTapSafetyPolicy {
             .filter { it.box.area < blocked.box.area }
             .filter { blocked.box.contains(it.box.centerX, it.box.centerY) }
             .maxByOrNull { it.box.area }
+        if (child != null) {
+            return Suggestion(child.index, Suggestion.Kind.CHILD_CONTROL, child.interactive, child.toggles)
+        }
+        // 真机实证（display 82）：blocked 往往是个**纯文本 label**（面积比那一行小得多），
+        // 它自己的范围里当然没有可点控件 —— 真正该点的是「包住它的那一行」。
+        // 所以再加一层：最小的那个包含 blocked 中心的可交互祖先。
+        //
+        // 但**面积最大的节点永远不能当建议**：那是根容器（整屏 ScrollView），
+        // 正是 fix155 事故里“盲点点到它中心”的那个东西，叫模型去点它等于把事故重做一遍。
+        val largestArea = candidates.maxOfOrNull { it.box.area } ?: 0L
+        val container = candidates
+            .asSequence()
+            .filter { it.index != blocked.index && !it.box.isEmpty }
+            .filter { it.interactive || it.toggles }
+            .filter { it.box.area < largestArea }
+            .filter { it.box.contains(blocked.box.centerX, blocked.box.centerY) }
+            .minByOrNull { it.box.area }
             ?: return null
-        return Suggestion(child.index, Suggestion.Kind.CHILD_CONTROL, child.interactive, child.toggles)
+        return Suggestion(
+            container.index,
+            Suggestion.Kind.CONTAINING_CONTROL,
+            container.interactive,
+            container.toggles,
+        )
     }
 }

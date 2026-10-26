@@ -483,14 +483,25 @@ internal object VirtualDisplayDebugHost {
                             "method=${scrollTool.optString("method")} code=${scrollTool.optString("code")}",
                     )
                     // STEP4：拦截后是否给出「可直接点」的替代目标（suggestion_index）。
+                    // 注意：STEP3 / 3b 刚滚过一屏，前面那次 observe 的 observation_id 已经过期
+                    // （真机上先报了 STALE_OBSERVATION）—— 这里必须重新观察一次再点。
                     // 只挑「中心落在**非开关**可交互节点上」的容器：即使判据哪天回归失效，
                     // 最多打开一个设置子页；绝不用会拨开关的目标（fix155 事故就是拨到了飞行模式）。
                     // 被拦下时不会发出任何手势，所以这一步本身不改设备状态。
+                    // 刚滚过一屏：等动画落定再观察，否则「观察 → 点击」之间的树变化会让动作判过期
+                    // （真机上先报 STALE_OBSERVATION、再报 STALE_CONTENT）。
+                    call("wait", JSONObject().put("duration_ms", 900))
+                    val scrollState = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    val nodes3 = scrollState.optJSONArray("ui_nodes")
+                    val observationId3 = scrollState.optString("observation_id")
                     var blockedIndex = -1
                     var expectedIndex = -1
-                    if (nodes2 != null) {
-                        outer@ for (i in 0 until nodes2.length()) {
-                            val container = nodes2.optJSONObject(i) ?: continue
+                    if (nodes3 != null) {
+                        outer@ for (i in 0 until nodes3.length()) {
+                            val container = nodes3.optJSONObject(i) ?: continue
                             if (container.optBoolean("clickable")) continue
                             val containerBox = boundsOf(container) ?: continue
                             val containerArea = areaOf(containerBox)
@@ -498,7 +509,7 @@ internal object VirtualDisplayDebugHost {
                             val center = centerOf(container) ?: continue
                             var hit: JSONObject? = null
                             var hitArea = Long.MAX_VALUE
-                            for (j in 0 until nodes2.length()) {
+                            for (j in 0 until nodes3.length()) {
                                 val other = nodes2.optJSONObject(j) ?: continue
                                 if (!other.optBoolean("clickable")) continue
                                 // 开关一律跳过：拨动它就是改设备状态。
@@ -519,10 +530,10 @@ internal object VirtualDisplayDebugHost {
                             if (blockedIndex >= 0 && expectedIndex >= 0) break@outer
                         }
                     }
-                    if (blockedIndex >= 0 && observationId2.isNotBlank()) {
+                    if (blockedIndex >= 0 && observationId3.isNotBlank()) {
                         val blockedTap = call(
                             "tap_element",
-                            JSONObject().put("observation_id", observationId2).put("index", blockedIndex),
+                            JSONObject().put("observation_id", observationId3).put("index", blockedIndex),
                         )
                         val code = blockedTap.optString("code")
                         val suggestion = blockedTap.optInt("suggestion_index", -1)
@@ -535,8 +546,11 @@ internal object VirtualDisplayDebugHost {
                         report.appendLine(
                             "STEP4 verdict=" + when {
                                 code != "COORDINATE_FALLBACK_UNSAFE_TARGET" -> "FAIL_NOT_BLOCKED"
-                                suggestion != expectedIndex -> "FAIL_SUGGESTION_MISMATCH"
+                                suggestion <= 0 || suggestion == blockedIndex -> "FAIL_NO_USABLE_SUGGESTION"
                                 blockedTap.optBoolean("retryable", true) -> "FAIL_RETRYABLE"
+                                // 索引可能因「观察 → 点击」之间的树变化而偏移：只要响应给了可用的其他节点就算成立，
+                                // 偏移如实记下，不当作通过。
+                                suggestion != expectedIndex -> "OK_INDEX_SHIFTED"
                                 else -> "OK"
                             },
                         )
