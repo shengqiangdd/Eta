@@ -711,6 +711,7 @@ internal object AgentRuntimeWire {
                 putString("detail", event.detail)
                 event.charsBefore?.let { putInt("chars_before", it) }
                 event.charsAfter?.let { putInt("chars_after", it) }
+                event.durationMs?.let { putLong("duration_ms", it) }
             }
 
             is AgentEvent.ModelRetryScheduled -> {
@@ -882,6 +883,7 @@ internal object AgentRuntimeWire {
             detail = bundle.getString("detail").orEmpty(),
             charsBefore = bundle.optionalInt("chars_before"),
             charsAfter = bundle.optionalInt("chars_after"),
+            durationMs = bundle.optionalElapsedMs("duration_ms"),
         )
         "model_retry_scheduled" -> AgentEvent.ModelRetryScheduled(
             round = bundle.getInt("round"),

@@ -133,6 +133,9 @@ internal class AgentContextSession(
             return
         }
         val operation = java.util.UUID.randomUUID().toString()
+        // 计时起点取「已决定压缩」：用户点完压缩到气泡变成结果的时间，正是他感知到的等待，
+        // 而之前这段耗时完全没记录 —— 只能从 logcat 时间戳倒推。
+        val startedAt = System.currentTimeMillis()
         onEvent(AgentEvent.ContextCompaction(
             operation,
             AgentEvent.ContextCompaction.PHASE_STARTED,
@@ -170,6 +173,7 @@ internal class AgentContextSession(
                 detail = compactionDetail(compaction, historyChars, afterChars),
                 charsBefore = historyChars.toInt(),
                 charsAfter = afterChars.toInt(),
+                durationMs = System.currentTimeMillis() - startedAt,
             ))
         } catch (failure: Exception) {
             runController.throwIfCancelled()
@@ -177,8 +181,14 @@ internal class AgentContextSession(
             val detail = ((failure as? AgentModelFailure)?.message?.takeIf { it.isNotBlank() }
                 ?: "${failure::class.simpleName}: ${failure.message.orEmpty()}")
                 .take(MAX_FAILURE_DETAIL)
-            onEvent(AgentEvent.ContextCompaction(operation, "failed", before,
-                reasonCode = reasonCode, detail = detail, charsBefore = historyChars.toInt()))
+            onEvent(AgentEvent.ContextCompaction(
+                operation, "failed", before,
+                reasonCode = reasonCode,
+                detail = detail,
+                charsBefore = historyChars.toInt(),
+                // 失败也要给耗时：慢到最后才报错，比一开始就报错更值得让用户看见。
+                durationMs = System.currentTimeMillis() - startedAt,
+            ))
             // 手动压缩：用户主动点的，必须把失败告诉用户。
             if (force) throw failure
             // 自动压缩失败**不再中断整轮回答**：真机上这会把一个 86% 用量、本来还能跑完的

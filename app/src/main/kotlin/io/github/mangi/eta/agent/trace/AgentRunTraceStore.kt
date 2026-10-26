@@ -283,6 +283,8 @@ internal object AgentRunTraceStore {
                         event.tokensAfter?.let { put("after", it) }
                         event.charsBefore?.let { put("chars_before", it) }
                         event.charsAfter?.let { put("chars_after", it) }
+                        // 复用通用的 "ms" 键（Entry.elapsedMs）：压缩耗时是「为什么慢」的关键证据。
+                        event.durationMs?.let { put("ms", it) }
                     },
             )
             // 结束状态由 [finish] 统一写入：执行层（executor）在失败/取消路径上不一定

@@ -6022,10 +6022,58 @@ fix149 §五 的表格和更早那条「真冷启动 10,385 ms」都取自**同�
 | `ui_nodes_truncated` | 已按上下文体积裁掉尾部 | 提高 `max_nodes` 无效，先 `scroll` 把目标带入视野再观察 |
 | `ui_tree_truncated` | 无障碍层本身截断 | 才是提高 `max_nodes` 的场景 |
 
-### 六、未验证
+### 六、真机补测（同日，canary 725e7686）
 
-- **新预算（8,000/5,000）下的真机数据**：探针已加 `--ei eta.debug.max_nodes 120`，
-  但那一轮真机跑的是旧预算版本；本轮只做了门禁与单测。
+探针加了 `--ei eta.debug.max_nodes 120`，在虚拟屏（display 19）上跑本机「工具能力总览」页：
+
+| 指标 | 值 |
+|---|---|
+| 无障碍树节点数 | 79 |
+| 请求 max_nodes | 120 |
+| 实际带回 `ui_nodes_shown` | **67**（按体积裁尾） |
+| `ui_nodes_truncated` | true，`ui_nodes_note` 提示「先 scroll 再观察，别反复提高 max_nodes」 |
+| 整份结果字符数 | **9,623** < 12,000 → 未落盘 |
+
+即：**把 max_nodes 开到 120 也不会把上下文撑爆**，多出来的节点按体积裁掉并显式告知模型。
+
+### 七、仍未验证
+
 - `AgentAfterActionSummaryTest` 的 4 例仍是 Robolectric，本机 aarch64 不支持，仍未真跑。
-- 主包 `io.github.mangi.eta` 仍是旧代码，改动只在 canary 生效。
+- 主包 `io.github.mangi.eta` 仍是旧代码，改动只在 canary 生效 —— 所以**我自己这次会话的工具调用仍走旧格式**：
+  同一天在虚拟屏上观察 canary，40 个节点整份 15,151 字符，照样被落盘。
+  「工具层变小」这件事，只有主包升级后才会体现在日常使用里。
+
+## fix152：压缩气泡把已有的数字露出来 + 耗时入账（2026-10-26）
+
+### 一、问题（两个都不是“没数据”，而是“数据送了却没显示”）
+
+1. 压缩完成时，`AgentEvent.ContextCompaction.displayMessage` 写死成
+   「上下文已压缩，用量将在下一次模型响应后更新。」——
+   而 `detail` 里明明已有「摘要 X 字符；上下文 A → B 字符」（`compactionDetail()` 算好的）。
+   气泡取的是 `displayMessage`，于是**用户点完压缩看不出省了多少**。
+2. 压缩耗时**完全没记录**：真机上曾出现一次 44.9 秒的压缩，事后只能去 logcat 扒时间戳。
+
+### 二、改法
+
+- `AgentEvent.ContextCompaction` 新增 `durationMs: Long?`（旧事件读成 null，ABI 向后兼容）。
+- `AgentContextSession.compact()` 从「决定压缩」开始计时，completed 与 failed 都带上；
+  skipped（被下限拦住）不计时。
+- `displayMessage` 完成态改为：`detail`（含字符数）+「；压缩后用量待下一次响应」+「，用时 X 秒」；
+  失败态在原因后补「（用时 X 秒）」。**不到 1 秒不显示耗时**（正常压缩远快于此，写出来只是噪声）。
+- 耗时同步进三处：Runtime Bundle 编解码（`duration_ms`，读取复用 `optionalElapsedMs` 以兼容 JSON 归档回 Int）、
+  运行追踪（复用通用 `ms` 键 → `Entry.elapsedMs`）、Markdown 导出与运行详情页（`runs_entry_compact_elapsed`，
+  中／繁／英三套）。旧追踪没有 `ms` 就不显示 —— 不补 0。
+
+### 三、验证
+
+- 单测 **433 例 0 失败**（新增 `AgentContextCompactionNoticeTest` 7 例：开始态文案、完成态带数字、
+  无 detail 回退、亚秒静默、分钟级格式、失败态、跳过态）；`AgentRuntimeWireTest` 的压缩往返用例
+  顺手加上 `durationMs`，同时覆盖 Bundle 与 JSON 两条路径。
+- 真机（canary）：历史压缩气泡仍显示旧文案 —— 说明**持久化的是当时那串 detail，不会被新代码改写**，
+  符合预期（历史不伪造）。新文案的渲染本次**未真机触发**：canary 的 provider 正在长时间重试，压缩跑不起来。
+
+### 四、仍未做
+
+- 压缩后 token 依旧要等下一次响应才有；气泡只提供字符数与耗时，不编造 token。
+- 主包未升级，日常会话里还看不到这套文案。
 

@@ -1810,6 +1810,7 @@
   <string name="runs_entry_compact_running">正在压缩上下文</string>
   <string name="runs_entry_compact_detail">%1$s → %2$s token</string>
   <string name="runs_entry_compact_chars_detail">%1$s → %2$s 字符</string>
+  <string name="runs_entry_compact_elapsed">用时 %1$s</string>
   <string name="runs_entry_done">运行完成</string>
   <string name="runs_entry_ended">运行结束</string>
   <string name="runs_entry_done_detail">总用时 %1$s</string>

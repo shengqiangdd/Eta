@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.runtime
 
 import io.github.mangi.eta.core.toSafeLogToken
+import java.util.Locale
 
 internal sealed interface AgentEvent {
     fun toLogLine(): String
@@ -27,20 +28,54 @@ internal sealed interface AgentEvent {
          */
         val charsBefore: Int? = null,
         val charsAfter: Int? = null,
+        /**
+         * 本次压缩实际耗时（含摘要请求）。
+         *
+         * 为什么要记：压缩慢的时候用户只看到「正在压缩上下文…」和空转的界面，
+         * 事后也没法从对话里判断是模型慢还是本地整理慢。旧版 Runtime 不带该字段，读端按 null 处理。
+         */
+        val durationMs: Long? = null,
     ) : AgentEvent {
+        /**
+         * 给人看的压缩状态。
+         *
+         * 完成时优先用 [detail]（里面有摘要字符数与压缩前后上下文大小）——
+         * 原来这里写死成「上下文已压缩，用量将在下一次模型响应后更新」，
+         * 把 Runtime 已经算好的数字全丢了，用户点完压缩看不出省了多少。
+         */
         val displayMessage: String get() = when (phase) {
             PHASE_STARTED -> RUNNING_DETAIL
-            PHASE_COMPLETED -> "上下文已压缩，用量将在下一次模型响应后更新。"
+            PHASE_COMPLETED -> buildString {
+                append(detail.ifBlank { "上下文已压缩" })
+                // 压缩后的 token 只能在下一次模型响应里拿到；写明这一点，别让用户以为数字被吞了。
+                append("；压缩后用量待下一次响应")
+                elapsedText()?.let { append("，用时 $it") }
+            }
             PHASE_SKIPPED -> if (detail.isBlank()) "上下文已经很小，无需压缩。" else detail
-            else -> if (detail.isBlank()) {
-                "上下文压缩失败，原始上下文已保留。"
-            } else {
-                "上下文压缩失败：$detail 原始上下文已保留。"
+            else -> buildString {
+                append(
+                    if (detail.isBlank()) "上下文压缩失败，原始上下文已保留。"
+                    else "上下文压缩失败：$detail 原始上下文已保留。",
+                )
+                elapsedText()?.let { append("（用时 $it）") }
             }
         }
+
+        /** 耗时可读化：不到 1 秒不显示 —— 正常压缩远快于此，写出来只是噪声。 */
+        private fun elapsedText(): String? {
+            val millis = durationMs ?: return null
+            if (millis < MIN_VISIBLE_DURATION_MS) return null
+            val seconds = millis / 1000.0
+            return if (seconds < 60) {
+                String.format(Locale.ROOT, "%.1f 秒", seconds)
+            } else {
+                "${millis / 60_000} 分 ${millis % 60_000 / 1000} 秒"
+            }
+        }
+
         override fun toLogLine(): String =
             "context_compaction phase=${phase.toSafeLogToken()}, before=$tokensBefore, after=$tokensAfter, " +
-                "chars=$charsBefore->$charsAfter, " +
+                "chars=$charsBefore->$charsAfter, duration=${durationMs}ms, " +
                 "code=${reasonCode.toSafeLogToken()}, detail=${detail.take(80).toSafeLogToken()}"
 
         companion object {
@@ -50,6 +85,8 @@ internal sealed interface AgentEvent {
             const val PHASE_SKIPPED = "skipped"
             /** 进行中的展示文案同时是 UI 判定运行态的依据，改动必须与 UI 侧同步。 */
             const val RUNNING_DETAIL = "正在压缩上下文…"
+            /** 低于这个耗时不写进文案：短压缩写出来只是噪声。 */
+            private const val MIN_VISIBLE_DURATION_MS = 1_000L
         }
     }
 

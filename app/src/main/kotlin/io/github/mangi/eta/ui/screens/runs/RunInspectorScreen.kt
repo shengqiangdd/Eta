@@ -631,19 +631,29 @@ private fun TraceEntryCard(
                 title = stringResource(
                     if (entry.phase == "completed") R.string.runs_entry_compact_done else R.string.runs_entry_compact_running,
                 ),
-                detail = if (entry.charsBefore != null || entry.charsAfter != null) {
-                    stringResource(
-                        R.string.runs_entry_compact_chars_detail,
-                        formatCount(entry.charsBefore ?: 0),
-                        formatCount(entry.charsAfter ?: 0),
+                detail = buildString {
+                    append(
+                        if (entry.charsBefore != null || entry.charsAfter != null) {
+                            resources.getString(
+                                R.string.runs_entry_compact_chars_detail,
+                                formatCount(entry.charsBefore ?: 0),
+                                formatCount(entry.charsAfter ?: 0),
+                            )
+                        } else {
+                            // 旧追踪没有字符数，只能回退到 token 口径。
+                            resources.getString(
+                                R.string.runs_entry_compact_detail,
+                                formatCount(entry.before ?: 0),
+                                formatCount(entry.after ?: 0),
+                            )
+                        },
                     )
-                } else {
-                    // 旧追踪没有字符数，只能回退到 token 口径。
-                    stringResource(
-                        R.string.runs_entry_compact_detail,
-                        formatCount(entry.before ?: 0),
-                        formatCount(entry.after ?: 0),
-                    )
+                    // 耗时只在真正测到时显示：旧追踪没有 ms，不补 0（伪造的 0 比不显示更误导）。
+                    entry.elapsedMs?.takeIf { it > 0 }?.let { elapsed ->
+                        append(" · ").append(
+                            resources.getString(R.string.runs_entry_compact_elapsed, formatDuration(elapsed)),
+                        )
+                    }
                 },
             )
             AgentRunTraceStore.KIND_TOOL -> ToolEntry(entry = entry, expanded = expanded, onToggle = { expanded = !expanded }, onCopy = { text ->

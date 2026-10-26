@@ -145,12 +145,14 @@ class AgentRuntimeWireTest {
     fun compactionUsageIsOptionalAndOldMeasuredFieldsRemainReadable() {
         for (event in listOf(
             AgentEvent.ContextCompaction("manual", "started"),
-            AgentEvent.ContextCompaction("automatic", "completed", tokensBefore = 765_000),
+            // durationMs 在 Bundle 里是 long、经 JSON 归档回来会变成 Int —— optionalElapsedMs 两种都要认。
+            AgentEvent.ContextCompaction("automatic", "completed", tokensBefore = 765_000, durationMs = 44_900),
             AgentEvent.ContextCompaction("legacy", "completed", tokensBefore = 9_000, tokensAfter = 2_000),
         )) {
             val bundle = AgentRuntimeWire.eventToBundle(event)
             assertEquals(event.tokensBefore != null, bundle.containsKey("tokens_before"))
             assertEquals(event.tokensAfter != null, bundle.containsKey("tokens_after"))
+            assertEquals(event.durationMs != null, bundle.containsKey("duration_ms"))
             assertEquals(event, AgentRuntimeWire.eventFromBundle(bundle))
             assertEquals(event, AgentEventJsonCodec.decode(AgentEventJsonCodec.encode(event)))
         }

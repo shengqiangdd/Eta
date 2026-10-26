@@ -150,14 +150,21 @@ internal object AgentRunExport {
             AgentRunTraceStore.KIND_USAGE -> "$at token 用量 · 上下文 ${count(entry.contextTokens ?: 0)}" +
                 " · 输入 ${count(entry.inputTokens ?: 0)} · 输出 ${count(entry.outputTokens ?: 0)}" +
                 " · 缓存 ${count(entry.cachedTokens ?: 0)}"
-            AgentRunTraceStore.KIND_COMPACT -> "$at " +
-                (if (entry.phase == "completed") "上下文已压缩" else "正在压缩上下文") +
-                " · " + if (entry.charsBefore != null || entry.charsAfter != null) {
-                    "${count(entry.charsBefore ?: 0)} → ${count(entry.charsAfter ?: 0)} 字符"
-                } else {
-                    // 旧追踪没有字符数，只能回退到 token 口径。
-                    "${count(entry.before ?: 0)} → ${count(entry.after ?: 0)} token"
-                }
+            AgentRunTraceStore.KIND_COMPACT -> buildString {
+                append(at).append(' ')
+                append(if (entry.phase == "completed") "上下文已压缩" else "正在压缩上下文")
+                append(" · ")
+                append(
+                    if (entry.charsBefore != null || entry.charsAfter != null) {
+                        "${count(entry.charsBefore ?: 0)} → ${count(entry.charsAfter ?: 0)} 字符"
+                    } else {
+                        // 旧追踪没有字符数，只能回退到 token 口径。
+                        "${count(entry.before ?: 0)} → ${count(entry.after ?: 0)} token"
+                    },
+                )
+                // 耗时是压缩体验的关键信号（真机实测一度 44.9 秒），有就带上。
+                entry.elapsedMs?.takeIf { it > 0 }?.let { append(" · 用时 ").append(duration(it)) }
+            }
             AgentRunTraceStore.KIND_DONE -> buildString {
                 append(at).append(if (entry.ok == true) " 运行完成" else " 运行结束")
                 entry.error?.takeIf(String::isNotBlank)?.let { append(" · ").append(compact(it, DETAIL_CHARS)) }

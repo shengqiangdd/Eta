@@ -1850,6 +1850,7 @@
   <string name="runs_entry_compact_running">Compacting context</string>
   <string name="runs_entry_compact_detail">%1$s → %2$s tokens</string>
   <string name="runs_entry_compact_chars_detail">%1$s → %2$s characters</string>
+  <string name="runs_entry_compact_elapsed">Took %1$s</string>
   <string name="runs_entry_done">Run completed</string>
   <string name="runs_entry_ended">Run ended</string>
   <string name="runs_entry_done_detail">Total %1$s</string>
