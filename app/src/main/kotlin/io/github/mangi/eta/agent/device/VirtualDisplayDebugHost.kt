@@ -5,6 +5,7 @@ import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.tool.AgentLocalTools
 import io.github.mangi.eta.agent.tool.CoordinateSpaceErrors
+import io.github.mangi.eta.agent.tool.ObservationScopeErrors
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.io.File
 import org.json.JSONObject
@@ -1138,6 +1139,73 @@ internal object VirtualDisplayDebugHost {
                                     croppedTap.optString("code") ==
                                         CoordinateSpaceErrors.SCREENSHOT_UNAVAILABLE -> "OK"
                                     croppedTap.optBoolean("ok") -> "FAIL_SILENTLY_ACCEPTED_CROPPED"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            // STEP13（fix163）：节点动作必须落在「快照所属那块屏」。
+                            // 快照取自虚拟屏、display_id 却写主屏（0）：旧实现只比 observation_id，
+                            // 动作按快照自己的窗口执行 → 点在虚拟屏上却返回 ok（反方向更重：会真动用户主屏）。
+                            val scopedObs = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", shotDisplayId).put("max_nodes", 60),
+                            )
+                            val scopedNodes = scopedObs.optJSONArray("ui_nodes")
+                            var scopedIndex = -1
+                            for (i in 0 until (scopedNodes?.length() ?: 0)) {
+                                val node = scopedNodes?.optJSONObject(i) ?: continue
+                                if (node.optBoolean("clickable")) {
+                                    scopedIndex = node.optInt("index", -1)
+                                    break
+                                }
+                            }
+                            val scopedTap = if (scopedIndex >= 0) {
+                                call(
+                                    "tap_element",
+                                    JSONObject()
+                                        .put("index", scopedIndex)
+                                        .put("observation_id", scopedObs.optString("observation_id"))
+                                        .put("display_id", 0),
+                                )
+                            } else {
+                                JSONObject()
+                            }
+                            report.appendLine(
+                                "STEP13 index=$scopedIndex code=${scopedTap.optString("code")} " +
+                                    "ok=${scopedTap.optBoolean("ok")} " +
+                                    "message=${scopedTap.optString("message").take(60)}",
+                            )
+                            report.appendLine(
+                                "STEP13 verdict=" + when {
+                                    scopedIndex < 0 -> "SKIPPED_NO_CLICKABLE_NODE"
+                                    scopedTap.optString("code") == ObservationScopeErrors.OTHER_DISPLAY -> "OK"
+                                    scopedTap.optBoolean("ok") -> "FAIL_SILENTLY_ACCEPTED"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            // STEP13b：同一块屏的节点动作必须照旧可用（别把节点动作整体禁掉）。
+                            // 上一步被拒后界面没变，同一快照与 index 仍成立。
+                            val sameScopeTap = if (scopedIndex >= 0) {
+                                call(
+                                    "tap_element",
+                                    JSONObject()
+                                        .put("index", scopedIndex)
+                                        .put("observation_id", scopedObs.optString("observation_id"))
+                                        .put("display_id", shotDisplayId),
+                                )
+                            } else {
+                                JSONObject()
+                            }
+                            report.appendLine(
+                                "STEP13b code=${sameScopeTap.optString("code")} " +
+                                    "ok=${sameScopeTap.optBoolean("ok")} " +
+                                    "method=${sameScopeTap.optString("method")}",
+                            )
+                            report.appendLine(
+                                "STEP13b verdict=" + when {
+                                    scopedIndex < 0 -> "SKIPPED_NO_CLICKABLE_NODE"
+                                    sameScopeTap.optBoolean("ok") -> "OK"
+                                    sameScopeTap.optString("code") ==
+                                        ObservationScopeErrors.OTHER_DISPLAY -> "FAIL_REJECTED_SAME_SCREEN"
                                     else -> "FAIL_UNEXPECTED"
                                 },
                             )

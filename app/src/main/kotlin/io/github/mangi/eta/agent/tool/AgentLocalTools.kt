@@ -1086,6 +1086,7 @@ internal class AgentLocalTools(
             return errorResult("INVALID_NODE_INDEX", "观察快照中不存在节点 index=$index")
         }
         val displayId = resolveDisplayId(args)
+        requireSameObservationScope(displayId, "tap_element")
         val result = performElementTap(observation, node, displayId)
         if (result.isOkJson()) return result
         return retryStaleNodeAction(result, observation, node) { fresh, target ->
@@ -1126,6 +1127,7 @@ internal class AgentLocalTools(
             return errorResult("INVALID_NODE_INDEX", "观察快照中不存在节点 index=$index")
         }
         val displayId = resolveDisplayId(args)
+        requireSameObservationScope(displayId, "long_press_element")
         val result = performElementLongPress(observation, node, displayId, durationMs)
         if (result.isOkJson()) return result
         return retryStaleNodeAction(result, observation, node) { fresh, target ->
@@ -1316,6 +1318,7 @@ internal class AgentLocalTools(
         } else {
             null
         }
+        if (index != null) requireSameObservationScope(null, "type_text")
         return deviceController.replaceText(
             text = args.requiredText("text"),
             index = index,
@@ -1340,6 +1343,7 @@ internal class AgentLocalTools(
         } else {
             null
         }
+        if (index != null) requireSameObservationScope(null, "clear_text")
         return deviceController.clearText(index = index, observation = observation)
     }
 
@@ -1391,6 +1395,30 @@ internal class AgentLocalTools(
      */
     private fun describeDisplayForAgent(displayId: Int?): String =
         if (displayId == null || displayId == 0) "主屏" else "display $displayId"
+
+    /**
+     * 节点动作必须落在「快照所属那块屏」（fix163）。
+     *
+     * 快照来自另一块屏时，index 的含义完全不同：按快照自己的窗口执行，
+     * 得到的是「说点了主屏、实际点了虚拟屏」的假成功（真机 STEP13 返回 ok=true，
+     * after.package 却是虚拟屏上的 com.android.settings）；反方向则会真的动用户的主屏。
+     */
+    private fun requireSameObservationScope(requestedDisplayId: Int?, toolName: String) {
+        val observed = publishedObservation.get().displayId
+        if (ObservationScopePolicy.check(observed, requestedDisplayId) ==
+            ObservationScopePolicy.Scope.MATCH
+        ) {
+            return
+        }
+        throw InvalidToolArgumentException(
+            message = "$toolName 的节点快照来自${describeDisplayForAgent(observed)}，" +
+                "不能用来操作${describeDisplayForAgent(requestedDisplayId)}：" +
+                "节点 index 只在它被观察的那块屏上有意义。请先对目标屏 observe_screen 一次，" +
+                "或用坐标工具（tap / tap_area）",
+            code = ObservationScopeErrors.OTHER_DISPLAY,
+            retryable = false,
+        )
+    }
 
     /**
      * 坐标系必须显式声明。旧版按"上一次观察是否带截图"隐式切换默认值，模型无从得知，

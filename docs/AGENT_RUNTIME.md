@@ -7088,3 +7088,74 @@ STEP1~STEP7b 全部照旧 OK（`OK` / `OK_INDEX_SHIFTED` / `OK_HONEST`），没�
 - `swipe` / `longPress` / `tapArea` 的 screenshot 分支没各自造样本（它们共用 `convertPoint`，逻辑同一处）；
   单测覆盖的是策略对象，端到端只验了 `tap`。
 - 裁剪后的 `crop_map` 换算本身（整屏像素 = source_left + 图像像素 / scale）没有逐像素对照过。
+
+## fix163：节点动作不检查「快照是哪块屏的」（2026-10-27 凌晨，fix162 之后）
+
+### 一、缺陷本身
+
+`tap_element` / `long_press_element` 用**上一次观察**的节点快照执行动作，
+目标屏由 `display_id` 决定，但两者从来没被比较过 ——
+`requireElementObservation` 只校验 `observation_id` 是不是当前快照：
+
+```kotlin
+private fun requireElementObservation(args: JSONObject) = publishedObservation.get()
+    .elements?.takeIf {
+        ObservationReferencePolicy.validate(current.id, requestedId) == Status.MATCH
+    }
+```
+
+于是「观察虚拟屏 → 写 `display_id=0` 点一个 index」会被照单执行：
+动作按**快照自己的窗口**走（`deviceController.tapElement(observation, index)`），
+与 `display_id` 无关。
+
+真机取证（本机 PKX110，canary 修复前）：
+
+```text
+observe_screen(display_id=124)  → o62（com.android.settings 设置首页）
+tap_element(index=2, observation_id=o62, display_id=0)
+  → {"ok":true,"tool":"tap_element","executor":"accessibility","method":"ACTION_CLICK",
+     "after":{"package":"com.android.settings", ...}}
+STEP13 verdict=FAIL_SILENTLY_ACCEPTED
+```
+
+调用写着「点主屏」，`after.package` 却是虚拟屏上的设置 —— 工具返回成功，
+模型因此相信主屏被点过。**反方向更严重**：快照取自主屏、`display_id` 写虚拟屏时，
+动作会真的打在用户正在用的主屏上，而工具声称它在操作虚拟屏。
+
+### 二、修法
+
+- 新增 `ObservationScopePolicy.check(observedDisplayId, requestedDisplayId)`
+  （`MATCH` / `OTHER_DISPLAY`，复用 `CoordinateDimensionPolicy.sameScreen` 的「主屏 null 与 0 等价」）。
+- 新增 `ObservationScopeErrors.OTHER_DISPLAY`；`AgentLocalTools.requireSameObservationScope()`
+  统一抛出（`retryable=false`，消息写明「快照来自 display 131，不能用来操作主屏」）。
+- 四处节点动作落地时调用：`tap_element`、`long_press_element`、
+  `type_text`（带 index 的主屏分支）、`clear_text`（同）。
+  `scroll_element` 不需要 —— 它按快照窗口滚动，本来就没有跨屏参数。
+
+### 三、真机取证（修复后，STEP13 / STEP13b）
+
+```text
+STEP13  index=2 code=OBSERVATION_OTHER_DISPLAY ok=false
+        message=tap_element 的节点快照来自display 131，不能用来操作主屏：节点 index 只在它被观察的那块屏上…
+STEP13  verdict=OK
+STEP13b code= ok=true method=ACTION_CLICK
+STEP13b verdict=OK
+```
+
+`STEP13b` 是**防误伤**的那条：同一块屏上 `tap_element(display_id=131)` 仍走
+`ACTION_CLICK` 成功 —— 新校验只拦跨屏，没有把节点动作整体禁掉。
+STEP1~STEP12 全部照旧（含 STEP8/9/9b/10 的输入路径，`type_text` 走虚拟屏 `input -d`，不受 index 校验影响）。
+
+### 四、门禁
+
+`ObservationScopePolicyTest`（5 例）第一件事就进 `FAST_TEST_FILTERS`：
+用例数 **506 → 511，0 失败**；`assemble` 成功（`Eta-v3.3.1-debug.apk` 96,393,293 字节，sha256 `16ce1354…`）。
+
+### 五、仍未验证
+
+- 反方向（快照取自**主屏**、`display_id=虚拟屏`）没有真机样本 ——
+  修复前那条路径会真的点用户的主屏，探针刻意不碰。
+- `long_press_element` / `type_text` / `clear_text` 的跨屏拒绝共用同一个 helper，
+  端到端只验了 `tap_element`（单测覆盖策略对象本身）。
+- 若模型「先观察主屏、再 `display_id=虚拟屏` 用坐标工具」，那是 fix161/162 管的范围；
+  这里只管节点动作。
