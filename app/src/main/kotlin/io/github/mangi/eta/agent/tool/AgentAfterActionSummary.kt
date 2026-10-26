@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.tool
 
 import io.github.mangi.eta.agent.device.RootShellDeviceController.ElementObservation
 import io.github.mangi.eta.agent.device.RootShellDeviceController.UiNode
+import io.github.mangi.eta.agent.device.UiNodeWire
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,9 +13,24 @@ import org.json.JSONObject
 internal object AgentAfterActionSummary {
     private const val MAX_DIFF_NODES = 8
 
+    /**
+     * 动作后附带节点也要守体积预算：这份摘要与前面的工具结果进的是同一条上下文，
+     * 超了同样会被溢写落盘（模型的下一步就只能去 read_file，而不是直接点）。
+     * 7,000 给 `changes`（最多 8×3 个节点）与结论字段留了余量。
+     */
+    private const val NODES_BUDGET_CHARS = 7_000
+
     fun build(before: ElementObservation?, after: ElementObservation): JSONObject {
         val changed = before == null || signature(before.nodes) != signature(after.nodes)
         val diff = before?.let { diff(it.nodes, after.nodes) }
+        val nodes = UiNodeWire.toArray(
+            nodes = after.nodes,
+            foregroundPackage = after.packageName,
+            includeNodeId = true,
+            includeBounds = false,
+            budgetChars = NODES_BUDGET_CHARS,
+        )
+        val nodesTruncated = nodes.shown < after.nodes.size
         return JSONObject()
             .put("observation_id", after.id)
             .put("package", after.packageName)
@@ -22,13 +38,24 @@ internal object AgentAfterActionSummary {
             .put("package_changed", before != null && before.packageName != after.packageName)
             .put("window_changed", before != null && before.windowId != after.windowId)
             .put("ui_tree_truncated", after.truncated)
-            .put("changes", diff?.toJson() ?: JSONObject().put("available", false))
-            .put("ui_nodes", JSONArray().also { array -> after.nodes.forEach { array.put(it.compactJson()) } })
+            .put("changes", diff?.toJson(after.packageName) ?: JSONObject().put("available", false))
+            .put("ui_nodes", nodes.nodes)
+            .put("ui_nodes_shown", nodes.shown)
+            .put("ui_nodes_truncated", nodesTruncated)
             .put(
                 "note",
                 if (changed) "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
                 else "界面没有可见变化，动作可能未生效；请换目标或方式，不要原样重复",
             )
+            .apply {
+                if (nodesTruncated) {
+                    put(
+                        "ui_nodes_note",
+                        "只附带了 ${nodes.shown}/${after.nodes.size} 个节点（按上下文体积裁剪尾部）；" +
+                            "已带上的 index 可直接用于 tap_element。",
+                    )
+                }
+            }
     }
 
     private data class Diff(
@@ -36,12 +63,12 @@ internal object AgentAfterActionSummary {
         val removed: List<UiNode>,
         val changed: List<Pair<UiNode, UiNode>>,
     ) {
-        fun toJson(): JSONObject = JSONObject()
+        fun toJson(foregroundPackage: String): JSONObject = JSONObject()
             .put("added_count", added.size)
             .put("removed_count", removed.size)
             .put("changed_count", changed.size)
-            .put("added", added.take(MAX_DIFF_NODES).toJsonArray())
-            .put("removed", removed.take(MAX_DIFF_NODES).toJsonArray())
+            .put("added", added.take(MAX_DIFF_NODES).toJsonArray(foregroundPackage))
+            .put("removed", removed.take(MAX_DIFF_NODES).toJsonArray(foregroundPackage))
             .put(
                 "changed",
                 JSONArray().also { array ->
@@ -49,15 +76,24 @@ internal object AgentAfterActionSummary {
                         array.put(
                             JSONObject()
                                 .put("node_id", new.nodeId.takeIf(String::isNotBlank) ?: JSONObject.NULL)
-                                .put("before", old.compactJson())
-                                .put("after", new.compactJson()),
+                                .put("before", old.toDiffJson(foregroundPackage))
+                                .put("after", new.toDiffJson(foregroundPackage)),
                         )
                     }
                 },
             )
 
-        private fun List<UiNode>.toJsonArray(): JSONArray =
-            JSONArray().also { array -> forEach { array.put(it.compactJson()) } }
+        private fun List<UiNode>.toJsonArray(foregroundPackage: String): JSONArray =
+            JSONArray().also { array -> forEach { array.put(it.toDiffJson(foregroundPackage)) } }
+
+        /** 差异条目里的节点：与 `ui_nodes` 同一口径，只是不带 bounds（差异看 center 已够）。 */
+        private fun UiNode.toDiffJson(foregroundPackage: String): JSONObject =
+            UiNodeWire.toArray(
+                nodes = listOf(this),
+                foregroundPackage = foregroundPackage,
+                includeNodeId = true,
+                includeBounds = false,
+            ).nodes.getJSONObject(0)
     }
 
     private fun diff(before: List<UiNode>, after: List<UiNode>): Diff {
@@ -88,26 +124,4 @@ internal object AgentAfterActionSummary {
 
     private fun signature(nodes: List<UiNode>): List<String> =
         nodes.map { "${it.className}|${it.viewId}|${it.text}|${it.desc}|${it.bounds.toShortString()}" }
-
-    /** 精简字段：省略默认值为 false 的布尔与包名，降低每步附带观察的 token 开销。 */
-    private fun UiNode.compactJson(): JSONObject = JSONObject()
-        .put("index", index)
-        .apply {
-            if (nodeId.isNotBlank()) put("node_id", nodeId)
-            if (text.isNotBlank()) put("text", text)
-            if (desc.isNotBlank()) put("desc", desc)
-            put("class", className.substringAfterLast('.'))
-            if (viewId.isNotBlank()) put("view_id", viewId.substringAfterLast('/'))
-            put("center", JSONObject().put("x", centerX).put("y", centerY))
-            if (clickable) put("clickable", true)
-            if (longClickable) put("long_clickable", true)
-            if (scrollable) put("scrollable", true)
-            if (editable) put("editable", true)
-            if (focused) put("focused", true)
-            if (password) put("password", true)
-            if (!enabled) put("enabled", false)
-            checked?.let { put("checked", it) }
-            if (selected) put("selected", true)
-            if (hint.isNotBlank()) put("hint", hint)
-        }
 }

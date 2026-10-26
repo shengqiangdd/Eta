@@ -85,7 +85,8 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.WorkspaceMessagesTest
   --tests io.github.mangi.eta.ui.app.WorkspaceExportNameTest
   --tests io.github.mangi.eta.ui.app.WorkspaceDirectoryBrowserTest
-  --tests io.github.mangi.eta.ui.app.WorkspacePickerHistoryTest'
+  --tests io.github.mangi.eta.ui.app.WorkspacePickerHistoryTest
+  --tests io.github.mangi.eta.agent.device.UiNodeWireTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
 # 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆
@@ -94,6 +95,8 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 也没法用「最近改动过的文件」当判据：本仓库源码会被 rsync 刷新 mtime，会频繁误报。
 # 所以这轮**没有**自动机制拦住「写了测试却没加进过滤列表」，只能靠这行提醒：
 # **新增 `ui/app` 下能本机跑的测试，必须同时加进上面的列表；漏加的表现是「用例数不变」。**
+# 2026-10-26 又踩一次同一类事：`UiNodeWireTest`（纯 JVM，守着 ui_nodes 体积不可回涨）
+# 写好并单跑通过，但加进列表前 `STAGES=test` 仍是 417 例——「全绿」根本没跑到它。已补（423 例）。
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest

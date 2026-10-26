@@ -5962,3 +5962,69 @@ fix149 §五 的表格和更早那条「真冷启动 10,385 ms」都取自**同�
 `/data/anr/trace_01..08` 全部是同一 PID 在 2.4 秒内连续 dump 出来的；`/data/system/dropbox` 里 18:53
 没有任何 `data_app_anr`（当天两条都是京东 push/widget 进程），事件日志也没有 `am_anr`；其中 4 份抓到的
 主线程状态是空闲（`MessageQueue.nativePollOnce`）。结论：外部触发的线程转储，排查方向作废。
+
+## fix151：ui_nodes 线格式收窄 —— 观察结果不再落盘（2026-10-26）
+
+### 一、问题不是「节点太多」，而是「每个节点太胖」
+
+`observe_screen` 一直不在 `AgentToolSpill.SELF_BOUNDED_TOOLS` 里，超过 12,000 预算就整段落盘：
+上下文里只剩 4,000 字预览 + 文件路径，模型必须再 `read_file` 一次才看得到节点 ——
+一次观察变成两步，而且读回来的还是一段被转义的 JSON。
+
+旧格式的实测体积（本机 PKX110 / Android 16）：
+
+| 场景 | 节点数 | `observe_screen` 结果 |
+|---|---|---|
+| 设置首页 | 30 | ≈11~12 KB |
+| 应用列表 | 23 | ≈9 KB |
+| 任意密集界面（默认上限） | 60 | ≈13.6 KB，**必落盘** |
+| 显式 `max_nodes=120` | 120 | 27~30 KB，**必落盘** |
+
+逐字段看，浪费的都不是模型要的信息：`class` 是全限定名（`android.widget.TextView`）、
+`package` 每个节点重复一遍、`view_id` 带完整资源前缀、`node_id` 没有任何工具接受、
+8 个布尔里多数是 false、位置同时给 `bounds` 对象和 `center` 对象。
+
+### 二、改法：一层共用的紧凑线格式 + 体积预算
+
+新增 `agent/device/UiNodeWire.kt`，`observe_screen` 与「动作后观察」共用：
+
+- `class` 只留最后一段；`view_id` 只留 `/` 后一段；
+- `package` 与顶层前台包相同时省略（多窗口 / 系统弹窗里才写）；
+- 默认 false 的布尔只在 true 时输出；但 `enabled=false`、`checked=false` 这类「反直觉状态」必须保留 ——
+  省 token 不能省到说谎；
+- `text`/`desc` 截断 200 字、`hint` 120 字，截断点不落在代理对中间；
+- `center` 改成 `[x,y]` 数组，`bounds` 仍是短串；两者都由 `Rect` 字段自行计算，
+  **不调 `Rect.toShortString()/centerX()`** —— 纯 JVM 单测里那两层会抛 `not mocked`，测试根本跑不起来。
+
+`observe_screen` 另外守一个 9,000 字符的 `ui_nodes` 预算（其余字段实测约 2.5 KB，总预算 12,000）：
+超了就少输出尾部节点，并写 `ui_nodes_shown` / `ui_nodes_truncated` / `ui_nodes_note`，
+**index 保持原快照下标不重编号**（重编号会让 `tap_element` 点到别的控件）。
+宁可「少看几个节点、但一次拿到」，也不要「整段落盘、再读一次」。
+
+### 三、验证
+
+- 单测：新增 `UiNodeWireTest` **6/6 通过**（默认布尔省略、反直觉状态保留、简名、包名省略规则、
+  代理对截断、预算裁剪不重编号、60 节点体积对照）。已加进 `tools/gate.sh` 的 `FAST_TEST_FILTERS`
+  —— 没加之前 `STAGES=test` 仍是 **417 例**，「全绿」压根没跑到新测试（本轮又踩一次同一类坑）。
+- 门禁：`STAGES=test,assemble` → **423 用例 0 失败**；APK 94,611,976 字节
+  sha256 `d67e2963…`，`pm install -r -d` 后设备侧 `base.apk` 哈希一致。
+- 真机（canary + 虚拟屏 + `eta.debug.virtual_display probe`，走的是真实 `RootShellDeviceController.observe`）：
+
+| 界面 | 节点 | `ui_nodes_shown` | 结果长度 |
+|---|---|---|---|
+| canary 自身界面 | 60 | 60（未裁剪） | **8,601 字符** |
+| 设置首页 | 30 | 30 | 5,406 |
+| 应用列表 | 23 | 23 | 4,606 |
+
+  60 节点 8,601 字符落在 12,000 预算内 → **不再落盘**，一次观察就能拿到全部节点。
+- 合成对照：同 60 个节点、旧字段形状 **19,221 字符** → 新 **8,661 字符**（−55%）。
+
+### 四、未验证 / 边界
+
+- **120 节点没有真机实测**：调试探针固定 `max_nodes=60`。按实测比例推算 120 节点约 15~16 KB，
+  会触发 9,000 预算裁剪到约 75~80 个节点（`ui_nodes_truncated=true` + `ui_nodes_note`），
+  仍然不落盘，但「一次看全 120 个」不再成立。要更高上限就得先证明上下文扛得住，这轮没动。
+- `AgentAfterActionSummaryTest` 4 例是 Robolectric，本机 aarch64 **不支持**（既有环境限制，非本次引入），
+  动作后摘要的改动靠「与 observe 同一套 `UiNodeWire`」+ 代码审阅保证，未在本机执行。
+- 设备侧 skill `virtual-display-playbook` 里「`max_nodes=120` 必落盘」的经验值**已过时**，
+  等本改动随正式版下发后再更新 skill 文案（当前设备上跑的还是旧代码，提前改会让 skill 说假话）。

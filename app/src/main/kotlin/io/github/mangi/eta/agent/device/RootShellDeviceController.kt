@@ -207,6 +207,17 @@ internal class RootShellDeviceController(
             null
         }
         val nodes = elementObservation?.nodes.orEmpty()
+        // 节点投影：紧凑线格式 + 体积预算（取舍见 UiNodeWire 的 KDoc）。
+        // 超预算时少输出尾部节点，而不是让整段结果被溢写落盘 —— 一旦落盘，
+        // 上下文里只剩预览，模型必须再 read_file 一次才拿得到节点，步数直接翻倍。
+        val nodeProjection = UiNodeWire.toArray(
+            nodes = nodes,
+            foregroundPackage = if (virtual != null) virtualForeground else elementObservation?.packageName.orEmpty(),
+            includeNodeId = false,
+            includeBounds = true,
+            budgetChars = UiNodeWire.OBSERVE_NODES_BUDGET_CHARS,
+        )
+        val nodesTruncatedByBudget = nodeProjection.shown < nodes.size
         val capture = if (includeScreenshot) {
             if (virtual != null) captureVirtualScreenshot(virtual) else captureScreenshot()
         } else {
@@ -334,7 +345,9 @@ internal class RootShellDeviceController(
             )
             .put("node_limit", elementObservation?.maxNodes ?: 0)
             .put("ui_tree_truncated", elementObservation?.truncated ?: false)
-            .put("ui_nodes", nodes.toJsonArray())
+            .put("ui_nodes", nodeProjection.nodes)
+            .put("ui_nodes_shown", nodeProjection.shown)
+            .put("ui_nodes_truncated", nodesTruncatedByBudget)
             .put(
                 "ui_diagnostics",
                 uiDiagnostics(
@@ -359,6 +372,14 @@ internal class RootShellDeviceController(
                         .put("height", image.height)
                 }
             )
+        if (nodesTruncatedByBudget) {
+            json.put(
+                "ui_nodes_note",
+                "本次只输出 ${nodeProjection.shown}/${nodes.size} 个节点（按上下文体积裁剪尾部）。" +
+                    "已输出节点的 index 可直接用于 tap_element；需要尾部节点时先 scroll 让它们进入视野再观察，" +
+                    "不要为了看全树反复提高 max_nodes。",
+            )
+        }
         if (displayEventAge != null) {
             json.put("display_event_age_ms", displayEventAge)
             json.put(
@@ -947,7 +968,12 @@ internal class RootShellDeviceController(
                 haystacks.any { value -> matches(value, needle, matchMode) }
             }
             if (match != null) {
-                val matchedNode = match.toJson()
+                val matchedNode = UiNodeWire.toArray(
+                    nodes = listOf(match),
+                    foregroundPackage = match.packageName,
+                    includeNodeId = true,
+                    includeBounds = true,
+                ).nodes.getJSONObject(0)
                 matchedNode.remove("index")
                 matchedNode.put("actionable", false)
                 return JSONObject()
@@ -1866,35 +1892,6 @@ internal class RootShellDeviceController(
             "坐标超出屏幕范围：($x,$y) not in ${width}x$height"
         }
     }
-
-    private fun List<UiNode>.toJsonArray(): JSONArray =
-        JSONArray().also { array ->
-            forEach { node -> array.put(node.toJson()) }
-        }
-
-    private fun UiNode.toJson(): JSONObject =
-        JSONObject()
-            .put("index", index)
-            .put("text", text)
-            .put("desc", desc)
-            .put("class", className)
-            .put("package", packageName)
-            .put("view_id", viewId)
-            .apply { if (nodeId.isNotBlank()) put("node_id", nodeId) }
-            .put("bounds", bounds.toShortString())
-            .put("center", JSONObject().put("x", centerX).put("y", centerY))
-            .put("clickable", clickable)
-            .put("long_clickable", longClickable)
-            .put("scrollable", scrollable)
-            .put("focused", focused)
-            .put("editable", editable)
-            .put("password", password)
-            .put("enabled", enabled)
-            .apply {
-                checked?.let { put("checked", it) }
-                if (selected) put("selected", true)
-                if (hint.isNotBlank()) put("hint", hint)
-            }
 
     private fun XmlPullParser.attr(name: String): String =
         getAttributeValue(null, name).orEmpty()
