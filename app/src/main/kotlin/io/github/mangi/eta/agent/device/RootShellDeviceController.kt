@@ -493,8 +493,14 @@ internal class RootShellDeviceController(
             // 虚拟屏也有无障碍树了：优先用节点滚动动作；拿不到根/滚动容器，
             // 或节点只支持手势（手势只作用于默认屏）时才退回 input -d 坐标滑动。
             val result = service.scrollCurrent(parsed, parsedAmount, displayId)
-            val canFallbackToRoot = result.code == "NO_ACTIVE_WINDOW" ||
-                result.code == "GESTURE_UNSUPPORTED_ON_VIRTUAL_DISPLAY"
+            // 虚拟屏上「无障碍这条路走不通」的任何理由都该退到 input -d。
+            // 以前只认两个错误码（NO_ACTIVE_WINDOW / GESTURE_UNSUPPORTED），其余原样报错；
+            // 实测同一调用时好时坏：失败那次 7ms 就返回了，说明压根没滑，
+            // 对模型来说与「不支持」没区别，却白费一轮。虚拟屏上坐标滑动是等价且更可靠的
+            // 那条路（结果仍由节点位移验证），所以这里对非默认屏一律兜底。
+            // displayId != 0 即非默认屏（0 是 Display.DEFAULT_DISPLAY）。
+            val onVirtualDisplay = displayId != null && displayId != 0
+            val canFallbackToRoot = onVirtualDisplay || result.code == "NO_ACTIVE_WINDOW"
             if (displayId == null || result.ok || !canFallbackToRoot) {
                 return scrollActionJson("scroll", result, displayId)
             }
@@ -517,6 +523,48 @@ internal class RootShellDeviceController(
             amount = parsedAmount,
             displayId = displayId,
         )
+    }
+
+    /**
+     * 兜底失败时的收尾：把「试过兜底、以及它到底发生了什么」带回给模型。
+     *
+     * 关键点：兜底已经把坐标滑动发给了系统，就不能再回「虚拟屏不支持手势」那种与事实相反的结论 ——
+     * 模型看到「本次未发送任何手势」会再滚一次，用户看到的就是「滚两屏」。所以这里用兜底自己的
+     * code/message（常见是 ACTION_OUTCOME_UNKNOWN：发出去了、但没能确认位移），并用
+     * `fallback_from` 保留原始的无障碍错误码。
+     *
+     * 不直接返回兜底的完整结果：它带 after/changes（几十个节点），而这里已经是失败路径，
+     * 模型需要的是原因，不是又一棵 UI 树。
+     */
+    private fun withFallbackFailure(
+        base: String,
+        reason: String,
+        fallback: JSONObject?,
+        error: Throwable?,
+    ): String {
+        val json = runCatching { JSONObject(base) }.getOrElse { return base }
+        if (fallback != null) {
+            json.put("code", fallback.optString("code").ifBlank { "ACTION_OUTCOME_UNKNOWN" })
+            json.put(
+                "message",
+                fallback.optString("message").ifBlank { "坐标滑动已发出，但无法确认位移；请先重新观察再决定" },
+            )
+            json.put("executor", "root")
+            json.put("method", fallback.optString("method"))
+            json.put("verified_by", fallback.optString("verified_by"))
+            json.put("fallback_from", reason)
+            // 兜底自己的诊断字段必须原样带上，否则「为什么没确认」在合并时就丢了：
+            // swipes（补发过几次）、verification（配到几个锚点）、真实耗时。
+            fallback.optInt("elapsed_ms", -1).takeIf { it >= 0 }?.let { json.put("fallback_elapsed_ms", it) }
+            fallback.optJSONObject("verification")?.let { json.put("verification", it) }
+            fallback.optInt("swipes", 1).takeIf { it > 1 }?.let { json.put("swipes", it) }
+        } else {
+            json.put(
+                "fallback_error",
+                (error?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: "兜底未返回结果").take(300),
+            )
+        }
+        return json.toString()
     }
 
     fun inputText(text: String): String {
@@ -797,6 +845,19 @@ internal class RootShellDeviceController(
                 waitForUiSettle("tap")
                 return nodeActionJson("tap_element", result)
             }
+            // 虚拟屏：节点不接受 ACTION_CLICK 时，无障碍手势兜底会落到用户主屏，
+            // 所以以前这里只能报错，模型得再补一次坐标 tap。改为直接用节点中心走 input -d。
+            if (VirtualDisplayFallbackPolicy.mayFallbackToRootCoordinates(
+                    result.code,
+                    snapshot.displayId,
+                    rootAvailable(),
+                )
+            ) {
+                fallbackToRootNodeAction(observation, index, durationMs = null)?.let { fallback ->
+                    waitForUiSettle("tap")
+                    return fallback.put("tool", "tap_element").toString()
+                }
+            }
             return nodeActionJson("tap_element", result)
         }
         if (!rootAvailable()) return rootRequired()
@@ -820,6 +881,18 @@ internal class RootShellDeviceController(
                 waitForUiSettle("long_press")
                 return nodeActionJson("long_press_element", result)
             }
+            // 同 tap_element：虚拟屏上节点不接受 ACTION_LONG_CLICK 时改走 input -d 长按。
+            if (VirtualDisplayFallbackPolicy.mayFallbackToRootCoordinates(
+                    result.code,
+                    snapshot.displayId,
+                    rootAvailable(),
+                )
+            ) {
+                fallbackToRootNodeAction(observation, index, durationMs = durationMs)?.let { fallback ->
+                    waitForUiSettle("long_press")
+                    return fallback.put("tool", "long_press_element").toString()
+                }
+            }
             return nodeActionJson("long_press_element", result)
         }
         if (!rootAvailable()) return rootRequired()
@@ -827,6 +900,62 @@ internal class RootShellDeviceController(
             ?: return errorJson("STALE_NODE", "无法在当前界面唯一确认目标节点，请重新观察屏幕")
         val node = resolved.node
         return longPress(node.centerX, node.centerY, durationMs).rewriteTool("long_press_element")
+    }
+
+    /**
+     * 虚拟屏上节点动作被「手势只作用于默认屏」挡住时的坐标兜底。
+     *
+     * 用最近一次观察里该节点的中心点走 `input -d`：不重新 dump 树（省一次几百毫秒），
+     * 也不会因为漏传 display_id 点到用户主屏。
+     */
+    private fun fallbackToRootNodeAction(
+        observation: ElementObservation,
+        index: Int,
+        durationMs: Int?,
+    ): JSONObject? {
+        val node = observation.nodes.firstOrNull { candidate -> candidate.index == index } ?: return null
+        if (node.bounds.isEmpty) return null
+        val displayId = observation.accessibilitySnapshot?.displayId ?: return null
+        // 盲点前的安全判定：中心点若落在别的节点上，那个「中心」其实是别人的落点
+        // （真机事故：设置首页根 ScrollView 的中心正好落在快捷开关行，把飞行模式打开了，
+        //  设备当场断网）。这种情况不发手势，直接把真正会被点到的节点报回去。
+        val unsafeHit = BlindTapSafetyPolicy.centerHitOnOtherNode(
+            targetIndex = index,
+            target = node.bounds.toBlindTapBox(),
+            candidates = observation.nodes.map { candidate ->
+                BlindTapSafetyPolicy.Candidate(
+                    index = candidate.index,
+                    box = candidate.bounds.toBlindTapBox(),
+                    interactive = candidate.clickable || candidate.editable || candidate.checked != null,
+                )
+            },
+        )
+        if (unsafeHit != null) {
+            return JSONObject()
+                .put("ok", false)
+                .put("method", "ROOT_COORDINATE_FALLBACK")
+                .put("code", BlindTapSafetyPolicy.UNSAFE_CODE)
+                .put("fallback_reason", VirtualDisplayFallbackPolicy.GESTURE_UNSUPPORTED)
+                .put("blocked_target_index", unsafeHit.index)
+                .put("blocked_target_interactive", unsafeHit.interactive)
+                .put(
+                    "message",
+                    "节点 #$index 的中心点落在节点 #${unsafeHit.index} 上" +
+                        (if (unsafeHit.interactive) "（那是可交互控件，盲点可能误触开关）" else "") +
+                        "：已取消这次盲点，请改点 #${unsafeHit.index} 或它的文本子节点",
+                )
+        }
+        // 页面还在切换时打进去的坐标动作会落在过渡中的窗口上（点了/滑了都没反应），
+        // 所以先等这屏刷稳再发。
+        awaitStableTree(displayId)
+        val raw = if (durationMs == null) {
+            tap(node.centerX, node.centerY, displayId)
+        } else {
+            longPress(node.centerX, node.centerY, durationMs, displayId)
+        }
+        return runCatching { JSONObject(raw) }.getOrNull()
+            ?.put("method", "ROOT_COORDINATE_FALLBACK")
+            ?.put("fallback_reason", VirtualDisplayFallbackPolicy.GESTURE_UNSUPPORTED)
     }
 
     fun scrollElement(
@@ -853,10 +982,39 @@ internal class RootShellDeviceController(
                     "ACCESSIBILITY_UNAVAILABLE",
                     "无障碍服务已断开，请重新观察屏幕",
                 )
-            return scrollActionJson(
-                tool = "scroll_element",
-                result = service.scrollNode(snapshot, index, parsed, parsedAmount),
-                displayId = snapshot.displayId,
+            val nodeResult = service.scrollNode(snapshot, index, parsed, parsedAmount)
+            if (!VirtualDisplayFallbackPolicy.mayFallbackToRootCoordinates(
+                    nodeResult.code,
+                    snapshot.displayId,
+                    rootAvailable(),
+                )
+            ) {
+                return scrollActionJson("scroll_element", nodeResult, snapshot.displayId)
+            }
+            // 虚拟屏上「节点只支持手势」不是终点：改走 scroll 里已验证过的 input -d 坐标滚动。
+            // 这样 scroll_element 在虚拟屏上也能真正滚起来，而不是让模型自己换算坐标再补一次 swipe。
+            // 页面切换动画期间发出去的滑动会打在过渡上（发了也不动），先等这屏刷稳。
+            awaitStableTree(snapshot.displayId)
+            val attempt = runCatching { JSONObject(scroll(direction, amount, snapshot.displayId)) }
+            val fallback = attempt.getOrNull()
+            if (fallback != null && fallback.optBoolean("ok")) {
+                return JSONObject()
+                    .put("ok", true)
+                    .put("tool", "scroll_element")
+                    .put("direction", parsed.name.lowercase())
+                    .put("display_id", snapshot.displayId)
+                    .put("method", "ROOT_SCROLL_FALLBACK")
+                    .put("fallback_reason", nodeResult.code)
+                    .put("fallback", fallback)
+                    .toString()
+            }
+            // 兜底也失败：不能像以前那样直接丢掉，只把原始错误码回给模型 ——
+            // 那样看不出「已经试过另一条路」，下次它还会原样重试。这里把尝试与原因一并带回。
+            return withFallbackFailure(
+                base = scrollActionJson("scroll_element", nodeResult, snapshot.displayId),
+                reason = nodeResult.code,
+                fallback = fallback,
+                error = attempt.exceptionOrNull(),
             )
         }
         if (!rootAvailable()) return rootRequired()
@@ -1513,34 +1671,62 @@ internal class RootShellDeviceController(
                 "INVALID_NODE_BOUNDS",
                 "滚动区域过小或不在屏幕内",
             )
-        val result = runSuText(
-            "input" + (displayId?.let { " -d $it" } ?: "") +
-                " swipe ${gesture.start.x} ${gesture.start.y} " +
-                "${gesture.end.x} ${gesture.end.y} 300",
-            timeoutSeconds = 8,
-        )
-        if (result.output == "ROOT_REQUIRED" && result.exitCode == -1) return rootRequired()
-        val commandOutcome = ShellActionOutcomePolicy.classify(result.exitCode)
-        if (commandOutcome == ShellActionOutcomePolicy.Outcome.FAILED) {
-            return scrollErrorJson(
-                tool,
+        val swipeCommand = "input" + (displayId?.let { " -d $it" } ?: "") +
+            " swipe ${gesture.start.x} ${gesture.start.y} " +
+            "${gesture.end.x} ${gesture.end.y} 300"
+        var attempts = 0
+        var commandOutcome = ShellActionOutcomePolicy.Outcome.SUCCEEDED
+        var probe = ScrollMotionProbe(null, anchors = 0, movingAnchors = 0)
+        while (true) {
+            attempts++
+            val result = runSuText(swipeCommand, timeoutSeconds = 8)
+            if (result.output == "ROOT_REQUIRED" && result.exitCode == -1) return rootRequired()
+            commandOutcome = ShellActionOutcomePolicy.classify(result.exitCode)
+            if (commandOutcome == ShellActionOutcomePolicy.Outcome.FAILED) {
+                return scrollErrorJson(
+                    tool,
+                    direction,
+                    "COMMAND_FAILED",
+                    result.output.ifBlank { "exit=${result.exitCode}" },
+                )
+            }
+            if (commandOutcome == ShellActionOutcomePolicy.Outcome.SUCCEEDED) {
+                Thread.sleep(SCROLL_SETTLE_MS)
+            }
+            probe = probeRootScrollMotion(
+                beforeNodes,
+                dumpUiNodes(maxNodes, displayId),
+                bounds,
                 direction,
-                "COMMAND_FAILED",
-                result.output.ifBlank { "exit=${result.exitCode}" },
             )
+            val movedNow = ScrollEvidenceContract.classify(
+                direction = direction,
+                delta = probe.delta,
+                movementSource = probe.delta?.let { ScrollMovementSource.ANCHOR_MOTION },
+                atBoundary = false,
+            ) == ScrollEvidence.MOVED_BY_ANCHOR_MOTION
+            // 锚点全在、一个都没动 → 这次手势大概率没生效（多半打在了页面切换动画上），
+            // 补发一次不会重复滚动；一个锚点都没配上也可能是页面换了，那时不补发。
+            if (!RootScrollResendPolicy.shouldResend(movedNow, probe.anchors, probe.movingAnchors, attempts)) {
+                break
+            }
         }
-        if (commandOutcome == ShellActionOutcomePolicy.Outcome.SUCCEEDED) {
-            Thread.sleep(450L)
-        }
-        val afterNodes = dumpUiNodes(maxNodes, displayId)
-        val inferredDelta = inferRootScrollDelta(beforeNodes, afterNodes, bounds, direction)
+        val inferredDelta = probe.delta
+        // 锚点确实动了、但幅度彼此不一致（典型：列表滚动同时伴着头部署开/收起）。
+        // 这时只敢确认「内容变了」：再盲目补一次滚动就是双倍位移，方向未确认则要求观察一次。
+        val partialMotion = probe.anchors >= 2 &&
+            probe.movingAnchors >= 2 &&
+            probe.movingAnchors * 2 >= probe.anchors
         val evidence = ScrollEvidenceContract.classify(
             direction = direction,
             delta = inferredDelta,
             movementSource = inferredDelta?.let { ScrollMovementSource.ANCHOR_MOTION },
             atBoundary = false,
+            partialAnchorMotion = partialMotion,
         )
-        val moved = evidence == ScrollEvidence.MOVED_BY_ANCHOR_MOTION
+        val directionConfirmed = evidence != ScrollEvidence.PARTIAL_ANCHOR_MOTION
+        val moved = evidence == ScrollEvidence.MOVED_BY_ANCHOR_MOTION ||
+            evidence == ScrollEvidence.PARTIAL_ANCHOR_MOTION
         val json = JSONObject()
             .put("ok", moved)
             .put("tool", tool)
@@ -1552,6 +1738,25 @@ internal class RootShellDeviceController(
             .put("method", "INPUT_SWIPE")
             .put("verified_by", if (moved) "ui_node_motion" else "none")
             .put("elapsed_ms", SystemClock.elapsedRealtime() - startedAt)
+        if (!directionConfirmed) {
+            json.put("verified_by", "anchor_motion_partial")
+                .put("direction_confirmed", false)
+                .put(
+                    "note",
+                    "内容确实移位了（${probe.movingAnchors}/${probe.anchors} 个锚点变化），但幅度不一致（例如头部此时正在展开/收起），" +
+                        "方向未确认；需要确认方向时再 observe_screen 一次，不要直接重滚。",
+                )
+        }
+        // 补发过几次、比对到几个锚点：这两项是「为什么没确认」的唯一证据。
+        if (attempts > 1) json.put("swipes", attempts)
+        if (!moved) {
+            json.put(
+                "verification",
+                JSONObject()
+                    .put("anchors", probe.anchors)
+                    .put("moving_anchors", probe.movingAnchors),
+            )
+        }
         inferredDelta?.let { delta ->
             if (direction.axis == ScrollAxis.VERTICAL) {
                 json.put("delta_y", delta)
@@ -1614,13 +1819,35 @@ internal class RootShellDeviceController(
      * Root 滚动只能用滚动前后都唯一存在的稳定节点证明方向；任意树变化不足以证明滚动。
      * 屏幕内容向上移动代表滚动位置向下，因此最后要反转节点位移符号。
      */
-    private fun inferRootScrollDelta(
+    /** 一次「坐标滑动后」的位移证据：换算出的位移、配上的锚点数、真正动了的锚点数。 */
+    private data class ScrollMotionProbe(
+        val delta: Int?,
+        val anchors: Int,
+        val movingAnchors: Int,
+    )
+
+    private fun probeRootScrollMotion(
         beforeNodes: List<UiNode>,
         afterNodes: List<UiNode>,
         region: Rect,
         direction: ScrollDirection,
-    ): Int? {
-        if (beforeNodes.isEmpty() || afterNodes.isEmpty()) return null
+    ): ScrollMotionProbe {
+        val deltas = scrollAnchorDeltas(beforeNodes, afterNodes, region, direction)
+        if (deltas.isEmpty()) return ScrollMotionProbe(delta = null, anchors = 0, movingAnchors = 0)
+        return ScrollMotionProbe(
+            delta = RootScrollMotionContract.inferScrollDelta(deltas),
+            anchors = deltas.size,
+            movingAnchors = deltas.count { delta -> kotlin.math.abs(delta) >= 2 },
+        )
+    }
+
+    private fun scrollAnchorDeltas(
+        beforeNodes: List<UiNode>,
+        afterNodes: List<UiNode>,
+        region: Rect,
+        direction: ScrollDirection,
+    ): List<Int> {
+        if (beforeNodes.isEmpty() || afterNodes.isEmpty()) return emptyList()
 
         fun UiNode.motionKey(): String? {
             if (viewId.isBlank() && text.isBlank() && desc.isBlank()) return null
@@ -1645,7 +1872,7 @@ internal class RootShellDeviceController(
             val newAxis = if (direction.axis == ScrollAxis.VERTICAL) newNode.centerY else newNode.centerX
             newAxis - oldAxis
         }
-        return RootScrollMotionContract.inferScrollDelta(contentDeltas)
+        return contentDeltas
     }
 
     private fun uiTreeSignature(nodes: List<UiNode>, region: Rect? = null): String =
@@ -1883,6 +2110,27 @@ internal class RootShellDeviceController(
             else -> 250L
         }
         Thread.sleep(delayMs)
+    }
+
+    /**
+     * 等到这屏的 UI 树连续两次一致（最多 [UI_STABLE_BUDGET_MS]）。
+     *
+     * 为什么需要：紧跟一次点击之后，**页面切换动画期间发出的手势常常打在过渡上** ——
+     * 既不滚动也不报错，表现为「发了但没动」。虚拟屏上实测就是这样稳定失败的：
+     * 同一探针 3/3 次得到 `ACTION_OUTCOME_UNKNOWN`，而 `verification` 显示 10 个锚点
+     * 里 9 个位置变了（那是页面切换造成的整体位移，不是滚动）。
+     * 等树稳定再发手势只多花几百毫秒，而且只在「节点动作被拒、需要坐标兜底」这条
+     * 罕见路径上付。
+     */
+    private fun awaitStableTree(displayId: Int?, maxNodes: Int = 60) {
+        val deadline = SystemClock.elapsedRealtime() + UI_STABLE_BUDGET_MS
+        var previous = dumpUiNodes(maxNodes, displayId)
+        while (SystemClock.elapsedRealtime() < deadline) {
+            Thread.sleep(UI_STABLE_POLL_MS)
+            val current = dumpUiNodes(maxNodes, displayId)
+            if (uiTreeSignature(current) == uiTreeSignature(previous)) return
+            previous = current
+        }
     }
 
     private fun validatePoint(x: Int, y: Int, displayId: Int? = null) {
@@ -2212,6 +2460,13 @@ internal class RootShellDeviceController(
         private const val MAX_INPUT_TEXT_CHARS = 1_000
         private const val MAX_REPLACE_TEXT_CHARS = 4_000
         private const val MAX_CLIPBOARD_TEXT_CHARS = 20_000
+
+        /** 坐标滑动后等界面稳定再比对树；太短会把「还在惯性滚动」当成没动。 */
+        private const val SCROLL_SETTLE_MS = 450L
+
+        /** 发手势前等 UI 刷稳：轮询间隔与总预算（预算用尽就用最后一棵树硬着头皮发）。 */
+        private const val UI_STABLE_POLL_MS = 150L
+        private const val UI_STABLE_BUDGET_MS = 1_200L
         private val ROOT_OBSERVATION_IDS = AtomicLong(0)
     }
 }
@@ -2234,3 +2489,7 @@ internal fun canonicalImeId(packageName: String, className: String): String =
     } else {
         "$packageName/$className"
     }
+
+/** 把 `Rect` 转成盲点安全判据用的纯数据盒子（见 [BlindTapSafetyPolicy]）。 */
+private fun Rect.toBlindTapBox(): BlindTapSafetyPolicy.Box =
+    BlindTapSafetyPolicy.Box(left = left, top = top, right = right, bottom = bottom)

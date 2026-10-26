@@ -3,6 +3,12 @@ package io.github.mangi.eta.agent.device
 internal enum class ScrollEvidence {
     MOVED_BY_EVENT,
     MOVED_BY_ANCHOR_MOTION,
+
+    /**
+     * 确实有锚点动了，但位移幅度彼此不一致（例如列表滚动同时伴着头部署开/收起），
+     * 所以只能确认「内容变了」，不能确认「朝请求方向移了多少」。
+     */
+    PARTIAL_ANCHOR_MOTION,
     DIRECTION_MISMATCH,
     AT_BOUNDARY,
     UNVERIFIED,
@@ -22,6 +28,7 @@ internal object ScrollEvidenceContract {
         delta: Int?,
         movementSource: ScrollMovementSource?,
         atBoundary: Boolean,
+        partialAnchorMotion: Boolean = false,
     ): ScrollEvidence {
         if (
             delta != null &&
@@ -38,6 +45,7 @@ internal object ScrollEvidenceContract {
             }
         }
         if (atBoundary) return ScrollEvidence.AT_BOUNDARY
+        if (partialAnchorMotion) return ScrollEvidence.PARTIAL_ANCHOR_MOTION
         return ScrollEvidence.UNVERIFIED
     }
 

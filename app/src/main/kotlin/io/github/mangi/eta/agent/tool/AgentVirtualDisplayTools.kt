@@ -57,6 +57,28 @@ internal object AgentVirtualDisplayTools {
                                     JSONObject()
                                         .put("type", "string")
                                         .put("description", "用途说明，便于日志回溯；最多 120 字"),
+                                )
+                                .put(
+                                    "package_name",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put(
+                                            "description",
+                                            "可选：创建后立刻启动该应用（= create + launch 一次完成），" +
+                                                "并自动带回 first_observation（observation_id + ui_nodes）",
+                                        ),
+                                )
+                                .put(
+                                    "activity",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "可选，配合 package_name：完整组件名 package/.Activity"),
+                                )
+                                .put(
+                                    "force",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put("description", "可选，配合 package_name：该应用已在别处运行时是否允许把它搬过来"),
                                 ),
                         ),
                 )
@@ -96,7 +118,9 @@ internal object AgentVirtualDisplayTools {
                         "在指定虚拟屏上启动应用，**不会把用户主屏切走**。" +
                             "应用已在别处运行时默认拒绝（强行启动会把它从主屏搬走）；" +
                             "确实需要时传 force=true。不传 activity 时自动解析启动入口。" +
-                            "启动后会用任务栈核验它是否真的落在该虚拟屏上。",
+                            "启动后会用任务栈核验它是否真的落在该虚拟屏上，并**自动观察一次首屏**：" +
+                            "结果里的 first_observation 带 observation_id 与 ui_nodes，可直接接着 tap_element，" +
+                            "不必再 wait + observe_screen。首屏若仍在加载，再 observe_screen 刷新一次即可。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -177,6 +201,11 @@ internal object AgentVirtualDisplayTools {
         val height: Int,
         val densityDpi: Int?,
         val purpose: String,
+        /** 可选：创建后立刻启动的应用；空串表示只建屏。 */
+        val packageName: String = "",
+        val activity: String = "",
+        /** 目标应用已在运行时是否允许把它搬到这块新屏（与 launch 同义）。 */
+        val force: Boolean = false,
     )
 
     data class ReleaseRequest(val id: String)
@@ -234,6 +263,13 @@ internal object AgentVirtualDisplayTools {
             height = height,
             densityDpi = dpi,
             purpose = args.optString("purpose").take(120),
+            packageName = args.optString("package_name").trim().also { packageName ->
+                if (packageName.isNotEmpty() && !ANDROID_ID.matches(packageName)) return null
+            },
+            activity = args.optString("activity").trim().also { activity ->
+                if (activity.isNotEmpty() && !COMPONENT.matches(activity)) return null
+            },
+            force = args.optBoolean("force"),
         )
     }
 

@@ -71,6 +71,34 @@ class AgentVirtualDisplayToolsTest {
     }
 
     @Test
+    fun createCanLaunchInTheSameCallAndDefaultsToCreateOnly() {
+        // 不传 package_name：行为与以前完全一致（只建屏），launch 由下一次调用做。
+        val createOnly = AgentVirtualDisplayTools.parseCreate(JSONObject())!!
+        assertEquals("", createOnly.packageName)
+        assertEquals("", createOnly.activity)
+        assertFalse(createOnly.force)
+
+        val combined = AgentVirtualDisplayTools.parseCreate(
+            JSONObject()
+                .put("width", 1080)
+                .put("height", 2400)
+                .put("package_name", "com.android.settings")
+                .put("force", true),
+        )!!
+        assertEquals("com.android.settings", combined.packageName)
+        assertTrue(combined.force)
+
+        // 包名 / 组件名会拼进 am 命令行，所以非法字符必须当场拒掉。
+        assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("package_name", "com.foo; rm -rf /")))
+        assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("package_name", "com.foo.Bar")))
+        assertNull(
+            AgentVirtualDisplayTools.parseCreate(
+                JSONObject().put("package_name", "com.android.settings").put("activity", "Settings"),
+            ),
+        )
+    }
+
+    @Test
     fun releaseRequiresAnIdAndAcceptsAll() {
         assertNull(AgentVirtualDisplayTools.parseRelease(JSONObject()))
         assertNull(AgentVirtualDisplayTools.parseRelease(JSONObject().put("id", "  ")))

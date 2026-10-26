@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.SystemClock
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.device.DeviceControlUnavailableException
+import io.github.mangi.eta.agent.device.RootShellDeviceController.Observation
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.RootShellDeviceController
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
@@ -1863,7 +1864,7 @@ internal class AgentLocalTools(
                         ?: "VIRTUAL_DISPLAY_FAILED"
                     return textResult(errorResult(code, throwable.message ?: "无法创建虚拟屏"))
                 }
-                JSONObject()
+                val created = JSONObject()
                     .put("ok", true)
                     .put("tool", "virtual_display_create")
                     .put("id", session.id)
@@ -1871,14 +1872,51 @@ internal class AgentLocalTools(
                     .put("width", session.width)
                     .put("height", session.height)
                     .put("density_dpi", session.densityDpi)
-                    .put(
-                        "next",
-                        "先 virtual_display_launch 启动目标应用，再 observe_screen(display_id=${session.displayId}) 确认界面。" +
-                            "虚拟屏支持无障碍 UI 树与 tap_element/scroll_element 等节点动作；" +
-                            "拿不到节点时再回退到截图 + 坐标动作（tap_area/swipe 等）。" +
-                            "任务结束后调用 virtual_display_release。"
+                if (request.packageName.isEmpty()) {
+                    created
+                        .put(
+                            "next",
+                            "先 virtual_display_launch 启动目标应用（它现在会自动观察首屏），" +
+                                "再按 first_observation 里的节点直接操作；" +
+                                "拿不到节点时再回退到截图 + 坐标动作（tap_area/swipe 等）。" +
+                                "任务结束后调用 virtual_display_release；也可以下次直接传 package_name，建屏与启动一次完成。",
+                        )
+                        .toString()
+                } else {
+                    // 建屏 + 启动 + 首屏观察合成一次调用：同一件事原本要 create / launch / (wait+observe) 三次。
+                    val launched = launchOnVirtualDisplay(
+                        session,
+                        AgentVirtualDisplayTools.LaunchRequest(
+                            id = session.id,
+                            packageName = request.packageName,
+                            activity = request.activity,
+                            force = request.force,
+                            action = "",
+                            data = "",
+                            flags = null,
+                            extras = emptyMap(),
+                        ),
                     )
-                    .toString()
+                    created.put("launched", launched.optBoolean("ok"))
+                    if (launched.optBoolean("ok")) {
+                        created
+                            .put("package_name", request.packageName)
+                            .put("component", launched.optString("component"))
+                        observeAfterLaunch(session.displayId)?.let { observation ->
+                            created.put("first_observation", summarizeLaunchObservation(observation))
+                        }
+                    } else {
+                        // 屏建好了但应用没起来：不能把整次调用判成失败 —— 模型会以为屏也没建，
+                        // 反复 create 直到撞上会话上限。把真实原因作为子字段报回去。
+                        created.put("launch_error", launched)
+                        created.put(
+                            "next",
+                            "屏已建好，但应用没启动成功：按 launch_error 处理" +
+                                "（常见原因是它已在别处运行，确实接受后果时传 force=true）。",
+                        )
+                    }
+                    created.toString()
+                }
             }
 
             "virtual_display_list" -> {
@@ -2004,6 +2042,9 @@ internal class AgentLocalTools(
                     )
                 val outcome = launchOnVirtualDisplay(session, request)
                 if (!outcome.optBoolean("ok")) return textResult(outcome.toString())
+                // 启动后顺手观察首次屏：以前这一步要 launch → wait N 秒 → observe_screen 三次调用，
+                // 而且"等多久"只能猜。现在一次调用就把首屏节点和 observation_id 一起拿到。
+                val firstObservation = observeAfterLaunch(session.displayId)
                 outcome
                     .put("tool", "virtual_display_launch")
                     .put("display_id", session.displayId)
@@ -2011,7 +2052,10 @@ internal class AgentLocalTools(
                     .put("action", request.action.ifEmpty { "android.intent.action.MAIN" })
                     .put("data", request.data)
                     .put("extras_count", request.extras.size)
-                    .toString()
+                if (firstObservation != null) {
+                    outcome.put("first_observation", summarizeLaunchObservation(firstObservation))
+                }
+                outcome.toString()
             }
 
             else -> return textResult(errorResult("UNKNOWN_TOOL", "未知虚拟屏工具：$name"))
@@ -2133,6 +2177,99 @@ internal class AgentLocalTools(
             .put("verified_on_display", session.displayId)
             .put("output", output.take(240))
     }
+
+    /**
+     * 启动后轮询该屏的首屏节点，拿到就返回（最多 [LAUNCH_OBSERVE_TIMEOUT_MS]）。
+     *
+     * 为什么不让模型自己 `wait` 一下再 `observe_screen`：等多久只能猜（猜短了拿到空节点，
+     * 猜长了白等），而且那是两次额外调用。这里按 [LAUNCH_OBSERVE_POLL_MS] 轮询，
+     * 一旦有节点就停；顺便把这次观察登记为「当前观察」，紧接着的 tap_element
+     * 无需再自己重现观察一次。
+     */
+    private fun observeAfterLaunch(displayId: Int): JSONObject? {
+        val deadline = SystemClock.elapsedRealtime() + LAUNCH_OBSERVE_TIMEOUT_MS
+        var last: JSONObject? = null
+        var lastObservation: Observation? = null
+        while (true) {
+            val observation = runCatching {
+                deviceController.observe(
+                    includeScreenshot = false,
+                    includeUiTree = true,
+                    maxNodes = LAUNCH_OBSERVE_MAX_NODES,
+                    displayId = displayId,
+                )
+            }.getOrNull()
+            val content = observation?.let { runCatching { JSONObject(it.content) }.getOrNull() }
+            if (content != null) {
+                last = content
+                lastObservation = observation
+                if (launchObservationReady(content)) {
+                    publishObservation(observation, displayId)
+                    return content
+                }
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                // 超时也要登记最后一次：它可能已经能用，只是没达到「就绪」判据。
+                lastObservation?.let { publishObservation(it, displayId) }
+                return last
+            }
+            Thread.sleep(LAUNCH_OBSERVE_POLL_MS)
+        }
+    }
+
+    /**
+     * 首屏「够用了」的判据：有可点／可滚节点，或节点数达到 [LAUNCH_OBSERVE_READY_NODES]。
+     *
+     * 只用「ui_nodes 非空」作判据会踩坑：启动动画期常只回 1~2 个纯容器节点（真机实测 2 个），
+     * 里面既没有可点项也没有滚动容器，模型还得再观察一次 —— 恰好是要省掉的那一步。
+     */
+    private fun launchObservationReady(content: JSONObject): Boolean {
+        val nodes = content.optJSONArray("ui_nodes") ?: return false
+        if (nodes.length() >= LAUNCH_OBSERVE_READY_NODES) return true
+        for (index in 0 until nodes.length()) {
+            val node = nodes.optJSONObject(index) ?: continue
+            if (node.optBoolean("clickable") || node.optBoolean("scrollable")) return true
+        }
+        return false
+    }
+
+    private fun publishObservation(
+        observation: Observation,
+        displayId: Int,
+    ) {
+        val elements = observation.elementObservation ?: return
+        publishedObservation.set(
+            PublishedObservation(
+                elements = elements,
+                coordinateSpace = observation.coordinateSpace,
+                displayId = displayId,
+            ),
+        )
+    }
+
+    /**
+     * 把一次完整观察缩成「首屏摘要」：只留节点与可用性字段，不带截图与坐标契约。
+     *
+     * 全量 content 约 8~9KB，直接塞进 launch 结果会把一次轻量调用变成大块上下文；
+     * 这里只留能直接着手的那几项。
+     */
+    private fun summarizeLaunchObservation(content: JSONObject): JSONObject =
+        JSONObject()
+            .put("observation_id", content.optString("observation_id"))
+            .put("ui_nodes_shown", content.optInt("ui_nodes_shown", 0))
+            .put("ui_tree_truncated", content.optBoolean("ui_tree_truncated"))
+            .put("ui_nodes_truncated", content.optBoolean("ui_nodes_truncated"))
+            .put("node_limit", content.optInt("node_limit", 0))
+            .put("ui_nodes", content.optJSONArray("ui_nodes") ?: JSONArray())
+            .put(
+                "note",
+                "启动后已自动观察首屏：界面已就绪可直接 tap_element；若仍是加载中的画面，再 observe_screen 刷新一次。",
+            )
+            .also { summary ->
+                content.optJSONObject("ui_diagnostics")?.let { diagnostics ->
+                    summary.put("ui_diagnostics", diagnostics)
+                }
+            }
 
     private fun openUri(args: JSONObject): String {
         val uriText = args.optString("uri").trim()
@@ -3059,6 +3196,18 @@ private val AFTER_ACTION_OPTIONS = AgentScreenObservationContract.Options(
 
 /** append 超过该长度改走粘贴路径；逐字键入的增量重建对长文本既慢又容易被输入法打断。 */
 private const val TYPE_TEXT_INCREMENTAL_CHARS = 200
+
+/** 虚拟屏启动后自动观察首屏的时间预算：够冷启动应用画完首屏，又不会把 launch 拖成「卡住」。 */
+private const val LAUNCH_OBSERVE_TIMEOUT_MS = 5_000L
+
+/** 自动观察的轮询间隔；比无障碍整树 dump 一次（约 300ms）略短，避免白等。 */
+private const val LAUNCH_OBSERVE_POLL_MS = 250L
+
+/** 首屏观察的节点上限：与固定套路里的默认值一致，约 8.6KB，不触发落盘。 */
+private const val LAUNCH_OBSERVE_MAX_NODES = 60
+
+/** 首屏节点数达到这个量就当「已经画出来了」，不必再等轮询到超时。 */
+private const val LAUNCH_OBSERVE_READY_NODES = 5
 
 /** 归一化坐标上界：0–999，与主流 GUI 模型的输出习惯一致。 */
 private const val NORMALIZED_MAX = 999

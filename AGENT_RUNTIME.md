@@ -6028,3 +6028,46 @@ fix149 §五 的表格和更早那条「真冷启动 10,385 ms」都取自**同�
   动作后摘要的改动靠「与 observe 同一套 `UiNodeWire`」+ 代码审阅保证，未在本机执行。
 - 设备侧 skill `virtual-display-playbook` 里「`max_nodes=120` 必落盘」的经验值**已过时**，
   等本改动随正式版下发后再更新 skill 文案（当前设备上跑的还是旧代码，提前改会让 skill 说假话）。
+
+## fix152：BACK 修复的真机复核 + 「主包是旧版」的结论作废（2026-10-26 晚）
+
+### 一、先纠正一个过时前提
+
+此前记录「主包仍是 2026-10-24 23:53 版（sha `ed56889d…`），既无 BackHandler 也无并行摘要」。
+本轮实测：**主包 `base.apk` 的 sha256 = `96d71498b44ab13dedcab83c7ce5c9943975946156885ac88fe6dd69fdcd9c52`，
+与工作区构建产物 `cmp` 逐字节相同，`lastUpdateTime=2026-10-26 19:44:08`**。
+即：19:44 那次安装已经把 **`BackHandler { popRoute() }` + 并行摘要（`eta-summary-batch` / `MAX_PARALLEL_BATCHES=2`）
+一起装进主包**了。用户手上跑的就是修复版，不需要再「重建主包装一遍」。
+
+方法教训：判断「设备上的包是不是最新」只有一种可靠办法 ——
+`dumpsys package <pkg> | grep codePath` 拿到 `base.apk`，再 `sha256sum` 与工作区产物 `cmp`。
+看文件名、看 versionName、看 `lastUpdateTime` 都会骗人（versionCode 同版重装时完全不变）。
+
+### 二、canary7 冒烟（虚拟屏 display 45，720×1280 / 320dpi）
+
+同源码打 `.canary` 后缀构建安装，`/data/local/tmp/eta-canary7.apk` sha `343b0c25…`，88,732,320 字节。
+
+| 动作 | 观察 | 结论 |
+|---|---|---|
+| 冷启动 | `ComponentInfo` 落在 display 45，pid 存活，界面正常渲染 | ✓ |
+| BACK（抽屉打开） | 抽屉节点整批移除 | 回退一层 ✓ |
+| BACK（抽屉关闭动画中） | 只剩遮罩节点，再变回会话页 | ✓ |
+| BACK（会话页根） | 界面无可见变化，`Task #8739 visible=true`、`Resumed`、`Activities=[MainActivity]` | **未 finish** ✓ |
+
+对照旧 canary4/canary5：同场景 BACK 后 `Activities=[]`（Activity 被 finish，进程随后回收）。
+修复前后差异明确，且任务 id（8739）与 ActivityRecord 全程不变。
+
+### 三、未验证 / 边界（不要当成已验证）
+
+1. **主屏（主包）的 BACK 行为仍未实测**。用户正在主屏用主包对话，按 BACK 会把他当前界面切走，
+   本轮没有擅自操作。虚拟屏验证只能证明「不再 finish」，不能证明「主屏按 BACK 真的回到桌面」。
+2. **虚拟屏上根页面 BACK 看不出动静** 有两种解释：`moveTaskToBack` 在无 launcher 的虚拟屏上无处可退，
+   或任务退到后台又被系统拉回前台。两者都无法在虚拟屏上区分，须在主屏判断。
+3. 并行摘要的**实机耗时收益**仍未测（本轮没有触发压缩；logcat 里暂无 `eta-summary-batch` 记录）。
+
+### 四、门禁
+
+- `STAGES=test sh tools/gate.sh` → **453 用例 0 失败**（含 `AgentContextSummarizerParallelTest`）。
+- 主包 `assembleDebug` 40s 成功，88,732,224 字节；`output-metadata.json` 的 `applicationId=io.github.mangi.eta`，
+  APK 内 `io.github.mangi.eta.canary` UTF-16 计数 **0**（确认不是 canary 串包）。
+- 设备侧 `dumpsys`：`versionCode=2026101401`、`versionName=3.3.1-debug`。

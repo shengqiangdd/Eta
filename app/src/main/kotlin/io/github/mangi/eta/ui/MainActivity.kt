@@ -119,6 +119,10 @@ class MainActivity : ComponentActivity() {
                 "EtaVirtualDisplayDebug",
                 VirtualDisplayDebugHost.workspaceProbe(this),
             )
+            "step_probe" -> android.util.Log.i(
+                "EtaVirtualDisplayDebug",
+                VirtualDisplayDebugHost.stepProbe(this),
+            )
             else -> return
         }
         intent.removeExtra(EXTRA_DEBUG_VIRTUAL_DISPLAY)

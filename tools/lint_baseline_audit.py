@@ -16,6 +16,28 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
+# 依赖版本检查依赖「远端元数据 + 本次解析出的依赖图」，两者都不确定：
+# 同一个 commit 在不同时间／不同网络下，GradleDependency 可能报也可能不报
+# （2026-10-26 实测：同一份 baseline，一次全部命中，另两次各差 1 条，
+#  而两条依赖的远端最新版都仍存在）。这种不确定性不该让整道门禁忽红忽绿，
+# 所以只对它降级为「提示」，其余类型的陈旧条目依旧按红处理。
+NETWORK_DEPENDENT_TYPES = {"GradleDependency"}
+
+
+def _unmatched_types(issue) -> set:
+    """从 LintBaselineFixed 的 message 里取出「哪些类型没复现」。"""
+    message = issue.get("message") or ""
+    match = re.search(r"Unmatched issue types:\s*(.+)$", message)
+    if not match:
+        return set()
+    return {part.strip() for part in match.group(1).split(",") if part.strip()}
+
+
+def _unmatched_count(issue) -> int:
+    message = issue.get("message") or ""
+    match = re.match(r"\s*(\d+)", message)
+    return int(match.group(1)) if match else 1
+
 
 def main() -> int:
     if len(sys.argv) != 3:
@@ -31,6 +53,21 @@ def main() -> int:
 
     # LintBaseline 是「baseline 过滤了多少条」的提示，不是代码问题
     issues = [i for i in root.iter("issue") if i.get("id") != "LintBaseline"]
+    # 只降级「全是依赖版本检查」的陈旧条目，并把少抑制的条数记下来，供下面的对账使用。
+    relaxed = 0
+    kept = []
+    for issue in issues:
+        if issue.get("id") == "LintBaselineFixed":
+            types = _unmatched_types(issue)
+            if types and types.issubset(NETWORK_DEPENDENT_TYPES):
+                relaxed += _unmatched_count(issue)
+                print(
+                    "  ! 提示：baseline 里有 %d 条 %s 本次没有复现（依赖更新检查依赖远端元数据，不稳定），不阻断门禁"
+                    % (_unmatched_count(issue), "/".join(sorted(types)))
+                )
+                continue
+        kept.append(issue)
+    issues = kept
     stamp = time.strftime("%H:%M:%S", time.localtime(_mtime(report_path)))
     if issues:
         print("  ✗ lint 报告有 %d 条问题（报告时间 %s）：" % (len(issues), stamp))
@@ -66,14 +103,14 @@ def main() -> int:
         return 2
     else:
         filtered = int(match.group(1)) + int(match.group(2))
-        if filtered != base_count:
+        if filtered != base_count - relaxed:
             print(
-                "  ✗ baseline 账目不平：lint 只过滤了 %d 条，baseline 却记着 %d 条（差 %d）"
-                % (filtered, base_count, base_count - filtered)
+                "  ✗ baseline 账目不平：lint 只过滤了 %d 条，baseline 记着 %d 条（已放过 %d 条依赖更新提示，差 %d）"
+                % (filtered, base_count, relaxed, base_count - relaxed - filtered)
             )
             print("    多半是某条 issue 已修好或被 @SuppressLint 覆盖，请从 %s 删掉对应 <issue>" % baseline_path)
             return 2
-        print("  ✓ baseline 账目一致：%d 条全部命中" % base_count)
+        print("  ✓ baseline 账目一致：%d 条命中（另有 %d 条依赖更新提示未复现，已放过）" % (filtered, relaxed))
     return 0
 
 

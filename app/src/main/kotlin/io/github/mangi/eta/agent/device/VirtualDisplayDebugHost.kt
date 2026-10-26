@@ -21,6 +21,18 @@ import org.json.JSONObject
 internal object VirtualDisplayDebugHost {
     private var controller: VirtualDisplayController? = null
 
+    /**
+     * 同一时刻只允许一个探针在跑。
+     *
+     * 为什么需要：`am start` 带 extras 时，冷启动会先在 onCreate 消费一次、
+     * 随后 onNewIntent 又投递一次同一个 intent —— 两个线程各建一块虚拟屏、
+     * 抢着写同一个报告文件，最后看到的是「后一个覆盖前一个」的残缺结论。
+     */
+    private val probeRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 探针用来启动的目标应用：系统设置在任何设备上都存在，且首屏有足够多的可点节点。 */
+    private const val PROBE_PACKAGE = "com.android.settings"
+
     fun create(context: Context): String {
         controller?.let { existing ->
             return "already: " + existing.list().joinToString { "${it.id}@${it.displayId}" }
@@ -123,6 +135,7 @@ internal object VirtualDisplayDebugHost {
      * 与 [probe] 的区别：probe 调控制器，本方法调工具名与参数，能抓住「dispatch 漏传 display_id」。
      */
     fun toolProbe(context: Context): String {
+        if (!probeRunning.compareAndSet(false, true)) return "tool probe already running"
         Thread({
             val report = StringBuilder()
             val tools = AgentLocalTools(
@@ -221,12 +234,210 @@ internal object VirtualDisplayDebugHost {
                 report.appendLine("EXCEPTION=${error.javaClass.simpleName}: ${error.message}")
             } finally {
                 runCatching { tools.close() }
-            }
-            runCatching {
-                File(context.getExternalFilesDir(null), "tool-probe.txt").writeText(report.toString())
+                runCatching {
+                    File(context.getExternalFilesDir(null), "tool-probe.txt").writeText(report.toString())
+                }
+                // 报告落盘之后再放开，下一个探针不会写到一半被覆盖。
+                probeRunning.set(false)
             }
         }, "eta-tool-probe").start()
         return "tool probe started"
+    }
+
+    /**
+     * 仅测试版：验证「降低虚拟屏步数」的三处改动，结果写 `step-probe.txt`。
+     *
+     * 三件事都走真实工具名与参数（不是直接调控制器），所以能抓到「工具层没接上」这类缺陷：
+     *
+     * 1. `virtual_display_create` 带 `package_name`：一次调用完成建屏 + 启动 + 首屏观察，
+     *    结果里应有 `launched=true` 与 `first_observation.ui_nodes`；
+     * 2. `tap_element` 点一个**不可点**节点：应回 `method=ROOT_COORDINATE_FALLBACK`
+     *    （工具层自己兜底，模型不必再换算坐标补一次）；
+     * 3. `scroll_element` 滚滚动容器：节点只支持手势时应回 `method=ROOT_SCROLL_FALLBACK`。
+     */
+    fun stepProbe(context: Context): String {
+        if (!probeRunning.compareAndSet(false, true)) return "step probe already running"
+        Thread({
+            val report = StringBuilder()
+            val tools = AgentLocalTools(
+                context = context.applicationContext,
+                logger = AndroidAgentLogger,
+                browserToolsEnabled = { false },
+                terminalToolsEnabled = { false },
+                deviceDirectToolsEnabled = { true },
+                deviceSensitiveReadToolsEnabled = { true },
+                deviceSensitiveActionToolsEnabled = { true },
+                memoryToolsEnabled = { false },
+                memoryWritable = false,
+                rootAvailable = { true },
+            )
+            fun call(name: String, args: JSONObject): JSONObject {
+                val result = tools.execute(
+                    AgentModelClient.ToolCall(
+                        id = "stepprobe-$name",
+                        name = name,
+                        argumentsJson = args.toString(),
+                    ),
+                )
+                val json = runCatching { JSONObject(result.content) }.getOrDefault(JSONObject())
+                report.appendLine("$name=").appendLine(result.content.take(1_500))
+                return json
+            }
+            try {
+                val create = call(
+                    "virtual_display_create",
+                    JSONObject()
+                        .put("width", 720)
+                        .put("height", 1280)
+                        .put("density_dpi", 320)
+                        .put("purpose", "step probe")
+                        .put("package_name", PROBE_PACKAGE),
+                )
+                val displayId = create.optInt("display_id", -1)
+                val id = create.optString("id")
+                val first = create.optJSONObject("first_observation")
+                report.appendLine(
+                    "STEP1 launched=${create.optBoolean("launched")} display_id=$displayId " +
+                        "first_nodes=${first?.optInt("ui_nodes_shown", 0)}",
+                )
+                val nodes = first?.optJSONArray("ui_nodes")
+                val observationId = first?.optString("observation_id").orEmpty()
+                fun firstIndex(predicate: (JSONObject) -> Boolean): Int? {
+                    if (nodes == null) return null
+                    for (i in 0 until nodes.length()) {
+                        val node = nodes.optJSONObject(i) ?: continue
+                        if (predicate(node)) return node.optInt("index", -1).takeIf { it >= 0 }
+                    }
+                    return null
+                }
+                // 找一个「不可点」的节点：线格式只在 clickable=true 时输出该键，所以 !optBoolean 就是不可点。
+                //
+                // **必须限制在顶部标题栏区域**：探针启动的是系统设置，首页那把开关（包含飞行模式）
+                // 就在屏幕中部，盲点中心坐标会真的把它们拨动。实测就是靠这一点把设备反复切进
+                // 飞行模式、把网络搞掉。所以只允许点「上 1/5 屏」的不可点节点（标题栏），
+                // 找不到就跳过该步 —— 不为了凑一个结果去乱点。
+                val screenHeight = create.optInt("height", 0)
+                val boundsPattern = Regex("-?\\d+")
+                fun boundsOf(node: JSONObject): IntArray? {
+                    val raw = node.optString("bounds")
+                    if (!raw.contains('[')) return null
+                    val numbers = boundsPattern.findAll(raw).map { it.value.toInt() }.toList()
+                    return if (numbers.size >= 4) {
+                        intArrayOf(numbers[0], numbers[1], numbers[2], numbers[3])
+                    } else {
+                        null
+                    }
+                }
+                fun centerOf(node: JSONObject): IntArray? {
+                    val center = node.optJSONArray("center") ?: return null
+                    if (center.length() < 2) return null
+                    return intArrayOf(center.optInt(0, -1), center.optInt(1, -1))
+                }
+                // 中心点上还压着别的节点 → 盲点实际会命中那个控件。
+                // 上一版只按「在屏幕上方 1/5」筛，结果根 ScrollView 的中心也进了候选，
+                // 直接把设置首页的快捷开关（含飞行模式）拨开了。这里再算一层覆盖。
+                //
+                // 只算**比目标更小**的节点：全屏根容器覆盖一切，它本身不是被点到的东西，
+                // 否则每个节点都会被判成"被覆盖"，STEP2 永远只能跳过。
+                fun areaOf(box: IntArray): Long = (box[2] - box[0]).toLong() * (box[3] - box[1])
+                fun centerCoveredByOther(node: JSONObject): Boolean {
+                    val index = node.optInt("index", -1)
+                    val center = centerOf(node) ?: return true
+                    if (center[0] < 0 || center[1] < 0) return true
+                    val own = boundsOf(node) ?: return true
+                    val ownArea = areaOf(own)
+                    val total = nodes?.length() ?: 0
+                    for (i in 0 until total) {
+                        val other = nodes?.optJSONObject(i) ?: continue
+                        if (other.optInt("index", -2) == index) continue
+                        val box = boundsOf(other) ?: continue
+                        if (areaOf(box) >= ownArea) continue
+                        val covers = center[0] >= box[0] && center[0] < box[2] &&
+                            center[1] >= box[1] && center[1] < box[3]
+                        if (covers) return true
+                    }
+                    return false
+                }
+                fun safeArea(node: JSONObject): Boolean {
+                    if (screenHeight <= 0) return false
+                    val center = centerOf(node) ?: return false
+                    if (center[1] >= screenHeight / 5) return false
+                    return !centerCoveredByOther(node)
+                }
+                val nonClickable = firstIndex { node ->
+                    !node.optBoolean("clickable") && node.has("bounds") && safeArea(node)
+                }
+                if (displayId > 0 && observationId.isNotBlank() && nonClickable != null) {
+                    val tap = call(
+                        "tap_element",
+                        JSONObject().put("observation_id", observationId).put("index", nonClickable),
+                    )
+                    report.appendLine(
+                        "STEP2 index=$nonClickable ok=${tap.optBoolean("ok")} " +
+                            "method=${tap.optString("method")} code=${tap.optString("code")}",
+                    )
+                } else {
+                    report.appendLine(
+                        "STEP2 skipped（顶部安全区里没有不可点节点）observation=$observationId index=$nonClickable",
+                    )
+                }
+                if (displayId > 0) {
+                    val observation = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    val observationId2 = observation.optString("observation_id")
+                    val nodes2 = observation.optJSONArray("ui_nodes")
+                    var scrollable = -1
+                    if (nodes2 != null) {
+                        for (i in 0 until nodes2.length()) {
+                            val node = nodes2.optJSONObject(i) ?: continue
+                            if (node.optBoolean("scrollable")) {
+                                scrollable = node.optInt("index", -1)
+                                break
+                            }
+                        }
+                    }
+                    if (observationId2.isNotBlank() && scrollable >= 0) {
+                        val scrolled = call(
+                            "scroll_element",
+                            JSONObject()
+                                .put("observation_id", observationId2)
+                                .put("index", scrollable)
+                                .put("direction", "down")
+                                .put("amount", "small"),
+                        )
+                        report.appendLine(
+                            "STEP3 index=$scrollable ok=${scrolled.optBoolean("ok")} " +
+                                "method=${scrolled.optString("method")} code=${scrolled.optString("code")}",
+                        )
+                    } else {
+                        report.appendLine("STEP3 skipped observation=$observationId2 scrollable=$scrollable")
+                    }
+                    // STEP3b：同状态下直接调 `scroll` 工具作对照。
+                    // scroll_element 的兜底内部走的就是它；两边结果不一致时，问题一定在「拼接」而不是滑动本身。
+                    val scrollTool = call(
+                        "scroll",
+                        JSONObject().put("display_id", displayId).put("direction", "down").put("amount", "small"),
+                    )
+                    report.appendLine(
+                        "STEP3b scroll ok=${scrollTool.optBoolean("ok")} " +
+                            "method=${scrollTool.optString("method")} code=${scrollTool.optString("code")}",
+                    )
+                    call("virtual_display_release", JSONObject().put("id", id))
+                }
+            } catch (error: Throwable) {
+                report.appendLine("EXCEPTION=${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                runCatching { tools.close() }
+                runCatching {
+                    File(context.getExternalFilesDir(null), "step-probe.txt").writeText(report.toString())
+                }
+                // 报告落盘之后再放开，下一个探针不会写到一半被覆盖。
+                probeRunning.set(false)
+            }
+        }, "eta-step-probe").start()
+        return "step probe started"
     }
 
     /**

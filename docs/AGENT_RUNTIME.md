@@ -6282,3 +6282,125 @@ reasoning_capabilities_override_json =
 - 并发对**限流**的影响只有 2~3 并发的小样本。若某个服务商限流更严，表现会是压缩失败
   （比慢更糟）—— 那时应把 `MAX_PARALLEL_BATCHES` 降回 1，而不是加重试。
 
+
+## fix155：虚拟屏操作降步数 —— 建屏即启动、节点动作自动兜底（2026-10-26）
+
+### 一、动机：步数是被实测出来的，不是拍出来的
+
+统计 29 份 run-trace：`GESTURE_UNSUPPORTED_ON_VIRTUAL_DISPLAY` 出现 **21 次**，
+`scroll_element` 调用 **154 次**，`tap_element` **222 次**。也就是说，在虚拟屏上
+「点一个本身不接受 `ACTION_CLICK` 的节点」和「滚动容器」这两件事经常一次做不成，
+模型只能自己把 bounds 换算成坐标、再补一次 `tap`/`swipe` —— 每次多一轮往返，
+而且漏传 `display_id` 就会**点到用户主屏**。
+
+### 二、四处改动（都在工具层，模型不需要知道）
+
+| 改动 | 少掉的往返 |
+|---|---|
+| `virtual_display_create` 直接带 `package_name`（可选 `activity`/`force`） | 建屏 + 启动 + 首屏观察 **3 次 → 1 次** |
+| `virtual_display_launch` 成功后自动观察首屏，结果带 `first_observation` | 省掉「等 → observe_screen」2 次 |
+| `tap_element` / `long_press_element`：节点动作被「手势只作用于默认屏」挡住时，用该节点 `center` 走 `input -d` | 省掉「模型自己换算坐标 + 补一次 tap」1~2 次 |
+| `scroll_element`：节点只支持手势时，退回 `scroll` 已验证过的 `input -d` 坐标滑动 | 同上 |
+| `tap_element` / `long_press_element` 的**盲点安全判定** | 事故防线：中心点落在更小节点上就不发手势，直接报出「会点到谁」 |
+
+兜底不是无条件的：`VirtualDisplayFallbackPolicy` 要求**错误码正好是那条虚拟屏硬限制 + 目标不是默认屏 + Root 可用**，
+三条同时成立才兜底，避免「兜底兜到用户主屏」。
+
+### 三、真机验证（canary，`step_probe`，本机 PKX110 / Android 16）
+
+`step_probe` 走真实工具名与参数（不是直接调控制器），因此能抓到「工具层没接上」：
+
+```
+# 一次成功运行（display 29）
+STEP1 launched=true display_id=29 first_nodes=20      # 一次调用完成建屏+启动+首屏 20 节点
+STEP2 index=0 ok=true method=ROOT_COORDINATE_FALLBACK  # 点不可点节点，工具层自己兜底
+STEP3 index=0 ok=true method=ROOT_SCROLL_FALLBACK      # scroll_element 在虚拟屏真的滚起来了
+```
+
+`STEP3` 还配了对照 `STEP3b`（同状态下直接调 `scroll`）：`ok=true method=INPUT_SWIPE`。
+两边一致，说明兜底路径与 `scroll` 走的是同一条已验证通道。
+
+### 四、这轮挖出的真缺陷：「说假话」的兜底结果（比不兜底更糟）
+
+同一场景**反复跑**会出现 `STEP3 ok=false`（例如 display 37 那次）—— 一开始只能看到无障碍那条错误
+（`虚拟屏不支持无障碍手势兜底；本次未发送任何手势，可改用坐标滑动`）。
+加上「兜底失败也带原因」的诊断后拿到真因：
+
+```
+fallback_attempt: {"ok":false,"code":"ACTION_OUTCOME_UNKNOWN","method":"INPUT_SWIPE",
+                   "message":"滚动手势已发出，但无法确认方向或位移；请先重新观察，禁止直接重试"}
+```
+
+即**坐标滑动其实发出去了**，只是「滑动前后锚点对不上」没能确认位移 ——
+多半紧跟在一次点击之后（页面切换动画中，前后两棵树分属两个页面）。
+而旧代码把这个当「兜底失败」，回给模型的却是「本次未发送任何手势」：
+**与事实相反**。模型据此再滚一次，用户看到的就是「滚两屏」。
+
+修法两条：
+
+1. **如实回报**：兜底一旦真的发出动作，就用兜底自己的 `code`/`message`（`ACTION_OUTCOME_UNKNOWN`
+   或 `DIRECTION_MISMATCH`），原始无障碍错误码降到 `fallback_from`。模型因此会「先重新观察」，
+   而不是盲目重试。
+2. **让第一次就成功**：`rootScroll` 收到「锚点都在、一个都没动」时，判定这次手势没生效
+   （典型是打在页面切换动画上），**自己补发一次**（`RootScrollResendPolicy`，最多 2 次）。
+   之所以敢补发：这种情况下确认过「没动」，补发不会变成滚两屏；而一个锚点都没配上时
+   （页面换了、我们不知道滚没滚）**不补发**，直接如实报 `ACTION_OUTCOME_UNKNOWN`。
+   改前实测：同一探针连续 3 次都是 `ACTION_OUTCOME_UNKNOWN`（每次都在同一时序上失败，
+   不是偶发）。改后的复测结果见下节。
+
+### 五、真机事故：探针把飞行模式打开了
+
+`step_probe` 的 STEP2 原本选「第一个不可点节点」。设置首页的 `index=0` 是根 `ScrollView`
+`[0,0][720,1280]`，它的中心 `(360,640)` 正好落在快捷开关行上 —— 一次盲点把**飞行模式**
+打开了：`Switch 关闭→开启`，同时 `Xiaomi_6EA9_5G → 已关闭`，设备当场断网、任务中断。
+证据就在探针报告的 `changes` 里。
+
+也就是说：**容器的「中心」不是这个容器的中心，而是容器内部随机某个控件。**
+盲点在没有语义的地方等于随机拨开关。两处都改了：
+
+1. **探针**：STEP2 只在上 1/5 屏里选节点，且要求「中心点没有被更小的节点覆盖」；
+2. **工具层**（更要紧）：新增 `BlindTapSafetyPolicy` —— 盲点前先算中心点会不会落到
+   别的节点上；会就**不发手势**，回 `COORDINATE_FALLBACK_UNSAFE_TARGET` +
+   `blocked_target_index` + 一句「请改点 #N」。
+
+判据里有一个容易写错的地方：只能把**面积比目标小**的节点算作命中。全屏根容器覆盖一切，
+它本身不是被点到的东西；若也算命中，任何节点都会被判成「被覆盖」，盲点就永久被禁掉。
+第一版就是这么写的 —— 探针 STEP2 全程 `skipped`，才在真机上暴露出来。
+
+判据是纯函数（不碰 android 类型），6 个单测覆盖：根节点中心落在开关上被抓、标题栏空白放行、
+祖先全屏容器不拦、空 bounds 放行、面积最小者胜出。
+
+滚动侧另外两层（本轮同时落地）：`awaitStableTree()` 在发手势前等 UI 树连续两次一致；
+`RootScrollResendPolicy` 只在「锚点都在、一个都没动」时补发一次；
+`ScrollEvidence` 新增 `anchor_motion_partial` —— 内容确实移位、但幅度不一致（例如头部
+正在展开/收起）时判「动了」并标 `direction_confirmed=false`，不再误报 `ACTION_OUTCOME_UNKNOWN`。
+
+### 六、复测（2026-10-26，canary，本机 PKX110 / Android 16）
+
+```
+run 2 / run 3 一致（display 60 / 61）：
+STEP1 launched=true first_nodes=20
+STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK     # 标题栏空白 → 放行
+STEP3 index=0 ok=true method=ROOT_SCROLL_FALLBACK
+      └ fallback.verified_by=anchor_motion_partial（11/12 锚点在动，方向未确认 → 如实标注）
+STEP3b scroll ok=true method=INPUT_SWIPE
+airplane=0                                                # 全程没有再次被拨动
+```
+
+`run 1` 的 `first_nodes=0` 属已知时序：覆盖安装后首次建屏时无障碍还没连上，同一次调用拿不到节点。
+
+### 七、仍未完善（诚实清单）
+
+- 上面第 2 条**只减少**误判，不消除：页面切换动画期间的锚点比对天生不可靠。
+  真要做稳，得在滑动前等一次「界面稳定」判据，那会把每次滚动都变慢，需单独一轮量化取舍。
+- `scroll_element` 走到「兜底 + 无法确认位移」时，模型仍需自己重新观察一次（这是正确行为，
+  不是缺陷），所以 154 次 `scroll_element` 里最坏情况仍会多一次 `observe_screen`。
+- 测试版重装后无障碍服务会停在 `Binding services`（首次观察拿到 0 节点、`accessibility_available:false`）。
+  把该服务**短暂关掉再打开**即可恢复（恢复后 `Bound services` 出现两项）。
+  这是测试环境现象，已在收尾时把 `enabled_accessibility_services` 还原成原值。
+- `step_probe` 的 `STEP3b` 是**对照探针**，只为证明「兜底与 scroll 同源」，不参与判定。
+- **建屏那一次可能拿不到首屏节点**（复测 run 1/3）：无障碍刚好还没连上，`first_nodes=0`。
+  再 `observe_screen` 一次即可；没有自动重试，是不想把建屏动作拖长。
+- **安全判定只覆盖「中心点落在更小节点上」这一种危险落点**。若落点上没有更小节点、
+  但整行可点（语义是开关），仍会盲点 —— 探针侧另用「上 1/5 屏」限制兜底，
+  真实任务里这一步没有额外护栏，属于已知残余风险。
