@@ -6077,3 +6077,89 @@ fix149 §五 的表格和更早那条「真冷启动 10,385 ms」都取自**同�
 - 压缩后 token 依旧要等下一次响应才有；气泡只提供字符数与耗时，不编造 token。
 - 主包已于 12:51 升级（`04e556c7`，包内含 fix152 文案）；但压缩气泡本身仍未用真实压缩验证（见上）。
 
+## fix153：压缩请求不该按用户的最高档思考（2026-10-26）
+
+### 一、问题（先有数据，再有改动）
+
+压缩慢不是「模型慢」，而是**我们自己要求它多想**：
+
+| 测量项 | 值 |
+|---|---|
+| compact 请求数（用量账本 `purpose=compact`） | 89 |
+| 这些请求的输出 token | 462,453 |
+| 其中 reasoning token | **348,820（75%）** |
+| 单次请求平均思考 token | 3,920 |
+| 完整压缩耗时（26 次） | 中位 **79 s**／均值 91 s／最长 199 s |
+| 每次压缩的串行请求数 | 3~4（分批 + 合并） |
+| 同模型普通对话每轮 reasoning | 约 300 token |
+
+最后一行是关键对照：普通对话只思考 300 token，说明**不是端点强制思考**，而是我们把用户的
+思考档位（High）原样带进了摘要请求。摘要是「把已有对话写成 6,000 字正文」的活，
+思考对它没有可测收益，却让每次压缩多花一分钟以上。
+
+旧代码的口径是：
+
+```kotlin
+if (!capabilities.mandatory && OFF in selectable) OFF
+else config.effectiveReasoningEffort   // ← 强制思考的模型：原样沿用用户档位
+```
+
+即**只要模型不能关思考，压缩就按 High 跑**，而且界面上没有任何提示。
+
+### 二、改成三档（`ProviderRequest.summaryReasoningEffort`）
+
+| 模型能力 | 压缩请求的档位 | 理由 |
+|---|---|---|
+| `canDisable` 且非 `mandatory`，且集合里有 OFF | **OFF** | 省掉全部 reasoning |
+| 强制思考，但有显式档（minimal／low／medium…） | **集合里 rank 最小的显式档** | 保留「会思考」，但不再按用户最高档烧时间 |
+| 只有 Default（没有显式档） | 用户档位合法就沿用，否则退回 Default | 决定权在服务端；擅自传别的值会触发「当前模型不支持…」校验失败 |
+
+两处不能省：
+
+1. 必须排除 OFF 与 DEFAULT 再取 `min` —— 「最小 rank」如果算上 OFF 会得到 OFF，
+   而 mandatory 模型发 OFF 会被 `ProviderReasoning.validatedEffort` 直接拒绝。
+2. 兜底必须回到 **Default** 而不是用户值：库里可能残留上一个模型的档位，
+   发出去会撞 `require(effort in selectableEfforts)` → 压缩直接失败。
+
+### 三、这台设备上实际降到哪一档（不是推测，是读库得到的）
+
+`provider_models` 里当前选中的模型：
+
+```
+model_id = cn:deepseek-v4.1-flash      provider = wkby（http://myc.sq6.top:7863/v1）
+reasoning_capabilities_json        = null            ← 服务商未提供能力表
+reasoning_capabilities_override_json =
+  {"supportedEfforts":["medium","high","max"],"defaultEffort":null,
+   "defaultEnabled":true,"mandatory":true,"canDisable":false}
+```
+
+所以本机是第二档：用户停在 **High**，压缩请求发 **medium** —— 这是该模型允许的最低显式档
+（没有 low / minimal，也关不掉思考）。
+
+顺带确认三种情形各自的落点：
+
+- 内建百炼的 `deepseek-v4.1-flash`：`supportedEfforts=[low,high,max]`、`canDisable=true`
+  → 压缩请求 **OFF**（思考全关）。
+- 自定义服务商里 `reasoning_capabilities_json = null` 的模型（如 a6api、lingzhan、doro、maixun）
+  → **不改**。能力未知时不猜服务端支持什么，宁可少省一点也不让压缩失败。
+- `sq6`（`ocg-deepseek-v4.1-flash`）等同样无能力表 → 不改。
+
+### 四、验证
+
+- `AgentProviderSummaryEffortTest` 由 6 例扩到 **8 例**，新增两例都用本机真实能力表：
+  - `realDeviceConfigurationDropsHighToMedium`：High → Medium；
+  - `compactionPayloadCarriesTheLoweredEffort`：**端到端到请求体** ——
+    同样配置下 `CHAT` 请求体 `reasoning_effort = "high"`，
+    `COMPACTION` 请求体 `reasoning_effort = "medium"`。
+- 第二例是这次补的关键：只测 `summaryReasoningEffort` 不够，中间还有
+  `validatedEffort` 的集合校验和 CUSTOM 源分派，任一处都能让降档白改而单测全绿。
+
+### 五、仍未做（诚实清单）
+
+- **压缩的实际耗时收益没有端到端实测**。要真实触发一次压缩，而当前会话上下文在 74%，
+  压缩会打断正在进行的对话；本次只证明「请求体里的档位确实降了」，
+  没有证明「压缩从 79 秒降到多少秒」。降档能省多少 reasoning 只有跑一次才作数。
+- 如果降档后 reasoning 占比仍然高，下一个该动的是**串行请求次数**（3~4 次/压缩），
+  而不是继续压档位 —— 每减少一次请求就是省掉一整段思考。
+
+

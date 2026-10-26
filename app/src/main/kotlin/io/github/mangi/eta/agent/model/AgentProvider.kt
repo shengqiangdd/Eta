@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.model
 
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
+import io.github.mangi.eta.data.model.ReasoningEffort
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -75,18 +76,31 @@ internal data class ProviderRequest(
          * - 同一模型上普通对话每轮 reasoning 只有约 300 token，说明不是端点强制思考。
          *
          * 摘要的产物是 6,000 字符的正文，思考对它没有可测收益，却让每次压缩多花一分钟以上。
-         * 只在模型确实支持关闭思考时覆盖（`mandatory` 或不在可选集合里就保持用户设置），
-         * 否则会触发 `当前模型强制启用思考，不能选择 Off` 的校验失败。
+         *
+         * 三档处理（按收益排序）：
+         * 1. 能关就关（`canDisable` 且非 `mandatory`）—— 省掉全部 reasoning；
+         * 2. 强制思考的模型**降到最低显式档**：原来这里是「mandatory 就沿用用户设置」，
+         *    用户开着 High 时，每次压缩都按 High 思考 —— 慢了却没有任何提示；
+         * 3. 模型只提供 Default（没有显式档）时沿用用户设置：Default 的决定权在服务端，
+         *    擅自传别的值反而会触发「当前模型不支持……」的校验失败。
+         *
+         * 不能传集合外的值：`ProviderReasoning.validatedEffort` 要求 effort ∈ selectableEfforts，
+         * 而库里可能残留旧模型时代的档位，所以兜底也要回到 Default。
          */
         internal fun summaryReasoningEffort(
             config: AgentModelClient.ModelConfig,
-        ): io.github.mangi.eta.data.model.ReasoningEffort {
+        ): ReasoningEffort {
             val capabilities = config.reasoningCapabilities ?: return config.effectiveReasoningEffort
-            if (capabilities.mandatory) return config.effectiveReasoningEffort
-            if (io.github.mangi.eta.data.model.ReasoningEffort.OFF !in capabilities.selectableEfforts) {
-                return config.effectiveReasoningEffort
-            }
-            return io.github.mangi.eta.data.model.ReasoningEffort.OFF
+            val userEffort = config.effectiveReasoningEffort
+            val selectable = capabilities.selectableEfforts
+            if (!capabilities.mandatory && ReasoningEffort.OFF in selectable) return ReasoningEffort.OFF
+            val cheapestExplicit = selectable
+                .asSequence()
+                .filter { it != ReasoningEffort.OFF && it != ReasoningEffort.DEFAULT }
+                .minByOrNull { it.rank }
+            if (cheapestExplicit != null) return cheapestExplicit
+            // 没有显式档可用：用户设置合法就照旧，不合法（换模型留下的旧值）退回 Default。
+            return if (userEffort in selectable) userEffort else ReasoningEffort.DEFAULT
         }
     }
 }
