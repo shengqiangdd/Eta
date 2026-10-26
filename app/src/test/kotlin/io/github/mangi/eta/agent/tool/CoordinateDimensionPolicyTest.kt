@@ -87,4 +87,70 @@ class CoordinateDimensionPolicyTest {
             ),
         )
     }
+
+    // ---- 截图坐标系（fix162）----
+
+    @Test
+    fun `screenshot coordinates are usable on the display they were taken from`() {
+        assertEquals(
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.USABLE,
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = true,
+                publishedDisplayId = 116,
+                requestedDisplayId = 116,
+            ),
+        )
+    }
+
+    @Test
+    fun `a screenshot from the main screen cannot place a point on a virtual display`() {
+        // 真机就是这条路：主屏 1216x2640 观察后，用 screenshot 坐标去点 720x1280 的虚拟屏，
+        // 越界坐标被放行，到控制器才报成 TOOL_ERROR（看着像内部错误）。
+        assertEquals(
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.OTHER_DISPLAY,
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = true,
+                publishedDisplayId = null,
+                requestedDisplayId = 116,
+            ),
+        )
+    }
+
+    @Test
+    fun `a virtual screenshot cannot place a point on the main screen`() {
+        // 反方向不报错，而是静默点偏：数值合法、落点在屏内，但不是模型想点的地方。
+        assertEquals(
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.OTHER_DISPLAY,
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = true,
+                publishedDisplayId = 116,
+                requestedDisplayId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `main screen null and zero display ids still count as the same screenshot source`() {
+        assertEquals(
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.USABLE,
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = true,
+                publishedDisplayId = 0,
+                requestedDisplayId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `no screenshot means no screenshot space, even on the same display`() {
+        // 未附图、或附图被 region 裁剪放大（坐标系已置空）都走这条。
+        assertEquals(
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.NO_SCREENSHOT,
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = false,
+                publishedDisplayId = 116,
+                requestedDisplayId = 116,
+            ),
+        )
+    }
 }

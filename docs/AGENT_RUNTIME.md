@@ -7001,3 +7001,90 @@ fix156/157/158/159/160/161 是同一个模式：**「动作发出去了」被当
 这轮的尺子是「屏幕尺寸」，下一轮可能是「刷新率」「语言」「分辨率」——
 凡是「同一个参数在不同对象上有不同含义」的地方，都要先问一句：
 **我现在用的是哪个对象的尺子？**
+
+## fix162：截图坐标系还是「上次看的那块屏」的（2026-10-26 深夜，fix161 之后）
+
+### 一、缺陷本身
+
+fix161 把「屏幕尺寸」的尺子按 `display_id` 对齐了，但 `coordinate_space=screenshot`
+这一支没用那把尺子 —— 它拿的是最近一次观察里记的 `CoordinateSpace`（屏宽高 + 截图宽高）：
+
+```kotlin
+if (space == null) { throw ... }
+val point = runCatching { space.fromScreenshot(x, y) }   // ← space 来自 publishedObservation
+return ScreenPoint(point.x, point.y)
+```
+
+`fromScreenshot` 只按 `screenshotWidth/Height → screenWidth/Height` 的比例缩放，
+**不知道这次要点哪块屏**。于是「先看主屏截图、再去虚拟屏点坐标」这条常见路径，
+是用主屏 1216x2640 的整屏截图当尺子去换算 720x1280 的虚拟屏。
+
+真机证据（本机 PKX110；主屏 1216x2640 带截图观察后，虚拟屏 116 = 720x1280）：
+
+| 调用 | 返回 |
+|---|---|
+| `tap(x=1000,y=2000,coordinate_space=screenshot,display_id=116)` | `TOOL_ERROR` / `坐标超出屏幕范围：(1000,2000) not in 720x1280` |
+
+两个问题：
+
+1. **错误码与提示都在说假话**：这是参数用错了尺子，报出来却是 `TOOL_ERROR`
+   （模型会当成内部故障重试），消息只说「坐标超出屏幕范围」，看不出真正原因是**截图属于另一块屏**。
+2. **反方向连错都不报**：截图尺寸小于目标屏时（虚拟屏截图 → 主屏坐标），
+   数值合法、落点在屏内，于是**静默点偏** —— 动作成功、位置不是想点的那个。
+   这是最坏的一种「成功」，本轮没有为它造真机样本（那需要真的点用户的主屏）。
+
+同一族的第二个洞：`observe_screen(region=...)` 会把附图裁成放大图，
+但 `coordinateSpace` 原样保留（仍是整屏截图尺寸）。裁剪图按宽高比换算，
+**丢掉的是裁剪偏移**，所以 `coordinate_contract.screenshot` 报的尺寸与附图不符 ——
+模型照着算同样是静默点偏。
+
+### 二、修法
+
+- `CoordinateDimensionPolicy` 增加 `screenshotUse(hasSpace, publishedDisplayId, requestedDisplayId)`
+  → `NO_SCREENSHOT` / `OTHER_DISPLAY` / `USABLE`（纯 JVM，可直接单测）。
+  与 `pick` 的关键区别：**尺寸可以回退到主屏，截图不行** ——
+  另一块屏的截图连「一像素等于多少屏幕像素」的对应关系都不成立。
+- `convertPoint` 的 screenshot 分支先过这个判断，再换算：
+  - 跨屏 → `SCREENSHOT_SPACE_OTHER_DISPLAY`，消息写明「附的是主屏的截图，不能换算 display 123 的截图坐标」；
+  - 无截图 / 已裁剪 → `SCREENSHOT_SPACE_UNAVAILABLE`。
+  两者都 `retryable=false`：原样重试不会变好，要去重新观察或改用 normalized。
+- `cropObservation` 裁剪后把 `coordinateSpace` **置空**，并把响应里的 `coordinate_contract`
+  改写成「本次附图是裁剪放大图，没有整屏截图坐标系，请按 crop_map 换算」。
+- 新增 `CoordinateSpaceErrors`（两个错误码），单独成对象，避免「参数错 / 屏不对 / 尺子不对」再混成 `INVALID_ARGUMENT`。
+
+### 三、真机取证（canary 本次构建，探针 STEP11/11b/12）
+
+```text
+STEP11  display_id=123
+STEP11  code=SCREENSHOT_SPACE_OTHER_DISPLAY message=最近一次观察附的是主屏的截图，不能用来换算display 123的截图坐标…
+STEP11  verdict=OK
+STEP11b screenshot=720x1280 code= ok=true
+STEP11b verdict=OK
+STEP12  contract.screenshot=null note=本次附图是裁剪放大图（见 crop_map）：没有整屏截图坐标系…
+STEP12  code=SCREENSHOT_SPACE_UNAVAILABLE
+STEP12  verdict=OK
+```
+
+三件事各自被证明：
+
+1. 跨屏截图坐标被**明确拒绝**，且提示指名「主屏 / display 123」（修复前是 `TOOL_ERROR`；
+   同一次 build 之前的报告里就是 `STEP11 code=DISPLAY_NO_VISIBLE_WINDOW` 那种被别的检查遮住的样子，
+   所以探针改成自己建屏，不让「没有可见窗口」抢答）。
+2. **同屏**截图坐标照旧可用（`ok=true`）—— 没有把 `screenshot` 坐标系整体废掉。
+3. 裁剪后契约里不再有 `screenshot` 尺寸，`screenshot` 坐标被拒为 `SCREENSHOT_SPACE_UNAVAILABLE`。
+
+STEP1~STEP7b 全部照旧 OK（`OK` / `OK_INDEX_SHIFTED` / `OK_HONEST`），没有回归。
+
+### 四、门禁
+
+`CoordinateDimensionPolicyTest` 增加 5 例（跨屏两方向、同屏、主屏 null/0 等价、无截图），
+实测用例数 **501 → 506，0 失败**；`assemble` 打包成功
+（`Eta-v3.3.1-debug.apk` 96,389,757 字节，sha256 `c43d0718…`）。
+
+### 五、仍未验证
+
+- **静默点偏**那一路没有真机样本：要证明「虚拟屏截图坐标打到主屏」会点错位置，
+  必须在用户主屏上真的点一下 —— 这一轮刻意没做，结论靠代码路径 + 单测。
+- `swipe` / `longPress` / `tapArea` 的 screenshot 分支没各自造样本（它们共用 `convertPoint`，逻辑同一处）；
+  单测覆盖的是策略对象，端到端只验了 `tap`。
+- 裁剪后的 `crop_map` 换算本身（整屏像素 = source_left + 图像像素 / scale）没有逐像素对照过。

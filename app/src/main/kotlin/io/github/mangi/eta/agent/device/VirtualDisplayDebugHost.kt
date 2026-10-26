@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.tool.AgentLocalTools
+import io.github.mangi.eta.agent.tool.CoordinateSpaceErrors
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.io.File
 import org.json.JSONObject
@@ -1033,6 +1034,114 @@ internal object VirtualDisplayDebugHost {
                             )
                         } else {
                             report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
+                        }
+                        // STEP11（fix162）：截图坐标系也得是「这块屏的截图」。
+                        // 自己建一块屏并启动设置：STEP8 那块输入屏可能已把应用迁回主屏，
+                        // 拿它测只会得到「没有可见窗口」，把真正要看的坐标系判断遮住。
+                        val shotDisplay = call(
+                            "virtual_display_create",
+                            JSONObject()
+                                .put("width", 720)
+                                .put("height", 1280)
+                                .put("density_dpi", 320)
+                                .put("package_name", PROBE_PACKAGE)
+                                .put("force", true)
+                                .put("purpose", "fix162 screenshot coordinate space"),
+                        )
+                        val shotDisplayId = shotDisplay.optInt("display_id", -1)
+                        report.appendLine("STEP11 display_id=$shotDisplayId")
+                        if (shotDisplayId <= 0) {
+                            report.appendLine("STEP11 skipped 建屏失败")
+                        } else {
+                            // 先对主屏带截图观察，再用 screenshot 坐标点这块虚拟屏。
+                            // 旧实现拿主屏 1216x2640 当尺子，越界坐标被放行到控制器，报成 TOOL_ERROR。
+                            call(
+                                "observe_screen",
+                                JSONObject().put("include_screenshot", true).put("max_nodes", 1),
+                            )
+                            val crossScreen = call(
+                                "tap",
+                                JSONObject()
+                                    .put("x", 900)
+                                    .put("y", 1200)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            val crossCode = crossScreen.optString("code")
+                            val crossMessage = crossScreen.optString("message")
+                            report.appendLine("STEP11 code=$crossCode message=${crossMessage.take(70)}")
+                            report.appendLine(
+                                "STEP11 verdict=" + when {
+                                    crossCode == CoordinateSpaceErrors.SCREENSHOT_OTHER_DISPLAY &&
+                                        crossMessage.contains("主屏") -> "OK"
+                                    crossCode == "TOOL_ERROR" -> "FAIL_LEAKED_TO_CONTROLLER"
+                                    crossScreen.optBoolean("ok") -> "FAIL_SILENTLY_ACCEPTED"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            // STEP11b：同一块屏的整屏截图坐标必须照旧可用（别修成“截图全废”）。
+                            val sameShot = call(
+                                "observe_screen",
+                                JSONObject()
+                                    .put("display_id", shotDisplayId)
+                                    .put("include_screenshot", true)
+                                    .put("max_nodes", 1),
+                            )
+                            val sameContract = sameShot.optJSONObject("coordinate_contract")
+                                ?.optJSONObject("screenshot")
+                            val sameTap = call(
+                                "tap",
+                                JSONObject()
+                                    .put("x", 20)
+                                    .put("y", 12)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            report.appendLine(
+                                "STEP11b screenshot=${sameContract?.optInt("width")}x${sameContract?.optInt("height")} " +
+                                    "code=${sameTap.optString("code")} ok=${sameTap.optBoolean("ok")}",
+                            )
+                            report.appendLine(
+                                "STEP11b verdict=" + when {
+                                    sameTap.optBoolean("ok") -> "OK"
+                                    sameTap.optString("code") ==
+                                        CoordinateSpaceErrors.SCREENSHOT_OTHER_DISPLAY -> "FAIL_REJECTED_SAME_SCREEN"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            // STEP12：region 裁剪后附图不再是整屏图，screenshot 坐标系必须失效，
+                            // 否则 coordinate_contract 报的尺寸与附图不符，模型换算后静默点偏。
+                            val croppedObs = call(
+                                "observe_screen",
+                                JSONObject()
+                                    .put("display_id", shotDisplayId)
+                                    .put("include_screenshot", true)
+                                    .put("max_nodes", 1)
+                                    .put("region", "420,380,160,80"),
+                            )
+                            val croppedContract = croppedObs.optJSONObject("coordinate_contract")
+                            val croppedTap = call(
+                                "tap",
+                                JSONObject()
+                                    .put("x", 10)
+                                    .put("y", 10)
+                                    .put("coordinate_space", "screenshot")
+                                    .put("display_id", shotDisplayId),
+                            )
+                            report.appendLine(
+                                "STEP12 contract.screenshot=${croppedContract?.opt("screenshot")} " +
+                                    "note=${croppedContract?.optString("note")?.take(40)} " +
+                                    "code=${croppedTap.optString("code")}",
+                            )
+                            report.appendLine(
+                                "STEP12 verdict=" + when {
+                                    croppedTap.optString("code") ==
+                                        CoordinateSpaceErrors.SCREENSHOT_UNAVAILABLE -> "OK"
+                                    croppedTap.optBoolean("ok") -> "FAIL_SILENTLY_ACCEPTED_CROPPED"
+                                    else -> "FAIL_UNEXPECTED"
+                                },
+                            )
+                            call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
                         call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))
                     }

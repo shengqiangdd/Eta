@@ -925,7 +925,26 @@ internal class AgentLocalTools(
             "截图已裁剪放大；坐标请用 crop_map 换算：整屏像素 = source_left + 图像像素 / scale，" +
                 "再按 screen 宽高换成 normalized（0–999）。region 仍以整屏 normalized 表示。",
         )
-        return observation.copy(content = content.toString(), image = cropped.image)
+        // 附图已从「整屏」变成「裁剪放大」：原来那份 CoordinateSpace（整屏宽高 + 整屏截图宽高）
+        // 对这张图不再成立 —— fromScreenshot 只按宽高比缩放，不知道裁剪偏移。
+        // 继续挂着它，coordinate_contract 会报出一个与附图不符的截图尺寸，
+        // 模型照着换算就是静默点偏（fix162）。所以这里把坐标系置空，并在响应里说清楚原因。
+        content.put(
+            "coordinate_contract",
+            JSONObject()
+                .put("recommended_coordinate_space", "normalized")
+                .put("screen", content.optJSONObject("coordinate_contract")?.optJSONObject("screen") ?: JSONObject())
+                .put(
+                    "note",
+                    "本次附图是裁剪放大图（见 crop_map）：没有整屏截图坐标系，coordinate_space=screenshot 已不可用；" +
+                        "坐标请按 crop_map 换算成整屏像素，再按 screen 宽高换成 normalized（0–999）",
+                ),
+        )
+        return observation.copy(
+            content = content.toString(),
+            image = cropped.image,
+            coordinateSpace = null,
+        )
     }
 
     /** 裁剪结果连同它在原图中的位置，供模型把裁剪图坐标换算回整屏。 */
@@ -1368,6 +1387,12 @@ internal class AgentLocalTools(
     }
 
     /**
+     * 「这次点哪块屏」的人话描述：错误消息里写 `display 116` 比写 `null` 有用得多。
+     */
+    private fun describeDisplayForAgent(displayId: Int?): String =
+        if (displayId == null || displayId == 0) "主屏" else "display $displayId"
+
+    /**
      * 坐标系必须显式声明。旧版按"上一次观察是否带截图"隐式切换默认值，模型无从得知，
      * 经常把截图像素当成屏幕像素；缺省时直接报参数错误，让模型在下一步改正。
      */
@@ -1415,12 +1440,38 @@ internal class AgentLocalTools(
         if (requestedSpace != "screenshot") {
             throw InvalidToolArgumentException("coordinate_space 只能是 normalized、screen 或 screenshot")
         }
-        if (space == null) {
-            throw InvalidToolArgumentException(
-                "最近一次观察没有附图，没有 screenshot 坐标系；看截图定位请用 normalized，或先带截图重新观察",
+        // 截图坐标系同样得是「这块屏的整屏截图」：另一块屏的截图只按宽高比换算，
+        // 会算出越界点（被控制器报成 TOOL_ERROR，看着像内部错误）或屏内的错位置（静默点偏）。
+        when (
+            CoordinateDimensionPolicy.screenshotUse(
+                hasSpace = space != null,
+                publishedDisplayId = published.displayId,
+                requestedDisplayId = displayId,
             )
+        ) {
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.NO_SCREENSHOT -> throw InvalidToolArgumentException(
+                message = "最近一次观察没有可用的截图坐标系（未附图，或附图已按 region 裁剪放大）；" +
+                    "看截图定位请用 normalized（0–999），或先带截图整屏重新观察一次",
+                code = CoordinateSpaceErrors.SCREENSHOT_UNAVAILABLE,
+                retryable = false,
+            )
+
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.OTHER_DISPLAY -> throw InvalidToolArgumentException(
+                message = "最近一次观察附的是${describeDisplayForAgent(published.displayId)}的截图，" +
+                    "不能用来换算${describeDisplayForAgent(displayId)}的截图坐标：请先对这块屏带截图观察一次" +
+                    "（observe_screen 传 display_id 与 include_screenshot），或用 normalized（0–999）",
+                code = CoordinateSpaceErrors.SCREENSHOT_OTHER_DISPLAY,
+                retryable = false,
+            )
+
+            CoordinateDimensionPolicy.ScreenshotSpaceUse.USABLE -> Unit
         }
-        val point = runCatching { space.fromScreenshot(x, y) }
+        val screenshotSpace = space ?: throw InvalidToolArgumentException(
+            message = "最近一次观察没有附图，没有 screenshot 坐标系；看截图定位请用 normalized，或先带截图重新观察",
+            code = CoordinateSpaceErrors.SCREENSHOT_UNAVAILABLE,
+            retryable = false,
+        )
+        val point = runCatching { screenshotSpace.fromScreenshot(x, y) }
             .getOrElse { throwable ->
                 throw InvalidToolArgumentException(
                     throwable.message ?: "截图坐标超出范围",
