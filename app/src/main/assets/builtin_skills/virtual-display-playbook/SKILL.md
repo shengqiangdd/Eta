@@ -82,6 +82,7 @@ description: 在独立虚拟屏上操作 Android 应用时，用最少工具调�
   - `code=SCROLL_TREE_UNREADABLE`：只读到不到 4 个节点，界面还没画完 → 先 `observe_screen`；
   - `code=NO_SCROLLABLE_TARGET`：节点够多但没有 `scrollable=true` 的容器 → 这条页面不用
     `scroll`，要按方向滑就用 `swipe` 指定起止点（起手避开输入框）。
+    这不是异常：自绘界面很常见这一形态（实测 ColorOS 计算器首屏 25 个节点、0 个可滚动容器）。
   两个码都表示**手势一次都没发出**，所以不必担心「已经滑过又滑一次」；但换个参数重试同样
   没用 —— 判据看的是界面树，不是参数。
 

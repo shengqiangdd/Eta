@@ -41,8 +41,16 @@ internal object ScrollTargetPolicy {
         else -> Decision.NO_TARGET
     }
 
-    fun codeFor(decision: Decision): String = when (decision) {
-        Decision.PROCEED, Decision.NO_TARGET -> NO_TARGET_CODE
+    /**
+     * 取消动作时给模型的错误码；`PROCEED` 不是错误，返回 null。
+     *
+     * 以前这里对 `PROCEED` 也返回 NO_TARGET_CODE。调用点虽然先判了「不是 PROCEED」才用它，
+     * 但 API 本身在说谎：一次能正常滚动的调用，只要有人换个写法（比如先取值再判空），
+     * 就会被写成「页面不可滚动」。改成可空，让它在类型上就取不到错误码。
+     */
+    fun errorCodeFor(decision: Decision): String? = when (decision) {
+        Decision.PROCEED -> null
+        Decision.NO_TARGET -> NO_TARGET_CODE
         Decision.TREE_UNREADABLE -> TREE_UNREADABLE_CODE
     }
 

@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.device
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -56,12 +57,15 @@ class ScrollTargetPolicyTest {
     fun `codes tell the model what actually happened`() {
         assertEquals(
             ScrollTargetPolicy.NO_TARGET_CODE,
-            ScrollTargetPolicy.codeFor(ScrollTargetPolicy.Decision.NO_TARGET),
+            ScrollTargetPolicy.errorCodeFor(ScrollTargetPolicy.Decision.NO_TARGET),
         )
         assertEquals(
             ScrollTargetPolicy.TREE_UNREADABLE_CODE,
-            ScrollTargetPolicy.codeFor(ScrollTargetPolicy.Decision.TREE_UNREADABLE),
+            ScrollTargetPolicy.errorCodeFor(ScrollTargetPolicy.Decision.TREE_UNREADABLE),
         )
+        // 能滚的时候不存在「错误码」：以前 PROCEED 也会返回 NO_TARGET_CODE，
+        // 谁把它用在判定之外，就会把一次正常滚动写成「页面不可滚动」。
+        assertNull(ScrollTargetPolicy.errorCodeFor(ScrollTargetPolicy.Decision.PROCEED))
         // 两个码不能相同：模型（与文档）靠它们区分「页面确实不能滚」与「还没看清」。
         assertTrue(
             ScrollTargetPolicy.NO_TARGET_CODE != ScrollTargetPolicy.TREE_UNREADABLE_CODE,

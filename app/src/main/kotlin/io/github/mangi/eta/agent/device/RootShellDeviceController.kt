@@ -519,7 +519,9 @@ internal class RootShellDeviceController(
             return scrollErrorJson(
                 tool = "scroll",
                 direction = parsed,
-                code = ScrollTargetPolicy.codeFor(decision),
+                code = checkNotNull(ScrollTargetPolicy.errorCodeFor(decision)) {
+                    "PROCEED 已在上面放过，这里必然有错误码"
+                },
                 message = ScrollTargetPolicy.messageFor(decision, beforeNodes.size, scrollableNodes.size),
                 retryable = false,
             )

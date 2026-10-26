@@ -583,6 +583,30 @@ internal object VirtualDisplayDebugHost {
                                 if (emptyScroll.optString("code") == "DISPLAY_NO_VISIBLE_WINDOW") "OK" else "FAIL",
                         )
                         call("virtual_display_release", JSONObject().put("id", empty.optString("id")))
+                        // STEP6：屏**释放之后**再用同一个 display_id —— 同样是「屏不对」，不能报成「参数错」。
+                        // 故意用 observe_screen：它只读、不发任何手势，万一判据没拦住也只是多读一次空屏，
+                        // 不会像 tap/scroll 那样有可能真的注入到主屏（那正是这条判据要防的事）。
+                        // 若这里得到 DISPLAY_NO_VISIBLE_WINDOW，说明释放还没从注册表里消失（异步回收）：
+                        // 同样不会误发动作，但如实记为「尚未立即失效」，不当作通过。
+                        val releasedObs = call(
+                            "observe_screen",
+                            JSONObject()
+                                .put("display_id", emptyDisplay)
+                                .put("include_ui_tree", false),
+                        )
+                        val releasedCode = releasedObs.optString("code")
+                        report.appendLine(
+                            "STEP6 display=$emptyDisplay code=$releasedCode " +
+                                "retryable=${releasedObs.optBoolean("retryable", true)}",
+                        )
+                        report.appendLine(
+                            "STEP6 verdict=" + when (releasedCode) {
+                                "DISPLAY_RELEASED" -> "OK"
+                                "DISPLAY_NO_VISIBLE_WINDOW" -> "OK_NOT_YET_RELEASED"
+                                "INVALID_ARGUMENT" -> "FAIL_REGRESSED_TO_ARGUMENT"
+                                else -> "FAIL_UNEXPECTED"
+                            },
+                        )
                     } else {
                         report.appendLine("STEP5 skipped create_empty_display_failed")
                     }

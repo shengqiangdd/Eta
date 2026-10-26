@@ -6523,3 +6523,88 @@ airplane=0 wifi=1
 - 设备锁屏时**探针会静默降级**（树里只有时钟/日期），各项 `skipped` 看起来像“探针坏了”，
   实际是锁屏。先 `dumpsys window policy | grep showing=` 看一眼。
 
+## fix157：把「能不能滚」的错误码收紧 + 补上两个真机样本（2026-10-26 深夜）
+
+fix156 留下一句诚实清单：「`NO_SCROLLABLE_TARGET` 仍无真机样本」。这一轮把它和一个
+API 层面的小谎一起收掉了。
+
+### 一、`codeFor(PROCEED)` 返回 `NO_TARGET_CODE`：API 自己在说谎
+
+`ScrollTargetPolicy.codeFor()` 原本是：
+
+```kotlin
+Decision.PROCEED, Decision.NO_TARGET -> NO_TARGET_CODE
+```
+
+调用点确实先判了「不是 PROCEED」才取值，所以**没有实际故障**。但它是一条随时会被踩中的沟：
+谁换个写法（先取值、再判空，或者以后把判定挪走），一次**能正常滚动**的调用就会被写成
+「页面不可滚动」，模型于是改用 `swipe` 或干脆放弃。
+
+改成 `errorCodeFor(decision): String?`，`PROCEED -> null`，调用点 `checkNotNull(...)`，
+单测里加一条 `assertNull`。原则写在这里免得下次再犯：**判定函数只能返回「这次该怎么走」，
+不能顺手给一个看起来合法的默认错误码。**
+
+### 二、`NO_SCROLLABLE_TARGET` 的真机样本（一屏两态）
+
+探针本来就支持 `--es eta.debug.probe_action scroll`（直接调 `device.scroll` 并落盘 JSON），
+所以这次**没有改代码**，只是写了条临时脚本：建屏 → 启动目标应用 → probe scroll → 读 `vd-probe.txt`。
+
+同一块虚拟屏（display 88，1080×1920 @420），两次结果正好构成对照：
+
+| 目标界面 | 节点数 | 可滚动容器 | 返回 |
+|---|---|---|---|
+| ColorOS 计算器 `.Calculator` | 25 | 0 | `code=NO_SCROLLABLE_TARGET` `retryable=false` |
+| 系统设置 `.Settings` | 26 | 2（ScrollView + RecyclerView） | `ok=true` `moved=true` `method=INPUT_SWIPE` `verified_by=ui_node_motion` |
+
+也就是说：**同样是「节点二十几个」，判据能给出一边取消、一边照滚两种结论**，
+而且取消那侧的手势一次都没发出。计算器这类自绘界面是这一形态的常见来源，
+已写进 Skill，免得模型把 `NO_SCROLLABLE_TARGET` 当成故障。
+
+### 三、探针新增 STEP6：屏释放之后再动它
+
+fix156 只覆盖了「屏还在、但上面没窗口」（`DISPLAY_NO_VISIBLE_WINDOW`）。真正更常见的是
+**屏已经没了，模型还拿着旧 `display_id` 继续动作** —— 这时 `input -d` 会回退到默认屏，
+也就是用户自己的手机。新增 STEP6 补上样本：
+
+```text
+STEP5 display=90 code=DISPLAY_NO_VISIBLE_WINDOW retryable=false   verdict=OK
+STEP6 display=90 code=DISPLAY_RELEASED retryable=false            verdict=OK
+```
+
+STEP6 故意用 `observe_screen`（只读、不发手势），而**不是** `tap`：万一判据哪天失效，
+`tap` 会真的把点击注入到主屏（这正是这条判据存在的理由），而 `observe_screen` 最多多读一次空屏。
+记录里也区分了 `OK_NOT_YET_RELEASED`（释放还没从注册表消失 → 报的是 `NO_VISIBLE_WINDOW`），
+不把「顺序问题」混进「判据正确」。
+
+### 四、本轮真机完整探针（display 89，解锁态，20 个节点）
+
+```text
+STEP1 launched=true display_id=89 first_nodes=20
+STEP2 index=1 ok=true method=ROOT_COORDINATE_FALLBACK
+STEP3 index=0 ok=true method=ROOT_SCROLL_FALLBACK
+STEP3b scroll ok=true method=INPUT_SWIPE
+STEP4 index=0 expected=9 code=COORDINATE_FALLBACK_UNSAFE_TARGET blocked_by=center_hit
+      suggestion=8 retryable=false                verdict=OK_INDEX_SHIFTED
+STEP5 display=90 code=DISPLAY_NO_VISIBLE_WINDOW retryable=false   verdict=OK
+STEP6 display=90 code=DISPLAY_RELEASED retryable=false            verdict=OK
+airplane=0 wifi=1
+```
+
+`STEP4` 仍是 `OK_INDEX_SHIFTED`（观察与点击之间树变了，索引从 9 挪到别处）—— 与 fix156 两次运行一致，
+说明这是这个页面的常态，不是偶发。
+
+### 五、仍未验证（诚实清单）
+
+- **`suggestion_index` 的可点性**依旧只由「字段 + 单测 + 真实树对照」支撑：探针不会真去点建议值
+  （那是设置里的真实控件，点下去就改设备状态）。
+- `SCROLL_TREE_UNREADABLE` 只在锁屏时命中过（2 个节点），没专门在解锁态造过更小的树。
+
+### 六、环境记录（这轮又多一条）
+
+- 覆盖安装 canary 后无障碍照例停在 `Binding services`，但 fix156 记的顺序**这次一步没成功**：
+  `am start` → `accessibility_enabled` 0 → 1 → 等 10 秒，canary 仍是 `Binding`。
+  原因是我 `am start` 得太早（进程还没起来就拨开关，等于空拨）。可靠做法是：
+  **先确认 `pidof <包名>` 有输出、Activity 已是 topResumed**，再拨 0 → 等 3 秒 → 1 → 等 12 秒。
+- `terminal_job` 的 Android 任务看不到 `/workspace`（那是 Linux guest 的路径），
+  装包要用宿主侧路径 `/data/local/tmp/eta/eta-v2/app/build/outputs/...`。
+
