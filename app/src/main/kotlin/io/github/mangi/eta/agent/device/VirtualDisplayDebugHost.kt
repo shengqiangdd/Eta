@@ -1480,6 +1480,37 @@ internal object VirtualDisplayDebugHost {
                                     else -> "FAIL_SCROLL:" + sameScopeCode
                                 },
                             )
+                            // STEP18（fix168）：参数名写错不能被静默吞掉。
+                            // `observe_screen` 的声明名是 include_screenshot；模型很爱写 includeScreenshot。
+                            // 这个工具只读，写错名字除了多一张截图没有任何副作用，适合做探针。
+                            val typoObs = call(
+                                "observe_screen",
+                                JSONObject().put("max_nodes", 20).put("includeScreenshot", true),
+                            )
+                            val typoHints = typoObs.optJSONArray("arg_hints")
+                            val typoFirst = typoHints?.optString(0).orEmpty()
+                            report.appendLine(
+                                "STEP18 ok=${typoObs.optBoolean("ok")} " +
+                                    "hints=${typoHints?.length() ?: 0} first=$typoFirst",
+                            )
+                            report.appendLine(
+                                "STEP18 verdict=" + when {
+                                    typoHints == null || typoHints.length() == 0 -> "FAIL_NO_HINT"
+                                    typoFirst.contains("include_screenshot") -> "OK"
+                                    else -> "OK_OTHER:" + typoFirst.take(40)
+                                },
+                            )
+                            // 反方向：合法参数一个都不该冒出提示（误报比漏报更烦人）。
+                            val cleanObs = call("observe_screen", JSONObject().put("max_nodes", 10))
+                            report.appendLine(
+                                "STEP18b hints=${cleanObs.optJSONArray("arg_hints")?.length() ?: 0}",
+                            )
+                            report.appendLine(
+                                "STEP18b verdict=" + when {
+                                    cleanObs.optJSONArray("arg_hints") == null -> "OK"
+                                    else -> "FAIL_SPURIOUS_HINT"
+                                },
+                            )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
                         call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))

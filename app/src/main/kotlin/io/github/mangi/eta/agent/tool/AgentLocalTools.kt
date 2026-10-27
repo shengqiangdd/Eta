@@ -333,7 +333,7 @@ internal class AgentLocalTools(
                     )
                 }
             }
-            when (toolCall.name) {
+            val produced = when (toolCall.name) {
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
                 "launch_app" -> textResult(launchApp(args))
@@ -459,6 +459,7 @@ internal class AgentLocalTools(
                     )
                 )
             }
+            annotateArgumentHints(toolCall.name, args, produced)
         }.getOrElse { throwable ->
             val code = when (throwable) {
                 // 参数错与「屏不对」必须分开：原来两者都是 INVALID_ARGUMENT，
@@ -3287,6 +3288,33 @@ internal class AgentLocalTools(
             .put("code", code)
             .put("message", message)
             .toString()
+
+    /**
+     * fix168：模型传了本工具不认识的参数时，不要静默丢掉。
+     *
+     * `JSONObject.optInt("display_id")` 拿不到时只会返回缺省值，工具照常执行、
+     * 结果里也看不出任何异常 —— 模型于是就相信「我已经指定了」。
+     * 这里在**成功结果**上附一条 `arg_hints`（不改变 `ok`、不改变任何动作）：
+     * 归一化后能对上声明参数的（`displayId` → `display_id`）直接给出正确名字，
+     * 完全对不上的列出这个工具支持哪些参数。
+     */
+    private fun annotateArgumentHints(
+        toolName: String,
+        args: JSONObject,
+        result: AgentModelClient.ToolResult,
+    ): AgentModelClient.ToolResult {
+        if (args.length() == 0) return result
+        val declared = ToolArgumentSchema.declaredKeys(toolName) ?: return result
+        val hints = ToolArgumentHintPolicy.review(declared, args.keys().asSequence().toList())
+        if (hints.isEmpty()) return result
+        val json = runCatching { JSONObject(result.content) }.getOrNull() ?: return result
+        // 只挂在成功结果上：失败时模型已经在看错误码，再叠一条参数提示只会把注意力拉偏。
+        if (!json.optBoolean("ok")) return result
+        val messages = JSONArray()
+        hints.forEach { hint -> messages.put(ToolArgumentHintPolicy.message(hint, declared)) }
+        json.put("arg_hints", messages)
+        return result.copy(content = json.toString())
+    }
 
     private fun textResult(content: String): AgentModelClient.ToolResult =
         AgentModelClient.ToolResult(content)

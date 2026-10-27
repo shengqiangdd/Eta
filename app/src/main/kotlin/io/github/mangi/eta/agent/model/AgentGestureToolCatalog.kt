@@ -74,6 +74,15 @@ internal object AgentGestureToolCatalog {
                                         .put("type", "string")
                                         .put("description", "与 index 来自同一次最近 observe_screen 的 observation_id。")
                                 )
+                                .put(
+                                    "display_id",
+                                    JSONObject()
+                                        .put("type", "integer")
+                                        .put(
+                                            "description",
+                                            "可选。节点动作只作用于快照所属那块屏；写了就必须与快照同屏，否则报 OBSERVATION_OTHER_DISPLAY（0 表示主屏）。"
+                                        )
+                                )
                         )
                         .put("required", JSONArray().put("index").put("observation_id"))
                 )
@@ -126,6 +135,15 @@ internal object AgentGestureToolCatalog {
                                     JSONObject()
                                         .put("type", "string")
                                         .put("description", "与 index 来自同一次最近 observe_screen 的 observation_id。")
+                                )
+                                .put(
+                                    "display_id",
+                                    JSONObject()
+                                        .put("type", "integer")
+                                        .put(
+                                            "description",
+                                            "可选。节点动作只作用于快照所属那块屏；写了就必须与快照同屏，否则报 OBSERVATION_OTHER_DISPLAY（0 表示主屏）。"
+                                        )
                                 )
                                 .put(
                                     "duration_ms",
@@ -218,6 +236,15 @@ internal object AgentGestureToolCatalog {
                                     JSONObject()
                                         .put("type", "string")
                                         .put("description", "与 index 来自同一次最近 observe_screen 的 observation_id。")
+                                )
+                                .put(
+                                    "display_id",
+                                    JSONObject()
+                                        .put("type", "integer")
+                                        .put(
+                                            "description",
+                                            "可选。节点动作只作用于快照所属那块屏；写了就必须与快照同屏，否则报 OBSERVATION_OTHER_DISPLAY（0 表示主屏）。"
+                                        )
                                 )
                                 .put(
                                     "direction",

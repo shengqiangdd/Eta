@@ -7470,3 +7470,58 @@ java.lang.AssertionError: The Robolectric native runtime is not supported on Lin
 ### 六、门禁与产物
 
 532 例 0 失败；`assemble` 成功（`Eta-v3.3.1-debug.apk` 96,408,625 字节，sha256 `150bc386…`）。
+
+## fix168：参数名写错被静默吞掉（2026-10-27，fix167 之后）
+
+### 一、缺陷
+
+`JSONObject.optInt("display_id")` 拿不到时只返回缺省值，工具照常执行、结果里也看不出异常。
+模型写 `displayId`（驼峰，很常见）时：参数被忽略 → 动作按缺省走（常见是「最近一次观察的屏」）→
+`ok=true`。**模型因此相信自己已经指定了那块屏。**
+
+fix167 修的是「参数被忽略后仍执行」；这里修的是「参数名本身不存在，却没有任何反馈」。
+
+### 二、修法
+
+新增两个纯 JVM 组件：
+
+| 组件 | 作用 |
+|---|---|
+| `ToolArgumentSchema` | 工具名 → schema 声明的参数名。**唯一真相源是各 catalog 的 schema**（不手写清单，避免漂移），首次使用时构建一次并缓存；拼装失败的 catalog 只跳过自己。 |
+| `ToolArgumentHintPolicy` | 给定 declared + provided，归一化（小写、去掉 `_`/`-`）后比对：能对上就给出正确名，对不上就列出可用参数。 |
+
+`AgentLocalTools.execute()` 把 `when` 的结果接成 `val produced`，成功时附一条 `arg_hints`（**不改 `ok`、不改动作**）：
+
+```text
+参数「includeScreenshot」不会被使用：本工具叫「include_screenshot」，请按这个名字重发（本次已按缺省值执行）
+```
+
+只挂在成功结果上：失败时模型已经在看错误码，再叠提示会拉偏注意力。
+未登记的工具返回 `null` → **不提示**（宁缺，不误报）。
+
+同时补齐 schema：`tap_element` / `long_press_element` / `scroll_element` 现在声明 `display_id`
+（执行层从 fix167 起就会读它，之前 schema 里没写）。
+
+### 三、真机取证（探针 STEP18，本机 PKX110 / A16）
+
+```text
+STEP18 ok=true hints=1 first=参数「includeScreenshot」不会被使用：本工具叫「include_screenshot」，请按这个名字重发（本次已按缺省值执行）
+STEP18 verdict=OK
+STEP18b hints=0
+STEP18b verdict=OK
+```
+
+18 项 verdict 全 OK、无 FAIL；STEP17（fix167）回归通过。
+
+### 四、门禁
+
+`ToolArgumentHintPolicyTest`（7 例）+ `ToolArgumentSchemaTest`（7 例）均为纯 JVM，进 `FAST_TEST_FILTERS`：
+用例数 **532 → 546，0 失败**；`assemble` 成功（`Eta-v3.3.1-debug.apk` 96,409,645 字节，sha256 `bad07927…`）。
+
+### 五、限制（如实记）
+
+- **完全陌生的参数名**（对不上任何声明名）只有单测覆盖：探针只验了「驼峰 → 下划线」这条最常走的路。
+- `AgentDeviceToolCatalog` / `AgentPhoneToolCatalog` 需要拼装参数，暂未纳入索引 —— 这些工具收到错参数仍然静默。
+  补法是给 `ToolArgumentSchema` 加一个带默认参数的 lambda，等下一轮统一清。
+- 提示不阻止执行：模型若无视 `arg_hints` 继续用错名字，行为与修复前一样。彻底的做法是硬失败，
+  但那会让「多传一个无害参数」变成整次调用失败，先把提示跑一轮看真实命中率再定。
