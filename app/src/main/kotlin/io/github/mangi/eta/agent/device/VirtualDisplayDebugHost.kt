@@ -1737,6 +1737,10 @@ internal object VirtualDisplayDebugHost {
             // 没有真机样本」。只有单测覆盖 UTF-16 偏移，而真实输入框怎么处理是另一回事。
             val cnSeed = "测试一下"
             val cnTail = "追加"
+            // 主屏那一组（TEXT3c/3d）用另一对字：同一个报告里两串中文内容不同，
+            // 回读时不会互相干扰（findText 是按内容找节点）。
+            val cnMainSeed = "中文种子"
+            val cnMainTail = "后缀"
             var displayKey = ""
             try {
                 var waitMs = 0
@@ -1778,10 +1782,14 @@ internal object VirtualDisplayDebugHost {
                     report.appendLine("TEXT1 verdict=SKIPPED_FOREGROUND_OTHER:$foreground")
                     report.appendLine("TEXT2 verdict=SKIPPED_FOREGROUND_OTHER")
                     report.appendLine("TEXT3 verdict=SKIPPED_FOREGROUND_OTHER")
+                    report.appendLine("TEXT3c verdict=SKIPPED_FOREGROUND_OTHER")
+                    report.appendLine("TEXT3d verdict=SKIPPED_FOREGROUND_OTHER")
                 } else if (mainEditable < 0) {
                     report.appendLine("TEXT1 verdict=SKIPPED_NO_EDITABLE")
                     report.appendLine("TEXT2 verdict=SKIPPED_NO_EDITABLE")
                     report.appendLine("TEXT3 verdict=SKIPPED_NO_EDITABLE")
+                    report.appendLine("TEXT3c verdict=SKIPPED_NO_EDITABLE")
+                    report.appendLine("TEXT3d verdict=SKIPPED_NO_EDITABLE")
                 } else {
                     val typed = call(
                         "type_text",
@@ -1848,6 +1856,101 @@ internal object VirtualDisplayDebugHost {
                                 leftover >= 0 -> "FAIL_NOT_CLEARED"
                                 else -> "OK"
                             },
+                        )
+                    }
+                    // ③b 主屏 + 中文（非 ASCII）：fix175 只测了虚拟屏的中文，主屏没有样本。
+                    // 两者走同一个无障碍 ACTION_SET_TEXT，但主屏用的是「当前输入焦点」（没有
+                    // display 参数），是真机上最容易写错框的一条 —— 这里补齐：
+                    // 点框 → 写中文 → 追加中文 → 读回 → 清空。
+                    var cnMainObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                    // 只接受“真的主屏”样本：本机实测过“published 观察停在虚拟屏”的情形，
+                    // 那时不带 display_id 的 type_text 会写到那块虚拟屏；再把结论写成主屏样本就是假的。
+                    val cnMainScope = cnMainObs.optJSONObject("display")?.optString("scope").orEmpty()
+                    val cnMainDisplay = cnMainObs.optJSONObject("display")?.optInt("id", -1) ?: -1
+                    // fix176：主屏在 observe_screen 里是 scope="default"、id=0（工具结果里另一种写法是
+                    // scope="main"）；第一版只认 "main"，于是每次主屏样本都被判成
+                    // SKIPPED_NOT_MAIN:default/0 —— 样本没跑，报告却像是"主屏没这个能力"。
+                    val cnMainIsMain = cnMainDisplay == 0 ||
+                        cnMainScope == "main" || cnMainScope == "default"
+                    val cnMainEditable = firstEditable(cnMainObs)
+                    if (!cnMainIsMain) {
+                        // 不在主屏就根本别写：不带 display_id 的写入会落到快照那块屏上，
+                        // 既污染虚拟屏样本，又让「主屏通过」变成假结论。
+                        report.appendLine("TEXT3c verdict=SKIPPED_NOT_MAIN:$cnMainScope/$cnMainDisplay")
+                        report.appendLine("TEXT3d verdict=SKIPPED_NOT_MAIN")
+                    } else if (cnMainEditable < 0) {
+                        report.appendLine("TEXT3c verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT3d verdict=SKIPPED_NO_EDITABLE")
+                    } else {
+                        call(
+                            "tap_element",
+                            JSONObject()
+                                .put("observation_id", cnMainObs.optString("observation_id"))
+                                .put("index", cnMainEditable),
+                        )
+                        Thread.sleep(400L)
+                        val cnMainWrote = call(
+                            "type_text",
+                            JSONObject().put("text", cnMainSeed),
+                        )
+                        val cnMainAppended = call(
+                            "type_text",
+                            JSONObject().put("mode", "append").put("text", cnMainTail),
+                        )
+                        cnMainObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val cnMainBoth = findText(cnMainObs, cnMainSeed + cnMainTail)
+                        val cnMainSeedOnly = findText(cnMainObs, cnMainSeed)
+                        report.appendLine(
+                            "TEXT3c write=${cnMainWrote.optBoolean("ok")} " +
+                                "append=${cnMainAppended.optBoolean("ok")} " +
+                                "scope=$cnMainScope/$cnMainDisplay " +
+                                "method=${cnMainWrote.optString("method")} " +
+                                "verify=${cnMainWrote.optString("input_verification")}/" +
+                                cnMainAppended.optString("input_verification") +
+                                " both=$cnMainBoth seedOnly=$cnMainSeedOnly " +
+                                "text=${nodeText(cnMainObs, cnMainBoth).take(40)}",
+                        )
+                        report.appendLine("TEXT3c raw=" + cnMainWrote.toString().take(400))
+                        report.appendLine(
+                            "TEXT3c verdict=" + when {
+                                !cnMainWrote.optBoolean("ok") ->
+                                    "FAIL_CN_WRITE:" + cnMainWrote.optString("code")
+                                cnMainWrote.optString("input_verification") != "verified" ->
+                                    "FAIL_CN_NOT_VERIFIED:" +
+                                        cnMainWrote.optString("input_verification")
+                                cnMainAppended.optString("code") ==
+                                    "TEXT_SELECTION_UNAVAILABLE" -> "OK_HONEST_DEGRADE"
+                                !cnMainAppended.optBoolean("ok") ->
+                                    "OK_NOT_ATTEMPTED:append:" + cnMainAppended.optString("code")
+                                cnMainBoth >= 0 &&
+                                    cnMainAppended.optString("input_verification") == "verified" ->
+                                    "OK"
+                                cnMainBoth >= 0 -> "FAIL_NOT_VERIFIED:append"
+                                cnMainSeedOnly >= 0 -> "FAIL_APPEND_NOT_APPLIED"
+                                else -> "FAIL_CN_LOST"
+                            },
+                        )
+                        // 主屏里同样不能留测试文本（这个框是 canary 自己的会话框，不 submit）。
+                        val cnClearObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val cnClearIndex = findText(cnClearObs, cnMainSeed)
+                            .takeIf { it >= 0 } ?: cnMainEditable
+                        val cnMainCleared = call(
+                            "clear_text",
+                            JSONObject()
+                                .put("observation_id", cnClearObs.optString("observation_id"))
+                                .put("index", cnClearIndex),
+                        )
+                        val cnAfterClear = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val cnMainLeft = findText(cnAfterClear, cnMainSeed)
+                        report.appendLine(
+                            "TEXT3d clearIndex=$cnClearIndex ok=${cnMainCleared.optBoolean("ok")} " +
+                                "leftover=$cnMainLeft " +
+                                "verdict=" + when {
+                                    !cnMainCleared.optBoolean("ok") ->
+                                        "FAIL_CLEANUP:" + cnMainCleared.optString("code")
+                                    cnMainLeft >= 0 -> "FAIL_NOT_CLEARED"
+                                    else -> "OK"
+                                },
                         )
                     }
                 }

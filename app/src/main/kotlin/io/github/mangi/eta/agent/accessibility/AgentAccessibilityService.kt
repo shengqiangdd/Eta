@@ -869,25 +869,29 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun inputTextFocused(text: String): NodeActionResult = runNodeActionOnMainSync {
+    fun inputTextFocused(text: String): NodeActionResult = writeTextPrepared {
         val node = findFocusedEditableNode()
-            ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-                "NO_FOCUSED_EDITABLE",
-                "没有获得输入焦点的可编辑节点",
+            ?: return@writeTextPrepared TextWriteTarget.Rejected(
+                NodeActionResult.failure(
+                    "NO_FOCUSED_EDITABLE",
+                    "没有获得输入焦点的可编辑节点",
+                ),
             )
         node.incrementalTextValidationError()?.let { error ->
-            return@runNodeActionOnMainSync error
+            return@writeTextPrepared TextWriteTarget.Rejected(error)
         }
         val plan = TextEditPlanner.insertAtSelection(
             currentText = node.realText(),
             insertedText = text,
             selectionStart = node.textSelectionStart,
             selectionEnd = node.textSelectionEnd,
-        ) ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-            "TEXT_SELECTION_UNAVAILABLE",
-            "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
+        ) ?: return@writeTextPrepared TextWriteTarget.Rejected(
+            NodeActionResult.failure(
+                "TEXT_SELECTION_UNAVAILABLE",
+                "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
+            ),
         )
-        setNodeText(node, plan.text, plan.cursor)
+        TextWriteTarget.Ready(node, plan.text, plan.cursor)
     }
 
     fun setTextNode(
@@ -906,13 +910,15 @@ class AgentAccessibilityService : AccessibilityService() {
                 }
             }
         }
-        return runNodeActionOnMainSync {
+        return writeTextPrepared {
             val node = findFocusedEditableNode()
-                ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-                    "NO_FOCUSED_EDITABLE",
-                    "没有获得输入焦点的可编辑节点",
+                ?: return@writeTextPrepared TextWriteTarget.Rejected(
+                    NodeActionResult.failure(
+                        "NO_FOCUSED_EDITABLE",
+                        "没有获得输入焦点的可编辑节点",
+                    ),
                 )
-            setNodeText(node, text, text.length)
+            TextWriteTarget.Ready(node, text, text.length)
         }
     }
 
@@ -1430,6 +1436,85 @@ class AgentAccessibilityService : AccessibilityService() {
     private fun AccessibilityNodeInfo.realText(): String =
         if (isShowingHintText) "" else text?.toString().orEmpty()
 
+    /**
+     * fix176：写入后确认读回。
+     *
+     * `performAction(ACTION_SET_TEXT)` 返回 true 只说明动作被受理，不代表文本已经落地：
+     * 2026-10-27 真机（PKX110 / Android 16）实测 —— 主屏 Compose 输入框写中文时，动作返回后
+     * 立刻读节点仍是旧值，被报成 ACTION_OUTCOME_UNKNOWN；同一份报告里稍后重新观察，文本已经
+     * 是「中文种子后缀」。模型拿到 ok=false 会重试，内容就变成两串重复。
+     *
+     * 为什么不在这里无条件等一会儿再读：调用方本身可能就在无障碍主线程上
+     * （`runNodeActionOnMainSync` 的 block 内部），阻塞主线程会让 Compose 的提交一起排队，
+     * 等多久都读不到新值。所以只有非主线程才等待，主线程保持原来的「立即读」。
+     */
+    private fun textReadbackMatches(node: AccessibilityNodeInfo, expected: String): Boolean {
+        fun matches(): Boolean = runCatching { node.realText() }.getOrNull() == expected
+        if (matches()) return true
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            val deadline = SystemClock.uptimeMillis() + TEXT_READBACK_TIMEOUT_MS
+            while (true) {
+                // refresh 失败不代表内容没更新（节点对象会被原地更新），所以不看它的返回值，
+                // 只看读到的内容。
+                runCatching { node.refresh() }
+                if (matches()) return true
+                val remaining = deadline - SystemClock.uptimeMillis()
+                if (remaining <= 0L) break
+                SystemClock.sleep(minOf(TEXT_READBACK_INTERVAL_MS, remaining))
+            }
+        }
+        // 只在失败时留一行现场：哪个可编辑节点、期望与实际长度各多少（不记文本内容）。
+        // 正常路径零日志 —— 文本写入是高频动作，每条都打会淹没 logcat。
+        android.util.Log.w(
+            "EtaTextWrite",
+            "读回不匹配 class=" + node.className +
+                " viewId=" + node.viewIdResourceName +
+                " mainThread=" + (Looper.myLooper() == Looper.getMainLooper()) +
+                " want=" + expected.length +
+                " got=" + (runCatching { node.realText() }.getOrNull()?.length ?: -1),
+        )
+        return false
+    }
+
+    private sealed interface TextWriteTarget {
+        data class Ready(
+            val node: AccessibilityNodeInfo,
+            val text: String,
+            val cursor: Int,
+        ) : TextWriteTarget
+
+        data class Rejected(val result: NodeActionResult) : TextWriteTarget
+    }
+
+    /**
+     * fix176：文本写入不再整段跑在无障碍主线程上。
+     *
+     * 真机证据（PKX110 / A16，主屏 Compose 输入框 replace）：调用方等主线程超过
+     * [MAIN_SYNC_TIMEOUT_SECONDS] 秒，工具层于是拿到 `ACTION_OUTCOME_UNKNOWN`
+     * 「系统未在时限内返回结果」——而文本其实已经写进去了。
+     * 节点动作（performAction / refresh）本身是 Binder 调用，不要求主线程；
+     * 只有「从窗口树里找焦点节点」这一步留给主线程（index 通路早就是这个结构）。
+     */
+    private fun writeTextPrepared(block: () -> TextWriteTarget): NodeActionResult =
+        when (val prepared = callOnMainSync(block)) {
+            is MainThreadCallResult.Completed -> when (val target = prepared.value) {
+                null -> NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
+                is TextWriteTarget.Ready -> setNodeText(target.node, target.text, target.cursor)
+                is TextWriteTarget.Rejected -> target.result
+            }
+            // 两种失败分开说：下面第一种连「找节点」都没开始，第二种是主线程里抛了错。
+            // 两者都没有写过文本（block 只读不写），所以都可以安全重试 —— 但不能都说成
+            // 「主线程无响应」，那会让“为什么没写成”在现场丢掉。
+            MainThreadCallResult.NOT_STARTED -> NodeActionResult.failure(
+                "SERVICE_TIMEOUT",
+                "无障碍服务主线程无响应，动作未执行；请重新观察后重试",
+            )
+            MainThreadCallResult.OUTCOME_UNKNOWN -> NodeActionResult.failure(
+                "SERVICE_TIMEOUT",
+                "无障碍层在准备写入时出错或超时，文本未写入；请重新观察后重试",
+            )
+        }
+
     private fun setNodeText(
         node: AccessibilityNodeInfo,
         text: String,
@@ -1447,7 +1532,13 @@ class AgentAccessibilityService : AccessibilityService() {
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, safeCursor)
         }
         val refreshed = runCatching { node.refresh() }.getOrDefault(false)
-        if (!node.isPassword && (!refreshed || node.realText() != text)) {
+        // fix176：旧写法是 `if (!refreshed || realText() != text) -> outcomeUnknown`，把
+        // 「refresh 失败」和「内容不对」混成一个结果；而 refresh()=false 时节点对象自己可能
+        // 已经带着新文本（AccessibilityNodeInfo 会被原地更新），于是写入成功也被报成
+        // ACTION_OUTCOME_UNKNOWN（ok=false）。判定因此只看**内容相等**：内容相符就是证据，
+        // 内容还没落地时再给一段有限的读回窗口（见 [textReadbackMatches]）。
+        val password = runCatching { node.isPassword }.getOrDefault(true)
+        if (!password && !textReadbackMatches(node, text)) {
             return NodeActionResult.outcomeUnknown()
         }
         val selectionRestored = refreshed && node.performAction(
@@ -2123,7 +2214,12 @@ class AgentAccessibilityService : AccessibilityService() {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return try {
                 MainThreadCallResult.Completed(block())
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                // 抛错时调用方只会拿到「结果未知」，不留原因的话现场就彻底丢了。
+                android.util.Log.w(
+                    "EtaA11y",
+                    "main-thread throwable=" + error.javaClass.name + ": " + error.message,
+                )
                 // 框架调用抛错时无法证明副作用没有发生，禁止调用方回退重放。
                 MainThreadCallResult.OUTCOME_UNKNOWN
             }
@@ -2136,7 +2232,11 @@ class AgentAccessibilityService : AccessibilityService() {
             if (gate.tryStart()) {
                 try {
                     value = block()
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    android.util.Log.w(
+                        "EtaA11y",
+                        "posted throwable=" + error.javaClass.name + ": " + error.message,
+                    )
                     failed = true
                 } finally {
                     gate.finish()
@@ -2618,6 +2718,11 @@ class AgentAccessibilityService : AccessibilityService() {
         private const val SCROLL_VERIFY_TIMEOUT_MS = 520L
         private const val GESTURE_CALLBACK_GRACE_MS = 1_500L
         private const val MAIN_SYNC_TIMEOUT_SECONDS = 3L
+
+        // 写入动作返回后，等界面把文本状态提交出来的窗口：总量控制在 300ms 内 ——
+        // 既够 Compose 完成一次提交，又不会让「真的没写进去」的场景白等太久。
+        private const val TEXT_READBACK_TIMEOUT_MS = 300L
+        private const val TEXT_READBACK_INTERVAL_MS = 40L
         private const val SCROLL_EVENT_OBSERVATION_TIMEOUT_MS =
             MAIN_SYNC_TIMEOUT_SECONDS * 1_000L +
                 SCROLL_GESTURE_DURATION_MS +

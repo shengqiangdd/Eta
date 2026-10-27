@@ -882,7 +882,12 @@ internal class AgentLocalTools(
         val resolved = if (args.has("display_id")) {
             args.optInt("display_id", 0).takeIf { it != 0 }
         } else {
-            publishedObservation.get().displayId
+            // fix176：主屏归一成 null 的规则在 [ImplicitDisplayPolicy] 里（附真机取证）。
+            // 少了这一步时，刚 observe 过主屏（displayId=0）之后的 type_text 会被当成
+            // 「指定了屏」→ 交给虚拟屏通路 textOnDisplay(0)；那条通路用自己的验证口径，
+            // 写入明明成功（文本已经落到输入框）却报 ok=false / ACTION_OUTCOME_UNKNOWN。
+            // 真机 TEXT3c 就是这么红了两轮：报告 text=中文种子后缀，但 write=false。
+            ImplicitDisplayPolicy.inherit(publishedObservation.get().displayId)
         }
         // 虚拟屏可能已经被释放或空闲回收。此时仍把动作注入那个 display，
         // `input -d` 会回退到默认屏 —— 用户会看到自己的主屏被点。宁可报错，也不能动主屏。

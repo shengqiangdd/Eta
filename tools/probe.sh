@@ -84,12 +84,25 @@ warmup() {
   am force-stop "$PKG" 2>/dev/null
   sleep 2
   timeout 15 am start -n "$ACTIVITY" >/tmp/probe-warmup.log 2>&1
+  # 固定 sleep 不够：进程可能还没起。实测 12:20 那次两次 warmup 都只投递了 intent，
+  # 进程根本没重建，后面直接 exit 3（假失败）。改成盯 pidof，最多等 10 秒。
+  local waited=0
+  while [ "$waited" -lt 10 ]; do
+    pidof "$PKG" >/dev/null 2>&1 && return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
 }
 
-pm install -r "$APK" >/tmp/probe-install.log 2>&1
-if ! grep -q Success /tmp/probe-install.log; then
-  echo "安装失败: $(cat /tmp/probe-install.log)" >&2
-  exit 2
+if [ "${DEV_SKIP_INSTALL-0}" = "1" ]; then
+  echo "DEV_SKIP_INSTALL=1：跳过安装，按设备上已装的 $PKG 测（APK 尺寸仍会核对）"
+else
+  pm install -r "$APK" >/tmp/probe-install.log 2>&1
+  if ! grep -q Success /tmp/probe-install.log; then
+    echo "安装失败: $(cat /tmp/probe-install.log)" >&2
+    exit 2
+  fi
 fi
 
 # 坑 7（真机踩到，最贵的一个）：`pm install` 报 Success，装的却不是这个包。
@@ -118,9 +131,20 @@ sleep 8
 rm -f "$REPORT"
 
 # 坑 3/4：`-W` 会卡，只发 intent；进程已在。
-timeout 15 am start -n "$ACTIVITY" \
-  $(if [ -n "$INPUT_PKG" ]; then echo "--es eta.debug.input_pkg $INPUT_PKG"; fi) \
-  --es eta.debug.virtual_display "$EXTRA" >/tmp/probe-start.log 2>&1
+start_probe_intent() {
+  timeout 15 am start -n "$ACTIVITY" \
+    $(if [ -n "$INPUT_PKG" ]; then echo "--es eta.debug.input_pkg $INPUT_PKG"; fi) \
+    --es eta.debug.virtual_display "$EXTRA" >>/tmp/probe-start.log 2>&1
+}
+start_probe_intent
+if ! pidof "$PKG" >/dev/null 2>&1; then
+  # 坑 10：最近任务里还留着这个 Task 时，`am start` 只会把 intent 投递给
+  # 「已在运行的实例」，而进程刚被装包杀掉 —— intent 投递成功、进程却没重建。
+  # 实测就是一条 exit 3 的假失败（手工 force-stop 再 start 一次就正常）。
+  am force-stop "$PKG" 2>/dev/null
+  sleep 2
+  start_probe_intent
+fi
 if ! pidof "$PKG" >/dev/null 2>&1; then
   echo "进程没起来: $(cat /tmp/probe-start.log)" >&2
   exit 3
@@ -188,6 +212,11 @@ if [ -n "$REPORT_SIZE" ] && [ "$REPORT_SIZE" != "$APK_SIZE" ]; then
 fi
 echo "report apk_size=${REPORT_SIZE:-<没有 BUILD 行：旧版本 App>}"
 
+# 坑 10（2026-10-27）：`OK_UNVERIFIED` 以前会被算成干净的 PASS。
+# 它表示「动作被接受了，但没有读回证据」——那正是 fix159/fix160/fix175 反复在修的同一个毛病
+# （把「没报错」当成「成功」）。所以它也归入「带跳过的通过」，不拦门禁、也不冒充全绿；
+# 同理 `OK_HONEST_DEGRADE`（工具主动降级并说清楚了）也算带跳过。
+#
 # 坑 5：verdict 是唯一判据，前缀固定。
 echo "--- verdict ---"
 grep -E 'verdict=|accessibility_ready_after' "$REPORT"
@@ -196,7 +225,7 @@ if grep -E 'verdict=' "$REPORT" | grep -q FAIL; then
   echo "FAIL" >&2
   exit 1
 fi
-if grep -E 'verdict=' "$REPORT" | grep -q -e SKIPPED -e NOT_ATTEMPTED; then
+if grep -E 'verdict=' "$REPORT" | grep -q -e SKIPPED -e NOT_ATTEMPTED -e UNVERIFIED -e DEGRADE; then
   echo "PASS_WITH_SKIPS"
   exit 0
 fi

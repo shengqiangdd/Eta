@@ -7995,7 +7995,126 @@ TEXT8  ok=true method=INPUT_TEXT verification=verified both=4 seedOnly=4 text=et
 
 ### 七、限制
 
-- 中文样本只有 **display 通路**（`ACTION_SET_TEXT`）。主屏走 IME 的那条通路依然没有中文真机样本。
+- 中文样本只有 **display 通路**（`ACTION_SET_TEXT`）。主屏的短文本同样走无障碍（见 fix176 §六），
+  当时没有主屏中文样本；fix176 已补（TEXT3c/TEXT3d）。
 - 只覆盖一个控件（ColorOS 便签搜索框）。带格式/联想的编辑器若改写内容，现在会落到
   `FAIL_NOT_VERIFIED`（这是想要的行为：不再静默 OK），但**能否写进去**没有更多样本。
 - 探针仍依赖目标 App 有可见的搜索入口；换机型/换 App 会重试 3 轮，仍可能跳过。
+
+## fix176：主屏写中文被判成「结果未知」——文本落地了，工具却说没写成（2026-10-27，fix175 之后）
+
+### 一、症状（报告自己就在打自己的脸）
+
+真机探针 TEXT3c 只做一件事：点主屏输入框 → 写中文 → `append` 中文 → 重新观察 → 读回。
+
+```text
+TEXT3c write=false append=true both=24 seedOnly=24 text=中文种子后缀
+TEXT3c raw={"ok":false,"code":"ACTION_OUTCOME_UNKNOWN","message":"动作可能已执行，但系统未在时限内返回结果…"}
+TEXT3c verdict=FAIL_CN_WRITE:ACTION_OUTCOME_UNKNOWN
+```
+
+`both=24` / `text=中文种子后缀` 是**报告重新观察后读到的节点文本** —— 中文确实写进了输入框，
+而同一个工具调用返回 `ok=false`。模型拿到 false 会重试，用户看到的就是内容变成两遍。
+
+### 二、根因（两处叠加，都不在「写文本」这个动作上）
+
+**根因 1：主屏 `displayId=0` 被当成「指定了一块屏」。**
+
+`resolveDisplayId` 的规则是「没传 `display_id` 就沿用最近一次观察所在的屏」，而主屏的 id 就是 `0`：
+
+```kotlin
+// 修前
+publishedObservation.get().displayId          // 主屏时是 0
+// 0 != null → 被当成「显式指定了屏」→ 走虚拟屏分支
+deviceController.textOnDisplay(displayId = 0, ...)
+```
+
+虚拟屏分支用 `input -d 0` 注入 + 自己的验证口径（`TextInputVerification`），
+文本落地了但自检读不到 → `ok=false`。**修**：抽出 `ImplicitDisplayPolicy.inherit()`
+（`0` → `null`，其余原样），并补 4 条纯 JVM 单测守住这条规则。
+
+**根因 2：文本写入整段跑在无障碍主线程上，写完立刻读回。**
+
+`setTextNode` 被 `runNodeActionOnMainSync` 包住，`performAction(ACTION_SET_TEXT)` 返回后
+立刻 `refresh()` + 读节点 —— 此刻 Compose 还没提交，读到的是旧值。而「等一会儿再读」
+在主线程上永远等不到：**阻塞主线程 = 阻塞 Compose 提交**。
+
+**修**：新增 `TextWriteTarget` + `writeTextPrepared` —— 只把「找焦点节点 / 准备文本」
+（纯读操作）留在主线程，`performAction` 与读回放到调用线程；读回窗口 300ms、每 40ms 一次
+（`textReadbackMatches`，主线程上仍然是「立即读」，不阻塞）。
+
+**顺带修掉一处判定缺陷**：旧判定是 `if (!refreshed || realText() != text) -> outcomeUnknown`，
+把「`refresh()` 返回 false」和「内容不对」混成一个结果。而 `refresh()=false` 时节点对象
+自己可能已经带着新文本（`AccessibilityNodeInfo` 会被原地更新）→ 写入成功也报 unknown。
+现在判定**只看内容相等**：内容相符就是证据。
+
+### 三、探针自己也有两处假判定（这轮真踩到）
+
+1. **主屏 scope 断言写错**：`observe_screen` 对主屏返回 `scope="default"`、`id=0`，
+   而动作之后的 `after.display.scope` 是 `"main"`。第一版只认 `"main"`，于是每次主屏样本
+   都被记成 `SKIPPED_NOT_MAIN:default/0` —— 样本根本没跑，报告却像「主屏没有这个能力」。
+   改成认 `id=0` 或 scope 为 `default`/`main`。
+2. **先写再判是不是主屏**：原逻辑会把文本真的打到那块（虚拟）屏上，再写结论「跳过」。
+   现在先按 scope 分流，跳过的样本不产生任何写入。
+3. `probe.sh` 把 `OK_UNVERIFIED` / `OK_HONEST_DEGRADE` 算成干净的 `PASS`。它们正是
+   fix159/160/175 反复在修的同一个病（把「没报错」当「成功」），现在归入 `PASS_WITH_SKIPS`：
+   不拦门禁，但也不冒充全绿。
+
+### 四、真机证据（PKX110 / Android 16 / canary，APK 91,801,265 字节 / sha256 f5d62a0a…）
+
+```text
+TEXT3c write=true append=true scope=default/0 method=ACTION_SET_TEXT_AND_SELECTION \
+       verify=verified/verified both=18 seedOnly=18 text=中文种子后缀
+TEXT3c verdict=OK
+TEXT3d clearIndex=18 ok=true leftover=-1 verdict=OK
+--- verdict ---
+TEXT accessibility_ready_after=0ms ｜ TEXT1..TEXT12 共 15 行全部 OK
+--- 结果 --- PASS（退出码 0）
+```
+
+清空也验了：`TEXT3d leftover=-1`（主屏输入框里没有残留测试文本）。
+
+### 五、日志口径
+
+- 调试期临时的 `EtaTextProbe` 打点全部删掉（其中一条每次写入都 `Throwable().stackTrace` —— 那是真开销）。
+- 只保留失败路径一行：`Log.w("EtaTextWrite", "读回不匹配 class=… viewId=… mainThread=… want=… got=…")`，
+  **不记文本内容**，只记长度。
+- 主线程里抛错保留 `Log.w("EtaA11y", …)`：否则调用方只看到「结果未知」，为什么出错在现场彻底丢掉。
+- `writeTextPrepared` 把「主线程没响应」与「准备阶段抛错/超时」分开报（都不含糊地说「未写入」），
+  两者都没有写过文本，所以提示语都允许重试。
+
+### 六、修正 fix175 §七的一处措辞
+
+fix175 写「主屏走 IME 的那条通路依然没有中文真机样本」——**不准确**。主屏短文本三条路都是无障碍：
+
+| 调用 | 实际通路 |
+|---|---|
+| `type_text`（replace，带/不带 index） | `ACTION_SET_TEXT`（焦点节点或 index 节点） |
+| `type_text`（append，短文本） | `inputTextFocused` → 也是 `ACTION_SET_TEXT` |
+| `type_text`（append，超长文本） | `pasteText`（剪贴板 + 粘贴键） |
+| 虚拟屏会话 | `input -d`（此时才用剪贴板/按键） |
+
+所以这轮补的 TEXT3c/TEXT3d 就是**主屏无障碍通路**的中文样本（含 append），
+真正没有覆盖的只剩「超长 append 走粘贴」这一条。
+
+### 七、门禁与产物
+
+```text
+[0/3] 契约    ✓ minSdk=33
+[1/3] 单测    ✓ 559 个用例，失败 0（白名单 0）—— 含新增 ImplicitDisplayPolicyTest 4 条
+[2/3] lint    ✓ 无新增问题；baseline 账目一致（376 条命中，1 条依赖更新提示未复现已放过）
+[3/3] 打包    ✓ Eta-v3.3.1-debug.apk 91,801,265 字节 ｜ sha256 f5d62a0a70f8444f…
+```
+
+真机探针跑的就是这个产物（报告 `apk_size=91801265` 与字节数一致）：
+`probe.sh text` → 15 行 verdict 全 OK、`PASS`、退出码 0。
+
+### 八、这轮踩到的坑（都值得记住）
+
+1. **`rg "runOnMainSync("` 漏掉了 `runOnMainSync {`**：按「带括号」搜，只看到 2 处，就把它当死代码删了 →
+   门禁直接编译失败（真实调用都是尾随 lambda 写法，共十几处）。删任何「看起来没人用」的私有函数前，
+   搜函数名本身，不要搜调用语法。错误已修（函数原样恢复），代价是一次红门禁。
+2. **「动作成功」和「读回一致」是两个证据**：`performAction` 返回 true 只代表受理。
+   这轮把判定从「refresh 成功 + 内容相等」改成「内容相等」，才算真的在证明结果。
+3. **判据写错会伪装成「能力缺失」**：`SKIPPED_NOT_MAIN` 让一个没跑过的样本看起来像「主屏不支持」，
+   比红更危险 —— 红至少会有人查。
