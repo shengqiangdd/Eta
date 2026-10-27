@@ -1401,6 +1401,85 @@ internal object VirtualDisplayDebugHost {
                                     else -> "OK"
                                 },
                             )
+                            // STEP17（fix167）：节点类手势三件套对 display_id 必须一样严。
+                            // 修复前 scroll_element 既不解析 display_id、也不查那块屏还在不在：
+                            // 传 display_id=0（以为在主屏滚动）时参数被默默丢掉，动作仍在快照所属的
+                            // 虚拟屏上执行、结果照旧 ok —— 与 fix163 同一个病，只漏了这一个工具。
+                            val scrollScope = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", crossDisplayId).put("max_nodes", 20),
+                            )
+                            val scrollScopeId = scrollScope.optString("observation_id")
+                            val wrongScopeScroll = if (scrollScopeId.isBlank()) {
+                                JSONObject().put("code", "NO_SNAPSHOT")
+                            } else {
+                                call(
+                                    "scroll_element",
+                                    JSONObject()
+                                        .put("observation_id", scrollScopeId)
+                                        .put("index", 0)
+                                        .put("direction", "down")
+                                        .put("display_id", 0),
+                                )
+                            }
+                            report.appendLine(
+                                "STEP17a snapshot=$scrollScopeId display=$crossDisplayId " +
+                                    "code=${wrongScopeScroll.optString("code")} " +
+                                    "ok=${wrongScopeScroll.optBoolean("ok")}",
+                            )
+                            report.appendLine(
+                                "STEP17a verdict=" + when {
+                                    scrollScopeId.isBlank() -> "SKIPPED_NO_SNAPSHOT"
+                                    wrongScopeScroll.optBoolean("ok") -> "FAIL_DISPLAY_ID_IGNORED"
+                                    wrongScopeScroll.optString("code") ==
+                                        "OBSERVATION_OTHER_DISPLAY" -> "OK"
+                                    else -> "FAIL_OTHER_CODE:" + wrongScopeScroll.optString("code")
+                                },
+                            )
+                            // 17b：不传 display_id 的正常路径不能被这次收紧误伤。
+                            // 虚拟屏上的便签首屏常常没有 scrollable 节点（本机实测两轮 scrollable=-1），
+                            // 所以正向样本改用**主屏**：前台是 canary 自己的列表，能稳定拿到可滚容器。
+                            val mainScopeState = call("observe_screen", JSONObject().put("max_nodes", 60))
+                            val mainScopeId = mainScopeState.optString("observation_id")
+                            var mainScrollable = -1
+                            val mainScopeNodes = mainScopeState.optJSONArray("ui_nodes")
+                            if (mainScopeNodes != null) {
+                                for (i in 0 until mainScopeNodes.length()) {
+                                    val node = mainScopeNodes.optJSONObject(i) ?: continue
+                                    if (node.optBoolean("scrollable")) {
+                                        mainScrollable = node.optInt("index", -1)
+                                        break
+                                    }
+                                }
+                            }
+                            val sameScopeScroll =
+                                if (mainScopeId.isBlank() || mainScrollable < 0) {
+                                    JSONObject().put("code", "NO_SCROLLABLE")
+                                } else {
+                                    call(
+                                        "scroll_element",
+                                        JSONObject()
+                                            .put("observation_id", mainScopeId)
+                                            .put("index", mainScrollable)
+                                            .put("direction", "down")
+                                            .put("amount", "small"),
+                                    )
+                                }
+                            val sameScopeCode = sameScopeScroll.optString("code")
+                            report.appendLine(
+                                "STEP17b mainScrollable=$mainScrollable code=$sameScopeCode " +
+                                    "ok=${sameScopeScroll.optBoolean("ok")} " +
+                                    "method=${sameScopeScroll.optString("method")}",
+                            )
+                            report.appendLine(
+                                "STEP17b verdict=" + when {
+                                    sameScopeCode == "OBSERVATION_OTHER_DISPLAY" ||
+                                        sameScopeCode == "DISPLAY_RELEASED" -> "FAIL_NORMAL_PATH_BROKEN"
+                                    mainScopeId.isBlank() || mainScrollable < 0 -> "SKIPPED_NO_SCROLLABLE"
+                                    sameScopeScroll.optBoolean("ok") -> "OK"
+                                    else -> "FAIL_SCROLL:" + sameScopeCode
+                                },
+                            )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
                         call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))

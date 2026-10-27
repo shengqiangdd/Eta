@@ -1272,6 +1272,12 @@ internal class AgentLocalTools(
         val observation = requireElementObservation(args) ?: return observationError(args)
         val direction = args.optString("direction")
         val amount = args.optString("amount")
+        // fix167：和 tap_element / long_press_element 对齐。
+        // 以前这里既不解析 display_id、也不查那块屏还在不在：
+        // 模型传 display_id=0（以为在主屏滚动）时参数被默默丢掉，动作仍在快照所属的虚拟屏上执行，
+        // 结果照样 ok —— 模型看不出自己搞错了屏（与 fix163 修的是同一个病，只是漏了这个工具）。
+        val displayId = resolveDisplayId(args)
+        requireSameObservationScope(displayId, "scroll_element")
         val result = deviceController.scrollElement(
             observation = observation,
             index = index,

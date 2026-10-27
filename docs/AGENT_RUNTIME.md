@@ -7389,3 +7389,84 @@ STEP16b 在主屏按 BACK，会把主屏前台应用退到后台 —— 所以�
   这条只由单测覆盖，没有真机样本。
 - `ENTER` 走 `imeEnter` 的路径（含 `type_text(submit=true)`）未单独验。
 - `landed` 只描述“命令发给了哪块屏”，不是“系统实际把按键交给了哪个窗口”的证明。
+
+## fix167：节点手势三件套里漏了一个（2026-10-27，fix166 之后）
+
+### 一、缺陷
+
+`tap_element` / `long_press_element` / `scroll_element` 都是「用某次观察的节点做动作」，但只有前两个
+在动作前做了两件事：
+
+```kotlin
+val displayId = resolveDisplayId(args)                       // 解析本次要作用的屏（含虚拟屏是否还在）
+requireSameObservationScope(displayId, "xxx_element")        // 快照所属屏 vs 本次动作屏必须一致
+```
+
+`scroll_element` 两件都没做 —— 它只读 `index / observation_id / direction / amount`，
+`display_id` 被**默默丢掉**。后果与 fix163 修的是同一个病：
+
+- 模型在虚拟屏上观察后调用 `scroll_element(..., display_id=0)`（以为在主屏滚），
+  动作仍在快照所属的虚拟屏上执行，返回 `ok=true`；
+- 反过来（快照在主屏、`display_id` 写虚拟屏）更糟：动作打在用户正在用的主屏上，工具声称在操作虚拟屏。
+
+### 二、修法
+
+`scrollElement()` 补齐两行（与 `tapElement` / `longPressElement` 完全同构）：
+
+```kotlin
+val displayId = resolveDisplayId(args)
+requireSameObservationScope(displayId, "scroll_element")
+```
+
+顺带获得另外两项已有校验（以前这个工具整条跳过）：
+虚拟屏已释放 → `DISPLAY_RELEASED`；屏在但没有可见窗口 → `DISPLAY_NO_VISIBLE_WINDOW`。
+
+### 三、真机取证（探针 STEP17，本机 PKX110 / A16）
+
+```text
+STEP17a snapshot=u77 display=18 code=OBSERVATION_OTHER_DISPLAY ok=false
+STEP17a verdict=OK
+```
+
+即「快照在虚拟屏 18、本次要主屏」现在是**明确报错**，不再静默放行。
+
+正向（不传 `display_id`）用主屏做样本 —— 虚拟屏上的便签首屏连续两轮 `scrollable=-1`，
+拿不到可滚节点：
+
+```text
+STEP17b mainScrollable=0 code= ok=true method=INPUT_SWIPE
+STEP17b verdict=OK
+```
+
+整份探针 16 项 verdict，无 `FAIL`（STEP16a 因前置 `DISPLAY_NO_VISIBLE_WINDOW` 记 `OK_NOT_ATTEMPTED`）。
+
+### 四、这轮踩到的新坑（比缺陷本身更值得记）
+
+**Robolectric 测试在本机（Linux aarch64）根本跑不了**：
+
+```text
+java.lang.AssertionError: The Robolectric native runtime is not supported on Linux (aarch64)
+    at org.robolectric.nativeruntime.DefaultNativeRuntimeLoader.ensureLoaded
+```
+
+我先按惯例写了 3 例 Robolectric 单测（构造 `AgentLocalTools` + 假 `screenObservationProvider`），
+加进 `FAST_TEST_FILTERS`，门禁立刻 **3 例全红**。这不是测试写错，是环境不支持 ——
+`app/build.gradle.kts` 里只记了「SQLite native 只有 x86_64」，实际是**整套 native runtime**。
+已删测试类，并在 `tools/gate.sh` 里写明：**需要 Context 的测试本机只能靠真机探针**。
+
+推论：`AgentLocalTools` 这一层的接线（哪个分支传了哪个参数）在本机**没有**自动化保护，
+只能靠 `VirtualDisplayDebugHost` 的 STEP* 断言 —— 这也是本轮 STEP17 选择「用探针验」的原因。
+
+### 五、仍未验证
+
+- **修复前的行为是代码推断，不是实测**：我没有留修复前的真机样本（`scrollElement` 源码里
+  确实从未读取 `display_id`，属于阅读可证）；STEP17a 只证明了修复**后**会报错。
+- 本轮探针跑的时候 canary 的无障碍还没绑上（`observe_screen` 返回
+  `accessibility.available=false`，节点来自 uiautomator，滚动走 `INPUT_SWIPE` 回退）。
+  STEP17 的两条断言都在工具层（参数解析与屏判定），与节点来源无关；
+  但「无障碍节点路径下的 `scroll_element` 错误码」这一轮没有新样本。
+- `display_id` 与快照同屏但指向**已释放**的虚拟屏：逻辑上会 `DISPLAY_RELEASED`，无真机样本。
+
+### 六、门禁与产物
+
+532 例 0 失败；`assemble` 成功（`Eta-v3.3.1-debug.apk` 96,408,625 字节，sha256 `150bc386…`）。

@@ -118,6 +118,11 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 2026-10-26 深夜第四次（这次是写完先说一句才加）：`ScrollRegionPolicyTest`（守「指了哪个节点就滑
 # 哪个区域」，防指东滑西）同样必须先加进来，否则用例数不变、绿灯来自「没跑到」。
 # **结论：新增任何能在本机跑的测试类，第一件事就是把它加到这个列表里。**
+# 2026-10-27（fix167）反过来的坑：Robolectric 测试在本机（Linux aarch64）**跑不了** ——
+# 「The Robolectric native runtime is not supported on Linux (aarch64)」，
+# 一加进列表就是 3 例全红（B.221 只记了 SQLite native，实际是整套 native runtime）。
+# 所以「能在本机跑」是硬前提：需要 Context / AgentLocalTools 这类用 Robolectric 的测试，
+# 本机只能靠真机探针（VirtualDisplayDebugHost 的 STEP*）验证，别往这个列表里塞。
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest
