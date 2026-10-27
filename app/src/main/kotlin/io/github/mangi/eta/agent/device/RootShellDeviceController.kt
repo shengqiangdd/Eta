@@ -217,7 +217,7 @@ internal class RootShellDeviceController(
                     windowId = null,
                     nodes = rootNodes,
                     maxNodes = nodeLimit,
-                    truncated = rootNodes.size >= nodeLimit,
+                    truncated = dump.truncated,
                     treeSignature = uiTreeSignature(rootNodes),
                 )
             } else {
@@ -1792,7 +1792,11 @@ internal class RootShellDeviceController(
                 ?: return UiDumpResult(emptyList(), "无障碍服务不可用（虚拟屏的 UI 树只能由无障碍提供）")
             val snapshot = service.captureNodeSnapshot(maxNodes, displayId)
                 ?: return UiDumpResult(emptyList(), "无障碍拿不到 display $displayId 的窗口根节点（窗口未暴露或已销毁）")
-            return UiDumpResult(snapshot.nodes.map { node -> node.toUiNode() }, null)
+            return UiDumpResult(
+                nodes = snapshot.nodes.map { node -> node.toUiNode() },
+                failure = null,
+                truncated = snapshot.truncated,
+            )
         }
         if (!rootAvailable()) return UiDumpResult(emptyList(), "Root 授权不可用，无法用 uiautomator")
         val result = runSuText(
@@ -1810,10 +1814,23 @@ internal class RootShellDeviceController(
                 "uiautomator dump 失败（exit=${result.exitCode}，输出 ${result.output.length} 字符）",
             )
         }
-        return UiDumpResult(parseUiNodes(result.output, maxNodes), null)
+        // fix180：多收一个节点专门用于「到底还有没有」的判定。
+        // 原来判定是 rootNodes.size >= nodeLimit，界面节点数恰好等于上限时也会标 truncated=true，
+        // 于是模型被告知「还有更多节点，先 scroll」，而树其实已经全给了 —— 白跑一趟动作。
+        val parsed = parseUiNodes(result.output, maxNodes + 1)
+        return UiDumpResult(
+            nodes = parsed.take(maxNodes),
+            failure = null,
+            truncated = UiNodeWire.nodesExceededLimit(parsed.size, maxNodes),
+        )
     }
 
-    private data class UiDumpResult(val nodes: List<UiNode>, val failure: String?)
+    private data class UiDumpResult(
+        val nodes: List<UiNode>,
+        val failure: String?,
+        /** 是否还有节点没输出（fix180：只看「确实多出来」，不看「正好等于上限」）。 */
+        val truncated: Boolean = false,
+    )
 
     /**
      * 某个包此刻有没有活着的进程。

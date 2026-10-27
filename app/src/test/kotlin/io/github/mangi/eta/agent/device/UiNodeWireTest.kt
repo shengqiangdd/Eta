@@ -202,6 +202,16 @@ class UiNodeWireTest {
         assertFalse(json.has("hint_len"))
     }
 
+    @Test
+    fun nodeLimitIsInclusiveNotTruncating() {
+        // fix180：界面节点数恰好等于上限时，树是完整的，不能报「还有更多」。
+        assertFalse(UiNodeWire.nodesExceededLimit(found = 60, limit = 60))
+        assertTrue(UiNodeWire.nodesExceededLimit(found = 61, limit = 60))
+        assertFalse(UiNodeWire.nodesExceededLimit(found = 59, limit = 60))
+        assertFalse(UiNodeWire.nodesExceededLimit(found = 0, limit = 1))
+        assertTrue(UiNodeWire.nodesExceededLimit(found = 2, limit = 1))
+    }
+
     private fun project(
         nodes: List<UiNode>,
         foreground: String,

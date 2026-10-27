@@ -80,6 +80,16 @@ internal object UiNodeWire {
 
     class Projection(val nodes: JSONArray, val shown: Int)
 
+    /**
+     * 「节点被上限截断」的唯一判定口径（fix180）。
+     *
+     * 采集端多收一个节点专门用来回答这个问题：**只有确实多出来**才算截断。
+     * 原来 uiautomator 回退路径写的是 `rootNodes.size >= nodeLimit` —— 界面节点数恰好
+     * 等于上限时也报 truncated=true，于是模型看到「还有更多节点，先 scroll」，
+     * 而树其实已经全给了，白跑一趟动作还不一定找得到东西。
+     */
+    fun nodesExceededLimit(found: Int, limit: Int): Boolean = found > limit
+
     fun UiNode.toWireJson(
         foregroundPackage: String,
         includeNodeId: Boolean,

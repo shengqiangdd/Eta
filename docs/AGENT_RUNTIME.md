@@ -8305,3 +8305,42 @@ fix178 把 `text` / `desc` 的采集端上限与线格式并成一个常量。�
   输出逻辑（`putClippedText`）作为证据，**不冒充真机验证**。
 - `AccessibilityNodeIdentity` 仍用 `take(MAX_TEXT_CHARS)`：只做节点身份比对，不输出给模型，
   不需要原文长度。
+
+## fix180：`ui_tree_truncated` 的谎报 —— 「正好等于上限」不等于「还有更多」（2026-10-27，fix179 之后）
+
+### 一、问题
+
+uiautomator 回退路径（无障碍不可用时观察主屏）的截断判定是：
+
+```kotlin
+truncated = rootNodes.size >= nodeLimit
+```
+
+`parseUiNodes` 的循环条件是 `nodes.size < maxNodes`，也就是**收满就停**。
+两者一凑：界面恰好有 60 个可见节点时，`size == limit` → 报 `ui_tree_truncated=true`。
+模型看到「还有更多节点，先 scroll 让它们进入视野再观察」，于是白跑一次滚动 ——
+而树其实已经完整给了。这属于「界面在说假话」，和 fix177/178 是同一族，只是方向反过来（多报而不是漏报）。
+
+### 二、改法：多收一个，只认「确实多出来」
+
+1. `UiNodeWire.nodesExceededLimit(found, limit) = found > limit` —— 唯一判定口径，纯 JVM，可单测。
+2. `dumpUiNodesReported` 解析时传 `maxNodes + 1`，多收的那个节点只用来回答「到底还有没有」，
+   输出前 `take(maxNodes)` 丢掉，`index` 保持 0..limit-1 连续（`parseUiNodes` 用 `nodes.size` 当 index，
+   截断后不会出现空洞）。
+3. `UiDumpResult` 新增 `truncated` 字段，虚拟屏分支直接用 `snapshot.truncated`，
+   root 分支用新判定；调用处不再自己算。
+
+### 三、为什么**不动**无障碍路径（那条也用 `>=`）
+
+无障碍快照的 `truncated` 不只用于输出，它同时喂给
+`AccessibilityIdentityFreshnessPolicy.canBypassContentChange(snapshotTruncated = …)` ——
+快照不完整时**不许**绕过「内容已变化」检查。那里「刚好满上限就视为可能不完整」是故意的保守：
+放宽它会削弱动作可靠性判定，而收益只是少一次无效 scroll。
+要精确化就得把「输出口径」与「身份判定口径」拆成两个字段，风险大于收益，本轮不做，记在这里。
+
+### 四、验证
+
+- 单测：`nodeLimitIsInclusiveNotTruncating`（60/60 → 不截断、61/60 → 截断、59/60、0/1、2/1）。
+- 门禁：566 用例 / 0 失败（含 lint 与打包，产物指纹见提交说明）。
+- **未真机触发**：本机无障碍服务正常工作，观察主屏走的是无障碍路径；要不改设置就走到
+  uiautomator 回退分支做不到。所以这条只有单测覆盖，不冒充真机验证。
