@@ -120,6 +120,10 @@ internal class RootShellDeviceController(
         val hint: String = "",
         /** 无障碍节点稳定 ID；uiautomator 回退路径为空。 */
         val nodeId: String = "",
+        /** `text` 被上限砍之前的原始长度；0 = 未知（不标截断）。 */
+        val textFullLength: Int = 0,
+        /** `desc` 的原始长度；0 = 未知。 */
+        val descFullLength: Int = 0,
     ) {
         val centerX: Int get() = bounds.centerX()
         val centerY: Int get() = bounds.centerY()
@@ -1893,8 +1897,12 @@ internal class RootShellDeviceController(
                 val visible = parser.attr("visible-to-user") != "false"
                 val bounds = parser.attr("bounds").toRectOrNull()
                 if (visible && bounds != null && bounds.width() > 2 && bounds.height() > 2) {
-                    val text = parser.attr("text").take(120)
-                    val desc = parser.attr("content-desc").take(120)
+                    // fix178：这里原来也写死 take(120)，和无障碍采集端同一类缺陷 —— 线格式承诺
+                    // 「200 字才截断并标 text_clipped」，上游先砍到 120 就等于永不标记。
+                    val fullText = parser.attr("text")
+                    val fullDesc = parser.attr("content-desc")
+                    val text = fullText.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
+                    val desc = fullDesc.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
                     val clickable = parser.attr("clickable").toBoolean()
                     val scrollable = parser.attr("scrollable").toBoolean()
                     val focused = parser.attr("focused").toBoolean()
@@ -1904,6 +1912,8 @@ internal class RootShellDeviceController(
                             index = nodes.size,
                             text = text,
                             desc = desc,
+                            textFullLength = fullText.length,
+                            descFullLength = fullDesc.length,
                             className = parser.attr("class"),
                             packageName = parser.attr("package"),
                             viewId = parser.attr("resource-id"),
@@ -2647,6 +2657,8 @@ internal class RootShellDeviceController(
             selected = selected,
             hint = hint,
             nodeId = nodeId,
+            textFullLength = textFullLength,
+            descFullLength = descFullLength,
         )
 
     private data class ShellTextResult(val exitCode: Int, val output: String)

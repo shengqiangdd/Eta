@@ -212,6 +212,30 @@ if [ -n "$REPORT_SIZE" ] && [ "$REPORT_SIZE" != "$APK_SIZE" ]; then
 fi
 echo "report apk_size=${REPORT_SIZE:-<没有 BUILD 行：旧版本 App>}"
 
+# 坑 11（2026-10-27）：报告只有固定文件名，后一次运行会把前一次覆盖掉。
+# 实测代价：先拿旧 APK 做反向实验、再跑修复版，回头核对时磁盘上只剩「旧 APK 失败」
+# 那一份，修复版的 PASS 只能靠记忆复述 —— 等于没有证据。所以每轮都留一份带时间 +
+# APK 指纹的副本；只增不改，不参与 PASS/FAIL 判定。
+archive_report() {
+  a_dir="$REPORT_DIR/archive"
+  if ! mkdir -p "$a_dir" 2>/dev/null; then
+    echo "警告：留档目录不可写，报告没有备份（$a_dir）" >&2
+    return 0
+  fi
+  a_fp=$(sha256sum "$APK" 2>/dev/null | cut -c1-12)
+  if [ -z "$a_fp" ]; then
+    a_fp=$(md5sum "$APK" 2>/dev/null | cut -c1-12)
+  fi
+  [ -n "$a_fp" ] || a_fp=noapk
+  a_dest="$a_dir/${REPORT_NAME%.txt}-$(date +%Y%m%d-%H%M%S)-$MODE-$a_fp.txt"
+  if cp "$REPORT" "$a_dest" 2>/dev/null; then
+    echo "留档：$a_dest"
+  else
+    echo "警告：报告留档失败（$a_dest）" >&2
+  fi
+}
+archive_report
+
 # 坑 10（2026-10-27）：`OK_UNVERIFIED` 以前会被算成干净的 PASS。
 # 它表示「动作被接受了，但没有读回证据」——那正是 fix159/fix160/fix175 反复在修的同一个毛病
 # （把「没报错」当成「成功」）。所以它也归入「带跳过的通过」，不拦门禁、也不冒充全绿；

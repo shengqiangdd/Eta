@@ -124,6 +124,61 @@ class UiNodeWireTest {
         )
     }
 
+    @Test
+    fun collectorSideClippingMustStillBeMarked() {
+        // fix178（2026-10-27 真机缺陷）：采集端先 take(120)，线格式看到的文本已经不超长，
+        // 于是 text_clipped 一次都不出现 —— 243 字的消息显示成 120 字且毫无提示，
+        // 模型把片段当全文。修复后采集端与线格式共用上限，并把原始长度带下来。
+        val shown = "长".repeat(UiNodeWire.MAX_TEXT_CHARS)
+        val json = project(listOf(node(index = 0, text = shown).copy(textFullLength = 243)), "app")
+            .nodes.getJSONObject(0)
+        assertEquals(shown, json.getString("text"))
+        assertTrue("采集端砍过也必须标出来", json.getBoolean("text_clipped"))
+        assertEquals("必须知道还有多少字没看到", 243, json.getInt("text_len"))
+    }
+
+    @Test
+    fun completeTextCarriesNoClippingMarkers() {
+        // 反向用例：没被砍过的文本不能凭空多出标记，否则模型会以为自己看的是残片。
+        val json = project(listOf(node(index = 0, text = "设置").copy(textFullLength = 2)), "app")
+            .nodes.getJSONObject(0)
+        assertFalse(json.has("text_clipped"))
+        assertFalse(json.has("text_len"))
+        assertFalse(json.has("desc_clipped"))
+    }
+
+    @Test
+    fun exactLimitIsNotClippedButOneCharMoreIs() {
+        val atLimit = project(
+            listOf(node(index = 0, text = "a".repeat(UiNodeWire.MAX_TEXT_CHARS))),
+            "app",
+        ).nodes.getJSONObject(0)
+        assertFalse(atLimit.has("text_clipped"))
+
+        val overLimit = project(
+            listOf(node(index = 0, text = "a".repeat(UiNodeWire.MAX_TEXT_CHARS + 1))),
+            "app",
+        ).nodes.getJSONObject(0)
+        assertTrue(overLimit.getBoolean("text_clipped"))
+        assertTrue(overLimit.getString("text").endsWith("…"))
+        assertEquals(UiNodeWire.MAX_TEXT_CHARS + 1, overLimit.getInt("text_len"))
+    }
+
+    @Test
+    fun descAndHintUseTheSameMarkerConvention() {
+        val node = node(index = 0, text = "条目").copy(
+            desc = "描".repeat(UiNodeWire.MAX_TEXT_CHARS),
+            descFullLength = 500,
+            hint = "提示".repeat(100),
+        )
+        val json = project(listOf(node), "app").nodes.getJSONObject(0)
+        assertTrue(json.getBoolean("desc_clipped"))
+        assertEquals(500, json.getInt("desc_len"))
+        assertTrue(json.getBoolean("hint_clipped"))
+        // hint 没有采集端的原始长度，但「这一层砍了多少」自己就算得出来：200 字显示 120 字。
+        assertEquals(200, json.getInt("hint_len"))
+    }
+
     private fun project(
         nodes: List<UiNode>,
         foreground: String,

@@ -8118,3 +8118,151 @@ fix175 写「主屏走 IME 的那条通路依然没有中文真机样本」—�
    这轮把判定从「refresh 成功 + 内容相等」改成「内容相等」，才算真的在证明结果。
 3. **判据写错会伪装成「能力缺失」**：`SKIPPED_NOT_MAIN` 让一个没跑过的样本看起来像「主屏不支持」，
    比红更危险 —— 红至少会有人查。
+
+## fix177：append 超长文本的粘贴通路 —— 同一类「文本落地却报失败」，这次**反向实验当场抓到**（2026-10-27，fix176 之后）
+
+### 一、动它的理由
+
+fix176 修的是主屏 `replace` / 短 `append`。但 `type_text` 的 append 在 text 超过 **200 字**
+（`AgentLocalTools` 的 `TYPE_TEXT_INCREMENTAL_CHARS`）时改走 `pasteText` →
+`AgentAccessibilityService.pasteText`，而那个函数整段包在 `runNodeActionOnMainSync` 里：
+
+- 找节点、`ACTION_SET_TEXT`、剪贴板写入、`ACTION_PASTE`、读回校验 **全在无障碍主线程**；
+- 粘贴兜底分支的判定是 `refresh() && realText() == plan.text`，把 `refresh()` 的返回值当证据
+  —— fix176 已经证明这是错的：`refresh()` 返回 false 时节点对象自己可能已经带着新文本。
+
+### 二、改法（与 `writeTextPrepared` 同构）
+
+只把「找焦点节点 + 算插入计划」（纯读）放主线程；`ACTION_SET_TEXT` / 剪贴板 / `ACTION_PASTE` /
+读回放调用线程；粘贴兜底分支改用 `textReadbackMatches`（300ms 窗口、每 40ms 一次）。
+错误语义与 fix176 一致：主线程没开始 → `SERVICE_TIMEOUT`（未写入）；准备阶段抛错 → 也是未写入，但单独说明。
+
+### 三、反向实验（这次是真的，而且**复现了缺陷**）
+
+只回退服务侧改动（`git stash` 单个文件，保留新样本），用旧代码跑同一份探针：
+
+```text
+旧代码（HEAD ca43086 的 pasteText，整段在主线程），APK 88,929,900 字节：
+TEXT3e ok=false code=ACTION_OUTCOME_UNKNOWN method= verify= idx=16 seenLen=120
+TEXT3e verdict=FAIL_LONG_WRITE:ACTION_OUTCOME_UNKNOWN
+探针结果：FAIL（退出码 1）
+```
+
+`idx=16 seenLen=120` 是**报告自己重新观察后找到的节点**（243 字的文本被 `ui_nodes` 截到 120 字显示）：
+文本确实写进去了，工具却说「结果未知」—— 与 fix176 的 TEXT3c 是同一个病，只是换成了 append 通路。
+
+修好后同一份探针：
+
+```text
+TEXT3e ok=true method=ACTION_SET_TEXT_PASTE verify=verified idx=13 seenLen=120 \
+       clipBefore=true/51 clipAfter=true/51 clipSame=true → OK
+TEXT3f clear ok=true leftover=-1 → OK
+探针结果：PASS（退出码 0）
+```
+
+### 四、这次差点写错结论：**反向实验必须先确认「换的二进制真的换了」**
+
+第一次反向实验（05:32）得到的却是「旧代码也 OK」。差点就把「这条改动只是预防性」写进文档。
+实际原因是 **构建是 no-op**：`git stash` 回退源码后，Gradle 增量编译没有察觉到文件变化
+（配置缓存 + 文件监听的组合），APK 的 mtime 还停在 05:30、大小仍是 91806521（修好那一版）。
+我是靠「删掉 APK 重新构建后大小变成 88,929,900」才发现的。
+
+**教训（已当成规矩）：反向实验 / A-B 对比的第一步，是确认被测二进制真的换了** ——
+至少核对两项（大小 + sha256，或 mtime + sha256）。只看「gradle 退出码 0」等于没验证。
+反过来说：如果我先写了文档「旧代码也 OK」，那就是用一个**没跑过的版本**得出「不会坏」的结论，
+比红更糟。
+
+### 五、两条必须说清的限制
+
+1. **`ACTION_PASTE` 兜底分支仍然没被走到**：Compose 输入框接受 `ACTION_SET_TEXT`，
+   只有它**拒绝**时才会走粘贴。这条分支的判定改动只有代码层面的证据，本轮没有真机样本。
+2. **观察到的 `seenLen=120` 是「采集端先砍」的结果（fix178 才查清）**：本轮当时以为是线格式把
+   text 截到 120 字；实际上 `UiNodeWire.MAX_TEXT_CHARS=200`，真正砍在采集端
+   （`IndexedNode` / uiautomator 回退两处各自写死 `take(120)`）—— 于是线格式永远看不到超长文本、
+   `text_clipped` 一次都不会出现，**静默截断**。fix178 把采集端与线格式并成同一个上限，
+   并让节点自报 `text_len`；本条修正后 fix177 的样本表述仍成立（不拿观察到的长度当全文），
+   但「为什么只有 120」的原因换了。第一版差点写成 `text == longSeed` 精确比对，那样会永远红。
+3. 剪贴板可读性不稳定：修好那次 `clipBefore=true/51 clipAfter=true/51`（可读且一致）；
+   旧代码那次两次都 `false/0`（不可读）。**读不到时不做断言**（`clipSame` 视为成立），
+   所以「剪贴板被还原」这条只有在可读的样本里才算证据。
+
+### 六、门禁与产物
+
+```text
+[0/3] 契约    ✓ minSdk=33
+[1/3] 单测    ✓ 559 个用例，失败 0（白名单 0）—— 含新增 TEXT3e/TEXT3f 走的同一条服务通路
+[2/3] lint    ✓ 无新增问题；baseline 账目一致（376 条命中，1 条依赖更新提示未复现已放过）
+[3/3] 打包    ✓ Eta-v3.3.1-debug.apk 90,091,833 字节 ｜ sha256 bca2272d1d53fa54…
+```
+
+真机探针（`job_e60b045a`）跑的就是这个产物，报告里 `apk_size=90091833` 与字节数一致：
+
+```text
+TEXT3e ok=true method=ACTION_SET_TEXT_PASTE verify=verified idx=12 seenLen=120 \
+       clipBefore=false/0 clipAfter=false/0 clipSame=true
+TEXT3f clear ok=true leftover=-1
+15 行 verdict 全 OK → PASS（退出码 0）
+```
+
+留档：`/sdcard/Android/data/io.github.mangi.eta.canary/files/archive/text-probe-20261027-134709-text-bca2272d1d53.txt`
+（`tools/probe.sh` 本轮新增 `archive_report`：报告原来只有固定文件名，后一次运行会覆盖前一次 ——
+反向实验和修复版两份证据就是这么丢的。现在每轮留一份带时间 + APK 指纹的副本，只增不改，不参与判定。）
+
+## fix178：`ui_nodes` 的「静默截断」—— 采集端把文本砍在线格式上限之下（2026-10-27，fix177 之后）
+
+### 一、怎么发现的
+
+fix177 收尾时核对探针报告，注意到长文本样本里 `seenLen=120`，而我当时以为线格式上限就是 120。
+翻代码发现不是：`UiNodeWire.MAX_TEXT_CHARS = 200`（超长时截断、补 `…`、并打 `text_clipped`），
+但**采集端各自写死 `take(120)`**：
+
+| 位置 | 原来 | 后果 |
+|---|---|---|
+| 无障碍 `collectNodes`（`IndexedNode`） | `realText().take(120)` | 243 字的消息在 `ui_nodes` 里只有 120 字 |
+| uiautomator 回退（`RootShellDeviceController`） | `parser.attr("text").take(120)` | 同上 |
+
+因为 120 < 200，线格式**永远看不到超长文本** → `text_clipped` 一次都不会出现。
+真机证据（fix177 探针报告）：243 字写入后 `seenLen=120`，整份报告 `text_clipped` 出现 **0 次**。
+这不是「截断」，是**静默截断**：模型拿到被砍的片段，却没有任何标记告诉它「后面还有」。
+
+### 二、改法：上限只留一份定义，并把「原文多长」带下来
+
+1. `UiNodeWire.MAX_NODE_TEXT_CHARS = MAX_TEXT_CHARS` —— 采集端与线格式共用同一个常量，
+   以后改上限不会两边各改一半。
+2. `UiNode` 新增 `textFullLength` / `descFullLength`（0 = 未知）；无障碍与 uiautomator 两条采集路径都填。
+3. 线格式统一走 `putClippedText(field, raw, fullLength, limit)`，两种砍法都必然标出来：
+   - 这一层砍的（> limit）→ 值末尾 `…` + `<field>_clipped`；
+   - **采集端先砍的**（`fullLength` > 手上这段）→ 也打 `<field>_clipped`，并补 `<field>_len`（原始长度）。
+   `shownLength` 单独算（`…` 不算正文），只有「还没显示的字 > 0」才补 `_len` —— 否则完整文本也会多出标记。
+
+### 三、单测（4 条，都跑在 JVM 上）
+
+| 用例 | 守的是什么 |
+|---|---|
+| `collectorSideClippingMustStillBeMarked` | 采集端砍过（fullLength=243）也必须 `text_clipped` + `text_len=243` |
+| `completeTextCarriesNoClippingMarkers` | 完整文本不能凭空多出标记 |
+| `exactLimitIsNotClippedButOneCharMoreIs` | 200 字不砍、201 字砍且 `text_len=201` |
+| `descAndHintUseTheSameMarkerConvention` | `desc` / `hint` 走同一套标记惯例 |
+
+### 四、真机验证（样本本身就是验收项）
+
+`TEXT3e` 加了两条断言：长文本节点必须 `text_clipped=true` 且 `text_len ≥ 写入全文长度`；
+缺任一条判 `FAIL_LONG_TEXT_TRUNCATION_UNMARKED` / `FAIL_LONG_TEXT_LEN_UNDECLARED`。
+装新 APK（91,840,177 字节，sha `3d0c3f78…`）后：
+
+```text
+TEXT3e ok=true method=ACTION_SET_TEXT_PASTE verify=verified idx=13 seenLen=200 \
+       declaredLen=253 clipped=true clipBefore=false/0 clipAfter=false/0 clipSame=true → OK
+TEXT3f clear ok=true leftover=-1 → OK
+18 行 verdict 全 OK → PASS（退出码 0）
+```
+
+对比 fix177 那一版的同一行：`seenLen=120`、没有 `declaredLen` / `clipped` 字段 —— 差别就是本轮的改动。
+报告留档：`archive/text-probe-20261027-140028-text-3d0c3f788d65.txt`。
+
+### 五、仍然存在的同类残留（本轮**没修**，如实记下）
+
+- `hint` 采集端仍写 `take(60)`，而 `MAX_HINT_CHARS = 120` —— 超过 60 字的提示语仍会被静默砍。
+  危害比正文小（提示语极少超 60 字），但**是同一个病**，下一步按同样办法收掉。
+- `AccessibilityNodeIdentity` 里的 `take(200)` 不参与 `ui_nodes` 输出，只用于节点身份比对，
+  不需要原文长度，保持不变。

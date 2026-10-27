@@ -31,6 +31,16 @@ import org.json.JSONObject
 internal object UiNodeWire {
     /** 单节点文本上限：正常控件文案远小于此，超长时截断，避免一个节点吃掉整棵树的预算。 */
     const val MAX_TEXT_CHARS = 200
+
+    /**
+     * 采集端（无障碍 / uiautomator 回退）用的文本上限，必须与 [MAX_TEXT_CHARS] 是同一个数。
+     *
+     * fix178：采集端原来各自写死 `take(120)`，比这里的 200 更小 —— 于是线格式永远看不到超长文本，
+     * `text_clipped` 一次都不会出现。真机实测（2026-10-27）：243 字的消息在 `ui_nodes` 里只有
+     * 120 字，整份报告里 `text_clipped` 出现 0 次，模型拿到「被砍过的片段」却以为是全文。
+     * 现在两边共用一个上限，原始长度随 [UiNode.textFullLength] 带下来。
+     */
+    const val MAX_NODE_TEXT_CHARS = MAX_TEXT_CHARS
     const val MAX_HINT_CHARS = 120
 
     /**
@@ -78,15 +88,9 @@ internal object UiNodeWire {
         .put("index", index)
         .apply {
             if (includeNodeId && nodeId.isNotBlank()) put("node_id", nodeId)
-            clipped(text, MAX_TEXT_CHARS)?.let { (value, cut) ->
-                put("text", value)
-                // 截断必须显式标记：不说的话模型会以为那就是全部内容（聊天/日志/正文节点尤其危险）。
-                if (cut) put("text_clipped", true)
-            }
-            clipped(desc, MAX_TEXT_CHARS)?.let { (value, cut) ->
-                put("desc", value)
-                if (cut) put("desc_clipped", true)
-            }
+            // 截断必须显式标记：不说的话模型会以为那就是全部内容（聊天/日志/正文节点尤其危险）。
+            putClippedText("text", text, textFullLength, MAX_TEXT_CHARS)
+            putClippedText("desc", desc, descFullLength, MAX_TEXT_CHARS)
             if (className.isNotBlank()) put("class", className.substringAfterLast('.'))
             if (viewId.isNotBlank()) put("view_id", viewId.substringAfterLast('/'))
             // 多窗口 / 系统弹窗里会出现同屏他包节点，那种情况才值得多写 20 个字符。
@@ -109,23 +113,55 @@ internal object UiNodeWire {
             if (!enabled) put("enabled", false)
             checked?.let { put("checked", it) }
             if (selected) put("selected", true)
-            clipped(hint, MAX_HINT_CHARS)?.let { (value, cut) ->
-                put("hint", value)
-                if (cut) put("hint_clipped", true)
-            }
+            putClippedText("hint", hint, 0, MAX_HINT_CHARS)
         }
+
+    /**
+     * 输出一个可能被截断的文本字段，并保证「被砍过」这件事一定写出来。
+     *
+     * 两种砍法都要标：
+     * 1. 这一层砍的（超过 [limit]）→ 值末尾补 `…`，同时打 `<field>_clipped`；
+     * 2. 采集端先砍过的（[fullLength] 大于手上这段）→ 显示文本里看不出来，
+     *    只有原始长度能说明它被砍了，所以额外给 `<field>_len`，让模型知道「还有多少没看到」。
+     */
+    private fun JSONObject.putClippedText(
+        field: String,
+        raw: String,
+        fullLength: Int,
+        limit: Int,
+    ): JSONObject {
+        val clip = clipped(raw, limit) ?: return this
+        put(field, clip.value)
+        val original = maxOf(fullLength, clip.rawLength)
+        if (clip.cut || original > clip.shownLength) {
+            put("${field}_clipped", true)
+            if (original > clip.shownLength) put("${field}_len", original)
+        }
+        return this
+    }
 
     /**
      * 空白返回 null（不输出空字段）；超长按码点截断并补省略号，同时告诉调用方「被截了」。
      *
      * 截断点不能落在 UTF-16 代理对中间，否则序列化出孤立代理，模型看到乱码。
      */
-    private fun clipped(raw: String, limit: Int): Pair<String, Boolean>? {
+    private fun clipped(raw: String, limit: Int): Clip? {
         val text = raw.trim()
         if (text.isEmpty()) return null
-        if (text.length <= limit) return text to false
+        if (text.length <= limit) return Clip(text, cut = false, rawLength = text.length)
         var end = limit
         if (Character.isHighSurrogate(text[end - 1])) end -= 1
-        return (text.substring(0, end) + "…") to true
+        val value = text.substring(0, end) + "…"
+        return Clip(value, cut = true, rawLength = text.length)
+    }
+
+    /**
+     * 一次截断的结果：显示值、是否被砍、没砍之前有多长，以及**显示出来多少字**。
+     *
+     * [shownLength] 要单独算：值末尾的 `…` 不是正文，不能被当成「看到了 201 个字」。
+     * 它决定要不要补 `<field>_len` —— 只有「还没显示的字 > 0」时才需要告诉模型还差多少。
+     */
+    private data class Clip(val value: String, val cut: Boolean, val rawLength: Int) {
+        val shownLength: Int get() = if (cut) value.length - 1 else value.length
     }
 }

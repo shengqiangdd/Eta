@@ -35,6 +35,7 @@ import io.github.mangi.eta.agent.device.ScrollDirection
 import io.github.mangi.eta.agent.device.ScrollEvidence
 import io.github.mangi.eta.agent.device.ScrollEvidenceContract
 import io.github.mangi.eta.agent.device.ScrollMovementSource
+import io.github.mangi.eta.agent.device.UiNodeWire
 import io.github.mangi.eta.agent.device.RootScrollMotionContract
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.util.ArrayDeque
@@ -993,32 +994,61 @@ class AgentAccessibilityService : AccessibilityService() {
         setNodeText(target, text, text.length)
     }
 
-    /** 优先直接按选区写入，只有目标拒绝 SET_TEXT 时才回退系统粘贴。 */
-    fun pasteText(text: String): NodeActionResult = runNodeActionOnMainSync {
-        val node = findFocusedEditableNode()
-            ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-                "NO_FOCUSED_EDITABLE",
-                "没有获得输入焦点的可编辑节点",
+    /**
+     * 优先直接按选区写入，只有目标拒绝 SET_TEXT 时才回退系统粘贴。
+     *
+     * fix177：和 [writeTextPrepared] 同构 —— 找焦点节点留在主线程（纯读），
+     * 写入 / 粘贴 / 读回放到调用线程。旧写法整段在无障碍主线程上：粘贴后立刻
+     * `refresh()` 读节点，Compose 还没提交就判 `ACTION_OUTCOME_UNKNOWN`；
+     * 而这里恰好是 `type_text` append 超过 200 字（[AgentLocalTools] 的
+     * TYPE_TEXT_INCREMENTAL_CHARS）时唯一走得到的通路，属于 fix176 同一类缺陷。
+     */
+    fun pasteText(text: String): NodeActionResult {
+        val prepared = callOnMainSync {
+            val node = findFocusedEditableNode()
+                ?: return@callOnMainSync TextWriteTarget.Rejected(
+                    NodeActionResult.failure(
+                        "NO_FOCUSED_EDITABLE",
+                        "没有获得输入焦点的可编辑节点",
+                    ),
+                )
+            node.incrementalTextValidationError()?.let { error ->
+                return@callOnMainSync TextWriteTarget.Rejected(error)
+            }
+            val plan = TextEditPlanner.insertAtSelection(
+                currentText = node.realText(),
+                insertedText = text,
+                selectionStart = node.textSelectionStart,
+                selectionEnd = node.textSelectionEnd,
+            ) ?: return@callOnMainSync TextWriteTarget.Rejected(
+                NodeActionResult.failure(
+                    "TEXT_SELECTION_UNAVAILABLE",
+                    "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
+                ),
             )
-        node.incrementalTextValidationError()?.let { error ->
-            return@runNodeActionOnMainSync error
+            TextWriteTarget.Ready(node, plan.text, plan.cursor)
         }
-        val plan = TextEditPlanner.insertAtSelection(
-            currentText = node.realText(),
-            insertedText = text,
-            selectionStart = node.textSelectionStart,
-            selectionEnd = node.textSelectionEnd,
-        ) ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-            "TEXT_SELECTION_UNAVAILABLE",
-            "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
-        )
-        val directResult = setNodeText(node, plan.text, plan.cursor)
+        val target = when (prepared) {
+            is MainThreadCallResult.Completed -> prepared.value
+                ?: return NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
+            MainThreadCallResult.NOT_STARTED -> return NodeActionResult.failure(
+                "SERVICE_TIMEOUT",
+                "无障碍服务主线程无响应，动作未执行；请重新观察后重试",
+            )
+            MainThreadCallResult.OUTCOME_UNKNOWN -> return NodeActionResult.failure(
+                "SERVICE_TIMEOUT",
+                "无障碍层在准备写入时出错或超时，文本未写入；请重新观察后重试",
+            )
+        }
+        val ready = when (target) {
+            is TextWriteTarget.Ready -> target
+            is TextWriteTarget.Rejected -> return target.result
+        }
+        val directResult = setNodeText(ready.node, ready.text, ready.cursor)
         if (directResult.ok) {
-            return@runNodeActionOnMainSync directResult.copy(method = "ACTION_SET_TEXT_PASTE")
+            return directResult.copy(method = "ACTION_SET_TEXT_PASTE")
         }
-        if (directResult.code != "ACTION_FAILED") {
-            return@runNodeActionOnMainSync directResult
-        }
+        if (directResult.code != "ACTION_FAILED") return directResult
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val originalClip = runCatching { clipboard.primaryClip }.getOrNull()
         val temporaryLabel = "$CLIP_LABEL:${CLIP_IDS.incrementAndGet()}"
@@ -1031,16 +1061,16 @@ class AgentAccessibilityService : AccessibilityService() {
             clipboard.setPrimaryClip(temporaryClip)
         }.isSuccess
         if (!copied) {
-            return@runNodeActionOnMainSync NodeActionResult.failure(
+            return NodeActionResult.failure(
                 "CLIPBOARD_WRITE_FAILED",
                 "写入剪贴板失败",
             )
         }
         val pasteResult = try {
-            if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                val verified = runCatching { node.refresh() }.getOrDefault(false) &&
-                    node.realText() == plan.text
-                if (verified) {
+            if (ready.node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                // fix177：判定只看内容是否真的变成目标文本（再给一段有限读回窗口），
+                // 不再把「refresh() 的返回值」当证据。
+                if (textReadbackMatches(ready.node, ready.text)) {
                     NodeActionResult.success(method = "ACTION_PASTE", verified = true)
                 } else {
                     NodeActionResult.outcomeUnknown()
@@ -1056,7 +1086,7 @@ class AgentAccessibilityService : AccessibilityService() {
             temporaryLabel = temporaryLabel,
             originalClip = originalClip,
         )
-        if (!restored) {
+        return if (!restored) {
             NodeActionResult.outcomeUnknown().copy(clipboardWritten = true)
         } else {
             pasteResult.copy(clipboardWritten = true)
@@ -1998,9 +2028,15 @@ class AgentAccessibilityService : AccessibilityService() {
             if (depth > 0 && !visible) return
 
             val bounds = node.bounds()
-            val text = node.realText().take(120)
+            // fix178：这里原来写死 take(120) —— 线格式那边承诺「超过 200 字才截断并标 text_clipped」，
+            // 可上游先砍到 120，线格式就再没机会出现超长，标记永远不会出现。真机实测：243 字的消息
+            // 在 ui_nodes 里只有 120 字、整份报告 text_clipped 出现 0 次，模型把片段当成了全文。
+            // 现在上限与线格式共用同一个常量，原始长度带进 IndexedNode / UiNode。
+            val fullText = node.realText()
+            val fullDesc = node.contentDescription?.toString().orEmpty()
+            val text = fullText.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
             val hint = node.hintText?.toString().orEmpty().take(60)
-            val desc = node.contentDescription?.toString().orEmpty().take(120)
+            val desc = fullDesc.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
             val clickable = node.isClickable
             val longClickable = node.isLongClickable
             val scrollable = node.isScrollable
@@ -2042,6 +2078,8 @@ class AgentAccessibilityService : AccessibilityService() {
                     windowId = node.windowId,
                     text = text,
                     desc = desc,
+                    textFullLength = fullText.length,
+                    descFullLength = fullDesc.length,
                     className = node.className?.toString().orEmpty(),
                     packageName = node.packageName?.toString().orEmpty(),
                     viewId = node.viewIdResourceName.orEmpty(),
@@ -2478,6 +2516,10 @@ class AgentAccessibilityService : AccessibilityService() {
         val hint: String = "",
         /** AccessibilityNodeInfo.uniqueId；用于稳定身份与 diff。 */
         val nodeId: String = "",
+        /** `text` 被 200 字上限砍之前的原始长度；0 = 未知（不标截断）。 */
+        val textFullLength: Int = 0,
+        /** `desc` 的原始长度；0 = 未知。 */
+        val descFullLength: Int = 0,
     )
 
     internal data class IndexedNode(
@@ -2489,6 +2531,10 @@ class AgentAccessibilityService : AccessibilityService() {
         val windowId: Int,
         val text: String,
         val desc: String,
+        /** `text` 的原始长度（未被 200 字上限砍之前）；0 表示未知。 */
+        val textFullLength: Int = 0,
+        /** `desc` 的原始长度；0 表示未知。 */
+        val descFullLength: Int = 0,
         val className: String,
         val packageName: String,
         val viewId: String,
@@ -2561,8 +2607,8 @@ class AgentAccessibilityService : AccessibilityService() {
                 packageName = packageName?.toString().orEmpty(),
                 className = className?.toString().orEmpty(),
                 viewId = viewIdResourceName.orEmpty(),
-                text = (if (isShowingHintText) "" else text?.toString().orEmpty()).take(120),
-                description = contentDescription?.toString().orEmpty().take(120),
+                text = (if (isShowingHintText) "" else text?.toString().orEmpty()).take(UiNodeWire.MAX_TEXT_CHARS),
+                description = contentDescription?.toString().orEmpty().take(UiNodeWire.MAX_TEXT_CHARS),
                 password = isPassword,
             )
 
@@ -2586,6 +2632,8 @@ class AgentAccessibilityService : AccessibilityService() {
                 selected = selected,
                 hint = hint,
                 nodeId = stableId,
+                textFullLength = textFullLength,
+                descFullLength = descFullLength,
             )
     }
 
@@ -2602,8 +2650,8 @@ class AgentAccessibilityService : AccessibilityService() {
                 packageName = node.packageName?.toString().orEmpty(),
                 className = node.className?.toString().orEmpty(),
                 viewId = node.viewIdResourceName.orEmpty(),
-                text = node.text?.toString().orEmpty().take(120),
-                description = node.contentDescription?.toString().orEmpty().take(120),
+                text = node.text?.toString().orEmpty().take(UiNodeWire.MAX_TEXT_CHARS),
+                description = node.contentDescription?.toString().orEmpty().take(UiNodeWire.MAX_TEXT_CHARS),
                 password = node.isPassword,
             )
             if (!identity.matches(refreshedIdentity)) return null
@@ -2626,8 +2674,8 @@ class AgentAccessibilityService : AccessibilityService() {
                     packageName = node.packageName?.toString().orEmpty(),
                     className = node.className?.toString().orEmpty(),
                     viewId = node.viewIdResourceName.orEmpty(),
-                    text = node.text?.toString().orEmpty().take(120),
-                    description = node.contentDescription?.toString().orEmpty().take(120),
+                    text = node.text?.toString().orEmpty().take(UiNodeWire.MAX_TEXT_CHARS),
+                    description = node.contentDescription?.toString().orEmpty().take(UiNodeWire.MAX_TEXT_CHARS),
                     password = node.isPassword,
                 ),
             )

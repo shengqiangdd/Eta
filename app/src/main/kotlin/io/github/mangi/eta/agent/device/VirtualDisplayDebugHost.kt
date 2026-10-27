@@ -1696,6 +1696,23 @@ internal object VirtualDisplayDebugHost {
                 }
                 return ""
             }
+            /** fix178 用：节点文本被砍之前有多长（线格式的 text_len）；没标就是 0。 */
+            fun nodeDeclaredTextLen(state: JSONObject, index: Int): Int {
+                val nodes = state.optJSONArray("ui_nodes") ?: return 0
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optInt("index", -1) == index) return node.optInt("text_len", 0)
+                }
+                return 0
+            }
+            fun nodeTextClipped(state: JSONObject, index: Int): Boolean {
+                val nodes = state.optJSONArray("ui_nodes") ?: return false
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optInt("index", -1) == index) return node.optBoolean("text_clipped")
+                }
+                return false
+            }
             fun isEditable(state: JSONObject, index: Int): Boolean {
                 val nodes = state.optJSONArray("ui_nodes") ?: return false
                 for (i in 0 until nodes.length()) {
@@ -1949,6 +1966,85 @@ internal object VirtualDisplayDebugHost {
                                     !cnMainCleared.optBoolean("ok") ->
                                         "FAIL_CLEANUP:" + cnMainCleared.optString("code")
                                     cnMainLeft >= 0 -> "FAIL_NOT_CLEARED"
+                                    else -> "OK"
+                                },
+                        )
+                        // ③c 主屏 + append 超长文本：超过 200 字会改走 pasteText（剪贴板/粘贴兜底）通路。
+                        // fix177 之前那条通路整段跑在无障碍主线程上、粘贴后立刻读回，
+                        // 和 TEXT3c 一样会把「其实已经写进去了」报成结果未知。
+                        // 顺带验剪贴板：不能把测试文本留在用户剪贴板里。
+                        // 注：ui_nodes 的 text 有上限（fix178 起采集端与线格式共用 200 字），
+                        // 所以这里用「前缀找到节点」+「写入端自报 verified（它比的是全文）」两个证据，
+                        // 再加一条 fix178 的验收：节点必须自报 text_clipped 且 text_len = 全文长度。
+                        // 修复前这里只会看到 120 字、text_clipped 一次都不出现 —— 那就是「静默截断」。
+                        val longMarker = "长文本0123456789"
+                        val longSeed = longMarker + "0123456789".repeat(24) // 243 字
+                        val clipBefore = call("get_clipboard", JSONObject())
+                        val longWrote = call(
+                            "type_text",
+                            JSONObject().put("mode", "append").put("text", longSeed),
+                        )
+                        val longObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val longIndex = findText(longObs, longMarker)
+                        val longText = nodeText(longObs, longIndex)
+                        val longDeclaredLen = nodeDeclaredTextLen(longObs, longIndex)
+                        val longClipped = nodeTextClipped(longObs, longIndex)
+                        val clipAfter = call("get_clipboard", JSONObject())
+                        val clipSame = (!clipBefore.optBoolean("ok") && !clipAfter.optBoolean("ok")) ||
+                            clipBefore.optString("text") == clipAfter.optString("text")
+                        report.appendLine(
+                            "TEXT3e ok=${longWrote.optBoolean("ok")} " +
+                                "method=${longWrote.optString("method")} " +
+                                "verify=${longWrote.optString("input_verification")} " +
+                                "idx=$longIndex seenLen=${longText.length} " +
+                                "declaredLen=$longDeclaredLen clipped=$longClipped " +
+                                "clipBefore=${clipBefore.optBoolean("ok")}/${clipBefore.optString("text").length} " +
+                                "clipAfter=${clipAfter.optBoolean("ok")}/${clipAfter.optString("text").length} " +
+                                "clipSame=$clipSame",
+                        )
+                        report.appendLine("TEXT3e raw=" + longWrote.toString().take(400))
+                        report.appendLine(
+                            "TEXT3e verdict=" + when {
+                                !longWrote.optBoolean("ok") ->
+                                    "FAIL_LONG_WRITE:" + longWrote.optString("code")
+                                longWrote.optString("input_verification") != "verified" ->
+                                    "FAIL_LONG_NOT_VERIFIED:" + longWrote.optString("input_verification")
+                                longIndex < 0 -> "FAIL_LONG_TEXT_MISSING"
+                                // fix178：长文本必须「显式说明被砍」——既要有 text_clipped，
+                                // 也要有 text_len 告诉模型全文到底多长；缺一个就是静默截断。
+                                !longClipped -> "FAIL_LONG_TEXT_TRUNCATION_UNMARKED"
+                                longDeclaredLen < longSeed.length ->
+                                    "FAIL_LONG_TEXT_LEN_UNDECLARED:$longDeclaredLen<${longSeed.length}"
+                                !clipSame -> "FAIL_CLIPBOARD_NOT_RESTORED"
+                                else -> "OK"
+                            },
+                        )
+                        if (!clipSame && clipBefore.optBoolean("ok")) {
+                            // 服务没把剪贴板还给用户：这里补回去，不能把探针的测试文本留在别人剪贴板里。
+                            val clipFix = call(
+                                "set_clipboard",
+                                JSONObject().put("text", clipBefore.optString("text")),
+                            )
+                            report.appendLine("TEXT3e clipboard_recovered=" + clipFix.optBoolean("ok"))
+                        }
+                        // 清掉长文本（同样走 clear_text，index 用刚找到的那个）。
+                        val longClearObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val longClearIndex = findText(longClearObs, longMarker)
+                            .takeIf { it >= 0 } ?: cnMainEditable
+                        val longCleared = call(
+                            "clear_text",
+                            JSONObject()
+                                .put("observation_id", longClearObs.optString("observation_id"))
+                                .put("index", longClearIndex),
+                        )
+                        val longAfter = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        report.appendLine(
+                            "TEXT3f clear ok=${longCleared.optBoolean("ok")} " +
+                                "leftover=${findText(longAfter, longMarker)} " +
+                                "verdict=" + when {
+                                    !longCleared.optBoolean("ok") ->
+                                        "FAIL_CLEANUP:" + longCleared.optString("code")
+                                    findText(longAfter, longMarker) >= 0 -> "FAIL_NOT_CLEARED"
                                     else -> "OK"
                                 },
                         )
