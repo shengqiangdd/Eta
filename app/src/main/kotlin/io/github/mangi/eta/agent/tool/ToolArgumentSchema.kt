@@ -4,6 +4,7 @@ import io.github.mangi.eta.agent.acp.AgentAcpTools
 import io.github.mangi.eta.agent.model.AgentAskUserToolCatalog
 import io.github.mangi.eta.agent.model.AgentBrowserToolCatalog
 import io.github.mangi.eta.agent.model.AgentContextAppToolCatalog
+import io.github.mangi.eta.agent.model.AgentDeviceToolCatalog
 import io.github.mangi.eta.agent.model.AgentFileToolCatalog
 import io.github.mangi.eta.agent.model.AgentFileVisionToolCatalog
 import io.github.mangi.eta.agent.model.AgentGestureToolCatalog
@@ -47,6 +48,18 @@ internal object ToolArgumentSchema {
             val tools = JSONArray()
             val appenders: List<(JSONArray) -> Unit> = listOf(
                 { array -> AgentContextAppToolCatalog.appendTo(array) },
+                // device 目录要按开关拼装（direct / 敏感读 / 敏感写）。这里一律传 true：
+                // 提示只需要知道「这个名字到底被声明过没有」，多收录不会造成误报
+                // （它们确实在 schema 里）。fix168 时因签名带参数被跳过，结果这一百多个
+                // 设备工具收到错参数仍然静默 —— 与 fix168 修的是同一个病。
+                { array ->
+                    AgentDeviceToolCatalog.appendTo(
+                        array,
+                        directTools = true,
+                        sensitiveReadTools = true,
+                        sensitiveActionTools = true,
+                    )
+                },
                 { array -> AgentGestureToolCatalog.appendTo(array) },
                 { array -> AgentVirtualDisplayTools.appendTo(array) },
                 { array -> AgentAcpTools.appendTo(array) },

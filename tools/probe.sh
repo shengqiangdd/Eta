@@ -89,10 +89,10 @@ if ! pidof "$PKG" >/dev/null 2>&1; then
   exit 3
 fi
 
-# 报告写完才落盘，所以「末行有 STEP18b verdict」即可判定结束。
+# 报告写完才落盘，所以「最后一条 verdict（现在是 18c）」出现即可判定结束。
 i=0
 while [ $i -lt "$WAIT_S" ]; do
-  if [ -f "$REPORT" ] && grep -q 'STEP18b verdict=' "$REPORT"; then
+  if [ -f "$REPORT" ] && grep -q 'STEP18c verdict=' "$REPORT"; then
     break
   fi
   sleep 2
@@ -103,7 +103,7 @@ if [ ! -f "$REPORT" ]; then
   echo "没产出报告（等 ${WAIT_S}s）: $REPORT" >&2
   exit 3
 fi
-if ! grep -q 'STEP18b verdict=' "$REPORT"; then
+if ! grep -q 'STEP18c verdict=' "$REPORT"; then
   echo "报告不完整（等 ${WAIT_S}s），先给已有内容：" >&2
   head -40 "$REPORT" >&2
   exit 3

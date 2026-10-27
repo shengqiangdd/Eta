@@ -54,6 +54,21 @@ class ToolArgumentSchemaTest {
         assertNull(ToolArgumentSchema.declaredKeys("no_such_tool_at_all"))
     }
 
+    /**
+     * fix170：device / phone 目录的 `appendTo` 带开关参数，fix168 时因签名对不上被跳过，
+     * 结果这一百多个设备工具收到错参数仍然静默。
+     */
+    @Test
+    fun `device tools are indexed even though their catalog needs switches`() {
+        val stateKeys = ToolArgumentSchema.declaredKeys("get_device_state")
+        assertTrue("get_device_state 没有登记到参数索引里", stateKeys != null)
+        assertTrue("target" in checkNotNull(stateKeys))
+
+        val flashlight = ToolArgumentSchema.declaredKeys("set_flashlight")
+        assertTrue("set_flashlight 没有登记到参数索引里", flashlight != null)
+        assertTrue("enabled" in checkNotNull(flashlight))
+    }
+
     @Test
     fun `declared keys are never empty for a registered tool`() {
         val keys = checkNotNull(ToolArgumentSchema.declaredKeys("observe_screen"))

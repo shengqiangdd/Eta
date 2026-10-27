@@ -7583,3 +7583,56 @@ NOT_ATTEMPTED 的结果单独标成 `PASS_WITH_SKIPS`。
 - `scope_probe` 只覆盖 STEP15~18；STEP1~14 仍要整跑。
 - 脚本要求 root（`pm install`、`dumpsys`、force 迁移应用）。
 - 预热两轮启动是经验值（装包后首次绑定不稳定），换机型可能要调 `sleep`。
+
+## fix170：device 目录一百多个工具的参数名仍然静默（2026-10-27，fix169 之后）
+
+### 一、缺陷（fix168 自己记下的限制，这轮清掉）
+
+fix168 的参数名提示只覆盖 17 个 catalog。`AgentDeviceToolCatalog.appendTo` 的签名是
+`appendTo(tools, directTools, sensitiveReadTools, sensitiveActionTools)`，而索引里只登记了
+`appendTo(array)` 这一种形式 —— 它被 `runCatching` **静默跳过**，于是 device / phone 目录里
+一百多个工具**完全不在索引里**：模型传错参数名时既不提示、也不报错，与 fix168 修的是同一个病。
+
+这次是「新增的防护自己漏了一块」，而且漏得很安静：`runCatching` 只跳过、不记录。
+
+### 二、修法
+
+`ToolArgumentSchema` 增加一个 appender，显式传三组开关：
+
+```kotlin
+{ array ->
+    AgentDeviceToolCatalog.appendTo(
+        array,
+        directTools = true,
+        sensitiveReadTools = true,
+        sensitiveActionTools = true,
+    )
+}
+```
+
+与「一律用最全 schema」的原则一致：提示只需要知道「这个名字被声明过没有」，
+多收录不会误报（它们确实在 schema 里）。`AgentDeviceToolCatalog` 内部会再调
+`AgentPhoneToolCatalog`，两处一起进索引。
+
+### 三、真机取证（新加的 STEP18c）
+
+```text
+STEP18c ok=true enabled=true hints=1 first=参数「targetName」不会被使用：本工具的参数是 target（本次已按缺省值执行）
+STEP18c verdict=OK
+```
+
+`get_device_state` 只读、`target` 必填，正好当样本：动作照常执行（`enabled=true` 是 Wi-Fi 状态），
+同时明确告诉模型正确名字。scope 快通道 **8 项 verdict 全 OK**（`PASS`）。
+
+### 四、门禁
+
+`ToolArgumentSchemaTest` 新增一例（device 工具已登记 + `target`/`enabled` 声明）；
+用例数 **546 → 547，0 失败**；`assemble` 成功（96,453,869 字节，sha256 `dbb2d69690f7ca84…`）。
+
+### 五、限制（如实记）
+
+- 索引首次构建现在要多拼一百多个 device 工具，成本比之前高；它仍是**一次**（之后命中缓存），
+  但本轮没有单独计时，只确认了探针与单测都不因此变慢到可感知。
+- 反向漂移仍无门禁：如果某个工具**实现里读了 schema 没声明的参数**，提示就会误报
+  「这个参数不会被使用」。这类只能靠真实调用踩到；要根治得让实现从 schema 取参数名
+  （工程量大，暂不做）。

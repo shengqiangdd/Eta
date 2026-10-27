@@ -1594,6 +1594,28 @@ internal object VirtualDisplayDebugHost {
                 else -> "FAIL_SPURIOUS_HINT"
             },
         )
+        // 18c（fix170）：device 目录（一百多个工具）原先不在参数索引里，传错名字连提示都没有。
+        // `get_device_state` 只读、target 必填，正好当样本：带一个错名 targetName，
+        // 期望「动作真的执行了 + 提示叫 target」，而不是沉默。
+        val deviceTypo = call(
+            "get_device_state",
+            JSONObject().put("target", "wifi").put("targetName", "wifi"),
+        )
+        val deviceTypoHints = deviceTypo.optJSONArray("arg_hints")
+        val deviceTypoFirst = deviceTypoHints?.optString(0).orEmpty()
+        report.appendLine(
+            "STEP18c ok=${deviceTypo.optBoolean("ok")} enabled=${deviceTypo.opt("enabled")} " +
+                "hints=${deviceTypoHints?.length() ?: 0} first=$deviceTypoFirst",
+        )
+        report.appendLine(
+            "STEP18c verdict=" + when {
+                !deviceTypo.optBoolean("ok") ->
+                    "OK_NOT_ATTEMPTED:" + deviceTypo.optString("code")
+                deviceTypoHints == null || deviceTypoHints.length() == 0 -> "FAIL_NO_HINT"
+                deviceTypoFirst.contains("target") -> "OK"
+                else -> "OK_OTHER:" + deviceTypoFirst.take(40)
+            },
+        )
     }
 
     /**
