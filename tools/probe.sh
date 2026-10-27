@@ -126,6 +126,39 @@ if ! pidof "$PKG" >/dev/null 2>&1; then
   exit 3
 fi
 
+# 坑 8：进程活着 ≠ 它在**前台**。2026-10-27 实测：canary 进程正常、无障碍也连上了，
+# 但前台还是正式版 io.github.mangi.eta，于是 TEXT1~TEXT3 全部 SKIPPED_FOREGROUND_OTHER。
+#
+# 坑 9（坑 8 的第一版自己踩的）：`dumpsys activity activities | grep -m1 topResumedActivity`
+# 拿到的未必是前台 —— 那些行是**每个 Task 各一行**（不是一个屏一行）：第一个 Task 可能是
+# 后台里那个正式版，于是检查永远不通过（实测：警告发了两分钟，探针照样跑出 12 项 OK）。
+# 真正的前台看 `dumpsys window` 的 mCurrentFocus（全局只有一行）。
+focused_package() {
+  dumpsys window 2>/dev/null | grep -m1 "mCurrentFocus=" |
+    grep -o "u0 [A-Za-z0-9._]*/" | head -1 | sed -e 's/u0 //' -e 's#/$##'
+}
+
+wait_foreground() {
+  waited=0
+  while [ "$waited" -lt 60 ]; do
+    if [ "$(focused_package)" = "$PKG" ]; then
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+# 注意：等不到也不能写「会记 SKIPPED」——2026-10-27 实测过这种说法是错的：
+# 警告发出后前台在探针开跑前切过来了，TEXT1~3 照样是 OK。日志只能说事实，不能预言结果。
+if ! wait_foreground; then
+  timeout 15 am start -n "$ACTIVITY" >/tmp/probe-start.log 2>&1
+  sleep 3
+  wait_foreground ||
+    echo "警告：一共等了约 2 分钟，前台焦点是 $(focused_package)（不是 $PKG）；探针照跑，那几项会自己记 SKIPPED" >&2
+fi
+
 # 报告写完才落盘，所以「最后一条 verdict」出现即可判定结束。
 i=0
 while [ $i -lt "$WAIT_S" ]; do

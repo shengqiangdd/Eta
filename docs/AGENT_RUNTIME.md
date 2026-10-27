@@ -7921,3 +7921,81 @@ lint 也不再提醒（那些判据已经不存在了）。所以补了一个与
 - 契约检查只覆盖 `minSdk` 这一个数字，**不检查**「某个 API 是否真的被版本判据保护」这件事本身。
   也就是说：以后有人新写一处 `if (SDK_INT < 34)` 的恒真判据，契约阶段不会拦，
   仍要靠 lint 的 `ObsoleteSdkInt`（且**不能**再往 baseline 里加）。
+
+## fix175：中文（非 ASCII）写入一直没有真机样本（2026-10-27，fix174 之后）
+
+### 一、缺陷：两条「未验证」叠在一起
+
+1. fix160 §七 #3 明确记着：**非 ASCII 路径（走无障碍 `ACTION_SET_TEXT`）的 `verified` 没有真机样本**。
+   单测只能证明「给定文本，拼出来的结果对不对」，证明不了真实输入框会不会改写、会不会拒收。
+2. 更隐蔽的一条：fix173 的 TEXT7/TEXT8 判定只要求 `ok=true`。而 `ok` 只代表**动作被接受**，
+   `input_verification` 才是「读回来的内容确实是我要的」。也就是说：
+   **一个 `ok=true` + `unknown` 的写入，在探针里会被判成 OK。**
+
+### 二、修法（三处）
+
+- **新增 TEXT10/TEXT11/TEXT12**：在同一个输入框里先写中文 `测试一下`、再 `append` `追加`、
+  最后清空并确认 `leftover=-1`。中文必须走无障碍写入，且读回要逐字一致。
+- **判定收紧**：TEXT7/TEXT8 现在要求 `input_verification == "verified"`，
+  否则记 `FAIL_NOT_VERIFIED:<实际值>` —— 宁可红，也不让「接受了但没读回」混过去。
+- **找输入框不再「看一眼就下结论」**：搜索页展开的瞬间，首屏节点列表会被上下文预算截掉尾部
+  （实测只带回 27 个节点，而 `search_src_text` 排在第 30 个）→ 旧逻辑直接判
+  `SKIPPED_NO_EDITABLE`（假跳过）。改成最多 3 轮、找不到就等 1.5 秒重新观察。
+
+### 三、真机证据（PKX110 / A16 / canary）
+
+手工复现（虚拟屏 75，ColorOS 便签搜索框 `search_src_text`）：
+
+```text
+type_text 测试一下         → method=ACTION_SET_TEXT input_verification=verified text=测试一下
+type_text append 追加      → input_mode=append cleared=false verified text=测试一下追加
+type_text ""              → method=CLEAR_ONLY verified cleared=true（搜索页关闭，回到列表）
+```
+
+探针（`probe.sh text`，12 项 verdict 全 OK、`PASS`、退出码 0）：
+
+```text
+TEXT10 ok=true code= method=ACTION_SET_TEXT verification=verified
+TEXT11 ok=true code= both=12 seedOnly=12 text=测试一下追加
+TEXT12 ok=true leftover=-1 verdict=OK
+TEXT7  seed ok=true method=INPUT_TEXT verification=verified
+TEXT8  ok=true method=INPUT_TEXT verification=verified both=4 seedOnly=4 text=etaseedprobe
+```
+
+注意 TEXT7 的 `method=INPUT_TEXT` 与 TEXT10 的 `method=ACTION_SET_TEXT` 是同一个无障碍通路的
+两个标签（有无恢复选区），两条都拿到了 `verified`。
+
+### 四、探针的脆性也一起修了（两个坑都真踩到）
+
+**坑 A：进程活着 ≠ 在前台。** 有一次 canary 进程正常、无障碍也连上，但前台还是正式版
+`io.github.mangi.eta`，TEXT1~TEXT3 全部 `SKIPPED_FOREGROUND_OTHER`。现在 `probe.sh` 会等到
+前台**确实**是测试包再开跑（最多约 2 分钟，期间重启一次）。
+
+**坑 B：`topResumedActivity` 抓的不是前台。** 第一版用
+`dumpsys activity activities | grep -m1 topResumedActivity` 判断，结果检查永远不通过 ——
+那些行是**每个 Task 各一行**（不是一个屏一行），排在最前面的可能是后台里那个正式版。
+实测后果：警告发了两分钟，而探针随后 12 项全 OK。改用 `dumpsys window` 的 `mCurrentFocus`
+（全局只有一行）。顺带把警告文案改掉：不许写「会记 SKIPPED」这种预言（当时就是错的）。
+
+### 五、环境插曲：ColorOS 无障碍提示弹窗
+
+探针跑之前，主屏焦点被系统弹窗占着：
+`com.oplus.safecenter/.accessibility.AccessibilityGuideCloseActivity` ——
+「检测到"Eta"获取无障碍权限 / 关闭无障碍 / 保持开启」。它挡住前台，canary 起不来。
+
+- 无障碍 `ACTION_CLICK` 对它**无效**（点完 `screen_changed=false`）；
+- 用 `input tap` 点「保持开启」才关掉，随后核对 `accessibility_enabled=1`、两个服务都在。
+- **没有**点「关闭无障碍」，也没有卸载/重装去绕过它 —— 那会把用户的设备状态改掉。
+
+### 六、门禁与产物
+
+- `STAGES=test`：**555 / 0 失败**；契约阶段 `minSdk=33` 通过。
+- `STAGES=lint`：无新增问题，baseline 账目一致（376 命中 + 1 条依赖提示）。
+- APK **91,795,801 字节**，sha256 `d470a28760f82d4e…`；`text_probe` 报告 `apk_size` 与之一致。
+
+### 七、限制
+
+- 中文样本只有 **display 通路**（`ACTION_SET_TEXT`）。主屏走 IME 的那条通路依然没有中文真机样本。
+- 只覆盖一个控件（ColorOS 便签搜索框）。带格式/联想的编辑器若改写内容，现在会落到
+  `FAIL_NOT_VERIFIED`（这是想要的行为：不再静默 OK），但**能否写进去**没有更多样本。
+- 探针仍依赖目标 App 有可见的搜索入口；换机型/换 App 会重试 3 轮，仍可能跳过。

@@ -1733,6 +1733,10 @@ internal object VirtualDisplayDebugHost {
             val probeText = "etaprobe"
             val seedText = "etaseed"
             val tailText = "probe"
+            // 中文（非 ASCII）：fix160 §七 #3 一直记着「无障碍 ACTION_SET_TEXT 通路的中文 verified
+            // 没有真机样本」。只有单测覆盖 UTF-16 偏移，而真实输入框怎么处理是另一回事。
+            val cnSeed = "测试一下"
+            val cnTail = "追加"
             var displayKey = ""
             try {
                 var waitMs = 0
@@ -1938,6 +1942,9 @@ internal object VirtualDisplayDebugHost {
                     report.appendLine("TEXT7 verdict=SKIPPED_NO_DISPLAY")
                     report.appendLine("TEXT8 verdict=SKIPPED_NO_DISPLAY")
                     report.appendLine("TEXT9 verdict=SKIPPED_NO_DISPLAY")
+                    report.appendLine("TEXT10 verdict=SKIPPED_NO_DISPLAY")
+                    report.appendLine("TEXT11 verdict=SKIPPED_NO_DISPLAY")
+                    report.appendLine("TEXT12 verdict=SKIPPED_NO_DISPLAY")
                 } else {
                     // 日历主界面没有输入框，换一个真有 EditText 的应用（默认便签搜索）。
                     val appendPkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
@@ -1952,23 +1959,32 @@ internal object VirtualDisplayDebugHost {
                     )
                     var editIndex = firstEditable(appendObs)
                     var tapRounds = 0
-                    while (editIndex < 0 && tapRounds < 3) {
+                    // 不只靠一次 tap：搜索页展开时首屏节点列表可能被上下文预算截掉尾部，
+                    // 而 EditText（search_src_text）往往就在尾部（2026-10-27 实测：
+                    // 截断后只见 27 个节点，输入框排在第 30 个）→ 只看一次会误判
+                    // 「没有输入框」并记成 SKIPPED_NO_EDITABLE（假跳过）。
+                    // 所以：找不到就再等一拍重新观察，最多 3 次。
+                    var idleRounds = 0
+                    while (editIndex < 0 && tapRounds < 3 && idleRounds < 3) {
                         val entry = findSearchEntry(appendObs)
-                        if (entry < 0) break
-                        call(
-                            "tap_element",
-                            JSONObject()
-                                .put("display_id", displayId)
-                                .put("observation_id", appendObs.optString("observation_id"))
-                                .put("index", entry),
-                        )
-                        call("wait", JSONObject().put("duration_ms", 1_200))
+                        if (entry >= 0) {
+                            call(
+                                "tap_element",
+                                JSONObject()
+                                    .put("display_id", displayId)
+                                    .put("observation_id", appendObs.optString("observation_id"))
+                                    .put("index", entry),
+                            )
+                            tapRounds++
+                        } else {
+                            idleRounds++
+                        }
+                        call("wait", JSONObject().put("duration_ms", 1_500))
                         appendObs = call(
                             "observe_screen",
                             JSONObject().put("display_id", displayId).put("max_nodes", 60),
                         )
                         editIndex = firstEditable(appendObs)
-                        tapRounds++
                     }
                     report.appendLine(
                         "TEXT7 display=$displayId pkg=$appendPkg editable=$editIndex tapRounds=$tapRounds",
@@ -1977,6 +1993,9 @@ internal object VirtualDisplayDebugHost {
                         report.appendLine("TEXT7 verdict=SKIPPED_NO_EDITABLE")
                         report.appendLine("TEXT8 verdict=SKIPPED_NO_EDITABLE")
                         report.appendLine("TEXT9 verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT10 verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT11 verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT12 verdict=SKIPPED_NO_EDITABLE")
                     } else {
                         // display 通路的写入只认焦点框（或唯一的可编辑框），先点成焦点。
                         call(
@@ -2000,6 +2019,9 @@ internal object VirtualDisplayDebugHost {
                             "TEXT7 verdict=" + when {
                                 !seeded.optBoolean("ok") ->
                                     "OK_NOT_ATTEMPTED:seed:" + seeded.optString("code")
+                                // 光靠 ok 不够：ok 只代表动作被接受，verified 才是「读回一致」。
+                                seeded.optString("input_verification") != "verified" ->
+                                    "FAIL_NOT_VERIFIED:" + seeded.optString("input_verification")
                                 else -> "OK"
                             },
                         )
@@ -2029,7 +2051,10 @@ internal object VirtualDisplayDebugHost {
                                     "OK_HONEST_DEGRADE"
                                 !appended.optBoolean("ok") ->
                                     "OK_NOT_ATTEMPTED:" + appended.optString("code")
-                                both >= 0 -> "OK"
+                                both >= 0 && appended.optString("input_verification") == "verified" ->
+                                    "OK"
+                                both >= 0 ->
+                                    "FAIL_NOT_VERIFIED:" + appended.optString("input_verification")
                                 seedOnly >= 0 -> "FAIL_APPEND_NOT_APPLIED"
                                 else -> "FAIL_APPEND_LOST"
                             },
@@ -2054,6 +2079,76 @@ internal object VirtualDisplayDebugHost {
                                 leftover >= 0 -> "FAIL_NOT_CLEARED"
                                 else -> "OK"
                             },
+                        )
+                        // ⑧ 中文（非 ASCII）：ASCII 能写进去不等于中文能。中文必须走无障碍写入，
+                        // 而它的回读比较、以及「光标 = 前面几个 UTF-16 单元」都只在单测里验过。
+                        // 这里在同一个框里先写中文、再追加中文，读回必须逐字是「测试一下追加」。
+                        val cnWrote = call(
+                            "type_text",
+                            JSONObject().put("display_id", displayId).put("text", cnSeed),
+                        )
+                        report.appendLine(
+                            "TEXT10 ok=${cnWrote.optBoolean("ok")} code=${cnWrote.optString("code")} " +
+                                "method=${cnWrote.optString("method")} " +
+                                "verification=${cnWrote.optString("input_verification")}",
+                        )
+                        val cnAppended = call(
+                            "type_text",
+                            JSONObject()
+                                .put("display_id", displayId)
+                                .put("mode", "append")
+                                .put("text", cnTail),
+                        )
+                        val cnObs = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                        )
+                        val cnBoth = findText(cnObs, cnSeed + cnTail)
+                        val cnSeedOnly = findText(cnObs, cnSeed)
+                        report.appendLine(
+                            "TEXT11 ok=${cnAppended.optBoolean("ok")} " +
+                                "code=${cnAppended.optString("code")} " +
+                                "both=$cnBoth seedOnly=$cnSeedOnly " +
+                                "text=${nodeText(cnObs, cnBoth).take(40)}",
+                        )
+                        report.appendLine(
+                            "TEXT10 verdict=" + when {
+                                !cnWrote.optBoolean("ok") -> "FAIL_CN_WRITE:" + cnWrote.optString("code")
+                                cnWrote.optString("input_verification") != "verified" ->
+                                    "FAIL_CN_NOT_VERIFIED:" + cnWrote.optString("input_verification")
+                                cnSeedOnly >= 0 -> "OK"
+                                else -> "FAIL_CN_LOST"
+                            },
+                        )
+                        report.appendLine(
+                            "TEXT11 verdict=" + when {
+                                cnAppended.optString("code") == "TEXT_SELECTION_UNAVAILABLE" ->
+                                    "OK_HONEST_DEGRADE"
+                                !cnAppended.optBoolean("ok") ->
+                                    "OK_NOT_ATTEMPTED:" + cnAppended.optString("code")
+                                cnBoth >= 0 -> "OK"
+                                cnSeedOnly >= 0 -> "FAIL_CN_APPEND_NOT_APPLIED"
+                                else -> "FAIL_CN_APPEND_LOST"
+                            },
+                        )
+                        // 中文同样不能留在用户 App 里。
+                        val cnCleared = call(
+                            "type_text",
+                            JSONObject().put("display_id", displayId).put("text", ""),
+                        )
+                        val cnClearObs = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                        )
+                        val cnLeftover = findText(cnClearObs, cnSeed)
+                        report.appendLine(
+                            "TEXT12 ok=${cnCleared.optBoolean("ok")} leftover=$cnLeftover " +
+                                "verdict=" + when {
+                                    !cnCleared.optBoolean("ok") ->
+                                        "FAIL_CLEANUP:" + cnCleared.optString("code")
+                                    cnLeftover >= 0 -> "FAIL_NOT_CLEARED"
+                                    else -> "OK"
+                                },
                         )
                     }
                 }
