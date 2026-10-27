@@ -2035,7 +2035,11 @@ class AgentAccessibilityService : AccessibilityService() {
             val fullText = node.realText()
             val fullDesc = node.contentDescription?.toString().orEmpty()
             val text = fullText.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
-            val hint = node.hintText?.toString().orEmpty().take(60)
+            // fix179：hint 原来写死 take(60)，而线格式上限是 MAX_HINT_CHARS=120 —— 和 fix178
+            // 是同一个病：采集端砍在线格式上限之下，超长提示语就被静默截断（hint_clipped 永不出现）。
+            // 现在共用同一个上限，原始长度带进 IndexedNode / UiNode。
+            val fullHint = node.hintText?.toString().orEmpty()
+            val hint = fullHint.take(UiNodeWire.MAX_HINT_CHARS)
             val desc = fullDesc.take(UiNodeWire.MAX_NODE_TEXT_CHARS)
             val clickable = node.isClickable
             val longClickable = node.isLongClickable
@@ -2096,6 +2100,7 @@ class AgentAccessibilityService : AccessibilityService() {
                     checked = node.isCheckable.takeIf { it }?.let { node.isChecked },
                     selected = node.isSelected,
                     hint = hint,
+                    hintFullLength = fullHint.length,
                     clickTarget = clickTarget,
                     longClickTarget = longClickTarget,
                     scrollTarget = scrollTarget,
@@ -2520,6 +2525,8 @@ class AgentAccessibilityService : AccessibilityService() {
         val textFullLength: Int = 0,
         /** `desc` 的原始长度；0 = 未知。 */
         val descFullLength: Int = 0,
+        /** `hint` 的原始长度；0 = 未知。 */
+        val hintFullLength: Int = 0,
     )
 
     internal data class IndexedNode(
@@ -2549,6 +2556,8 @@ class AgentAccessibilityService : AccessibilityService() {
         val checked: Boolean?,
         val selected: Boolean,
         val hint: String,
+        /** `hint` 的原始长度（未被 MAX_HINT_CHARS 砍之前）；0 表示未知。 */
+        val hintFullLength: Int = 0,
         val clickTarget: NodeActionTarget?,
         val longClickTarget: NodeActionTarget?,
         val scrollTarget: NodeActionTarget?,
@@ -2634,6 +2643,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 nodeId = stableId,
                 textFullLength = textFullLength,
                 descFullLength = descFullLength,
+                hintFullLength = hintFullLength,
             )
     }
 

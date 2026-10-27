@@ -175,8 +175,31 @@ class UiNodeWireTest {
         assertTrue(json.getBoolean("desc_clipped"))
         assertEquals(500, json.getInt("desc_len"))
         assertTrue(json.getBoolean("hint_clipped"))
-        // hint 没有采集端的原始长度，但「这一层砍了多少」自己就算得出来：200 字显示 120 字。
+        // 这一层的长度自己就算得出来：200 字被砍到 120 字（采集端没砍时 fullLength=0，走这条）。
         assertEquals(200, json.getInt("hint_len"))
+    }
+
+    @Test
+    fun collectorSideHintClippingMustStillBeMarked() {
+        // fix179：采集端原来写死 take(60)，而线格式上限是 MAX_HINT_CHARS=120 ——
+        // 于是长提示语被砍到 60 字后，线格式根本看不出超长，hint_clipped 永远不出现。
+        val shown = "提".repeat(UiNodeWire.MAX_HINT_CHARS)
+        val json = project(
+            listOf(node(index = 0, text = "").copy(hint = shown, hintFullLength = 400)),
+            "app",
+        ).nodes.getJSONObject(0)
+        assertTrue("采集端砍过也必须标出来", json.getBoolean("hint_clipped"))
+        assertEquals(400, json.getInt("hint_len"))
+    }
+
+    @Test
+    fun completeHintCarriesNoClippingMarkers() {
+        val json = project(
+            listOf(node(index = 0, text = "").copy(hint = "搜索", hintFullLength = 2)),
+            "app",
+        ).nodes.getJSONObject(0)
+        assertFalse(json.has("hint_clipped"))
+        assertFalse(json.has("hint_len"))
     }
 
     private fun project(

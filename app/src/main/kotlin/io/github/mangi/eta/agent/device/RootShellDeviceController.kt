@@ -124,6 +124,8 @@ internal class RootShellDeviceController(
         val textFullLength: Int = 0,
         /** `desc` 的原始长度；0 = 未知。 */
         val descFullLength: Int = 0,
+        /** `hint` 的原始长度；0 = 未知（fix179）。 */
+        val hintFullLength: Int = 0,
     ) {
         val centerX: Int get() = bounds.centerX()
         val centerY: Int get() = bounds.centerY()
@@ -2659,6 +2661,7 @@ internal class RootShellDeviceController(
             nodeId = nodeId,
             textFullLength = textFullLength,
             descFullLength = descFullLength,
+            hintFullLength = hintFullLength,
         )
 
     private data class ShellTextResult(val exitCode: Int, val output: String)

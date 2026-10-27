@@ -8266,3 +8266,42 @@ TEXT3f clear ok=true leftover=-1 → OK
   危害比正文小（提示语极少超 60 字），但**是同一个病**，下一步按同样办法收掉。
 - `AccessibilityNodeIdentity` 里的 `take(200)` 不参与 `ui_nodes` 输出，只用于节点身份比对，
   不需要原文长度，保持不变。
+
+## fix179：第三处「上游先砍、下游不标」—— `hint` 也被静默截断（2026-10-27，fix178 之后）
+
+### 一、同一类缺陷还剩一处
+
+fix178 把 `text` / `desc` 的采集端上限与线格式并成一个常量。收尾时按「常量与硬编码截断对不上」再扫了一遍，
+剩下这一处：
+
+| 位置 | 上限 | 线格式上限 | 结果 |
+|---|---|---|---|
+| `collectNodes` 的 `node.hintText` | `take(60)` | `MAX_HINT_CHARS = 120` | 提示语到线格式时已 ≤60 字，永远不超长 → `hint_clipped` 一次都不出现 |
+
+危害比正文小（输入框提示语很少超过 60 字），但**是同一个病**：模型看到的是一段被砍过的提示语，
+没有任何标记说明它不完整。既然刚刚为 text/desc 建好了机制，没有理由把 hint 留在坑里。
+
+### 二、改法（与 fix178 完全同构）
+
+1. 采集端改成 `take(UiNodeWire.MAX_HINT_CHARS)`，并把 `fullHint.length` 带进
+   `IndexedNode.hintFullLength` / `UiNode.hintFullLength`（两个 `UiNode` 都要加：
+   `AgentAccessibilityService.UiNode` 与 `RootShellDeviceController.UiNode`，
+   中间由 `AgentAccessibilityService.UiNode.toUiNode()` 转换 —— 漏掉后者会编译失败，
+   本轮第一次跑门禁就是被这里拦下的）。
+2. 线格式 `putClippedText("hint", hint, hintFullLength, MAX_HINT_CHARS)` —— 与 text/desc 同一条通路。
+
+### 三、单测（新增 2 条，共 565 用例）
+
+| 用例 | 守的是什么 |
+|---|---|
+| `collectorSideHintClippingMustStillBeMarked` | 采集端砍过（hintFullLength=400）必须 `hint_clipped` + `hint_len=400` |
+| `completeHintCarriesNoClippingMarkers` | 短提示语不能凭空多出标记 |
+
+### 四、验证与限制
+
+- 门禁：565 用例 / 0 失败；lint 无新增；打包与产物指纹见提交说明。
+- **没有真机长 hint 样本**：探针界面（canary 的文本样本）里的 hint 是 Compose 给的短提示，
+  没有可注入 120+ 字提示语的入口。所以这条只有 JVM 单测 + 与 fix178 共用同一段已被真机验证过的
+  输出逻辑（`putClippedText`）作为证据，**不冒充真机验证**。
+- `AccessibilityNodeIdentity` 仍用 `take(MAX_TEXT_CHARS)`：只做节点身份比对，不输出给模型，
+  不需要原文长度。

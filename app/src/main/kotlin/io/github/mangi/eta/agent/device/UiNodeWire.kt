@@ -113,7 +113,7 @@ internal object UiNodeWire {
             if (!enabled) put("enabled", false)
             checked?.let { put("checked", it) }
             if (selected) put("selected", true)
-            putClippedText("hint", hint, 0, MAX_HINT_CHARS)
+            putClippedText("hint", hint, hintFullLength, MAX_HINT_CHARS)
         }
 
     /**
