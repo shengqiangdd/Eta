@@ -126,6 +126,13 @@ class MainActivity : ComponentActivity() {
                     intent.getStringExtra(EXTRA_DEBUG_INPUT_PKG),
                 ),
             )
+            "scope_probe" -> android.util.Log.i(
+                "EtaVirtualDisplayDebug",
+                VirtualDisplayDebugHost.scopeProbe(
+                    this,
+                    intent.getStringExtra(EXTRA_DEBUG_INPUT_PKG),
+                ),
+            )
             else -> return
         }
         intent.removeExtra(EXTRA_DEBUG_VIRTUAL_DISPLAY)

@@ -7525,3 +7525,61 @@ STEP18b verdict=OK
   补法是给 `ToolArgumentSchema` 加一个带默认参数的 lambda，等下一轮统一清。
 - 提示不阻止执行：模型若无视 `arg_hints` 继续用错名字，行为与修复前一样。彻底的做法是硬失败，
   但那会让「多传一个无害参数」变成整次调用失败，先把提示跑一轮看真实命中率再定。
+
+## fix169：探针只能整跑（3 分钟）→ 拆出 scope_probe 快通道 + tools/probe.sh（2026-10-27，fix168 之后）
+
+### 一、动机
+
+STEP15~18 守着 fix165~168 四条修复。改这几段时只能整跑 `step_probe`：STEP1~14 与本轮改动
+无关，却要 3 分钟，还会在设备上做输入注入、启动设置、点节点等一堆副作用。
+
+### 二、实现
+
+| 位置 | 内容 |
+|---|---|
+| `VirtualDisplayDebugHost.runDisplayScopeSteps(call, report, settingsDisplayId, inputDisplay)` | STEP15~18 抽成一个函数，**全量探针与快通道共用同一份代码**（复制会立刻漂移） |
+| `VirtualDisplayDebugHost.scopeProbe(...)` | 建两块屏后直接调上者，报告写 `scope-probe.txt` |
+| `MainActivity` | `--es eta.debug.virtual_display scope_probe` 入口 |
+| `tools/probe.sh` | 设备侧一键：装包 → 预热 → 发 intent → 等报告 → 按 verdict 判定 |
+
+### 三、跑通前挖到的四个「探针自己的坑」（都不是产品缺陷）
+
+1. **装完包直接跑 = 假失败**：`pm install` 杀掉进程后，无障碍服务会长时间停在 Binding
+   （实测 46 秒仍未绑上），而虚拟屏的 UI 树只能由无障碍提供 → 整段变成
+   `DISPLAY_NO_VISIBLE_WINDOW` / 空节点。可靠做法是 force-stop 后再启动**两次**进程
+   （第二次 1 秒内就 available）。脚本里写死这个预热，探针内仍留 30 秒等待兜底。
+   另：`dumpsys accessibility` 的 `Binding services` 为空**不能**说明已绑上（"还没开始绑"
+   也是空），所以脚本不拿它当判据。
+2. **输入应用要在虚拟屏上真能起**：`com.coloros.note` 在主屏有任务 → `APP_ALREADY_RUNNING`；
+   换 `com.android.contacts` → 启动即退出（`LAUNCH_NOT_ON_DISPLAY`）；最后用
+   `com.coloros.calendar`（实测 720×1280 虚拟屏首屏 53 个节点）。
+3. **正向样本不能用主屏**：主屏是 agent 自己的会话界面，一边流式输出一边观察会立刻
+   `STALE_NODE`，把「正常路径坏了」误报成失败。改用虚拟屏的系统设置列表；全量探针末尾
+   设置可能已被前面步骤退到后台，所以样本不可用时退回主屏，且主屏不稳定记
+   `SKIPPED_MAIN_UNSTABLE` 而不是 FAIL。
+4. **`settingsDisplayId` 的取值**：原代码把 `virtual_display_create` 返回的**字符串 id**
+   直接塞进 `display_id`（数值恰好相同才没暴露）。抽取时统一成数字 `display_id`。
+
+### 四、真机验证（PKX110 / Android 16 / canary）
+
+```text
+# sh probe.sh scope
+accessibility_ready_after=0ms
+STEP15 / 16a / 16b / 17a / 17b / 18 / 18b 全 OK
+PASS
+
+# sh probe.sh step（全量回归）
+STEP5 / 6 / 7a / 7b / 8 / 9 / 9b / 10 / 11 / 11b / 11c / 12 / 13 / 13b / 14
+STEP15 / 16a / 16b / 17a / 17b / 18 / 18b 全 OK（22 项）
+PASS
+```
+
+全量探针里 STEP8~10（便签输入屏）这次也真跑到了：之前几轮便签恰好在主屏运行，STEP8 直接
+skip ——「跳过」看起来和「通过」一样，是这套探针的老毛病；脚本现在把含 SKIPPED /
+NOT_ATTEMPTED 的结果单独标成 `PASS_WITH_SKIPS`。
+
+### 五、限制
+
+- `scope_probe` 只覆盖 STEP15~18；STEP1~14 仍要整跑。
+- 脚本要求 root（`pm install`、`dumpsys`、force 迁移应用）。
+- 预热两轮启动是经验值（装包后首次绑定不稳定），换机型可能要调 `sleep`。

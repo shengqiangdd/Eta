@@ -1,0 +1,124 @@
+#!/system/bin/sh
+# 真机探针一键跑（设备侧执行，需要 root）。
+#
+# 为什么要这个脚本：探针必须在「刚装好的 APK」进程里跑，而手工流程有六个易错点，
+# 每一个都真实把人骗过一次：
+#   1. 包名不带 suffix → `pm install` 报 Success 却装进了另一个包（gate.sh 注释里同款坑）；
+#   2. 报告文件没删 → 等的是上一次的结论，看着"很快就有结果"，其实是旧数据；
+#   3. 进程没起来就起探针 → 探针根本没跑，报告永远不出现；
+#   4. `am start -W` 在本机偶尔卡死 90 秒以上 → 外面必须包 timeout；
+#   5. 只看日志不看报告 → FAIL 行淹没在几百行 logcat 里；
+#   6. 装完包直接跑探针 → 无障碍服务卡在 Binding，虚拟屏 UI 树全空，
+#      整段变成 DISPLAY_NO_VISIBLE_WINDOW 的假失败（本机实测 30 秒都没绑上，
+#      而 force-stop 后重新 start 只要 8 秒）。所以这里先空起一次界面、等绑定，
+#      再发探针 intent。
+#
+# 用法（设备侧 root shell）：
+#   sh probe.sh scope     # 只跑 STEP15~18（屏作用域 / 按键落点 / 同屏校验 / 参数名提示），约 30 秒
+#   sh probe.sh step      # 全量 STEP1~18，约 3 分钟
+# 可覆盖：
+#   DEV_PKG=io.github.mangi.eta.canary DEV_APK=/data/local/tmp/x.apk \
+#     DEV_INPUT_PKG=com.coloros.note sh probe.sh scope
+# 退出码：0 = 报告里的 verdict 全部不含 FAIL；1 = 有 FAIL；2 = 参数错；3 = 没产出报告。
+set -u
+
+MODE=${1:-scope}
+case "$MODE" in
+  scope)
+    EXTRA=scope_probe
+    REPORT_NAME=scope-probe.txt
+    WAIT_S=${DEV_WAIT:-180}
+    ;;
+  step)
+    EXTRA=step_probe
+    REPORT_NAME=step-probe.txt
+    WAIT_S=${DEV_WAIT:-300}
+    ;;
+  *)
+    echo "用法: sh probe.sh [scope|step]" >&2
+    exit 2
+    ;;
+esac
+
+PKG=${DEV_PKG:-io.github.mangi.eta.canary}
+APK=${DEV_APK:-/data/local/tmp/Eta-debug.apk}
+# 空 = 用 APK 里的默认值（scope: 联系人；step: 设置）。别写死便签：它常被用户留在主屏。
+if [ -n "${DEV_INPUT_PKG:-}" ]; then
+  INPUT_PKG=$DEV_INPUT_PKG
+else
+  INPUT_PKG=""
+fi
+REPORT_DIR=${DEV_REPORT_DIR:-/sdcard/Android/data/$PKG/files}
+REPORT=$REPORT_DIR/$REPORT_NAME
+ACTIVITY=$PKG/io.github.mangi.eta.ui.MainActivity
+
+[ -f "$APK" ] || { echo "找不到 APK: $APK" >&2; exit 2; }
+
+# 无障碍预热：装包会 kills 进程，AMS 可能让无障碍服务长时间停在 Binding（本机实测 46 秒
+# 还没绑上，且「Binding 列表为空」两种含义都有：还没开始绑、绑好了。所以不靠它判定，
+# 改用经验做法：重启两次进程。装包后第一次启动常绑不上，第二次几秒内就好。
+warmup() {
+  am force-stop "$PKG" 2>/dev/null
+  sleep 2
+  timeout 15 am start -n "$ACTIVITY" >/tmp/probe-warmup.log 2>&1
+}
+
+pm install -r "$APK" >/tmp/probe-install.log 2>&1
+if ! grep -q Success /tmp/probe-install.log; then
+  echo "安装失败: $(cat /tmp/probe-install.log)" >&2
+  exit 2
+fi
+VER=$(dumpsys package "$PKG" | grep -m1 versionName | tr -d ' ')
+echo "installed $PKG $VER"
+
+# 坑 6：装包 kills 进程，AMS 可能让无障碍服务卡在 Binding（虚拟屏 UI 树全靠它）。
+warmup
+sleep 5
+warmup
+sleep 8
+
+# 坑 2：报告必须在这之后删，前面预热那次的 extra 不该产生报告。
+rm -f "$REPORT"
+
+# 坑 3/4：`-W` 会卡，只发 intent；进程已在。
+timeout 15 am start -n "$ACTIVITY" \
+  $(if [ -n "$INPUT_PKG" ]; then echo "--es eta.debug.input_pkg $INPUT_PKG"; fi) \
+  --es eta.debug.virtual_display "$EXTRA" >/tmp/probe-start.log 2>&1
+if ! pidof "$PKG" >/dev/null 2>&1; then
+  echo "进程没起来: $(cat /tmp/probe-start.log)" >&2
+  exit 3
+fi
+
+# 报告写完才落盘，所以「末行有 STEP18b verdict」即可判定结束。
+i=0
+while [ $i -lt "$WAIT_S" ]; do
+  if [ -f "$REPORT" ] && grep -q 'STEP18b verdict=' "$REPORT"; then
+    break
+  fi
+  sleep 2
+  i=$((i + 2))
+done
+
+if [ ! -f "$REPORT" ]; then
+  echo "没产出报告（等 ${WAIT_S}s）: $REPORT" >&2
+  exit 3
+fi
+if ! grep -q 'STEP18b verdict=' "$REPORT"; then
+  echo "报告不完整（等 ${WAIT_S}s），先给已有内容：" >&2
+  head -40 "$REPORT" >&2
+  exit 3
+fi
+
+# 坑 5：verdict 是唯一判据，前缀固定。
+echo "--- verdict ---"
+grep -E 'verdict=|accessibility_ready_after' "$REPORT"
+echo "--- 结果 ---"
+if grep -E 'verdict=' "$REPORT" | grep -q FAIL; then
+  echo "FAIL" >&2
+  exit 1
+fi
+if grep -E 'verdict=' "$REPORT" | grep -q -e SKIPPED -e NOT_ATTEMPTED; then
+  echo "PASS_WITH_SKIPS"
+  exit 0
+fi
+echo "PASS"

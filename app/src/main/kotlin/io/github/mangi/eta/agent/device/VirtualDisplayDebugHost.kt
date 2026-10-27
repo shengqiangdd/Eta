@@ -1314,202 +1314,14 @@ internal object VirtualDisplayDebugHost {
                                     else -> "OK_OTHER_REJECTION:" + typedWithIndex.optString("code")
                                 },
                             )
-                            // STEP15（fix165）：动作在哪块屏，after 就必须是哪块屏的反馈。
-                            // 修复前：after 跟着「最近一次观察的屏」走 —— 快照在 A 屏、动作在 B 屏时，
-                            // 反馈来自 A 屏，而 after 里连屏信息都没有，模型完全无从察觉。
-                            val scopeObs = call(
-                                "observe_screen",
-                                JSONObject().put("display_id", id).put("max_nodes", 20),
-                            )
-                            val crossDisplayId = inputDisplay.optInt("display_id", -1)
-                            val crossTap = call(
-                                "tap",
-                                JSONObject()
-                                    .put("display_id", crossDisplayId)
-                                    .put("coordinate_space", "normalized")
-                                    .put("x", 500)
-                                    .put("y", 900),
-                            )
-                            val crossAfter = crossTap.optJSONObject("after")
-                            val crossAfterDisplay = crossAfter?.optJSONObject("display")
-                            val crossAfterId = crossAfterDisplay?.optInt("id", -1) ?: -1
-                            val crossDiffAvailable = crossAfter
-                                ?.optJSONObject("changes")?.optBoolean("available", true) ?: true
-                            report.appendLine(
-                                "STEP15 snapshot=${scopeObs.optString("observation_id")} session=$id " +
-                                    "actionDisplay=$crossDisplayId " +
-                                    "code=${crossTap.optString("code")} ok=${crossTap.optBoolean("ok")} " +
-                                    "afterScope=${crossAfterDisplay?.optString("scope").orEmpty()} " +
-                                    "afterId=$crossAfterId package=${crossAfter?.optString("package").orEmpty()} " +
-                                    "diffAvailable=$crossDiffAvailable",
-                            )
-                            report.appendLine(
-                                "STEP15 verdict=" + when {
-                                    !crossTap.optBoolean("ok") ->
-                                        "OK_NOT_ATTEMPTED:" + crossTap.optString("code")
-                                    crossAfterDisplay == null -> "FAIL_AFTER_WITHOUT_DISPLAY"
-                                    crossAfterId != crossDisplayId -> "FAIL_AFTER_OTHER_DISPLAY"
-                                    crossDiffAvailable -> "FAIL_CROSS_DISPLAY_DIFF"
-                                    else -> "OK"
-                                },
-                            )
-                            // STEP16（fix166）：按键落点必须由 display_id 决定，并在响应里写明。
-                            // 修复前：display_id=0 被归一成 null，走无障碍 globalAction（作用于焦点窗口），
-                            // 而返回只有 executor=accessibility，模型无从核对。
-                            val keyOnDisplay = call(
-                                "press_key",
-                                JSONObject().put("display_id", crossDisplayId).put("button", "BACK"),
-                            )
-                            val keyLanded = keyOnDisplay.optJSONObject("landed")
-                            report.appendLine(
-                                "STEP16a display=$crossDisplayId code=${keyOnDisplay.optString("code")} " +
-                                    "ok=${keyOnDisplay.optBoolean("ok")} " +
-                                    "landedScope=${keyLanded?.optString("scope").orEmpty()} " +
-                                    "landedId=${keyLanded?.optInt("id", -1)} " +
-                                    "route=${keyLanded?.optString("route").orEmpty()}",
-                            )
-                            report.appendLine(
-                                "STEP16a verdict=" + when {
-                                    !keyOnDisplay.optBoolean("ok") ->
-                                        "OK_NOT_ATTEMPTED:" + keyOnDisplay.optString("code")
-                                    keyLanded == null -> "FAIL_NO_LANDED"
-                                    keyLanded.optString("scope") != "virtual" ||
-                                        keyLanded.optInt("id", -1) != crossDisplayId ->
-                                        "FAIL_WRONG_LANDING"
-                                    else -> "OK"
-                                },
-                            )
-                            // 显式主屏：必须走 input -d 0，而不是交给焦点漂移。
-                            // 注意：这会让主屏当前的前台应用退到后台（探针故意放在最后）。
-                            val keyOnMain = call(
-                                "press_key",
-                                JSONObject().put("display_id", 0).put("button", "BACK"),
-                            )
-                            val mainLanded = keyOnMain.optJSONObject("landed")
-                            report.appendLine(
-                                "STEP16b code=${keyOnMain.optString("code")} " +
-                                    "ok=${keyOnMain.optBoolean("ok")} " +
-                                    "landedScope=${mainLanded?.optString("scope").orEmpty()} " +
-                                    "route=${mainLanded?.optString("route").orEmpty()}",
-                            )
-                            report.appendLine(
-                                "STEP16b verdict=" + when {
-                                    !keyOnMain.optBoolean("ok") ->
-                                        "OK_NOT_ATTEMPTED:" + keyOnMain.optString("code")
-                                    mainLanded == null -> "FAIL_NO_LANDED"
-                                    mainLanded.optString("scope") != "main" -> "FAIL_WRONG_LANDING"
-                                    else -> "OK"
-                                },
-                            )
-                            // STEP17（fix167）：节点类手势三件套对 display_id 必须一样严。
-                            // 修复前 scroll_element 既不解析 display_id、也不查那块屏还在不在：
-                            // 传 display_id=0（以为在主屏滚动）时参数被默默丢掉，动作仍在快照所属的
-                            // 虚拟屏上执行、结果照旧 ok —— 与 fix163 同一个病，只漏了这一个工具。
-                            val scrollScope = call(
-                                "observe_screen",
-                                JSONObject().put("display_id", crossDisplayId).put("max_nodes", 20),
-                            )
-                            val scrollScopeId = scrollScope.optString("observation_id")
-                            val wrongScopeScroll = if (scrollScopeId.isBlank()) {
-                                JSONObject().put("code", "NO_SNAPSHOT")
-                            } else {
-                                call(
-                                    "scroll_element",
-                                    JSONObject()
-                                        .put("observation_id", scrollScopeId)
-                                        .put("index", 0)
-                                        .put("direction", "down")
-                                        .put("display_id", 0),
-                                )
-                            }
-                            report.appendLine(
-                                "STEP17a snapshot=$scrollScopeId display=$crossDisplayId " +
-                                    "code=${wrongScopeScroll.optString("code")} " +
-                                    "ok=${wrongScopeScroll.optBoolean("ok")}",
-                            )
-                            report.appendLine(
-                                "STEP17a verdict=" + when {
-                                    scrollScopeId.isBlank() -> "SKIPPED_NO_SNAPSHOT"
-                                    wrongScopeScroll.optBoolean("ok") -> "FAIL_DISPLAY_ID_IGNORED"
-                                    wrongScopeScroll.optString("code") ==
-                                        "OBSERVATION_OTHER_DISPLAY" -> "OK"
-                                    else -> "FAIL_OTHER_CODE:" + wrongScopeScroll.optString("code")
-                                },
-                            )
-                            // 17b：不传 display_id 的正常路径不能被这次收紧误伤。
-                            // 虚拟屏上的便签首屏常常没有 scrollable 节点（本机实测两轮 scrollable=-1），
-                            // 所以正向样本改用**主屏**：前台是 canary 自己的列表，能稳定拿到可滚容器。
-                            val mainScopeState = call("observe_screen", JSONObject().put("max_nodes", 60))
-                            val mainScopeId = mainScopeState.optString("observation_id")
-                            var mainScrollable = -1
-                            val mainScopeNodes = mainScopeState.optJSONArray("ui_nodes")
-                            if (mainScopeNodes != null) {
-                                for (i in 0 until mainScopeNodes.length()) {
-                                    val node = mainScopeNodes.optJSONObject(i) ?: continue
-                                    if (node.optBoolean("scrollable")) {
-                                        mainScrollable = node.optInt("index", -1)
-                                        break
-                                    }
-                                }
-                            }
-                            val sameScopeScroll =
-                                if (mainScopeId.isBlank() || mainScrollable < 0) {
-                                    JSONObject().put("code", "NO_SCROLLABLE")
-                                } else {
-                                    call(
-                                        "scroll_element",
-                                        JSONObject()
-                                            .put("observation_id", mainScopeId)
-                                            .put("index", mainScrollable)
-                                            .put("direction", "down")
-                                            .put("amount", "small"),
-                                    )
-                                }
-                            val sameScopeCode = sameScopeScroll.optString("code")
-                            report.appendLine(
-                                "STEP17b mainScrollable=$mainScrollable code=$sameScopeCode " +
-                                    "ok=${sameScopeScroll.optBoolean("ok")} " +
-                                    "method=${sameScopeScroll.optString("method")}",
-                            )
-                            report.appendLine(
-                                "STEP17b verdict=" + when {
-                                    sameScopeCode == "OBSERVATION_OTHER_DISPLAY" ||
-                                        sameScopeCode == "DISPLAY_RELEASED" -> "FAIL_NORMAL_PATH_BROKEN"
-                                    mainScopeId.isBlank() || mainScrollable < 0 -> "SKIPPED_NO_SCROLLABLE"
-                                    sameScopeScroll.optBoolean("ok") -> "OK"
-                                    else -> "FAIL_SCROLL:" + sameScopeCode
-                                },
-                            )
-                            // STEP18（fix168）：参数名写错不能被静默吞掉。
-                            // `observe_screen` 的声明名是 include_screenshot；模型很爱写 includeScreenshot。
-                            // 这个工具只读，写错名字除了多一张截图没有任何副作用，适合做探针。
-                            val typoObs = call(
-                                "observe_screen",
-                                JSONObject().put("max_nodes", 20).put("includeScreenshot", true),
-                            )
-                            val typoHints = typoObs.optJSONArray("arg_hints")
-                            val typoFirst = typoHints?.optString(0).orEmpty()
-                            report.appendLine(
-                                "STEP18 ok=${typoObs.optBoolean("ok")} " +
-                                    "hints=${typoHints?.length() ?: 0} first=$typoFirst",
-                            )
-                            report.appendLine(
-                                "STEP18 verdict=" + when {
-                                    typoHints == null || typoHints.length() == 0 -> "FAIL_NO_HINT"
-                                    typoFirst.contains("include_screenshot") -> "OK"
-                                    else -> "OK_OTHER:" + typoFirst.take(40)
-                                },
-                            )
-                            // 反方向：合法参数一个都不该冒出提示（误报比漏报更烦人）。
-                            val cleanObs = call("observe_screen", JSONObject().put("max_nodes", 10))
-                            report.appendLine(
-                                "STEP18b hints=${cleanObs.optJSONArray("arg_hints")?.length() ?: 0}",
-                            )
-                            report.appendLine(
-                                "STEP18b verdict=" + when {
-                                    cleanObs.optJSONArray("arg_hints") == null -> "OK"
-                                    else -> "FAIL_SPURIOUS_HINT"
-                                },
+                            // STEP15~18 已抽成独立函数：全量探针照常调用，也可用 scope_probe 单独跑。
+                            runDisplayScopeSteps(
+                                call = { toolName, toolArgs -> call(toolName, toolArgs) },
+                                report = report,
+                                // 原先这里直接写 `id`（virtual_display_create 返回的字符串 id）当
+                                // display_id 用，数值恰好一致才没暴露；抽取后统一成数字 id。
+                                settingsDisplayId = displayId,
+                                inputDisplay = inputDisplay,
                             )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
@@ -1529,6 +1341,368 @@ internal object VirtualDisplayDebugHost {
             }
         }, "eta-step-probe").start()
         return "step probe started"
+    }
+
+    /**
+     * STEP15~18 单独一段：屏作用域（fix165）、按键落点（fix166）、
+     * 节点手势三件套的同屏校验（fix167）、参数名提示（fix168）。
+     *
+     * 抽出来是为了「只验这几段」时不必重跑 STEP1~14（整套约 3 分钟，这段约 30 秒），
+     * 入口是 `--es eta.debug.virtual_display scope_probe`。
+     * 全量探针仍在 STEP14 之后调用它，行为不变。
+     */
+    private fun runDisplayScopeSteps(
+        call: (String, JSONObject) -> JSONObject,
+        report: StringBuilder,
+        settingsDisplayId: Int,
+        inputDisplay: JSONObject,
+    ) {
+
+        // STEP15（fix165）：动作在哪块屏，after 就必须是哪块屏的反馈。
+        // 修复前：after 跟着「最近一次观察的屏」走 —— 快照在 A 屏、动作在 B 屏时，
+        // 反馈来自 A 屏，而 after 里连屏信息都没有，模型完全无从察觉。
+        val scopeObs = call(
+            "observe_screen",
+            JSONObject().put("display_id", settingsDisplayId).put("max_nodes", 20),
+        )
+        val crossDisplayId = inputDisplay.optInt("display_id", -1)
+        fun crossTapAction() = call(
+            "tap",
+            JSONObject()
+                .put("display_id", crossDisplayId)
+                .put("coordinate_space", "normalized")
+                .put("x", 500)
+                .put("y", 900),
+        )
+        var crossTap = crossTapAction()
+        if (crossTap.optString("code") == "DISPLAY_NO_VISIBLE_WINDOW") {
+            // 全量探针里 STEP8 会在这块屏上做输入测试，应用可能已被系统迁回主屏，
+            // 到 STEP15 这块屏上就没窗口了（实测），tap 会被正确拒掉、整段退化成
+            // NOT_ATTEMPTED。这里兜一次：按原包重新拉起再点，否则这一段等于没跑。
+            val relaunch = call(
+                "virtual_display_launch",
+                JSONObject()
+                    .put("id", inputDisplay.optString("id"))
+                    .put("package_name", inputDisplay.optString("package_name"))
+                    .put("force", true),
+            )
+            report.appendLine(
+                "STEP15 relaunch ok=${relaunch.optBoolean("ok")} " +
+                    "launched=${relaunch.optBoolean("launched")} " +
+                    "code=${relaunch.optString("code")}",
+            )
+            Thread.sleep(1_500L)
+            crossTap = crossTapAction()
+        }
+        val crossAfter = crossTap.optJSONObject("after")
+        val crossAfterDisplay = crossAfter?.optJSONObject("display")
+        val crossAfterId = crossAfterDisplay?.optInt("id", -1) ?: -1
+        val crossDiffAvailable = crossAfter
+            ?.optJSONObject("changes")?.optBoolean("available", true) ?: true
+        report.appendLine(
+            "STEP15 snapshot=${scopeObs.optString("observation_id")} session=$settingsDisplayId " +
+                "actionDisplay=$crossDisplayId " +
+                "code=${crossTap.optString("code")} ok=${crossTap.optBoolean("ok")} " +
+                "afterScope=${crossAfterDisplay?.optString("scope").orEmpty()} " +
+                "afterId=$crossAfterId package=${crossAfter?.optString("package").orEmpty()} " +
+                "diffAvailable=$crossDiffAvailable",
+        )
+        report.appendLine(
+            "STEP15 verdict=" + when {
+                !crossTap.optBoolean("ok") ->
+                    "OK_NOT_ATTEMPTED:" + crossTap.optString("code")
+                crossAfterDisplay == null -> "FAIL_AFTER_WITHOUT_DISPLAY"
+                crossAfterId != crossDisplayId -> "FAIL_AFTER_OTHER_DISPLAY"
+                crossDiffAvailable -> "FAIL_CROSS_DISPLAY_DIFF"
+                else -> "OK"
+            },
+        )
+        // STEP16（fix166）：按键落点必须由 display_id 决定，并在响应里写明。
+        // 修复前：display_id=0 被归一成 null，走无障碍 globalAction（作用于焦点窗口），
+        // 而返回只有 executor=accessibility，模型无从核对。
+        val keyOnDisplay = call(
+            "press_key",
+            JSONObject().put("display_id", crossDisplayId).put("button", "BACK"),
+        )
+        val keyLanded = keyOnDisplay.optJSONObject("landed")
+        report.appendLine(
+            "STEP16a display=$crossDisplayId code=${keyOnDisplay.optString("code")} " +
+                "ok=${keyOnDisplay.optBoolean("ok")} " +
+                "landedScope=${keyLanded?.optString("scope").orEmpty()} " +
+                "landedId=${keyLanded?.optInt("id", -1)} " +
+                "route=${keyLanded?.optString("route").orEmpty()}",
+        )
+        report.appendLine(
+            "STEP16a verdict=" + when {
+                !keyOnDisplay.optBoolean("ok") ->
+                    "OK_NOT_ATTEMPTED:" + keyOnDisplay.optString("code")
+                keyLanded == null -> "FAIL_NO_LANDED"
+                keyLanded.optString("scope") != "virtual" ||
+                    keyLanded.optInt("id", -1) != crossDisplayId ->
+                    "FAIL_WRONG_LANDING"
+                else -> "OK"
+            },
+        )
+        // 显式主屏：必须走 input -d 0，而不是交给焦点漂移。
+        // 注意：这会让主屏当前的前台应用退到后台（探针故意放在最后）。
+        val keyOnMain = call(
+            "press_key",
+            JSONObject().put("display_id", 0).put("button", "BACK"),
+        )
+        val mainLanded = keyOnMain.optJSONObject("landed")
+        report.appendLine(
+            "STEP16b code=${keyOnMain.optString("code")} " +
+                "ok=${keyOnMain.optBoolean("ok")} " +
+                "landedScope=${mainLanded?.optString("scope").orEmpty()} " +
+                "route=${mainLanded?.optString("route").orEmpty()}",
+        )
+        report.appendLine(
+            "STEP16b verdict=" + when {
+                !keyOnMain.optBoolean("ok") ->
+                    "OK_NOT_ATTEMPTED:" + keyOnMain.optString("code")
+                mainLanded == null -> "FAIL_NO_LANDED"
+                mainLanded.optString("scope") != "main" -> "FAIL_WRONG_LANDING"
+                else -> "OK"
+            },
+        )
+        // STEP17（fix167）：节点类手势三件套对 display_id 必须一样严。
+        // 修复前 scroll_element 既不解析 display_id、也不查那块屏还在不在：
+        // 传 display_id=0（以为在主屏滚动）时参数被默默丢掉，动作仍在快照所属的
+        // 虚拟屏上执行、结果照旧 ok —— 与 fix163 同一个病，只漏了这一个工具。
+        val scrollScope = call(
+            "observe_screen",
+            JSONObject().put("display_id", crossDisplayId).put("max_nodes", 20),
+        )
+        val scrollScopeId = scrollScope.optString("observation_id")
+        val wrongScopeScroll = if (scrollScopeId.isBlank()) {
+            JSONObject().put("code", "NO_SNAPSHOT")
+        } else {
+            call(
+                "scroll_element",
+                JSONObject()
+                    .put("observation_id", scrollScopeId)
+                    .put("index", 0)
+                    .put("direction", "down")
+                    .put("display_id", 0),
+            )
+        }
+        report.appendLine(
+            "STEP17a snapshot=$scrollScopeId display=$crossDisplayId " +
+                "code=${wrongScopeScroll.optString("code")} " +
+                "ok=${wrongScopeScroll.optBoolean("ok")}",
+        )
+        report.appendLine(
+            "STEP17a verdict=" + when {
+                scrollScopeId.isBlank() -> "SKIPPED_NO_SNAPSHOT"
+                wrongScopeScroll.optBoolean("ok") -> "FAIL_DISPLAY_ID_IGNORED"
+                wrongScopeScroll.optString("code") ==
+                    "OBSERVATION_OTHER_DISPLAY" -> "OK"
+                else -> "FAIL_OTHER_CODE:" + wrongScopeScroll.optString("code")
+            },
+        )
+        // 17b：不传 display_id 的正常路径不能被这次收紧误伤。
+        // 正向样本优先用虚拟屏上的系统设置列表（不受 agent 自己界面影响）。
+        // 但全量探针跑到这里时，设置可能已被前面几步退到后台（实测 DISPLAY_NO_VISIBLE_WINDOW），
+        // 所以样本不可用就退回主屏；主屏又不稳定（STALE_NODE）时记 SKIPPED，不记 FAIL。
+        fun firstScrollableIndex(state: JSONObject): Int {
+            val nodes = state.optJSONArray("ui_nodes") ?: return -1
+            for (i in 0 until nodes.length()) {
+                val node = nodes.optJSONObject(i) ?: continue
+                if (node.optBoolean("scrollable")) return node.optInt("index", -1)
+            }
+            return -1
+        }
+        fun sampleOn(display: Int): Triple<String, Int, JSONObject> {
+            val state = call(
+                "observe_screen",
+                JSONObject().put("display_id", display).put("max_nodes", 60),
+            )
+            val observation = state.optString("observation_id")
+            val scrollable = firstScrollableIndex(state)
+            val result =
+                if (observation.isBlank() || scrollable < 0) {
+                    JSONObject().put("code", "NO_SCROLLABLE")
+                } else {
+                    call(
+                        "scroll_element",
+                        JSONObject()
+                            .put("observation_id", observation)
+                            .put("index", scrollable)
+                            .put("direction", "down")
+                            .put("amount", "small"),
+                    )
+                }
+            return Triple(observation, scrollable, result)
+        }
+
+        var sameScopeDisplay = settingsDisplayId
+        var sameScopeSample = sampleOn(settingsDisplayId)
+        if (!sameScopeSample.third.optBoolean("ok") && settingsDisplayId != 0) {
+            report.appendLine(
+                "STEP17b fallback_to_main reason=" + sameScopeSample.third.optString("code"),
+            )
+            sameScopeDisplay = 0
+            sameScopeSample = sampleOn(0)
+        }
+        val sameScopeId = sameScopeSample.first
+        val sameScopeScrollable = sameScopeSample.second
+        val sameScopeScroll = sameScopeSample.third
+        val sameScopeCode = sameScopeScroll.optString("code")
+        report.appendLine(
+            "STEP17b display=$sameScopeDisplay scrollable=$sameScopeScrollable " +
+                "code=$sameScopeCode ok=${sameScopeScroll.optBoolean("ok")} " +
+                "method=${sameScopeScroll.optString("method")}",
+        )
+        report.appendLine(
+            "STEP17b verdict=" + when {
+                sameScopeCode == "OBSERVATION_OTHER_DISPLAY" ||
+                    sameScopeCode == "DISPLAY_RELEASED" -> "FAIL_NORMAL_PATH_BROKEN"
+                sameScopeId.isBlank() || sameScopeScrollable < 0 -> "SKIPPED_NO_SCROLLABLE"
+                sameScopeScroll.optBoolean("ok") -> "OK"
+                sameScopeDisplay == 0 -> "SKIPPED_MAIN_UNSTABLE:" + sameScopeCode
+                else -> "FAIL_SCROLL:" + sameScopeCode
+            },
+        )
+        // STEP18（fix168）：参数名写错不能被静默吞掉。
+        // `observe_screen` 的声明名是 include_screenshot；模型很爱写 includeScreenshot。
+        // 这个工具只读，写错名字除了多一张截图没有任何副作用，适合做探针。
+        val typoObs = call(
+            "observe_screen",
+            JSONObject().put("max_nodes", 20).put("includeScreenshot", true),
+        )
+        val typoHints = typoObs.optJSONArray("arg_hints")
+        val typoFirst = typoHints?.optString(0).orEmpty()
+        report.appendLine(
+            "STEP18 ok=${typoObs.optBoolean("ok")} " +
+                "hints=${typoHints?.length() ?: 0} first=$typoFirst",
+        )
+        report.appendLine(
+            "STEP18 verdict=" + when {
+                typoHints == null || typoHints.length() == 0 -> "FAIL_NO_HINT"
+                typoFirst.contains("include_screenshot") -> "OK"
+                else -> "OK_OTHER:" + typoFirst.take(40)
+            },
+        )
+        // 反方向：合法参数一个都不该冒出提示（误报比漏报更烦人）。
+        val cleanObs = call("observe_screen", JSONObject().put("max_nodes", 10))
+        report.appendLine(
+            "STEP18b hints=${cleanObs.optJSONArray("arg_hints")?.length() ?: 0}",
+        )
+        report.appendLine(
+            "STEP18b verdict=" + when {
+                cleanObs.optJSONArray("arg_hints") == null -> "OK"
+                else -> "FAIL_SPURIOUS_HINT"
+            },
+        )
+    }
+
+    /**
+     * 只跑 STEP15~18 的快通道（本机实测约 30 秒）。
+     *
+     * 建两块屏：设置屏给「跨屏 after」当观察源，便签屏给按键 / 节点手势用，
+     * 然后直接调 [runDisplayScopeSteps]。STEP1~14 守着别的缺陷，
+     * 改这几段时不该连带重跑那三分钟。
+     * 用法：`am start ... --es eta.debug.virtual_display scope_probe`
+     */
+    fun scopeProbe(context: Context, inputProbePackage: String? = null): String {
+        if (!probeRunning.compareAndSet(false, true)) return "scope probe already running"
+        Thread({
+            val report = StringBuilder()
+            val tools = AgentLocalTools(
+                context = context.applicationContext,
+                logger = AndroidAgentLogger,
+                browserToolsEnabled = { false },
+                terminalToolsEnabled = { false },
+                deviceDirectToolsEnabled = { true },
+                deviceSensitiveReadToolsEnabled = { true },
+                deviceSensitiveActionToolsEnabled = { true },
+                memoryToolsEnabled = { false },
+                memoryWritable = false,
+                rootAvailable = { true },
+            )
+            fun call(name: String, args: JSONObject, log: Boolean = true): JSONObject {
+                val result = tools.execute(
+                    AgentModelClient.ToolCall(
+                        id = "scopeprobe-$name",
+                        name = name,
+                        argumentsJson = args.toString(),
+                    ),
+                )
+                val json = runCatching { JSONObject(result.content) }.getOrDefault(JSONObject())
+                if (log) report.appendLine("$name=").appendLine(result.content.take(1_500))
+                return json
+            }
+            try {
+                // 装包会杀掉进程，无障碍服务需要重新 binding（本机实测 2~10 秒）。
+                // 虚拟屏的 UI 树只能由无障碍提供（uiautomator 读不到别的屏），没连上时
+                // observe 返回空节点、tap 报 DISPLAY_NO_VISIBLE_WINDOW —— 整段会看起来
+                // 像「功能坏了」，其实只是探针起得太早。
+                var waitMs = 0
+                while (waitMs < 30_000) {
+                    val ready = call(
+                        "observe_screen",
+                        JSONObject().put("max_nodes", 1),
+                        log = false,
+                    )
+                    if (ready.optJSONObject("accessibility")?.optBoolean("available") == true) break
+                    Thread.sleep(1_000L)
+                    waitMs += 1_000
+                }
+                report.appendLine("SCOPE accessibility_ready_after=${waitMs}ms")
+                val settings = call(
+                    "virtual_display_create",
+                    JSONObject()
+                        .put("width", 720)
+                        .put("height", 1280)
+                        .put("density_dpi", 320)
+                        .put("purpose", "scope probe")
+                        .put("package_name", PROBE_PACKAGE),
+                )
+                val settingsDisplayId = settings.optInt("display_id", -1)
+                // 输入屏默认用日历而不是便签：这一段（STEP15~18）只需要「有可见窗口」，
+                // 而便签常被用户留在主屏跑（不 force 就启不来），联系人又会在虚拟屏上
+                // 启动即退出（实测 LAUNCH_NOT_ON_DISPLAY）。日历不带用户数据，且本机实测
+                // 在 720x1280 虚拟屏上能拿到完整首屏（53 个节点）。
+                val probePkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: "com.coloros.calendar"
+                val inputDisplay = call(
+                    "virtual_display_create",
+                    JSONObject()
+                        .put("width", 720)
+                        .put("height", 1280)
+                        .put("density_dpi", 320)
+                        .put("purpose", "scope probe input")
+                        .put("package_name", probePkg)
+                        .put("force", true),
+                )
+                val inputDisplayId = inputDisplay.optInt("display_id", -1)
+                report.appendLine(
+                    "SCOPE settings=$settingsDisplayId input=$inputDisplayId pkg=$probePkg " +
+                        "launched=${inputDisplay.optBoolean("launched")}",
+                )
+                if (settingsDisplayId > 0 && inputDisplayId > 0) {
+                    runDisplayScopeSteps(
+                        call = { toolName, toolArgs -> call(toolName, toolArgs) },
+                        report = report,
+                        settingsDisplayId = settingsDisplayId,
+                        inputDisplay = inputDisplay,
+                    )
+                } else {
+                    report.appendLine("SCOPE skipped create_failed")
+                }
+                call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))
+                call("virtual_display_release", JSONObject().put("id", settings.optString("id")))
+            } catch (error: Throwable) {
+                report.appendLine("EXCEPTION=${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                runCatching { tools.close() }
+                runCatching {
+                    File(context.getExternalFilesDir(null), "scope-probe.txt").writeText(report.toString())
+                }
+                probeRunning.set(false)
+            }
+        }, "eta-scope-probe").start()
+        return "scope probe started"
     }
 
     /**
