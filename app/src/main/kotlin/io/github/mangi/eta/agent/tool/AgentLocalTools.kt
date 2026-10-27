@@ -2025,6 +2025,7 @@ internal class AgentLocalTools(
                     task = request.task,
                     cwd = request.cwd,
                     timeoutSeconds = request.timeoutSeconds,
+                    model = request.model,
                     onProgress = progressSink?.let { sink ->
                         AcpClient.ProgressObserver { kind, detail ->
                             val now = System.currentTimeMillis()

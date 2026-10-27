@@ -8982,3 +8982,38 @@ STEP9d 与 STEP8b 共用。
 - **未验证（如实）**：切会话在真机界面上「计时接着走」需要 GUI 操作（切走再切回），
   本轮只到单测 + 载入路径日志这一层；旧包 22:09 的抓屏证明执行中卡片
   （心跳 + 正文 + 计时）本身是可见的。
+
+## 委派用的是什么模型：从「完全不可见」到「可查、可指定」（2026-10-27 深夜，PKX110/A16）
+
+### 事实（Linux 侧 codex-acp 探针，不是推测）
+
+- `session/new` 的 `models` 里本来就有答案：`currentModelId = "gpt-5.6-sol/low"`，
+  `availableModels` **41 个**（gpt-6.1-sol / gpt-6-astra / gpt-6.1-terra / gpt-6-sol / gpt-6-luna /
+  gpt-5.6-* 的各档，以及 `ocg-*`、`grok-4.7`、`kimi-k2.7-code` 这类别家来源）。
+  以前 Eta 既不读、也不展示，用户只能猜「这次到底谁在干活」。
+- `session/set_model` 存在且可用；`session/configure` 不存在（-32601）；
+  `session/set_config_option` 只认 `mode`（Approval Preset），不认 model。
+- **`session/set_model` 不校验 modelId**：`no-such-model-xyz` 也返回 `{}`。
+  名字写错不会当场报错，只会在后面用着用着诡异失败 —— 所以校验必须由客户端做。
+
+### 改动
+
+- `acp_delegate` 新增可选参数 `model`：用户自然语言说「用 gpt-6.1-sol/high 做这件事」时，
+  主模型把它带给工具（工具描述已写明这个约定）。
+- 握手状态机：init → session/new →（可选 set_model）→ prompt；
+  session/new 的 `models` 被解析进 `AcpModels.Info`。
+- 本地校验（`AcpModels`，**9 条单测**）：
+  - 请求的模型在清单里 → 切换；
+  - 不在 → 当场失败，并列出可用项（最多 20 个）；
+  - 代理没报清单 → 放行但标记「未校验」；
+  - 代理不支持切换（回 -32601）→ 明确提示「去掉 model 参数即用默认」。
+- 结果新增 `model` / `model_requested` / `available_models`（截断到 20 个，附总数）；
+  `acp_session_status` 也带 `model`；工具卡片摘要显示「模型 xxx」。
+
+### 验证
+
+- 探针端到端（Linux）：默认 `gpt-5.6-sol/low` → `set_model gpt-6.1-sol/high` → prompt
+  → **5.4 秒 `stopReason=end_turn`**，说明「先切模型再跑回合」这条路成立。
+- `AcpModelsTest` **9/9**；已加入 `FAST_TEST_FILTERS`，门禁用例 677 → **686**。
+- **未验证（如实）**：真机 App 内 `acp_delegate(model=…)` 的端到端效果要装新包后实测一次；
+  provider 层（`/root/.codex/config.toml` 的 `model_provider`）不在 ACP 协议内，本轮没有动它。

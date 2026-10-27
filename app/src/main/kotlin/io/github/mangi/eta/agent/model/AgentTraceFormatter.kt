@@ -479,6 +479,13 @@ internal class AgentTraceFormatter {
         if (json == null) return if (isSuccessResult(result)) "完成" else "失败"
         return buildList {
             add(if (json.optBoolean("ok", false)) "完成" else "失败")
+            if (!json.isNull("model")) {
+                val model = json.optString("model").trim()
+                val requested = if (json.isNull("model_requested")) "" else json.optString("model_requested").trim()
+                if (model.isNotEmpty()) {
+                    add(if (requested.isNotEmpty() && requested != model) "模型 $model（请求 $requested）" else "模型 $model")
+                }
+            }
             if (json.has("elapsed_ms")) add(formatAcpDuration(json.optLong("elapsed_ms")))
             json.optJSONArray("steps")?.let { steps ->
                 if (steps.length() > 0) {

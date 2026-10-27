@@ -74,6 +74,17 @@ internal object AgentAcpTools {
                                     JSONObject()
                                         .put("type", "integer")
                                         .put("description", "超时秒数，30..1800；默认 600"),
+                                )
+                                .put(
+                                    "model",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put(
+                                            "description",
+                                            "指定代理用的模型（可选）。用户说「用 X 模型」时传 X；" +
+                                                "留空则用代理默认模型。可用值看上一次结果的 available_models。" +
+                                                "名字必须在代理清单里，否则会直接失败（代理自己不校验）。",
+                                        ),
                                 ),
                         )
                         .put("required", JSONArray().put("task")),
@@ -124,6 +135,7 @@ internal object AgentAcpTools {
         val task: String,
         val cwd: String,
         val timeoutSeconds: Int,
+        val model: String? = null,
     )
 
     data class SessionRequest(val sessionId: String)
@@ -139,7 +151,11 @@ internal object AgentAcpTools {
         val agent = args.optString("agent").trim()
         // 代理 id 可能是内置名（codex）或插件命名空间形式（<plugin>:<agent>）。
         if (agent.isNotEmpty() && !AGENT_ID.matches(agent)) return null
-        return DelegateRequest(agent, task, cwd, timeout)
+        val model = args.optString("model").trim().takeIf { it.isNotEmpty() }
+        if (model != null && (model.length > AcpModels.MAX_MODEL_ID_CHARS || model.any { it.isISOControl() })) {
+            return null
+        }
+        return DelegateRequest(agent, task, cwd, timeout, model)
     }
 
     fun parseSession(args: JSONObject): SessionRequest? {

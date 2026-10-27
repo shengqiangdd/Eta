@@ -107,6 +107,14 @@ internal class AcpClient(
         var finished = false
         var stopReason: String? = null
         var error: String? = null
+        /** 本次委派请求的模型（null = 用代理默认）。 */
+        var requestedModel: String? = null
+        /** `session/new` 报的当前模型。 */
+        var defaultModel: String? = null
+        /** 设置成功后实际生效的模型。 */
+        var activeModel: String? = null
+        /** 代理报的可用模型清单（真机 codex-acp：41 个）。 */
+        var availableModels: List<String> = emptyList()
         /** 本次委派的进度观察者；null 表示调用方不关心过程（例如 acp_session_status）。 */
         var progress: ProgressObserver? = null
     }
@@ -191,6 +199,7 @@ internal class AcpClient(
         task: String,
         cwd: String,
         timeoutSeconds: Int,
+        model: String? = null,
         onProgress: ProgressObserver? = null,
     ): Pair<Boolean, String> {
         val spec = BUILTIN_AGENTS.firstOrNull { it.id == agentId }
@@ -221,7 +230,7 @@ internal class AcpClient(
                     "或在该环境里完成一次代理登录（例如 codex login）后重试",
             )
         }
-        val launched = runCatching { launch(spec, resolution.path, task, cwd) }
+        val launched = runCatching { launch(spec, resolution.path, task, cwd, model) }
         if (launched.isFailure) {
             val reason = launched.exceptionOrNull()?.message ?: "无法启动代理进程"
             return false to errorJson("ACP_LAUNCH_FAILED", reason)
@@ -248,6 +257,10 @@ internal class AcpClient(
             .put("tool", "acp_delegate")
             .put("session_id", handle.session.id)
             .put("agent", spec.id)
+            // 用户问的就是这个：这次委派用的是哪个模型。
+            .put("model", handle.activeModel ?: handle.defaultModel ?: JSONObject.NULL)
+            .put("model_requested", handle.requestedModel ?: JSONObject.NULL)
+            .put("available_models", AcpModels.availableJson(AcpModels.Info(handle.defaultModel, handle.availableModels)))
             .put("cwd", cwd)
             .put("elapsed_ms", elapsed)
             .put("stop_reason", handle.stopReason ?: JSONObject.NULL)
@@ -290,6 +303,7 @@ internal class AcpClient(
             .put("tool", "acp_session_status")
             .put("session_id", sessionId)
             .put("agent", handle.session.agentId)
+            .put("model", handle.activeModel ?: handle.defaultModel ?: JSONObject.NULL)
             .put("age_seconds", handle.session.ageSeconds)
             .put("finished", handle.finished)
             .put("stop_reason", handle.stopReason ?: JSONObject.NULL)
@@ -507,7 +521,13 @@ internal class AcpClient(
     private fun stderrTail(handle: Live): String =
         synchronized(handle.stderr) { handle.stderr.toString().takeLast(MAX_STDERR_CHARS) }
 
-    private fun launch(spec: AgentSpec, executablePath: String, task: String, cwd: String): Live {
+    private fun launch(
+        spec: AgentSpec,
+        executablePath: String,
+        task: String,
+        cwd: String,
+        model: String? = null,
+    ): Live {
         // 每次委派都是一个真实进程 + 一个 HandlerThread；没有上限时并发委派会把内存和 PID 一起吃光。
         if (live.size >= MAX_LIVE_SESSIONS) {
             throw IllegalStateException(
@@ -553,6 +573,7 @@ internal class AcpClient(
             thread = thread,
         )
         live[sessionId] = live_
+        live_.requestedModel = model?.trim()?.takeIf { it.isNotEmpty() }
         // stderr 必须持续读走：管道缓冲区（常见 64KB）写满后代理会卡在 write 上，
         // 表现为「initialize 之后一个字都不回」，而且看不出原因。只留尾部用于报错。
         val stderrPump = Thread {
@@ -628,9 +649,23 @@ internal class AcpClient(
                 ),
         )
 
-        var sessionCreated = false
-        var promptSent = false
+        var sessionNewId = -1
+        var setModelId = -1
         var promptId = -1
+
+        fun sendPrompt() {
+            promptId = send(
+                "session/prompt",
+                JSONObject()
+                    .put("sessionId", handle.session.acpSessionId)
+                    .put(
+                        "prompt",
+                        JSONArray().put(
+                            JSONObject().put("type", "text").put("text", task),
+                        ),
+                    ),
+            )
+        }
         while (!handle.stopped.get()) {
             val line = handle.reader.readLine() ?: break
             if (line.isBlank()) continue
@@ -688,28 +723,49 @@ internal class AcpClient(
                     val id = msg.optInt("id", -1)
                     val error = msg.optJSONObject("error")
                     if (error != null) {
-                        handle.error = error.optString("message").ifBlank { "ACP 返回错误" }
+                        val raw = error.optString("message").ifBlank { "ACP 返回错误" }
+                        handle.error = if (id == setModelId) {
+                            "这个代理不支持切换模型（session/set_model）：$raw；去掉 model 参数即用代理默认"
+                        } else {
+                            raw
+                        }
                         handle.finished = true
                         return
                     }
                     val result = msg.optJSONObject("result") ?: JSONObject()
                     if (id == initId) {
-                        send("session/new", JSONObject().put("cwd", handle.session.cwd).put("mcpServers", JSONArray()))
-                        sessionCreated = true
-                    } else if (sessionCreated && !promptSent) {
-                        handle.session.acpSessionId = result.optString("sessionId")
-                        promptId = send(
-                            "session/prompt",
-                            JSONObject()
-                                .put("sessionId", handle.session.acpSessionId)
-                                .put(
-                                    "prompt",
-                                    JSONArray().put(
-                                        JSONObject().put("type", "text").put("text", task),
-                                    ),
-                                ),
+                        sessionNewId = send(
+                            "session/new",
+                            JSONObject().put("cwd", handle.session.cwd).put("mcpServers", JSONArray()),
                         )
-                        promptSent = true
+                    } else if (id == sessionNewId) {
+                        handle.session.acpSessionId = result.optString("sessionId")
+                        // 代理在 session/new 里已经把「当前模型 + 可用模型」告诉我们了：
+                        // 不读它，用户就只能猜「这次到底用的什么模型」。
+                        val models = AcpModels.parse(result)
+                        handle.availableModels = models.available
+                        handle.defaultModel = models.currentModelId
+                        when (val choice = AcpModels.choose(handle.requestedModel, models)) {
+                            null -> sendPrompt()
+                            is AcpModels.Choice.Reject -> {
+                                handle.error = choice.message
+                                handle.finished = true
+                                return
+                            }
+                            is AcpModels.Choice.Use -> {
+                                setModelId = send(
+                                    "session/set_model",
+                                    JSONObject()
+                                        .put("sessionId", handle.session.acpSessionId)
+                                        .put("modelId", choice.modelId),
+                                )
+                            }
+                        }
+                    } else if (id == setModelId) {
+                        // codex-acp 对成功的 set_model 回 `{}`（不校验名字），
+                        // 所以这里只认「有没有返回 error」，不再指望它报错。
+                        handle.activeModel = handle.requestedModel
+                        sendPrompt()
                     } else if (id == promptId) {
                         handle.stopReason = result.optString("stopReason").ifBlank { "end_turn" }
                         handle.finished = true
