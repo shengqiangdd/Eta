@@ -2106,9 +2106,10 @@ internal object VirtualDisplayDebugHost {
                         (!pasteClipBefore.optBoolean("ok") && !pasteClipAfter.optBoolean("ok")) ||
                             pasteClipBefore.optString("text") == pasteClipAfter.optString("text")
                     val pasteMethod = pasteWrote.optString("method")
-                    // 契约（RootShellDeviceController.nodeActionJson）：`input_verification`
-                    // 只给 method 含 SET_TEXT 的结果补；ACTION_PASTE 通路只有 `verified: true|false`。
-                    // 只读前者会把真正走通兜底的结果判成失败（2026-10-27 真机踩到）。
+                    // 两个字段都要认：fix171 给 SET_TEXT 通路补 `input_verification`，
+                    // fix182 起 ACTION_PASTE 兜底也补（之前只有 `verified`，按前者判断会把
+                    // 真的走通兜底的结果报成失败 —— 2026-10-27 真机踩到）。
+                    // 保留双读是为了兼容旧版本 APK 的报告，不代表其中一个是多余的。
                     val pasteVerified =
                         pasteWrote.optBoolean("verified") ||
                             pasteWrote.optString("input_verification") == "verified"

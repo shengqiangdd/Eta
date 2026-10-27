@@ -2597,11 +2597,11 @@ internal class RootShellDeviceController(
             // fix171：文本写入有两条通路，回报形状却不一样 —— root 的 `input text` 给
             // `input_verification: verified|not_applied|unknown`，无障碍的 ACTION_SET_TEXT
             // 只给 `verified: true|false`。同一个工具两种字段，按字段判断的模型会漏掉一种。
-            // 这里补齐（保留 verified 兼容旧读取），并且只报能证明的值：
-            // 无障碍通路拿不到「确定没写进去」的证据时不自称 not_applied。
-            if (result.method.contains("SET_TEXT")) {
-                json.put("input_verification", if (verified) "verified" else "unknown")
-            }
+            // fix182：当时只给「method 含 SET_TEXT」补，结果 `ACTION_PASTE`（目标拒绝 SET_TEXT、
+            // 改走粘贴兜底）漏在外面 —— 这正是它唯一存在的情形，等于兜底分支永远没有这个字段。
+            // 判定规则统一收到 [TextInputVerification.wireVerificationField]，并由单测守着。
+            TextInputVerification.wireVerificationField(result.method, verified)
+                ?.let { field -> json.put("input_verification", field) }
         }
         if (!result.ok) {
             json

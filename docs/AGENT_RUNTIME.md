@@ -8431,3 +8431,56 @@ truncated = rootNodes.size >= nodeLimit
 - 密码框、`writeTextPrepared` 的两个 `SERVICE_TIMEOUT` 分支，仍无真机触发样本（旧债）。
 - 长 `hint` 的真机样本仍缺（fix179 只有单测）。
 - 本条 TEXT3g 只覆盖「已有种子文本 + 超长追加」，空框追加是**故意不支持**的（产品语义如此）。
+
+
+## fix182：`ACTION_PASTE` 兜底的成功结果永远没有 `input_verification`（2026-10-27，fix181 之后）
+
+### 一、问题：补字段的条件，恰好排除了唯一需要它的分支
+
+fix171 的出发点是「同一个工具两种字段」：root 的 `input text` 给
+`input_verification: verified|not_applied|unknown`，无障碍的 `ACTION_SET_TEXT` 只给 `verified: true|false`。
+当时的补法是：
+
+```kotlin
+if (result.method.contains("SET_TEXT")) {
+    json.put("input_verification", if (verified) "verified" else "unknown")
+}
+```
+
+而 `ACTION_PASTE` 只在一个场景出现：**目标拒绝了 `ACTION_SET_TEXT`**，改用粘贴兜底。
+于是「method 含 SET_TEXT」这个条件对它**永远不成立** —— 需要补字段的那条通路，被条件本身排除了。
+
+这不是理论问题：fix181 的真机 raw 里清清楚楚只有 `"verified":true`，
+按 `input_verification` 判断的探针把一次完全成功的粘贴报成了「未验证」。
+按字段名判断的消费方（模型同样可能这么读）拿到的结论是「不知道有没有写进去」。
+
+### 二、改法：规则收进纯函数，条件按「是不是文本写入」
+
+- 新增 `TextInputVerification.wireVerificationField(method, verified)`：
+  `verified == null`（例如 `outcomeUnknown`）返回 `null` 不编结论；
+  `method` 含 `SET_TEXT` 或等于 `ACTION_PASTE` → `verified` / `unknown`；其余动作返回 `null`。
+- `nodeActionJson` 改为调用它，不再自己揉条件。
+- 为什么按 method 而不是「有 `verified` 就补」：`verified` 也出现在非文本动作上
+  （例如滚动确认），补一个 `input_verification` 只会让「文本到底写没写进去」更难判断。
+- 三态 vs 二态保持不变：无障碍通路拿不到「确定没写进去」的证据，所以永不自称 `not_applied`。
+
+### 三、验证
+
+- 单测：新增 `paste fallback also carries input_verification`
+  （PASTE 成功/失败、`ACTION_SET_TEXT_PASTE`、非文本动作、`null` 结论、空 method 六个分支）。
+- 门禁：**567 用例 / 0 失败**；lint 报告无新增（报告时间 10:03:29，baseline 376 条账目一致）；
+  产物 **93,018,321 字节**，sha256 `32cb0575a50b85d7…`。
+- 真机（PKX110 / Android 16，canary）：同一标本、同一行，前后对照 ——
+  - 修前：`TEXT3g ... method=ACTION_PASTE verified=true verify=`（空），raw 里没有 `input_verification`；
+  - 修后：`TEXT3g ... verified=true verify=verified`，raw 里出现 `"input_verification":"verified"`。
+  整份 text 探针 PASS，报告留档 `archive/text-probe-20261027-180438-text-32cb0575a50b.txt`。
+
+### 四、教训：「补齐字段」不能按「已有形状」判断
+
+这和 fix177/178/179/180 是同一族毛病，只是这次坏在**条件本身**：
+用「已经长成什么样」来决定「要不要补成统一形状」，新形状永远补不上。
+正确做法是**先定义规则（哪些动作属于哪一类），再据此生成字段** —— 这也是把它抽成纯函数的原因：
+规则可单测，读代码的人不必再从三个分支里反推它到底覆盖了什么。
+
+顺带再记一次「字节数不是内容凭据」：本轮两次构建产物同为 **93,018,321 字节**，
+sha 分别是 `1fe957588057e071…` 与 `32cb0575a50b85d7…`（差别只在注释）。

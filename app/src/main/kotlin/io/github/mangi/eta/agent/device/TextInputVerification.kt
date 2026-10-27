@@ -137,6 +137,27 @@ internal object TextInputVerification {
         }
     }
 
+    /**
+     * 无障碍通路的回报里 `input_verification` 该填什么（`null` = 不填这个字段）。
+     *
+     * 为什么需要它（fix182）：同一个「文本写成了」在这条通路里曾有两种回报形状 ——
+     * `method` 含 `SET_TEXT` 时补 `input_verification`，而 `ACTION_PASTE`（目标拒绝 SET_TEXT、
+     * 改走 [PASTE_METHOD] 兜底）**只有 `verified`**。按 `input_verification` 判断的消费方
+     * 在兜底成功时反而读不到结论：2026-10-27 真机探针就这样把「粘贴成功」报成「未验证」。
+     *
+     * 为什么按 method 而不是「有 verified 就补」：`verified` 也出现在别的动作上，
+     * 那些不是文本写入，补一个 `input_verification` 只会把语义弄乱。
+     */
+    fun wireVerificationField(method: String, verified: Boolean?): String? {
+        if (verified == null) return null
+        val isTextWrite = method.contains("SET_TEXT") || method == PASTE_METHOD
+        if (!isTextWrite) return null
+        return if (verified) "verified" else "unknown"
+    }
+
+    /** 粘贴兜底分支的动作名（与 `AgentAccessibilityService.pasteText` 保持一致）。 */
+    const val PASTE_METHOD = "ACTION_PASTE"
+
     /** 把实际（截断后的）输入内容带进提示里，便于模型对账自己到底点了什么。 */
     private fun echo(typed: String): String {
         val trimmed = typed.trim()

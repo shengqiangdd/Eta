@@ -233,4 +233,21 @@ class TextInputVerificationTest {
         assertTrue(replaced!!.contains("整体替换"))
         assertTrue(replaced != note)
     }
+
+    @Test
+    fun `paste fallback also carries input_verification`() {
+        // 守卫 fix182：ACTION_PASTE 成功时必须给出同样的 verified 结论。
+        // 真机代价：探针只读 input_verification，于是一次完全成功的粘贴被报成「未验证」。
+        assertEquals("verified", TextInputVerification.wireVerificationField("ACTION_PASTE", true))
+        assertEquals("unknown", TextInputVerification.wireVerificationField("ACTION_PASTE", false))
+        // 直写通路（SET_TEXT 被接受）与它的粘贴变体都得保留原有行为。
+        assertEquals("verified", TextInputVerification.wireVerificationField("ACTION_SET_TEXT", true))
+        assertEquals("verified", TextInputVerification.wireVerificationField("ACTION_SET_TEXT_PASTE", true))
+        // 非文本写入的动作不补：verified 只说明它自己那件事做成了。
+        assertNull(TextInputVerification.wireVerificationField("GESTURE_SCROLL", true))
+        assertNull(TextInputVerification.wireVerificationField("ACTION_CLICK", true))
+        // 没有结论就不编一个（outcomeUnknown 的 verified 是 null）。
+        assertNull(TextInputVerification.wireVerificationField("ACTION_PASTE", null))
+        assertNull(TextInputVerification.wireVerificationField("", true))
+    }
 }
