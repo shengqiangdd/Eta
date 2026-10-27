@@ -235,6 +235,37 @@ class TextInputVerificationTest {
     }
 
     @Test
+    fun `replace with identical content is unconfirmed not failed`() {
+        val same = TextInputVerification.Field(text = "abc", password = false)
+        // 写的内容和现有内容完全一样：读出来无差别，不能断言「没写进去」。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(before = same, after = same, typed = "abc"),
+        )
+        // 该变又真没变：「没生效」仍然是正确结论。
+        assertEquals(
+            TextInputVerification.Verdict.NOT_APPLIED,
+            TextInputVerification.judge(before = same, after = same, typed = "xyz"),
+        )
+        val note = TextInputVerification.noteFor(
+            TextInputVerification.Verdict.UNKNOWN,
+            typed = "abc",
+            hadFocusedField = true,
+            beforeText = "abc",
+        )
+        assertNotNull(note)
+        assertTrue(note!!.contains("本来就是"))
+        // 与「读不出文本」必须区分：两者的处理建议不一样。
+        assertTrue(
+            note != TextInputVerification.noteFor(
+                TextInputVerification.Verdict.UNKNOWN,
+                typed = "abc",
+                hadFocusedField = true,
+            ),
+        )
+    }
+
+    @Test
     fun `paste fallback also carries input_verification`() {
         // 守卫 fix182：ACTION_PASTE 成功时必须给出同样的 verified 结论。
         // 真机代价：探针只读 input_verification，于是一次完全成功的粘贴被报成「未验证」。

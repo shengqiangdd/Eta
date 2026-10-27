@@ -862,7 +862,14 @@ internal class RootShellDeviceController(
             .put("submitted", submitted)
             .put("input_mode", mode.name.lowercase(Locale.ROOT))
             .put("input_verification", verdict.name.lowercase(Locale.ROOT))
-        TextInputVerification.noteFor(verdict, typed, hadFocusedField = before != null, mode = mode)
+        TextInputVerification.noteFor(
+            verdict,
+            typed,
+            hadFocusedField = before != null,
+            mode = mode,
+            // 传原值：目标与原文完全相同时，判定只能是「未确认」，提示语要说得准。
+            beforeText = before?.text,
+        )
             ?.let { note -> json.put("note", note) }
         return json.toString()
     }

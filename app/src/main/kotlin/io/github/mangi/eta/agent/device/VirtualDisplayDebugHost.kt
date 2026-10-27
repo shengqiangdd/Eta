@@ -1038,6 +1038,37 @@ internal object VirtualDisplayDebugHost {
                                     },
                                 )
                             }
+                            // STEP9c（fix183）：同一段文本连续写两次。
+                            // 第二次写入后读回来的文本与写入前完全一样 —— 这时既不能说「没写进去」，
+                            // 也不能说「写进去了」。判定必须是 unknown，提示语要说明「本来就是」，
+                            // 不能沿用「被页面吞掉了」（那会让模型以为失败并换方式重试）。
+                            val idemFirst = call(
+                                "type_text",
+                                JSONObject().put("text", "idem-9").put("display_id", inputDisplayId),
+                            )
+                            val idemSecond = call(
+                                "type_text",
+                                JSONObject().put("text", "idem-9").put("display_id", inputDisplayId),
+                            )
+                            val idemSecondNote = idemSecond.optString("note")
+                            report.appendLine(
+                                "STEP9c first=${idemFirst.optString("input_verification")} " +
+                                    "second=${idemSecond.optString("input_verification")} " +
+                                    "note=${idemSecondNote.take(40)}",
+                            )
+                            report.appendLine(
+                                "STEP9c verdict=" + when {
+                                    idemFirst.optString("input_verification") != "verified" ->
+                                        "FAIL_IDEM_FIRST_NOT_VERIFIED:" +
+                                            idemFirst.optString("input_verification")
+                                    idemSecond.optString("input_verification") != "unknown" ->
+                                        "FAIL_IDEM_NOT_UNCONFIRMED:" +
+                                            idemSecond.optString("input_verification")
+                                    !idemSecondNote.contains("本来就是") -> "FAIL_IDEM_NOTE_UNCLEAR"
+                                    else -> "OK"
+                                },
+                            )
+                            call("clear_text", JSONObject().put("display_id", inputDisplayId))
                             // STEP10（fix161）：坐标校验必须用**这块屏**的尺寸。
                             // 720x1280 的屏上报 (900,1200)：旧实现拿主屏 1216x2640 校验 → 放行 →
                             // 直到控制器才拦，错误码变成 TOOL_ERROR。现在应直接 INVALID_ARGUMENT，
@@ -1705,6 +1736,16 @@ internal object VirtualDisplayDebugHost {
                 }
                 return 0
             }
+            /**
+             * 取「真实文本长度」：`text_len` 只在文本**被裁剪**时才带（见 nodeDeclaredTextLen），
+             * 未裁剪时字段缺失、读出来是 0 —— 2026-10-27 真机拿它当「写入前长度」，
+             * 把 before=4 读成 before=0，于是 `248 != 0 + 244` 误报 FAIL_PASTE_NOT_APPENDED。
+             * 未裁剪时 text 就是全文，直接用它的长度；空框两边都是 0。
+             */
+            fun nodeEffectiveTextLen(state: JSONObject, index: Int): Int {
+                val declared = nodeDeclaredTextLen(state, index)
+                return if (declared > 0) declared else nodeText(state, index).length
+            }
             fun nodeTextClipped(state: JSONObject, index: Int): Boolean {
                 val nodes = state.optJSONArray("ui_nodes") ?: return false
                 for (i in 0 until nodes.length()) {
@@ -2106,6 +2147,9 @@ internal object VirtualDisplayDebugHost {
                         (!pasteClipBefore.optBoolean("ok") && !pasteClipAfter.optBoolean("ok")) ||
                             pasteClipBefore.optString("text") == pasteClipAfter.optString("text")
                     val pasteMethod = pasteWrote.optString("method")
+                    // 追加语义必须精确：写入前先记下当前长度，之后要求「正好多出 seed 的长度」。
+                    // 只判「够长」区分不了「真追加」与「被整体替换」—— 后者长度会停留在 seed 长度。
+                    val pasteBeforeLen = nodeEffectiveTextLen(pasteObs, pasteIndex)
                     // 两个字段都要认：fix171 给 SET_TEXT 通路补 `input_verification`，
                     // fix182 起 ACTION_PASTE 兜底也补（之前只有 `verified`，按前者判断会把
                     // 真的走通兜底的结果报成失败 —— 2026-10-27 真机踩到）。
@@ -2117,7 +2161,8 @@ internal object VirtualDisplayDebugHost {
                         "TEXT3g ok=${pasteWrote.optBoolean("ok")} method=$pasteMethod " +
                             "verified=${pasteWrote.optBoolean("verified")} " +
                             "verify=${pasteWrote.optString("input_verification")} " +
-                            "idx=$pasteAfterIndex declaredLen=$pasteDeclared seed=${pasteSeed.length} " +
+                            "idx=$pasteAfterIndex beforeLen=$pasteBeforeLen declaredLen=$pasteDeclared " +
+                            "seed=${pasteSeed.length} " +
                             "clipBefore=${pasteClipBefore.optBoolean("ok")} " +
                             "clipAfter=${pasteClipAfter.optBoolean("ok")} clipSame=$pasteClipSame",
                     )
@@ -2136,8 +2181,9 @@ internal object VirtualDisplayDebugHost {
                                 "FAIL_PASTE_NOT_VERIFIED:" +
                                     pasteWrote.optBoolean("verified") +
                                     "/" + pasteWrote.optString("input_verification")
-                            pasteDeclared < pasteSeed.length ->
-                                "FAIL_PASTE_TEXT_LEN_UNDECLARED:$pasteDeclared"
+                            // 必须是「原文 + 追加」：长度不等就是没按追加写进去（含被整体替换）。
+                            pasteDeclared != pasteBeforeLen + pasteSeed.length ->
+                                "FAIL_PASTE_NOT_APPENDED:$pasteDeclared(before=$pasteBeforeLen)"
                             !pasteClipSame -> "FAIL_CLIPBOARD_NOT_RESTORED"
                             else -> "OK"
                         },

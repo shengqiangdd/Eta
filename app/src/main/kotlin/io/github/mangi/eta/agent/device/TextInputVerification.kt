@@ -72,6 +72,10 @@ internal object TextInputVerification {
                 else -> Verdict.UNKNOWN
             }
         }
+        // 目标内容与现有完全相同：写与不写，读出来一模一样 —— 不能断言「没写进去」。
+        // 2026-10-27：旧写法直接给 NOT_APPLIED，配套文案是「一字未变，多半被页面吞掉了」，
+        // 于是「幂等重写同一段文本」被报成失败，模型会再写一遍（甚至去改别的字段）。
+        if (typed == before.text) return Verdict.UNKNOWN
         return if (after.text == before.text) Verdict.NOT_APPLIED else Verdict.VERIFIED
     }
 
@@ -97,6 +101,7 @@ internal object TextInputVerification {
         typed: String,
         hadFocusedField: Boolean,
         mode: Mode = Mode.REPLACE,
+        beforeText: String? = null,
     ): String? {
         if (mode == Mode.CLEAR) return when {
             verdict == Verdict.VERIFIED -> null
@@ -127,6 +132,13 @@ internal object TextInputVerification {
             mode == Mode.APPEND && verdict == Verdict.UNKNOWN ->
                 "文本变了，但不是「原有内容 + ${echo(typed)}」，无法确认是按追加语义写进去的。" +
                     "请 observe_screen 核对一次，不要当成已经追加成功。"
+            // 目标与原文相同时 judge 只能给 UNKNOWN：这时「没写」与「写进去了」读起来一样，
+            // 不能沿用下面「读不出文本」的说法（那是密码框或树读不到的情形）。
+            mode != Mode.APPEND && verdict == Verdict.UNKNOWN &&
+                beforeText != null && typed == beforeText ->
+                "输入框里本来就是「${echo(typed)}」，写入后读到的仍是同一段文本：" +
+                    "无法区分是这次写进去的，还是原来就在。按「未确认」上报 —— " +
+                    "内容对得上就继续；需要确证时先把内容改成别的值再写回来。"
             verdict == Verdict.UNKNOWN ->
                 "看到了输入框，但读不出它的文本（可能是密码框，或无障碍拿不到文本），无法确认是否写进去。" +
                     "请 observe_screen 核对一次再决定下一步。"

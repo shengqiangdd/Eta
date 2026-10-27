@@ -8484,3 +8484,75 @@ if (result.method.contains("SET_TEXT")) {
 
 顺带再记一次「字节数不是内容凭据」：本轮两次构建产物同为 **93,018,321 字节**，
 sha 分别是 `1fe957588057e071…` 与 `32cb0575a50b85d7…`（差别只在注释）。
+
+
+## fix183：同一段文本重写被报成「失败」；顺带修掉「写入前长度」的取值错误（2026-10-27）
+
+### 一、问题：幂等重写被判成「页面吞了文本」
+
+`REPLACE` 模式写入「与输入框现有内容完全相同」的文本时，读回来必然一模一样。
+旧的 `judge` 只看 `after.text == before.text`，于是给 `NOT_APPLIED`，`note` 是
+「一字未变，多半是被页面吞掉了……不要原样重试第三次」。
+后果不是「少报一次成功」，而是**把模型推去改别的字段或先清空再写** ——
+而用户要的内容其实早就在框里了。
+
+### 二、改法
+
+- `TextInputVerification.judge`：REPLACE/默认分支先判 `typed == before.text` → `UNKNOWN`。
+  写与不写读出来一样，这是「无法确认」，不是「没写进去」。
+- `noteFor` 增加 `beforeText` 参数与专属文案：
+  「输入框里本来就是「…」，写入后读到的仍是同一段文本：无法区分是这次写进去的，还是原来就在。」
+  必须与「读不出它的文本（密码框 / 无障碍拿不到）」分开 —— 两者都可能是 UNKNOWN，含义相反。
+- `RootShellDeviceController.textInputResult` 传入 `beforeText = before?.text`。
+
+### 三、验证：改的是 judge，不等于真机走 judge
+
+第一版把用例放在主屏（TEXT3h，同一段文本连写两次），真机结果是
+**first=verified second=verified** —— 一度以为是产品没修好。
+加了临时 `diag` 字段（只含长度与末尾码点）后看到 **diag1=null diag2=null**：
+返回里根本没有 judge 的痕迹。真相是主屏 `type_text` 默认走**无障碍 `ACTION_SET_TEXT`**，
+判定在 `AgentAccessibilityService` 里（只判「写后内容是否等于目标」），不经过 `judge`。
+那条路径对同内容重写给 `verified` 是合理的，不构成误报。
+
+于是把用例挪到**真正走 judge 的路径**（虚拟屏 root/无障碍注入）：step 探针新增 `STEP9c`，
+同一段文本连续写两次。真机（PKX110 / Android 16，canary `5761bb32`）：
+
+```
+STEP9c first=verified second=unknown note=输入框里本来就是「idem-9」，写入后读到的仍是同一段文本：无法区分是这次写进
+STEP9c verdict=OK
+```
+
+单测：新增 `replace with identical content is unconfirmed not failed`（覆盖 UNKNOWN 与
+NOT_APPLIED 两条路径，并检查两种文案不同）；全量 **568 用例 / 0 失败**。
+
+### 四、顺带修掉自己引入的取值错误（TEXT3g）
+
+fix183 同时把 TEXT3g 的追加断言从「够长」收紧为「正好多出 seed 长度」。第一版用
+`nodeDeclaredTextLen` 取写入前长度，真机报 `FAIL_PASTE_NOT_APPENDED:248(before=0)`。
+原因是 `text_len` **只在文本被裁剪时才带**，未裁剪时读出来是 0，不是「空框」。
+新增 `nodeEffectiveTextLen`（有 `text_len` 用它，否则用 `text.length`）后真机为
+`beforeLen=4 declaredLen=248 seed=244`，判定 OK。
+
+### 五、教训
+
+1. **「改了判定」要先确认「这条路真的调这个判定」**：同一个 `type_text` 在主屏与虚拟屏
+   走的是两套实现（无障碍服务判定 / `judge`），探针必须写明覆盖哪一条。
+2. `text_len` 是「被裁剪时的全文长度」，不是「文本长度」。拿它当长度用，未裁剪会读成 0。
+3. 临时诊断字段在工具层可能被过滤（模型侧看到的是固定结构），但**进程内探针读的是
+   controller 原始返回** —— 这次正是靠它才没在错误方向上继续改。
+
+### 六、仍未覆盖
+
+- 无障碍 `ACTION_SET_TEXT` 路径没有「同内容」专门判定：它报 `verified`，语义是「写后内容等于目标」，
+  不构成误报，但也没有「本来就是」的说明。
+- 密码框、长 hint、`writeTextPrepared` 的两个 `SERVICE_TIMEOUT` 分支仍无真机样本（旧缺口）。
+
+### 七、产物与门禁（定稿）
+
+- 门禁：**568 用例 / 0 失败**；lint 无新增（报告时间 10:44:10，baseline 376 条账目一致）；
+  产物 **93,019,829 字节**，sha256 `c5323cb6e2c176af…`。
+- 真机复跑（定稿产物，PKX110 / Android 16，canary `c5323cb6`）：
+  `STEP9c first=verified second=unknown`，**26 项全 OK / 0 FAIL**，报告
+  `archive/step-probe-20261027-184635-step-c5323cb6e2c1.txt`。
+  首次验证用的是 `5761bb32`（含临时 `diag` 字段），定稿版只删掉该诊断字段，
+  行为相同，但按惯例仍用定稿产物重跑了一遍 —— 两份报告都给出 `STEP9c verdict=OK`。
