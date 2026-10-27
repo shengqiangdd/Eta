@@ -905,39 +905,6 @@
 
     <issue
         id="ObsoleteSdkInt"
-        message="Unnecessary; `SDK_INT` is always >= 33"
-        errorLine1="            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &amp;&amp; e.displayId != Display.DEFAULT_DISPLAY) {"
-        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="123"
-            column="17"/>
-    </issue>
-
-    <issue
-        id="ObsoleteSdkInt"
-        message="Unnecessary; `SDK_INT` is never &lt; 33"
-        errorLine1="        if (Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.R) return null"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="214"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="ObsoleteSdkInt"
-        message="Unnecessary; `SDK_INT` is never &lt; 33"
-        errorLine1="        if (Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.R) return AppExitCause.NONE"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AppExitReporter.kt"
-            line="47"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="ObsoleteSdkInt"
         message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 33. Merge all the resources in this folder into `mipmap-anydpi`.">
         <location
             file="src/main/res/mipmap-anydpi-v26"/>

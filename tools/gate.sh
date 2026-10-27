@@ -227,6 +227,29 @@ run_assemble() {
 
 [ -n "$STAGES" ] || echo "STAGES 为空，什么都不会跑"
 
+# ---- 契约前置检查（与 STAGES 无关，始终执行）-----------------------------
+# 为什么需要它：fix174 把「API 30(R) 的版本判据」全删了 —— minSdk 33 之下那些判断恒真。
+# 于是 minSdk 33 从「事实」变成了**代码依赖的契约**：一旦有人把 minSdk 降下去，
+# windowsOnAllDisplays / getHistoricalProcessExitReasons 就成了未防护调用，
+# 而且不会有任何编译错误、lint 也不会提醒（判据已经删了）。这里把它钉成硬检查。
+run_contract() {
+  echo "==== [0/3] 契约 ===="
+  min_sdk=$(python3 -c 'import re,pathlib;t=pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8");m=re.search(r"minSdk\s*=\s*(\d+)",t);print(m.group(1) if m else "")')
+  if [ -z "$min_sdk" ]; then
+    echo "  ✗ 读不到 app/build.gradle.kts 里的 minSdk"
+    fail=1
+    return
+  fi
+  if [ "$min_sdk" -lt 33 ]; then
+    echo "  ✗ minSdk=$min_sdk < 33：本仓库已依赖「API 30 必然可用」，降下去必须先补回版本判据"
+    fail=1
+    return
+  fi
+  echo "  ✓ minSdk=$min_sdk（≥ 33：API 30 接口不需要版本判断）"
+}
+
+run_contract
+
 if has_stage test || has_stage test-all; then run_test; fi
 if has_stage lint; then run_lint; fi
 if has_stage assemble; then run_assemble; fi

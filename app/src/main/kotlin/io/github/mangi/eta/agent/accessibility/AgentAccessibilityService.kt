@@ -120,7 +120,7 @@ class AgentAccessibilityService : AccessibilityService() {
         // 虚拟屏拿不到节点，但事件会到达 —— 拿它当「这个屏刚变过」的轻量信号：
         // 比截图 diff 便宜，能告诉模型当前截图是否可能已过期。
         event?.let { e ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && e.displayId != Display.DEFAULT_DISPLAY) {
+            if (e.displayId != Display.DEFAULT_DISPLAY) {
                 lastDisplayEventAt[e.displayId] = SystemClock.elapsedRealtime()
                 AndroidAgentLogger.debug {
                     "a11y-event: display=${e.displayId} type=${e.eventType} pkg=${e.packageName}"
@@ -214,7 +214,7 @@ class AgentAccessibilityService : AccessibilityService() {
      */
     private fun mainDisplayRoot(): AccessibilityNodeInfo? {
         val active = rootInActiveWindow
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return active
+        // windowsOnAllDisplays 要 R(30)，而 minSdk 33 —— 这里不需要再判版本。
         val perDisplay = windowsOnAllDisplays ?: return active
         val mainWindows = perDisplay[Display.DEFAULT_DISPLAY].orEmpty().filter { it.root != null }
         if (mainWindows.isEmpty()) return active

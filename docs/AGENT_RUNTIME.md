@@ -7858,3 +7858,66 @@ sha256 `08628ffb12f86d3b…`，`tools/apk-package.py --expect io.github.mangi.et
   在真机上同样没有样本。
 - 探针最多点 3 轮搜索入口，找不到就记 `SKIPPED_NO_EDITABLE`；换个 App 跑很可能落到跳过，
   这时**不能**把 PASS 理解成「append 可用」。
+
+## fix174：把 minSdk 33 之下的死判据清干净（2026-10-27，fix173 之后）
+
+### 一、为什么这算一件正事
+
+fix172 删掉了一处 `if (SDK_INT < R) return null`，但同一个文件里还有同款判据没动，理由是
+「baseline 里有一条 `ObsoleteSdkInt` 挡着，删了要同步更新账目」。于是留下一个很难看的状态：
+**lint 是绿的，但代码里仍有恒真的版本判据**。`ObsoleteSdkInt` 恰恰就是 lint 在提醒
+「你这行永远不会成立」——被 baseline 抑制之后，提醒也一起消失了，等于把 lint 的结论静音。
+
+`minSdk 33`（Android 13）意味着 API 30(R) 的所有接口都必然可用。恒真的版本判断不会造成错误，
+但会误导后续维护：读代码的人会以为应用还要跑在 Android 11 上，从而保留一堆无意义的降级分支。
+
+### 二、清掉的三处（都是行为等价改动）
+
+| 位置 | 原判据 | 处理 |
+| --- | --- | --- |
+| `onAccessibilityEvent`（事件打点） | `SDK_INT >= R && e.displayId != DEFAULT` | 去掉左半边，只判 `displayId != DEFAULT` |
+| `mainDisplayRoot()`（主屏根节点校正） | `if (SDK_INT < R) return active` | 删掉，直接走 `windowsOnAllDisplays` |
+| `AppExitReporter.detectAndMark` | `if (SDK_INT < R) return NONE` | 删掉（`getHistoricalProcessExitReasons` 要 R） |
+
+`app/lint-baseline.xml` 同步删去对应的 **3 条** `ObsoleteSdkInt`，否则 lint 会报
+「baseline 里有条目没复现」（`LintBaselineFixed`），账目不平直接红 ——
+这一步不能省，`tools/lint_baseline_audit.py` 正是用来抓「陈旧 baseline 条目」的。
+
+**保留了** `Build.VERSION_CODES.UPSIDE_DOWN_CAKE`(34) 的 4 处判据：minSdk 33 < 34，它们**是真判据**。
+区分标准只有一条：判据要求的 API 是否高于 minSdk。
+
+### 三、门禁与真机
+
+- `STAGES=test,assemble`：用例 **555 / 0 失败**；APK 91,789,869 字节，sha256 `6dfab8861b542ade…`。
+- `STAGES=lint`：无新增问题，**baseline 376 条命中 + 1 条依赖更新提示未复现 = 377 条**账目一致
+  （原来是 380 条，正好减掉删掉的 3 条）。
+- 真机（PKX110 / A16 / canary，同一份 APK）：
+  `text_probe` 九项全 OK（`PASS`，TEXT8 仍是 `both=4 seedOnly=4 text=etaseedprobe`）；
+  `scope_probe` 八项全 OK（`PASS`）；`step_probe` `PASS_WITH_SKIPS`（仅 STEP17b 无可滚动节点跳过）。
+
+改的正好是「主屏根节点校正 + 无障碍事件打点」这两条被 scope/step 探针反复走到的路径，
+所以这三个探针的结果不是陪跑：`mainDisplayRoot` 一旦改错，`scope_probe` 的 STEP15~18c 会立刻红。
+
+### 四、顺带把「minSdk ≥ 33」钉成门禁
+
+判据删掉后，minSdk 33 就从**事实**变成了**代码依赖的契约**：一旦有人把 minSdk 降到 32，
+`windowsOnAllDisplays` / `getHistoricalProcessExitReasons` 会变成未防护调用，而编译不报错、
+lint 也不再提醒（那些判据已经不存在了）。所以补了一个与 `STAGES` 无关、**每次都跑**的前置阶段：
+
+```text
+==== [0/3] 契约 ====
+  ✓ minSdk=33（≥ 33：API 30 接口不需要版本判断）
+```
+
+它从 `app/build.gradle.kts` 解析 `minSdk`，低于 33 直接判红并打印「降下去必须先补回版本判据」。
+
+**这条检查自己也被验过**（照本仓库的老规矩：门禁要喂一个已知会失败的输入，不能只读代码猜）：
+把 `minSdk = 33` 临时改成 `30` → `✗ minSdk=30 < 33 …`、退出码 1；改回 33 → `✓`、退出码 0。
+注入用的临时改动已 `git checkout` 还原。
+
+### 五、限制
+
+- 这是**行为等价清理**，没有任何功能收益；它的价值是「让 lint 的结论重新可信」。
+- 契约检查只覆盖 `minSdk` 这一个数字，**不检查**「某个 API 是否真的被版本判据保护」这件事本身。
+  也就是说：以后有人新写一处 `if (SDK_INT < 34)` 的恒真判据，契约阶段不会拦，
+  仍要靠 lint 的 `ObsoleteSdkInt`（且**不能**再往 baseline 里加）。

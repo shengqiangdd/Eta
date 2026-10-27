@@ -3,7 +3,6 @@ package io.github.mangi.eta.agent.runtime
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
-import android.os.Build
 
 /** 上一次进程退出的性质。只区分用户真正需要知道的几种。 */
 internal enum class AppExitCause {
@@ -44,7 +43,7 @@ internal object AppExitReporter {
     private const val KEY_HANDLED_AT = "handled_at"
 
     fun detectAndMark(context: Context): AppExitCause {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return AppExitCause.NONE
+        // getHistoricalProcessExitReasons 要 R(30)，而 minSdk 33 —— 不需要再判版本。
         val manager = context.getSystemService(ActivityManager::class.java) ?: return AppExitCause.NONE
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val handledAt = prefs.getLong(KEY_HANDLED_AT, 0L)
