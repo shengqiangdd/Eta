@@ -1705,6 +1705,20 @@ internal object VirtualDisplayDebugHost {
                 return false
             }
 
+            /** 搜索入口：不同应用叫法不同（搜索 \/ 搜索应用 \/ 查找），只要可点就点。 */
+            fun findSearchEntry(state: JSONObject): Int {
+                val nodes = state.optJSONArray("ui_nodes") ?: return -1
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (!node.optBoolean("clickable")) continue
+                    val label = node.optString("desc") + node.optString("text")
+                    if (label.contains("搜索") || label.contains("查找")) {
+                        return node.optInt("index", -1)
+                    }
+                }
+                return -1
+            }
+
             /** 按内容找节点：会话列表一直在动，按旧 index 回读会把写成功误判成写丢。 */
             fun findText(state: JSONObject, needle: String): Int {
                 val nodes = state.optJSONArray("ui_nodes") ?: return -1
@@ -1717,6 +1731,8 @@ internal object VirtualDisplayDebugHost {
             val probePkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
                 ?: "com.coloros.calendar"
             val probeText = "etaprobe"
+            val seedText = "etaseed"
+            val tailText = "probe"
             var displayKey = ""
             try {
                 var waitMs = 0
@@ -1912,6 +1928,134 @@ internal object VirtualDisplayDebugHost {
                             else -> "FAIL_OTHER_CODE:" + crossClear.optString("code")
                         },
                     )
+                }
+
+                // ⑦ 追加写（mode=append）：走的是 TextEditPlanner.insertAtSelection，
+                // 与 replace（直接 ACTION_SET_TEXT 整段写入）是两条独立实现，
+                // fix160 起**只有单测、真机零样本**。这里在虚拟屏上补真机取证：
+                // 先写入 seed，再 append 一段，读回必须是 seed+tail（不是 tail，也不是 seed）。
+                if (displayId <= 0) {
+                    report.appendLine("TEXT7 verdict=SKIPPED_NO_DISPLAY")
+                    report.appendLine("TEXT8 verdict=SKIPPED_NO_DISPLAY")
+                    report.appendLine("TEXT9 verdict=SKIPPED_NO_DISPLAY")
+                } else {
+                    // 日历主界面没有输入框，换一个真有 EditText 的应用（默认便签搜索）。
+                    val appendPkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: "com.coloros.note"
+                    call(
+                        "launch_app",
+                        JSONObject().put("package_name", appendPkg).put("display_id", displayId),
+                    )
+                    var appendObs = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                    )
+                    var editIndex = firstEditable(appendObs)
+                    var tapRounds = 0
+                    while (editIndex < 0 && tapRounds < 3) {
+                        val entry = findSearchEntry(appendObs)
+                        if (entry < 0) break
+                        call(
+                            "tap_element",
+                            JSONObject()
+                                .put("display_id", displayId)
+                                .put("observation_id", appendObs.optString("observation_id"))
+                                .put("index", entry),
+                        )
+                        call("wait", JSONObject().put("duration_ms", 1_200))
+                        appendObs = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                        )
+                        editIndex = firstEditable(appendObs)
+                        tapRounds++
+                    }
+                    report.appendLine(
+                        "TEXT7 display=$displayId pkg=$appendPkg editable=$editIndex tapRounds=$tapRounds",
+                    )
+                    if (editIndex < 0) {
+                        report.appendLine("TEXT7 verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT8 verdict=SKIPPED_NO_EDITABLE")
+                        report.appendLine("TEXT9 verdict=SKIPPED_NO_EDITABLE")
+                    } else {
+                        // display 通路的写入只认焦点框（或唯一的可编辑框），先点成焦点。
+                        call(
+                            "tap_element",
+                            JSONObject()
+                                .put("display_id", displayId)
+                                .put("observation_id", appendObs.optString("observation_id"))
+                                .put("index", editIndex),
+                        )
+                        call("wait", JSONObject().put("duration_ms", 600))
+                        val seeded = call(
+                            "type_text",
+                            JSONObject().put("display_id", displayId).put("text", seedText),
+                        )
+                        report.appendLine(
+                            "TEXT7 seed ok=${seeded.optBoolean("ok")} code=${seeded.optString("code")} " +
+                                "method=${seeded.optString("method")} " +
+                                "verification=${seeded.optString("input_verification")}",
+                        )
+                        report.appendLine(
+                            "TEXT7 verdict=" + when {
+                                !seeded.optBoolean("ok") ->
+                                    "OK_NOT_ATTEMPTED:seed:" + seeded.optString("code")
+                                else -> "OK"
+                            },
+                        )
+                        val appended = call(
+                            "type_text",
+                            JSONObject()
+                                .put("display_id", displayId)
+                                .put("mode", "append")
+                                .put("text", tailText),
+                        )
+                        val appendObs2 = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                        )
+                        val both = findText(appendObs2, seedText + tailText)
+                        val seedOnly = findText(appendObs2, seedText)
+                        report.appendLine(
+                            "TEXT8 ok=${appended.optBoolean("ok")} code=${appended.optString("code")} " +
+                                "method=${appended.optString("method")} " +
+                                "verification=${appended.optString("input_verification")} " +
+                                "both=$both seedOnly=$seedOnly text=${nodeText(appendObs2, both).take(40)}",
+                        )
+                        report.appendLine(
+                            "TEXT8 verdict=" + when {
+                                // 输入框不提供光标/选区时，诚实降级比「假装追加成功」强。
+                                appended.optString("code") == "TEXT_SELECTION_UNAVAILABLE" ->
+                                    "OK_HONEST_DEGRADE"
+                                !appended.optBoolean("ok") ->
+                                    "OK_NOT_ATTEMPTED:" + appended.optString("code")
+                                both >= 0 -> "OK"
+                                seedOnly >= 0 -> "FAIL_APPEND_NOT_APPLIED"
+                                else -> "FAIL_APPEND_LOST"
+                            },
+                        )
+                        // 清空：别把测试文本留在搜索框里。
+                        val cleared = call(
+                            "type_text",
+                            JSONObject().put("display_id", displayId).put("text", ""),
+                        )
+                        val clearObs = call(
+                            "observe_screen",
+                            JSONObject().put("display_id", displayId).put("max_nodes", 60),
+                        )
+                        val leftover = findText(clearObs, seedText)
+                        report.appendLine(
+                            "TEXT9 ok=${cleared.optBoolean("ok")} code=${cleared.optString("code")} " +
+                                "leftover=$leftover",
+                        )
+                        report.appendLine(
+                            "TEXT9 verdict=" + when {
+                                !cleared.optBoolean("ok") -> "FAIL_CLEANUP:" + cleared.optString("code")
+                                leftover >= 0 -> "FAIL_NOT_CLEARED"
+                                else -> "OK"
+                            },
+                        )
+                    }
                 }
             } catch (error: Throwable) {
                 report.appendLine("EXCEPTION=${error.javaClass.simpleName}: ${error.message}")

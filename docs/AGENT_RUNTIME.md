@@ -7786,3 +7786,75 @@ baseline 379 条账目一致**（另有 1 条 `GradleDependency` 本次未复现
   （APK 本身可由 `tools/apk-package.py` + sha256 核对）。
 - 收尾只恢复**前台界面**与测试进程；探针创建过的虚拟屏由各探针自己的 `finally` 释放，
   若探针在中途被系统杀死，虚拟屏仍可能残留（需人工 `virtual_display_release id=all`）。
+
+## fix173：`mode=append` 一直没有真机样本（2026-10-27，fix172 之后）
+
+### 一、缺陷：选区插入只有单测，没有一次真机证据
+
+`TextEditPlanner.insertAtSelection` 是 `type_text(mode=append)` 的核心：读出当前文本 + 选区
+（UTF-16 offset），拼成 `前段 + 插入 + 后段`，再把整段写回并把光标挪到插入末尾。它此前
+**只有 JVM 单测**（覆盖折叠选区、非折叠选区、越界判空）。而单测只能证明「给定 offset 算得对」，
+证明不了这一条链路在真实 App 里成立：
+
+- 第三方输入框会不会给 `ACTION_GET_TEXT` 的选区（很多控件 `selectionStart/End` 是 -1）；
+- 写回用的是 `ACTION_SET_TEXT`（`INPUT_TEXT` 方法），整段替换后光标位置是否被 App 重置；
+- 追加完的内容是否真的落在框里，而不是「返回 ok、内容其实没变」。
+
+旧探针 TEXT1~TEXT6 只覆盖了本机自己的控件与一次跨屏快照，**没有一条走过 append**。
+
+### 二、修法：探针补 TEXT7/TEXT8/TEXT9，在别人的 App 里追加
+
+在 `VirtualDisplayDebugHost.textProbe` 里加了连续三步（跑在**已创建的那块虚拟屏**上，
+不动用户主屏）：
+
+1. 启动一个真实第三方 App（默认 `com.coloros.note`，可用 `inputProbePackage` 覆盖），
+   最多 3 轮点击含「搜索 / 查找」的可点节点（`findSearchEntry`）找可编辑框；
+2. **TEXT7**：`tap_element` 聚焦后用 `type_text(display_id, text="etaseed")` 写入种子；
+3. **TEXT8**：`type_text(display_id, mode="append", text="probe")`，随后重新 observe，
+   按内容判定三种结局 —— 找到 `etaseedprobe` → `OK`；只找到 `etaseed` →
+   **`FAIL_APPEND_NOT_APPLIED`**（工具说成功、内容没变）；两者都没有 →
+   `FAIL_APPEND_LOST`（内容被覆盖/清空）；
+4. **TEXT9**：清空输入框并回读，确认没把测试文本留在用户 App 里（`leftover=-1`）。
+
+判定刻意不用「工具返回 ok」当结论 —— 这与 fix171 之后统一的口径一致：**能不能读回才算数**。
+另外把 `TEXT_SELECTION_UNAVAILABLE` 单列为 `OK_HONEST_DEGRADE`：输入框不给选区时，
+宁可明确报「追加不了」，也不要退化成一个静默的全量替换。
+
+### 三、真机取证（PKX110 / A16 / canary）
+
+```text
+TEXT7 display=62 pkg=com.coloros.note editable=29 tapRounds=1
+TEXT7 seed ok=true code= method=INPUT_TEXT verification=verified
+TEXT8 ok=true code= method=INPUT_TEXT verification=verified both=4 seedOnly=4 text=etaseedprobe
+TEXT9 ok=true code= leftover=-1
+TEXT7/TEXT8/TEXT9 verdict=OK（整体 PASS）
+```
+
+两点值得记下来：
+
+- `both=4 seedOnly=4` 的**形状**才是追加成功的证据：`findText` 返回的是节点序号，
+  `etaseedprobe` 与 `etaseed` 命中同一个节点（4），说明框里确实变长成了拼接串。
+  若 append 静默没生效，会是 `both=-1 seedOnly=4`；若被覆盖，两者都是 -1。
+- 这一步是在 **ColorOS 笔记的搜索框**里完成的，不是本机自己的控件 —— 也就是
+  「第三方输入框 + 虚拟屏 + 追加」这条最容易出问题的组合被真实走过一次。
+
+### 四、门禁与产物
+
+`STAGES=test` 用例 **555 / 0 失败**；`STAGES=lint` 无新增问题、baseline **379 条账目一致**
+（1 条 `GradleDependency` 未复现，依赖远端元数据，不阻断）；打包 **91,789,869 字节**，
+sha256 `08628ffb12f86d3b…`，`tools/apk-package.py --expect io.github.mangi.eta.canary` 通过。
+
+探针（`DEV_APK=/data/local/tmp/Eta-debug.apk sh probe.sh text`）：九项 verdict 全 OK、`PASS`、
+退出码 0，报告 `apk_size=91789869` 与安装包一致。收尾核对：前台回到正式
+`io.github.mangi.eta/.ui.MainActivity`、虚拟屏 0 块、无障碍绑定与开关未变、`airplane=0`、`wifi=1`。
+
+### 五、限制（如实记，别当成已覆盖）
+
+- 只验证了**光标在末尾**的追加（折叠选区）。「选中一段文本再插入、把选区替换掉」这条
+  非折叠选区路径仍**只有单测**，没有真机样本。
+- `OK_HONEST_DEGRADE` 分支这轮**没有真机触发**（ColorOS 笔记的搜索框给了合法选区）。
+  哪个控件会返回 `TEXT_SELECTION_UNAVAILABLE`，目前仍是推断。
+- 只覆盖一个第三方 App 的一种输入框。密码框（`canSafelyReconstruct` 判 false → 应当降级）
+  在真机上同样没有样本。
+- 探针最多点 3 轮搜索入口，找不到就记 `SKIPPED_NO_EDITABLE`；换个 App 跑很可能落到跳过，
+  这时**不能**把 PASS 理解成「append 可用」。
