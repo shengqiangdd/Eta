@@ -60,6 +60,21 @@ wait_a11y_bound() {
   return 1
 }
 
+# 兜底：任何退出路径都要保证本服务留在 enabled 列表里。
+# 不带这个，a11y-rebind 中途失败会把「无障碍服务被自己摘掉」留在用户机器上。
+restore_a11y_enabled() {
+  cur=$(settings get secure enabled_accessibility_services 2>/dev/null)
+  case ":${cur-}:" in
+    *":$A11Y_SERVICE:"*) return 0 ;;
+  esac
+  if [ -n "${cur-}" ]; then
+    settings put secure enabled_accessibility_services "$cur:$A11Y_SERVICE"
+  else
+    settings put secure enabled_accessibility_services "$A11Y_SERVICE"
+  fi
+  echo "收尾：已把 $A11Y_SERVICE 加回 enabled 列表" >&2
+}
+
 a11y_ensure() {
   if a11y_bound; then
     return 0
@@ -86,6 +101,39 @@ case "$MODE" in
     fi
     exit 4
     ;;
+  # 真跑一次「摘掉再加回」：验证 a11y_rebind 这条路径本身。
+  # 与 a11y 模式的区别：a11y 只在「未绑定」时才重绑，而本机两轮都造不出未绑定状态，
+  # 于是那条分支从未被执行过（2026-10-27 记录）。这里主动摘一次，把路径走通并留下证据。
+  # 会临时让主屏上的无障碍动作失效，所以默认拒绝，必须显式授权。
+  a11y-rebind)
+    if [ "${DEV_ALLOW_REBIND-0}" != "1" ]; then
+      echo "拒绝执行：这条命令会临时摘掉 Eta 的无障碍服务（期间主屏上的无障碍动作会失效）。" >&2
+      echo "确认要跑请加 DEV_ALLOW_REBIND=1。" >&2
+      exit 2
+    fi
+    trap restore_a11y_enabled EXIT
+    cur=$(settings get secure enabled_accessibility_services 2>/dev/null)
+    case ":${cur-}:" in
+      *":$A11Y_SERVICE:"*) ;;
+      *)
+        echo "跳过：$A11Y_SERVICE 不在 enabled 列表里（当前：${cur-}）。先跑 sh probe.sh a11y。" >&2
+        exit 4
+        ;;
+    esac
+    a11y_rebind
+    sleep 3
+    if a11y_bound; then
+      echo "摘除后 3 秒仍处于绑定状态：系统或厂商守护把设置写回了（事实记录，不算失败）"
+    else
+      echo "摘除后 3 秒确实解绑：a11y_rebind 的摘除分支生效"
+    fi
+    if wait_a11y_bound 45; then
+      echo "无障碍已重新绑定：$A11Y_SERVICE"
+      exit 0
+    fi
+    echo "重绑失败：$A11Y_SERVICE（enabled=$(settings get secure enabled_accessibility_services)）" >&2
+    exit 4
+    ;;
   scope)
     EXTRA=scope_probe
     REPORT_NAME=scope-probe.txt
@@ -105,7 +153,7 @@ case "$MODE" in
     WAIT_S=${DEV_WAIT:-150}
     ;;
   *)
-    echo "用法: sh probe.sh [scope|step|text|a11y]" >&2
+    echo "用法: sh probe.sh [scope|step|text|a11y|a11y-rebind]" >&2
     exit 2
     ;;
 esac

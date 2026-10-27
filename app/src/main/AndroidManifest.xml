@@ -135,6 +135,18 @@
             android:theme="@android:style/Theme.DeviceDefault.Light"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
+        <!-- 真机探针专用：密码框 + 超长提示语（fix185）。
+             密码判据长期只有单测；无障碍写密码框更是从不校验（一律 verified=false）。
+             空密码框 + 长提示语同时验证「提示语不能算已有内容」。 -->
+        <activity
+            android:name=".agent.device.PasswordProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="Eta 密码框探针"
+            android:taskAffinity="io.github.mangi.eta.probe.password"
+            android:theme="@android:style/Theme.DeviceDefault.Light"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <activity
             android:name=".agent.voice.EtaVoiceAssistActivity"
             android:excludeFromRecents="true"

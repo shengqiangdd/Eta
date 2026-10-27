@@ -2134,4 +2134,6 @@
   <string name="probe_paste_only_title">探針樣本：下面這個輸入框拒絕 ACTION_SET_TEXT，只接受貼上</string>
   <string name="probe_limited_title">探針樣本：下面這個輸入框最多收 10 個字元，並把小寫轉成大寫</string>
   <string name="probe_plain_title">探針樣本：下面這個輸入框會原樣保留你寫入的內容</string>
+  <string name="probe_password_title">探針樣本：密碼輸入框（內容被遮蔽），提示語很長</string>
+  <string name="probe_password_hint">這段提示語刻意寫得很長，如果它被當成輸入框裡的正文，讀回長度和內容都會被污染，從而讓判據出錯——所以它必須被識別為提示語，而不是輸入框裡的內容。</string>
 </resources>

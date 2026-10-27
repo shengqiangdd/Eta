@@ -8749,3 +8749,142 @@ STEP9d 与 STEP8b 共用。
   `STEP16a OK`；`STEP17b` 这次是 `SKIPPED_MAIN_UNSTABLE:ACTION_OUTCOME_UNKNOWN`（主屏动作结果不确定，
   上一轮是 OK）—— 属主屏时序波动，脚本按设计记 SKIPPED。整轮结论 `PASS_WITH_SKIPS`，不是干净 PASS。
 - 仍缺：`a11y_rebind` 的真机证据、STEP15「跨屏 diff 隔离」的干净覆盖（当前总走兜底）。
+
+
+## fix185：把「还能改进但不致命」的缺口一次性收掉（2026-10-27）
+
+用户要求「有什么没改进，全部改进，不用一批批来」。这一轮把此前记录在案的遗留项
+逐条处理掉，并顺手挖出两个**真缺陷**（不是遗漏，而是判据本身在说假话）。
+
+### 一、长文本被判成「没写进去」（真缺陷）
+
+写入上限 `MAX_INPUT_TEXT_CHARS = 1000`，而读回走 `ui_nodes`，单节点文本上限
+`UiNodeWire.MAX_NODE_TEXT_CHARS = 200`。于是写 300 字时：
+
+- 输入框里确实是完整的 300 字；
+- 读回只拿到前 200 字；
+- 旧判据拿「读回内容」和「写入内容」比，判定为「对不上」→ `input_verification=unknown`；
+- 提示语更进一步说「可能被输入框截断（长度上限）」——**把自己的读回上限栽给了对方**。
+
+模型拿到这个结论会去把内容改短，属于典型的「判据说假话」。
+
+修法：
+1. `TextInputVerification.Field` 增加 `fullLength`（采集端已有 `textFullLength`），
+   `focusedFieldOn` 一起带出来；
+2. 读回被砍短（`readbackTruncated`）时改为「前缀一致 + 真实长度等于写入长度 +
+   写前长度与目标不同」→ `verified`；
+3. 前缀一致但真实长度不同 → 仍是 `unknown`，但提示语改成「读回只拿到前 N 个字符（读回上限），
+   输入框里共 M 个」；
+4. 读回被砍短时**不再断言「一字未变」**（旧逻辑会给 `not_applied`）；
+5. 幂等重写（写前长度 == 目标长度）仍只能是 `unknown` —— 我们读不到中间部分，
+   不能把「看起来一样」当成证据。
+
+真机正样本 STEP8c：写 300 字 → `verification=verified readbackLen=200 textLen=300 clipped=true prefixMatch=true`
+（修复前这里必然是 `unknown` + 一句错误的截断提示）。
+
+### 二、无障碍写密码框「从不校验」（真缺陷）
+
+`setNodeText` 原来对密码框直接 `verified = false`，理由写的是「读不到内容」。
+代价是**这条通路对密码框永不校验**，工具层一律回 `input_verification=unknown`。
+
+而掩码长度通常就是字符数：长度从 0 变成 8 是能证明写入发生的。
+修法：写前先记一次长度（关键：写后才读，长度恰好等于目标时无法区分「这次写进去的」
+与「原本就这么长」），写后按 `TextInputVerification.passwordWriteConfirmed` 判定：
+
+- 写后长度 == 目标长度，且写前长度 != 目标长度 → verified；
+- 写前读不到长度（null）→ 仍可 verified（读不到不等于「原来就这么长」）；
+- 长度相同（幂等）、长度对不上（固定掩码 / 截断）、读不到 → false（保持 unknown，不猜）。
+
+### 三、读回等待策略与超时常量（此前只能读代码）
+
+`textReadbackMatches` 里写死的「300ms 窗口 / 40ms 间隔 / 主线程不等」被抽成
+`ReadbackWindow`（可注入时钟与睡眠），语义不变但可测：
+
+- 首次命中 → 只调用一次，不睡；
+- 主线程 → **只试一次**（Compose 的提交也排在主线程，等多久都读不到）；
+- 非主线程 → 在窗口内重试，最后一次只睡剩余时间（不越过截止点）。
+
+同时把超时常量挪到 `AgentAccessibilityTimeouts`，用单测守住不变量：
+`SCROLL_EVENT_OBSERVATION_MS` 必须覆盖「主线程等待 + 手势 + 回调 + 确认」，
+反了会表现为「滚动成功了却报没滚动」。
+
+`writeTextPrepared` / `pasteText` 里两处 `SERVICE_TIMEOUT` 文案抽成 `TextWriteFailures`，
+单测断言「两句必须不同」——合并成一句就把「为什么没写成」丢了。
+
+### 四、两处「说的是同一件事、其实不同」
+
+1. `get_clipboard` 原来对「系统拒绝读取」和「剪贴板确实是空的」共用一个 code
+   （`CLIPBOARD_UNAVAILABLE_OR_EMPTY`）。前者可以再试，后者没必要重试。
+   现在分成 `CLIPBOARD_READ_FAILED` / `CLIPBOARD_EMPTY`（无障碍通路与 root 兜底两处都改）。
+2. 无障碍通路已经用 `ACTION_SET_TEXT` + 读回确认过写入，`DisplayTextInjection`
+   却把 `verified` 丢了，下游再拿「读得到的文本」猜一遍，密码框这类读不到内容的情形
+   就会被降级成 unknown。现在把 `verified` 透传下来：它说 verified 而下游只能给
+   UNKNOWN 时采信它；但**不覆盖 NOT_APPLIED**（两边矛盾说明有别的东西改了内容）。
+
+### 五、探针（把「没测到」变成「测到了」或「明确说没测到」）
+
+- **STEP8c（新）**：长文本 300 字 → 期望 verified 且 `textLen == 300`。
+- **STEP8d（新）**：`PasswordProbeActivity`（密码框 + 超长提示语）→
+  `hintLeaked=false`（提示语没被当正文）+ 密码判据。
+- **STEP8d2（新）**：非 ASCII 走无障碍 `SET_TEXT` 写同一个框，验证 a11y 通路结论。
+- **STEP8 skip 文案**：第三方应用没有可编辑节点时，从含糊的 `STEP8 skipped` 改成
+  `STEP8 verdict=SKIPPED_NO_FIELD:third_party …（正向写入已由 STEP8b/8c 覆盖）`。
+- **STEP15 终于不再总走兜底**：此前首次 tap 必然 `DISPLAY_NO_VISIBLE_WINDOW`
+  （前面的夹具把窗口都关了），于是「跨屏 diff 隔离」这条判据**从没真正生效**。
+  现在先在目标屏拉起窗口，**再回到设置屏观察一次**（关键：预热启动自带
+  `first_observation`，会把最近快照换成目标屏，跨屏前提就没了 —— 第一版就因此
+  报出假失败 `FAIL_CROSS_DISPLAY_DIFF`，实测 `diffAvailable=true`）。
+  真机结果：`relaunch=false diffAvailable=false` → `OK`。
+- **STEP17b**：只对「时序类不确定」（`ACTION_OUTCOME_UNKNOWN`）重试，最多 3 次并把
+  `attempts` 写进报告；`AXIS_MISMATCH` / `NO_SCROLLABLE` 是确定性结论，重试只是白等。
+
+### 六、probe.sh：a11y-rebind 真跑一次重绑路径
+
+`a11y_rebind()` 此前只有「无障碍没绑上」时才触发，而本机两轮都造不出未绑定状态 ——
+**那条分支从没被执行过**。新增 `sh probe.sh a11y-rebind`：
+
+- 默认拒绝执行（会临时让主屏无障碍动作失效），必须 `DEV_ALLOW_REBIND=1`；
+- 执行「摘掉 → 等 3 秒 → 观察是否真解绑 → 加回 → 等绑定」；
+- `EXIT` trap 兜底把服务写回 enabled 列表（失败也不能留在用户机器上）。
+
+真机结果：`摘除后 3 秒仍处于绑定状态（系统/厂商守护把设置写回了，事实记录）`
+→ `无障碍已重新绑定` → `exit=0`，`enabled_accessibility_services` 仍是两项。
+
+### 七、真机证据（PKX110 / Android 16 / ColorOS）
+
+报告：`step-probe-20261027-205602-step-382949493c2b.txt`（APK sha `382949493c2b3979…`，
+611 单测 0 失败），整体 `PASS_WITH_SKIPS`：
+
+| 项 | 结果 |
+|---|---|
+| STEP8c | `OK`（300 字 → verified，textLen=300） |
+| STEP8d | `OK_NOT_PASSWORD_NODE:text_readable` |
+| STEP8d2 | `OK_TEXT_PATH_NOT_PASSWORD` |
+| STEP15 | `OK`（`relaunch=false diffAvailable=false`） |
+| STEP17b | `SKIPPED_MAIN_UNSTABLE:ACTION_OUTCOME_UNKNOWN`（attempts=3） |
+
+### 八、仍未覆盖（如实记录，不假装）
+
+1. **密码分支的真机覆盖仍缺**：本机即使显式 `PasswordTransformationMethod`，
+   无障碍层对这个自建 EditText 仍报 `password=false`、内容明文可读（大概率是
+   「应用自己的无障碍服务读自家窗口」被系统清了标志）。要覆盖只能在第三方输入框里测，
+   不适合放进自动探针。判据本身由单测覆盖（`passwordWriteConfirmed` 6 组取值）。
+2. **长提示语只覆盖了一半**：`hintLeaked=false` 证明了空框时提示语没被当正文，
+   但「提示语很长 + 有内容 + 追加」的组合仍未测。
+3. **`MAIN_SYNC_TIMEOUT_SECONDS`** 的真实超时路径仍无法在单测里造出来
+   （需要在真实主线程上阻塞 3 秒），只覆盖了它的常量不变量与失败文案映射。
+4. **STEP17b** 仍会随主屏时序波动跳过；本轮只做到「重试 + 记录次数」，没有让它稳定。
+5. 剪贴板两种 code 只做了代码改动，真机上没造出「系统拒绝读取」的状态。
+
+### 九、教训
+
+1. **判据的输入被上游截断时，判据必须知道这件事**。读回上限 200 与写入上限 1000
+   差了 5 倍，而两边各自都是「合理配置」—— 直到把它们放在一起看，才发现
+   「写成功了却报未确认，还怪对方截断」。
+2. **「从不校验」比「校验错」更难发现**：`verified = false` 看起来是保守、安全，
+   但它意味着这条路径永远不给结论，用户看到的是永久 unknown。
+3. **加了预热不等于前提成立**：预热启动自带观察，把「跨屏」悄悄变成「同屏」，
+   第一版因此报了假失败。修好它的关键是「预热之后再重新观察一次」，
+   而不是调大等待时间。
+4. **重试要区分「不确定」与「已确定」**：对 `AXIS_MISMATCH` 重试 3 次只是把
+   2 秒变成 6 秒，结论一模一样。

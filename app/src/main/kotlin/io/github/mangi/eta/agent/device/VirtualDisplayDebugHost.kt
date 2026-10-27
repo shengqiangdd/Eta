@@ -888,7 +888,10 @@ internal object VirtualDisplayDebugHost {
                     )
                     val inputDisplayId = inputDisplay.optInt("display_id", -1)
                     if (inputDisplayId <= 0) {
-                        report.appendLine("STEP8 skipped create_failed pkg=$probePkg")
+                        report.appendLine(
+                            "STEP8 verdict=SKIPPED_CREATE_FAILED:third_party pkg=$probePkg " +
+                                "（正向写入已由 STEP8b/8c 的自带夹具覆盖）",
+                        )
                     } else {
                         var inputState = call(
                             "observe_screen",
@@ -1096,7 +1099,10 @@ internal object VirtualDisplayDebugHost {
                                 },
                             )
                         } else {
-                            report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
+                            report.appendLine(
+                                "STEP8 verdict=SKIPPED_NO_FIELD:third_party pkg=$probePkg " +
+                                    "（正向写入已由 STEP8b/8c 的自带夹具覆盖）",
+                            )
                         }
                         // STEP9d（fix184）：写入被输入框截断/改写时，读回来的内容变了，
                         // 但不是要写的那段 —— 旧判据只比「和写入前不同」，会报 verified。
@@ -1258,6 +1264,159 @@ internal object VirtualDisplayDebugHost {
                                     // 说成功了、读回来却不是要写的内容 —— 与 STEP9d 相反方向的假成功。
                                     plainText != "eta" -> "FAIL_FIELD_MISMATCH:$plainText"
                                     else -> "OK"
+                                },
+                            )
+                            call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
+                            Thread.sleep(600L)
+                        }
+                        // STEP8c（fix185）：写 300 字（> 读回上限 200，< 输入上限 1000）。
+                        // 修复前：读回只拿到前 200 字 → 判成「内容对不上」，提示语还会说
+                        // 「可能被输入框截断」—— 其实那是我们自己的读回上限。
+                        val longLaunch = launchProbe(PlainTextProbeActivity::class.java.name)
+                        val (longIndex, longWaitMs) = waitProbeField(plainTitle)
+                        if (longIndex < 0) {
+                            report.appendLine(
+                                "STEP8c launch=${longLaunch.optBoolean("ok")} " +
+                                    "wait=${longWaitMs}ms editable=$longIndex",
+                            )
+                            report.appendLine("STEP8c verdict=SKIPPED_NO_PLAIN_FIELD")
+                        } else {
+                            val longTyped = "eta-" + "7".repeat(296)
+                            val longWrote = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("display_id", inputDisplayId)
+                                    .put("text", longTyped)
+                                    .put("mode", "replace"),
+                            )
+                            val longAfter = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val longNode = limitedField(longAfter)
+                            val longFieldText = longNode?.optString("text").orEmpty()
+                            val longFieldLen = limitedFieldLen(longAfter)
+                            val longClipped = longNode?.optBoolean("text_clipped") ?: false
+                            val longVerification = longWrote.optString("input_verification")
+                            report.appendLine(
+                                "STEP8c sent=${longTyped.length} verification=$longVerification " +
+                                    "readbackLen=${longFieldText.length} textLen=$longFieldLen " +
+                                    "clipped=$longClipped prefixMatch=${longTyped.startsWith(longFieldText)} " +
+                                    "note=${longWrote.optString("note").take(40)}",
+                            )
+                            report.appendLine(
+                                "STEP8c verdict=" + when {
+                                    !longWrote.optBoolean("ok") ->
+                                        "FAIL_WRITE:" + longWrote.optString("code")
+                                    longWrote.optInt("chars") != longTyped.length -> "FAIL_SENT_LENGTH"
+                                    longVerification != "verified" ->
+                                        "FAIL_NOT_VERIFIED:$longVerification"
+                                    // 读回被采集上限砍短是正常的；真实长度必须等于写入长度。
+                                    longFieldLen != longTyped.length ->
+                                        "FAIL_FIELD_LENGTH:$longFieldLen"
+                                    else -> "OK"
+                                },
+                            )
+                            call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
+                            Thread.sleep(600L)
+                        }
+                        // STEP8d（fix185）：密码框 + 超长提示语。
+                        // 密码判据只能比长度：写 9 位后长度应为 9（掩码可读时）；
+                        // 掩码读不出长度时不冒充成功，记 OK_UNKNOWN_MASK_UNREADABLE。
+                        val pwTitle = context.getString(
+                            io.github.mangi.eta.R.string.probe_password_title,
+                        )
+                        val pwLaunch = launchProbe(PasswordProbeActivity::class.java.name)
+                        val (pwIndex, pwWaitMs) = waitProbeField(pwTitle)
+                        if (pwIndex < 0) {
+                            report.appendLine(
+                                "STEP8d launch=${pwLaunch.optBoolean("ok")} " +
+                                    "wait=${pwWaitMs}ms editable=$pwIndex",
+                            )
+                            report.appendLine("STEP8d verdict=SKIPPED_NO_PASSWORD_FIELD")
+                        } else {
+                            val pwBefore = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val pwBeforeText = limitedField(pwBefore)?.optString("text").orEmpty()
+                            // 空密码框会显示提示语：一旦提示语被当成正文，读回长度会直接暴露。
+                            val pwHintLeaked = pwBeforeText.length > PasswordProbeActivity.HINT_LENGTH_TARGET
+                            val pwTyped = "pw-eta123"
+                            val pwWrote = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("display_id", inputDisplayId)
+                                    .put("text", pwTyped)
+                                    .put("mode", "replace"),
+                            )
+                            val pwAfter = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val pwAfterLen = limitedFieldLen(pwAfter)
+                            val pwVerification = pwWrote.optString("input_verification")
+                            report.appendLine(
+                                "STEP8d sent=${pwTyped.length} verification=$pwVerification " +
+                                    "beforeLen=${pwBeforeText.length} afterLen=$pwAfterLen " +
+                                    "hintLeaked=$pwHintLeaked " +
+                                    "password=${limitedField(pwAfter)?.optBoolean("password")}",
+                            )
+                            report.appendLine(
+                                "STEP8d verdict=" + when {
+                                    !pwWrote.optBoolean("ok") ->
+                                        "FAIL_WRITE:" + pwWrote.optString("code")
+                                    pwHintLeaked -> "FAIL_HINT_AS_CONTENT"
+                                    limitedField(pwAfter)?.optBoolean("password") != true ->
+                                        // 2026-10-27 真机（ColorOS / A16）：密码框在无障碍层可能不被标记
+                                        // password=true（此时内容明文可读）。这不是产品缺陷，
+                                        // 而是「密码分支没被测到」—— 如实记录，不冒充通过。
+                                        "OK_NOT_PASSWORD_NODE:text_readable"
+                                    pwVerification == "verified" && pwAfterLen == pwTyped.length -> "OK"
+                                    // 掩码长度不可靠（例如固定显示 6 个 ●）：判据只能说不确定 —— 这是安全方向。
+                                    pwVerification == "unknown" ->
+                                        "OK_UNKNOWN_MASK_UNREADABLE:after=$pwAfterLen"
+                                    else -> "FAIL_VERIFICATION:$pwVerification"
+                                },
+                            )
+                            // STEP8d2（fix185）：非 ASCII 走无障碍 SET_TEXT —— 密码框只能比长度。
+                            // 修复前这条通路对密码框一律 verified=false，等于从不校验。
+                            val pwA11yTyped = "密码样本"
+                            val pwA11yWrote = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("display_id", inputDisplayId)
+                                    .put("text", pwA11yTyped)
+                                    .put("mode", "replace"),
+                            )
+                            val pwA11yAfter = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val pwA11yLen = limitedFieldLen(pwA11yAfter)
+                            val pwA11yVerification = pwA11yWrote.optString("input_verification")
+                            val pwA11yMethod = pwA11yWrote.optString("method")
+                            report.appendLine(
+                                "STEP8d2 sent=${pwA11yTyped.length} method=$pwA11yMethod " +
+                                    "verification=$pwA11yVerification afterLen=$pwA11yLen",
+                            )
+                            report.appendLine(
+                                "STEP8d2 verdict=" + when {
+                                    !pwA11yWrote.optBoolean("ok") ->
+                                        "FAIL_WRITE:" + pwA11yWrote.optString("code")
+                                    // 无障碍不通时本应用可走进程内注入：没测到 a11y 判据，不能冒充。
+                                    pwA11yMethod == "APP_INJECT" -> "OK_APP_INJECT_NOT_A11Y"
+                                    !pwA11yMethod.contains("SET_TEXT") ->
+                                        "FAIL_NOT_A11Y_PATH:$pwA11yMethod"
+                                    // 节点不被标记为密码框时，走的是普通文本判据：
+                                    // 密码分支（passwordWriteConfirmed）仍未覆盖 —— 如实记录。
+                                    limitedField(pwA11yAfter)?.optBoolean("password") != true ->
+                                        "OK_TEXT_PATH_NOT_PASSWORD"
+                                    pwA11yVerification == "verified" &&
+                                        pwA11yLen == pwA11yTyped.length -> "OK"
+                                    pwA11yVerification == "unknown" ->
+                                        "OK_UNKNOWN_MASK_UNREADABLE:after=$pwA11yLen"
+                                    else -> "FAIL_VERIFICATION:$pwA11yVerification"
                                 },
                             )
                             call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
@@ -1581,7 +1740,7 @@ internal object VirtualDisplayDebugHost {
         // STEP15（fix165）：动作在哪块屏，after 就必须是哪块屏的反馈。
         // 修复前：after 跟着「最近一次观察的屏」走 —— 快照在 A 屏、动作在 B 屏时，
         // 反馈来自 A 屏，而 after 里连屏信息都没有，模型完全无从察觉。
-        val scopeObs = call(
+        var scopeObs = call(
             "observe_screen",
             JSONObject().put("display_id", settingsDisplayId).put("max_nodes", 20),
         )
@@ -1593,6 +1752,30 @@ internal object VirtualDisplayDebugHost {
                 .put("coordinate_space", "normalized")
                 .put("x", 500)
                 .put("y", 900),
+        )
+        // 2026-10-27（fix185）：STEP8b/8c/8d 都会关掉夹具窗口，实测首次 tap 必然
+        // DISPLAY_NO_VISIBLE_WINDOW —— 于是「跨屏 diff 隔离」这条判据永远走兜底、从没真正测到。
+        // 先自己把窗口拉起来（不等失败），判据才有机会生效；拉不起来仍走原来的兜底。
+        val scopeWarm = call(
+            "virtual_display_launch",
+            JSONObject()
+                .put("id", inputDisplay.optString("id"))
+                .put("package_name", selfPackage)
+                .put("activity", selfPackage + "/" + PlainTextProbeActivity::class.java.name)
+                .put("force", true),
+        )
+        Thread.sleep(2_500L)
+        report.appendLine(
+            "STEP15 warm ok=${scopeWarm.optBoolean("ok")} " +
+                "launched=${scopeWarm.optBoolean("launched")} " +
+                "code=${scopeWarm.optString("code")}",
+        )
+        // 预热启动自带一次观察（first_observation），最近快照因此变成了这块屏 ——
+        // 「跨屏」前提就没了，diff 变成合法的同屏对比（实测 diffAvailable=true，报成假失败）。
+        // 所以必须在预热之后重新在设置屏观察一次，把跨屏前提建回来。
+        scopeObs = call(
+            "observe_screen",
+            JSONObject().put("display_id", settingsDisplayId).put("max_nodes", 20),
         )
         var crossTap = crossTapAction()
         // 是否走过「这块屏没窗口 → 自己拉夹具」的兜底。
@@ -1744,26 +1927,41 @@ internal object VirtualDisplayDebugHost {
             return -1
         }
         fun sampleOn(display: Int): Triple<String, Int, JSONObject> {
-            val state = call(
-                "observe_screen",
-                JSONObject().put("display_id", display).put("max_nodes", 60),
-            )
-            val observation = state.optString("observation_id")
-            val scrollable = firstScrollableIndex(state)
-            val result =
-                if (observation.isBlank() || scrollable < 0) {
-                    JSONObject().put("code", "NO_SCROLLABLE")
-                } else {
-                    call(
-                        "scroll_element",
-                        JSONObject()
-                            .put("observation_id", observation)
-                            .put("index", scrollable)
-                            .put("direction", "down")
-                            .put("amount", "small"),
-                    )
-                }
-            return Triple(observation, scrollable, result)
+            var observation = ""
+            var scrollable = -1
+            var result = JSONObject().put("code", "NO_SCROLLABLE")
+            var attempt = 0
+            // 2026-10-27（fix185）：本机实测同一步骤在 OK 与 SKIPPED_MAIN_UNSTABLE 之间来回跳
+            // （无障碍时序波动，不是功能坏）。只试一次就等于把「偶发」当结论；
+            // 最多试 3 次，并把次数写进报告 —— 仍然不成时如实记 SKIPPED，不冒充通过。
+            while (attempt < 3) {
+                attempt++
+                val state = call(
+                    "observe_screen",
+                    JSONObject().put("display_id", display).put("max_nodes", 60),
+                )
+                observation = state.optString("observation_id")
+                scrollable = firstScrollableIndex(state)
+                result =
+                    if (observation.isBlank() || scrollable < 0) {
+                        JSONObject().put("code", "NO_SCROLLABLE")
+                    } else {
+                        call(
+                            "scroll_element",
+                            JSONObject()
+                                .put("observation_id", observation)
+                                .put("index", scrollable)
+                                .put("direction", "down")
+                                .put("amount", "small"),
+                        )
+                    }
+                if (result.optBoolean("ok")) break
+                // 只对「时序类不确定」重试：AXIS_MISMATCH / NO_SCROLLABLE 是确定性结论，
+                // 重试只会白等（本机实测 3 次全是 AXIS_MISMATCH）。
+                if (result.optString("code") != "ACTION_OUTCOME_UNKNOWN") break
+                Thread.sleep(400L)
+            }
+            return Triple(observation, scrollable, result.put("attempts", attempt))
         }
 
         var sameScopeDisplay = settingsDisplayId
@@ -1782,6 +1980,7 @@ internal object VirtualDisplayDebugHost {
         report.appendLine(
             "STEP17b display=$sameScopeDisplay scrollable=$sameScopeScrollable " +
                 "code=$sameScopeCode ok=${sameScopeScroll.optBoolean("ok")} " +
+                "attempts=${sameScopeScroll.optInt("attempts", 1)} " +
                 "method=${sameScopeScroll.optString("method")}",
         )
         report.appendLine(

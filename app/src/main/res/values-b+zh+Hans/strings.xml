@@ -2134,4 +2134,6 @@
   <string name="probe_paste_only_title">探针样本：下面这个输入框拒绝 ACTION_SET_TEXT，只接受粘贴</string>
   <string name="probe_limited_title">探针样本：下面这个输入框最多收 10 个字符，并把小写转成大写</string>
   <string name="probe_plain_title">探针样本：下面这个输入框会原样保留你写入的内容</string>
+  <string name="probe_password_title">探针样本：密码输入框（内容被遮蔽），提示语很长</string>
+  <string name="probe_password_hint">这段提示语刻意写得很长，如果它被当成输入框里的正文，读回的长度和内容都会被污染，从而让判据出错——所以它必须被识别为提示语，而不是输入框里的内容。</string>
 </resources>

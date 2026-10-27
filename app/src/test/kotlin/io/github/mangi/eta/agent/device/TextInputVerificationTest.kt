@@ -456,4 +456,128 @@ class TextInputVerificationTest {
         assertNull(TextInputVerification.wireVerificationField("ACTION_PASTE", null))
         assertNull(TextInputVerification.wireVerificationField("", true))
     }
+
+    // ---- fix185：读回被采集上限砍短（写 300 字，只读回前 200 字） -----------------
+
+    @Test
+    fun `long text whose readback was clipped by the collector is still verified`() {
+        val typed = "a".repeat(300)
+        val verdict = TextInputVerification.judge(
+            before = TextInputVerification.Field("seed", password = false, fullLength = 4),
+            after = TextInputVerification.Field(typed.take(200), password = false, fullLength = 300),
+            typed = typed,
+        )
+        // 修复前：读回内容 ≠ 写入内容 → UNKNOWN，提示语还说是输入框截断的。
+        assertEquals(TextInputVerification.Verdict.VERIFIED, verdict)
+    }
+
+    @Test
+    fun `clipped readback with a wrong real length stays unknown and names the readback limit`() {
+        val typed = "b".repeat(300)
+        val after = TextInputVerification.Field(typed.take(200), password = false, fullLength = 260)
+        val verdict = TextInputVerification.judge(
+            before = TextInputVerification.Field("seed", password = false, fullLength = 4),
+            after = after,
+            typed = typed,
+        )
+        assertEquals(TextInputVerification.Verdict.UNKNOWN, verdict)
+        val note = TextInputVerification.noteFor(
+            verdict = verdict,
+            typed = typed,
+            hadFocusedField = true,
+            beforeText = "seed",
+            after = after,
+        )
+        assertNotNull(note)
+        // 必须说清「是我们读不全」，而不是把责任推给输入框。
+        assertTrue(note!!.contains("读回只拿到前 200 个字符"))
+        assertTrue(note.contains("共 260 个字符"))
+    }
+
+    @Test
+    fun `clipped readback whose prefix differs is reported as rewritten`() {
+        val typed = "c".repeat(300)
+        val after = TextInputVerification.Field("X".repeat(200), password = false, fullLength = 300)
+        val verdict = TextInputVerification.judge(
+            before = TextInputVerification.Field("seed", password = false, fullLength = 4),
+            after = after,
+            typed = typed,
+        )
+        assertEquals(TextInputVerification.Verdict.UNKNOWN, verdict)
+        val note = TextInputVerification.noteFor(
+            verdict = verdict,
+            typed = typed,
+            hadFocusedField = true,
+            beforeText = "seed",
+            after = after,
+        )
+        assertNotNull(note)
+        assertTrue(note!!.contains("与你要写入的内容不一致"))
+    }
+
+    @Test
+    fun `clipped readback cannot claim an idempotent rewrite was not applied`() {
+        // 写的就是框里已经有的那 300 字：我们只看到前 200 字，无法区分「写进去了」与「原本就在」。
+        // 报 NOT_APPLIED（字未变、多半被吞了）就是猜错了方向。
+        val typed = "d".repeat(300)
+        val clipped = typed.take(200)
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = TextInputVerification.Field(clipped, password = false, fullLength = 300),
+                after = TextInputVerification.Field(clipped, password = false, fullLength = 300),
+                typed = typed,
+            ),
+        )
+    }
+
+    @Test
+    fun `clipped readback append needs the real length to match`() {
+        val before = TextInputVerification.Field("a".repeat(200), password = false, fullLength = 200)
+        val typed = "z".repeat(150)
+        // 正确追加：真实长度 350，读回前缀仍是原文前 200 字。
+        assertEquals(
+            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.judge(
+                before = before,
+                after = TextInputVerification.Field(
+                    "a".repeat(200),
+                    password = false,
+                    fullLength = 350,
+                ),
+                typed = typed,
+                mode = TextInputVerification.Mode.APPEND,
+            ),
+        )
+        // 只追加了一部分：真实长度 300 ≠ 350，不能算成功，也不能算「一字未变」。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = before,
+                after = TextInputVerification.Field(
+                    "a".repeat(200),
+                    password = false,
+                    fullLength = 300,
+                ),
+                typed = typed,
+                mode = TextInputVerification.Mode.APPEND,
+            ),
+        )
+    }
+
+    @Test
+    fun `password write confirmation needs an exact target length and a real change`() {
+        // 空框 → 8 位：写后长度等于目标，且与写前不同 → 能确认。
+        assertTrue(TextInputVerification.passwordWriteConfirmed(0, 8, 8))
+        // 写前读不到长度（null）不等于「原来就这么长」：写后正好 8 位可以确认。
+        assertTrue(TextInputVerification.passwordWriteConfirmed(null, 8, 8))
+        // 幂等重写：长度前后一样，读不出差别。
+        assertFalse(TextInputVerification.passwordWriteConfirmed(8, 8, 8))
+        // 固定掩码（例如始终 6 个 ●）或写入被截断：长度对不上，不能算成功。
+        assertFalse(TextInputVerification.passwordWriteConfirmed(0, 6, 8))
+        // 长度根本读不到：无法确认。
+        assertFalse(TextInputVerification.passwordWriteConfirmed(0, null, 8))
+        // 空写入没有可确认的内容。
+        assertFalse(TextInputVerification.passwordWriteConfirmed(0, 0, 0))
+    }
 }

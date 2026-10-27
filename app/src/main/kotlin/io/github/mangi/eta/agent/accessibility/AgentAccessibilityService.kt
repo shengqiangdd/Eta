@@ -28,6 +28,8 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import io.github.mangi.eta.agent.device.AgentAccessibilityTimeouts
+import io.github.mangi.eta.agent.device.ReadbackWindow
 import io.github.mangi.eta.agent.device.ScrollAxis
 import io.github.mangi.eta.agent.device.ScrollAxisContract
 import io.github.mangi.eta.agent.device.ScrollAmount
@@ -35,6 +37,8 @@ import io.github.mangi.eta.agent.device.ScrollDirection
 import io.github.mangi.eta.agent.device.ScrollEvidence
 import io.github.mangi.eta.agent.device.ScrollEvidenceContract
 import io.github.mangi.eta.agent.device.ScrollMovementSource
+import io.github.mangi.eta.agent.device.TextInputVerification
+import io.github.mangi.eta.agent.device.TextWriteFailures
 import io.github.mangi.eta.agent.device.UiNodeWire
 import io.github.mangi.eta.agent.device.RootScrollMotionContract
 import io.github.mangi.eta.core.AndroidAgentLogger
@@ -1039,12 +1043,12 @@ class AgentAccessibilityService : AccessibilityService() {
             is MainThreadCallResult.Completed -> prepared.value
                 ?: return NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
             MainThreadCallResult.NOT_STARTED -> return NodeActionResult.failure(
-                "SERVICE_TIMEOUT",
-                "无障碍服务主线程无响应，动作未执行；请重新观察后重试",
+                TextWriteFailures.CODE,
+                TextWriteFailures.notStartedMessage(),
             )
             MainThreadCallResult.OUTCOME_UNKNOWN -> return NodeActionResult.failure(
-                "SERVICE_TIMEOUT",
-                "无障碍层在准备写入时出错或超时，文本未写入；请重新观察后重试",
+                TextWriteFailures.CODE,
+                TextWriteFailures.outcomeUnknownMessage(),
             )
         }
         val ready = when (target) {
@@ -1188,9 +1192,14 @@ class AgentAccessibilityService : AccessibilityService() {
 
     fun readClipboard(): ClipboardReadResult = runOnMainSync {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        // 2026-10-27（fix185）：原来两种情形共用一个 code「CLIPBOARD_UNAVAILABLE_OR_EMPTY」，
+        // 用户和模型都分不清「系统拒绝读取」与「剪贴板确实是空的」——
+        // 前者可以再试或换个办法，后者没必要重试。
         val clip = runCatching { clipboard.primaryClip }.getOrNull()
-            ?: return@runOnMainSync ClipboardReadResult.failure()
-        if (clip.itemCount <= 0) return@runOnMainSync ClipboardReadResult.failure()
+            ?: return@runOnMainSync ClipboardReadResult.failure(code = "CLIPBOARD_READ_FAILED")
+        if (clip.itemCount <= 0) {
+            return@runOnMainSync ClipboardReadResult.failure(code = "CLIPBOARD_EMPTY")
+        }
         ClipboardReadResult(
             ok = true,
             text = clip.getItemAt(0).coerceToText(this)?.toString().orEmpty(),
@@ -1526,19 +1535,17 @@ class AgentAccessibilityService : AccessibilityService() {
      */
     private fun textReadbackMatches(node: AccessibilityNodeInfo, expected: String): Boolean {
         fun matches(): Boolean = runCatching { node.realText() }.getOrNull() == expected
-        if (matches()) return true
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            val deadline = SystemClock.uptimeMillis() + TEXT_READBACK_TIMEOUT_MS
-            while (true) {
-                // refresh 失败不代表内容没更新（节点对象会被原地更新），所以不看它的返回值，
-                // 只看读到的内容。
-                runCatching { node.refresh() }
-                if (matches()) return true
-                val remaining = deadline - SystemClock.uptimeMillis()
-                if (remaining <= 0L) break
-                SystemClock.sleep(minOf(TEXT_READBACK_INTERVAL_MS, remaining))
-            }
+        // 2026-10-27（fix185）：等待策略抽成 ReadbackWindow（可注入时钟），由单测覆盖；
+        // 语义未变：非主线程在窗口内重试，主线程只试一次（主线程上等待只会把界面卡住）。
+        val matched = TEXT_READBACK_WINDOW.await(
+            isMainThread = Looper.myLooper() == Looper.getMainLooper(),
+        ) {
+            // refresh 失败不代表内容没更新（节点对象会被原地更新），所以不看它的返回值，
+            // 只看读到的内容。
+            runCatching { node.refresh() }
+            matches()
         }
+        if (matched) return true
         // 只在失败时留一行现场：哪个可编辑节点、期望与实际长度各多少（不记文本内容）。
         // 正常路径零日志 —— 文本写入是高频动作，每条都打会淹没 logcat。
         android.util.Log.w(
@@ -1582,12 +1589,12 @@ class AgentAccessibilityService : AccessibilityService() {
             // 两者都没有写过文本（block 只读不写），所以都可以安全重试 —— 但不能都说成
             // 「主线程无响应」，那会让“为什么没写成”在现场丢掉。
             MainThreadCallResult.NOT_STARTED -> NodeActionResult.failure(
-                "SERVICE_TIMEOUT",
-                "无障碍服务主线程无响应，动作未执行；请重新观察后重试",
+                TextWriteFailures.CODE,
+                TextWriteFailures.notStartedMessage(),
             )
             MainThreadCallResult.OUTCOME_UNKNOWN -> NodeActionResult.failure(
-                "SERVICE_TIMEOUT",
-                "无障碍层在准备写入时出错或超时，文本未写入；请重新观察后重试",
+                TextWriteFailures.CODE,
+                TextWriteFailures.outcomeUnknownMessage(),
             )
         }
 
@@ -1596,6 +1603,14 @@ class AgentAccessibilityService : AccessibilityService() {
         text: String,
         cursor: Int,
     ): NodeActionResult {
+        val password = runCatching { node.isPassword }.getOrDefault(true)
+        // 密码框读不到内容，但通常能读到长度（掩码字符数）。必须在写之前先记一次：
+        // 写后长度恰好等于目标长度时，没有这个基准就分不清「这次写进去的」与「原本就这么长」。
+        val beforePasswordLength = if (password) {
+            runCatching { node.realText().length }.getOrNull()
+        } else {
+            null
+        }
         val setTextArgs = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -1613,7 +1628,6 @@ class AgentAccessibilityService : AccessibilityService() {
         // 已经带着新文本（AccessibilityNodeInfo 会被原地更新），于是写入成功也被报成
         // ACTION_OUTCOME_UNKNOWN（ok=false）。判定因此只看**内容相等**：内容相符就是证据，
         // 内容还没落地时再给一段有限的读回窗口（见 [textReadbackMatches]）。
-        val password = runCatching { node.isPassword }.getOrDefault(true)
         if (!password && !textReadbackMatches(node, text)) {
             return NodeActionResult.outcomeUnknown()
         }
@@ -1621,14 +1635,43 @@ class AgentAccessibilityService : AccessibilityService() {
                 AccessibilityNodeInfo.ACTION_SET_SELECTION,
                 selectionArgs,
             )
+        // 2026-10-27（fix185）：密码框原来一律 `verified = false` —— 等于**从不校验**，
+        // 工具层永远回 unknown。掩码长度通常就是字符数，能用长度确认就应该确认；
+        // 确认不了（长度没变、读不到）仍然回未确认，不猜。
+        val verified = if (password) {
+            TextInputVerification.passwordWriteConfirmed(
+                beforeLength = beforePasswordLength,
+                afterLength = readbackPasswordLength(node),
+                typedLength = text.length,
+            )
+        } else {
+            true
+        }
         return NodeActionResult.success(
             method = if (selectionRestored) {
                 "ACTION_SET_TEXT_AND_SELECTION"
             } else {
                 "ACTION_SET_TEXT"
             },
-            verified = !node.isPassword,
+            verified = verified,
         )
+    }
+
+    /**
+     * 密码框写后读长度（在 [ReadbackWindow] 里等它出现）。
+     * 读不到返回 null —— 调用方据此给「未确认」，不猜。
+     */
+    private fun readbackPasswordLength(node: AccessibilityNodeInfo): Int? {
+        var last: Int? = null
+        TEXT_READBACK_WINDOW.await(
+            isMainThread = Looper.myLooper() == Looper.getMainLooper(),
+        ) {
+            runCatching { node.refresh() }
+            val length = runCatching { node.realText().length }.getOrNull()
+            last = length
+            length != null && length > 0
+        }
+        return last
     }
 
     private fun findFocusedEditableNode(): AccessibilityNodeInfo? {
@@ -2823,17 +2866,18 @@ class AgentAccessibilityService : AccessibilityService() {
         private const val SCROLL_GESTURE_DURATION_MS = 300L
         private const val SCROLL_VERIFY_TIMEOUT_MS = 520L
         private const val GESTURE_CALLBACK_GRACE_MS = 1_500L
-        private const val MAIN_SYNC_TIMEOUT_SECONDS = 3L
+        private const val MAIN_SYNC_TIMEOUT_SECONDS = AgentAccessibilityTimeouts.MAIN_SYNC_SECONDS
 
-        // 写入动作返回后，等界面把文本状态提交出来的窗口：总量控制在 300ms 内 ——
-        // 既够 Compose 完成一次提交，又不会让「真的没写进去」的场景白等太久。
-        private const val TEXT_READBACK_TIMEOUT_MS = 300L
-        private const val TEXT_READBACK_INTERVAL_MS = 40L
+        // 2026-10-27（fix185）：读回窗口与轮询间隔挪到 AgentAccessibilityTimeouts（纯 Kotlin），
+        // 这样「观察窗口必须覆盖主线程等待」这类不变量能被单测守住。
+        private val TEXT_READBACK_WINDOW = ReadbackWindow(
+            timeoutMs = AgentAccessibilityTimeouts.TEXT_READBACK_MS,
+            intervalMs = AgentAccessibilityTimeouts.TEXT_READBACK_INTERVAL_MS,
+            clock = { SystemClock.uptimeMillis() },
+            sleeper = { ms -> SystemClock.sleep(ms) },
+        )
         private const val SCROLL_EVENT_OBSERVATION_TIMEOUT_MS =
-            MAIN_SYNC_TIMEOUT_SECONDS * 1_000L +
-                SCROLL_GESTURE_DURATION_MS +
-                GESTURE_CALLBACK_GRACE_MS +
-                SCROLL_VERIFY_TIMEOUT_MS
+            AgentAccessibilityTimeouts.SCROLL_EVENT_OBSERVATION_MS
         private const val SCROLL_EVENT_QUEUE_CAPACITY = 1
         private const val MAX_SCROLL_SIGNALS = 64
 

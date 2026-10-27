@@ -16,8 +16,25 @@ package io.github.mangi.eta.agent.device
  * 刻意不引用 android 类型：本对象被纯 JVM 单测直接覆盖。
  */
 internal object TextInputVerification {
-    /** 一次观察里「聚焦的可编辑节点」的文本状态。 */
-    data class Field(val text: String, val password: Boolean)
+    /**
+     * 一次观察里「聚焦的可编辑节点」的文本状态。
+     *
+     * [fullLength] 是这个节点**真实**的字符数。采集端为了不让一个节点吃掉整棵树的预算，
+     * 会把文本截到 200 字（`UiNodeWire.MAX_NODE_TEXT_CHARS`），而工具允许写入到 1000 字。
+     * 少了这个字段，「写 300 字 → 只读回前 200 字」会被判成「内容对不上」，
+     * 提示语还会说是输入框截断的 —— 其实是我们自己的读回上限（2026-10-27 自查发现）。
+     */
+    data class Field(
+        val text: String,
+        val password: Boolean,
+        val fullLength: Int = text.length,
+    ) {
+        /** 真实长度：读回被采集上限砍短时以 [fullLength] 为准。 */
+        val length: Int get() = maxOf(fullLength, text.length)
+
+        /** 读回只拿到了前缀（我们自己砍的），不是输入框截断。 */
+        val readbackTruncated: Boolean get() = length > text.length
+    }
 
     enum class Verdict {
         /** 文本确实变了（密码框则是长度变了；清空则是真的空了）。 */
@@ -68,9 +85,18 @@ internal object TextInputVerification {
             }
         }
         if (mode == Mode.APPEND) {
+            val expected = before.text + typed
             return when {
                 // 追加的正确结果只有一个：原文 + 新内容。
-                after.text == before.text + typed -> Verdict.VERIFIED
+                after.text == expected -> Verdict.VERIFIED
+                // 2026-10-27：读回被采集上限砍短时，只看前缀 + 真实长度。
+                // 内容写着「原文 + 新增」、真实长度也对得上，就是追加上去了 ——
+                // 旧判据会因为我们自己只读回 200 字而报 UNKNOWN（假阴性）。
+                after.readbackTruncated && after.length == before.length + typed.length &&
+                    expected.startsWith(after.text) -> Verdict.VERIFIED
+                // 读回被截断时，「内容看着没变」不能断言等什么都没发生：我们只看到前 200 字，
+                // 后面有没有变不知道。判 NOT_APPLIED（「一字未变，多半被吞了」）就是猜错了方向。
+                after.readbackTruncated && after.length != before.length -> Verdict.UNKNOWN
                 // 旧内容被整体换成了新内容 —— 这正是「以为是追加、实际是替换」的样子。
                 after.text == typed && typed != before.text -> Verdict.NOT_APPLIED
                 after.text == before.text -> Verdict.NOT_APPLIED
@@ -84,6 +110,14 @@ internal object TextInputVerification {
         if (typed == before.text) return Verdict.UNKNOWN
         return when {
             after.text == typed -> Verdict.VERIFIED
+            // 2026-10-27：读回被采集端截到 200 字时，「读回内容 ≠ 写入内容」并不代表没写进去。
+            // 前缀一致、真实长度等于写入长度、且写前长度与目标不同 → 写进去了，只是我们读不完。
+            // 幂等重写（写前长度就相同）不能走这条：读不出中间部分，无法区分「这次写的」与「原本就在」。
+            after.readbackTruncated && typed.length > after.text.length &&
+                typed.startsWith(after.text) && after.length == typed.length &&
+                before.length != typed.length -> Verdict.VERIFIED
+            // 读回被截断且前后读到的长度同样：既然只看到前 200 字，就不能断言「一字未变」。
+            after.readbackTruncated && after.text == before.text -> Verdict.UNKNOWN
             after.text == before.text -> Verdict.NOT_APPLIED
             // 2026-10-27（fix184）：这里原来是「变了就算成功」（`else -> VERIFIED`）。
             // 输入框做了截断或改写时（长度上限、自动大写、加分隔符），文本确实变了，
@@ -104,10 +138,35 @@ internal object TextInputVerification {
      */
     private fun judgePasswordReplace(before: Field, after: Field, typed: String): Verdict {
         return when {
-            typed.length == before.text.length -> Verdict.UNKNOWN
-            after.text.length == typed.length -> Verdict.VERIFIED
+            // 写前长度本来就等于要写入的长度：读出来前后一样，无法区分「写进去了」与「原本就在」。
+            typed.length == before.length -> Verdict.UNKNOWN
+            // 比长度要用真实长度（[Field.length]），不是被采集上限砍过的前缀长度。
+            after.length == typed.length -> Verdict.VERIFIED
             else -> Verdict.UNKNOWN
         }
+    }
+
+    /**
+     * 无障碍 `ACTION_SET_TEXT` 写密码框：内容是掩码，只能比长度。
+     *
+     * 为什么单独一个函数（2026-10-27）：这条通路原来对密码框直接 `verified = false` ——
+     * 也就是**从不校验**，工具层一律回 `input_verification=unknown`。
+     * 而掩码长度通常就是字符数，写进去是能确认的。抽成纯函数是为了让这段判据被单测覆盖，
+     * 不依赖无障碍服务（Service 类在 JVM 单测里加载不了）。
+     *
+     * @param beforeLength 写入前读到的长度；读不到为 null。
+     * @param afterLength 写入后读到的长度；读不到为 null。
+     */
+    fun passwordWriteConfirmed(
+        beforeLength: Int?,
+        afterLength: Int?,
+        typedLength: Int,
+    ): Boolean {
+        if (typedLength <= 0) return false
+        val after = afterLength ?: return false
+        if (after != typedLength) return false
+        // 写前长度恰好等于目标长度：读出来一模一样，无法区分「写进去了」与「原本就这么长」。
+        return beforeLength != typedLength
     }
 
     /**
@@ -121,9 +180,9 @@ internal object TextInputVerification {
     private fun judgePasswordAppend(before: Field, after: Field, typed: String): Verdict {
         return when {
             // 追加的正确结果：长度 = 原长度 + 新内容长度。
-            after.text.length == before.text.length + typed.length -> Verdict.VERIFIED
+            after.length == before.length + typed.length -> Verdict.VERIFIED
             // 长度正好等于要追加的内容：旧内容被整体替换掉了。
-            after.text.length == typed.length && typed.length != before.text.length ->
+            after.length == typed.length && typed.length != before.length ->
                 Verdict.NOT_APPLIED
             // 长度没变（追加被吞）或变了但对不上（截断、固定掩码）：只能说不确定。
             else -> Verdict.UNKNOWN
@@ -143,7 +202,7 @@ internal object TextInputVerification {
             // 密码框读不出内容，只能看长度是否归零。
             // 2026-10-27（fix184）：before 读出来本来就是空（内容读不到）时，after 空不能
             // 证明「清空了」—— 那种情况从前会直接报 verified，等于对读不到的框从不验证。
-            return if (before.text.isNotEmpty() && after.text.isEmpty()) {
+            return if (before.length > 0 && after.length == 0) {
                 Verdict.VERIFIED
             } else {
                 Verdict.UNKNOWN
@@ -208,6 +267,24 @@ internal object TextInputVerification {
                 "输入框里本来就是「${echo(typed)}」，写入后读到的仍是同一段文本：" +
                     "无法区分是这次写进去的，还是原来就在。按「未确认」上报 —— " +
                     "内容对得上就继续；需要确证时先把内容改成别的值再写回来。"
+            // 2026-10-27：读回只拿到前缀（采集端 200 字上限），这和「输入框截断」是两件事。
+            // 不分开说，模型会得到「输入框把你的文本截断了」的错误结论，然后去把内容改短。
+            mode == Mode.APPEND && verdict == Verdict.UNKNOWN && after != null &&
+                !after.password && after.readbackTruncated ->
+                "文本变了，但读回只拿到前 ${after.text.length} 个字符（输入框里共 ${after.length} 个），" +
+                    "无法确认是否按「原有内容 + 追加内容」写进去。请 observe_screen 核对。"
+            mode != Mode.APPEND && verdict == Verdict.UNKNOWN && after != null &&
+                !after.password && after.readbackTruncated ->
+                if (typed.startsWith(after.text)) {
+                    "写入命令执行了（退出码 0）。输入框里现在共 ${after.length} 个字符，与你要写入的 " +
+                        "${typed.length} 个字符对不上；读回只拿到前 ${after.text.length} 个字符（读回上限），" +
+                        "前缀是一致的。可能是输入框截断，也可能是读回被砍短，无法确认是否原样写入。" +
+                        "请 observe_screen 核对；需要确证时把内容改短到 $after.text.length 字以内再写一次。"
+                } else {
+                    "写入命令执行了（退出码 0），但读回的前 ${after.text.length} 个字符与你要写入的内容不一致" +
+                        "（输入框里共 ${after.length} 个字符）。可能被输入框改写（大写、加分隔符），" +
+                        "也可能读回被砍短。请 observe_screen 核对，不要当成已经原样写入。"
+                }
             // 写后的内容既不是原文，也不是要写的内容：输入框做了改写或截断（长度上限、自动大写、
             // 加分隔符），或者只写进去一部分。这与「读不出文本」是两件事，必须分开说（fix184）。
             // 只报长度、不回显内容：输入框里可能是用户自己的数据。

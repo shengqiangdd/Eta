@@ -681,6 +681,7 @@ internal class RootShellDeviceController(
         val method: String = "",
         val code: String = "",
         val message: String = "",
+        val verified: Boolean? = null,
     )
 
     /**
@@ -703,7 +704,14 @@ internal class RootShellDeviceController(
             )
         val result = service.setTextOnDisplay(displayId, text, replace)
         return if (result.ok) {
-            DisplayTextInjection(ok = true, method = result.method.ifBlank { "A11Y_SET_TEXT" })
+            DisplayTextInjection(
+                ok = true,
+                method = result.method.ifBlank { "A11Y_SET_TEXT" },
+                // 2026-10-27（fix185）：无障碍已经自己做过校验（SET_TEXT 后读回），
+                // 把这个结论带下来 —— 否则下游只能拿「读得到的文本」再猜一遍，
+                // 密码框这类读不到内容的情形就会被降级成 unknown。
+                verified = result.verified,
+            )
         } else {
             DisplayTextInjection(
                 ok = false,
@@ -771,6 +779,7 @@ internal class RootShellDeviceController(
                     submitted = submit,
                     before = beforeField,
                     mode = mode,
+                    a11yVerified = injected.verified,
                 )
             }
             // 无障碍不通时只有本应用还能自救：进程内注入同样不碰 IME/剪贴板。
@@ -825,7 +834,13 @@ internal class RootShellDeviceController(
         val node = dumpUiNodesReported(60, displayId).nodes
             .firstOrNull { candidate -> candidate.focused && candidate.editable }
             ?: return null
-        return TextInputVerification.Field(text = node.text, password = node.password)
+        return TextInputVerification.Field(
+            text = node.text,
+            password = node.password,
+            // 2026-10-27（fix185）：把**真实长度**一起带出去。读回文本被采集上限（200 字）砍过，
+            // 而写入允许到 1000 字 —— 少了这个长度，「写 300 字成功」会被判成内容对不上。
+            fullLength = maxOf(node.textFullLength, node.text.length),
+        )
     }
 
     /**
@@ -843,6 +858,7 @@ internal class RootShellDeviceController(
         submitted: Boolean,
         before: TextInputVerification.Field?,
         mode: TextInputVerification.Mode,
+        a11yVerified: Boolean? = null,
     ): String {
         // 清空也要读 after：不读就没有任何证据说明「真的空了」（fix160）。
         val after = if (typed.isEmpty() && mode != TextInputVerification.Mode.CLEAR) {
@@ -850,7 +866,18 @@ internal class RootShellDeviceController(
         } else {
             focusedFieldOn(displayId)
         }
-        val verdict = TextInputVerification.judge(before, after, typed, mode)
+        val judged = TextInputVerification.judge(before, after, typed, mode)
+        // 2026-10-27（fix185）：无障碍通路自己做过校验（SET_TEXT 后读回内容/长度），
+        // 它说 verified 而这边只能给 UNKNOWN 时，采信更具体的证据 ——
+        // 否则「无障碍确认写进去了」会被下游再猜成「未确认」。
+        // 但不覆盖 NOT_APPLIED：两边矛盾说明有别的东西改动了内容，那时必须如实说不一致。
+        val verdict = if (
+            a11yVerified == true && judged == TextInputVerification.Verdict.UNKNOWN
+        ) {
+            TextInputVerification.Verdict.VERIFIED
+        } else {
+            judged
+        }
         val json = JSONObject()
             .put("ok", true)
             .put("tool", "type_text")
@@ -1543,8 +1570,14 @@ internal class RootShellDeviceController(
         val result = serviceResult ?: run {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = runCatching { clipboard.primaryClip }.getOrNull()
-            if (clip == null || clip.itemCount <= 0) {
-                AgentAccessibilityService.ClipboardReadResult.failure()
+            if (clip == null) {
+                // 2026-10-27（fix185）：与无障碍通路一致，把两种失败分开记 ——
+                // 系统拒绝读取（可以再试）与剪贴板确实是空的（没必要重试）。
+                AgentAccessibilityService.ClipboardReadResult.failure(
+                    code = "CLIPBOARD_READ_FAILED",
+                )
+            } else if (clip.itemCount <= 0) {
+                AgentAccessibilityService.ClipboardReadResult.failure(code = "CLIPBOARD_EMPTY")
             } else {
                 AgentAccessibilityService.ClipboardReadResult(
                     ok = true,
