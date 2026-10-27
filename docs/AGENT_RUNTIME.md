@@ -7331,3 +7331,61 @@ requested 为 null 时才把 0 当主屏），已改为在 `plan` 里先归一�
 - **`press_key` 的落点归属仍是开的**：`display_id=0` 归一成 null 后走无障碍
   globalAction（作用到焦点窗口），与「动作只在主屏」的声明不一致；
   本轮 STEP15 的跨屏证据来自 `tap`，不依赖 press_key。
+  → **已由 fix166 修掉，见下节。**
+
+## fix166：显式指定的屏没决定按键落点（2026-10-27，fix165 之后）
+
+### 一、缺陷本身
+
+`display_id=0`（主屏）在 `resolveDisplayId` 里被归一成 `null`，而 `pressKey()` 看到
+`null` 就走无障碍 `globalAction` —— 它作用于**当前焦点窗口**，焦点在哪块屏就打到哪块屏。
+于是「显式要求主屏」的 BACK 可能退掉虚拟屏上的界面，而响应里只有
+`executor=accessibility`，调用方无从核对落点。
+
+### 二、真机取证（本机 PKX110，修复前）
+
+fix165 取证时踩到的就是这条：
+
+```text
+observe_screen(148)                    → 快照属于虚拟屏 148
+press_key(button=BACK, display_id=0)   → {"executor":"accessibility"}（落点不受控）
+```
+
+### 三、修法
+
+- 新增 `KeyPressRoutePolicy.decide()`（纯 JVM）三条路由：
+  `ROOT_ON_DISPLAY`（`input -d <id> keyevent`）、`ROOT_DEFAULT_DISPLAY`
+  （`input -d 0 keyevent`）、`ACCESSIBILITY_GLOBAL`（旧行为）。
+  判定：目标屏是虚拟屏 → 必定按 display 注入；显式写主屏且 Root 可用 →
+  `input -d 0`；没写 display_id → 沿用无障碍（更快也不需要 Root）。
+- `pressKey(button, displayId, explicitDisplayId)` 新增第三个参数，
+  由 `AgentLocalTools` 按 `args.has("display_id")` 传入 ——
+  没有这个参数就分不清「显式要主屏」和「没说」。
+- 响应新增 `landed`：`{scope, id, route}`；走全局动作时 `scope=unknown` 并附说明
+  （诚实标注，而不是假装是主屏）。
+- 面板类（NOTIFICATIONS / QUICK_SETTINGS）没有 keycode：主屏上仍只能用全局动作，
+  虚拟屏上继续报 `UNSUPPORTED_ON_VIRTUAL_DISPLAY`，`landed` 回到 `unknown`。
+
+### 四、真机取证（修复后，探针 STEP16）
+
+```text
+STEP16a display=6 code= ok=true landedScope=virtual landedId=6 route=root_on_display
+STEP16a verdict=OK
+STEP16b code= ok=true landedScope=main route=root_default_display
+STEP16b verdict=OK
+```
+
+STEP16b 在主屏按 BACK，会把主屏前台应用退到后台 —— 所以它刻意排在探针最后。
+整份探针 **20 项 verdict 全 OK**（STEP1~16），无回归。
+
+### 五、门禁
+
+`KeyPressRoutePolicyTest`（6 例）进 `FAST_TEST_FILTERS`：用例数 **526 → 532，0 失败**；
+`assemble` 成功（`Eta-v3.3.1-debug.apk` 96,405,669 字节，sha256 `e3ad2d0d…`）。
+
+### 六、仍未验证
+
+- 「显式主屏但**无 Root**」会退化为全局动作（`landed=unknown`）：本机 Root 可用，
+  这条只由单测覆盖，没有真机样本。
+- `ENTER` 走 `imeEnter` 的路径（含 `type_text(submit=true)`）未单独验。
+- `landed` 只描述“命令发给了哪块屏”，不是“系统实际把按键交给了哪个窗口”的证明。

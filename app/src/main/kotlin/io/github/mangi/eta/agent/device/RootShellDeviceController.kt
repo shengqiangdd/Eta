@@ -1254,54 +1254,149 @@ internal class RootShellDeviceController(
         )
     }
 
-    fun pressKey(button: String, displayId: Int? = null): String {
+    fun pressKey(
+        button: String,
+        displayId: Int? = null,
+        explicitDisplayId: Boolean = false,
+    ): String {
         val normalized = button.uppercase()
         if (normalized == "PASTE" && !rootAvailable()) return rootRequired()
-        if (displayId == null) AgentAccessibilityService.current()?.let { service ->
+        // fix166：显式写了 display_id 就必须由它决定注入通道。display_id=0 会被归一成
+        // null（主屏），旧逻辑据此走无障碍 globalAction，而它作用于「当前焦点窗口」——
+        // 显式要求主屏也可能退掉虚拟屏的界面，返回却只说 executor=accessibility。
+        val route = KeyPressRoutePolicy.decide(
+            explicitDisplayId = if (explicitDisplayId) displayId ?: 0 else null,
+            routedDisplayId = displayId,
+            accessibilityAvailable = AgentAccessibilityService.current() != null,
+            rootAvailable = rootAvailable(),
+        )
+        if (route == KeyPressRoutePolicy.Route.ACCESSIBILITY_GLOBAL) AgentAccessibilityService.current()?.let { service ->
             when (normalized) {
                 "BACK", "HOME", "RECENTS", "NOTIFICATIONS", "QUICK_SETTINGS" -> {
                     val actionResult = service.globalActionResult(normalized)
                     if (actionResult.ok) {
                         waitForUiSettle("press_key")
-                        return okJson("press_key", "accessibility").let {
-                            JSONObject(it).put("button", normalized).toString()
-                        }
+                        return attachLanding(
+                            okJson("press_key", "accessibility").let {
+                                JSONObject(it).put("button", normalized).toString()
+                            },
+                            route,
+                            null,
+                        )
                     }
                     if (actionResult.code == "ACTION_OUTCOME_UNKNOWN") {
-                        return nodeActionJson("press_key", actionResult).let {
-                            JSONObject(it).put("button", normalized).toString()
-                        }
+                        return attachLanding(
+                            nodeActionJson("press_key", actionResult).let {
+                                JSONObject(it).put("button", normalized).toString()
+                            },
+                            route,
+                            null,
+                        )
                     }
-                    if (!rootAvailable()) return nodeActionJson("press_key", actionResult)
+                    if (!rootAvailable()) return attachLanding(
+                        nodeActionJson("press_key", actionResult),
+                        route,
+                        null,
+                    )
                 }
                 "ENTER" -> {
                     val result = service.imeEnter()
                     if (result.ok) {
                         waitForUiSettle("press_key")
-                        return nodeActionJson("press_key", result).let {
+                        return attachLanding(
+                            nodeActionJson("press_key", result).let {
+                                JSONObject(it).put("button", normalized).toString()
+                            },
+                            route,
+                            null,
+                        )
+                    }
+                    return attachLanding(
+                        nodeActionJson("press_key", result).let {
                             JSONObject(it).put("button", normalized).toString()
-                        }
-                    }
-                    return nodeActionJson("press_key", result).let {
-                        JSONObject(it).put("button", normalized).toString()
-                    }
+                        },
+                        route,
+                        null,
+                    )
                 }
             }
         }
         if (!rootAvailable()) return accessibilityUnavailable()
+        // 显式主屏走 `input -d 0`，虚拟屏走 `input -d <id>`：两者都与被要求的那块屏一致。
+        val targetDisplay = if (route == KeyPressRoutePolicy.Route.ROOT_ON_DISPLAY) displayId else 0
         val keyCode = when (normalized) {
             "BACK" -> 4
             "HOME" -> 3
             "ENTER" -> 66
             "RECENTS" -> 187
             "PASTE" -> 279
-            "NOTIFICATIONS", "QUICK_SETTINGS" -> return errorJson(
-                "UNSUPPORTED_ON_VIRTUAL_DISPLAY",
-                "通知面板与快捷设置面板只属于主屏，虚拟屏上不可用",
-            )
+            "NOTIFICATIONS", "QUICK_SETTINGS" -> {
+                // 面板没有 keycode：主屏上仍只能用无障碍全局动作；虚拟屏上不可用。
+                if (targetDisplay != 0) {
+                    return attachLanding(
+                        errorJson(
+                            "UNSUPPORTED_ON_VIRTUAL_DISPLAY",
+                            "通知面板与快捷设置面板只属于主屏，虚拟屏上不可用",
+                        ),
+                        route,
+                        targetDisplay,
+                    )
+                }
+                val service = AgentAccessibilityService.current()
+                    ?: return accessibilityUnavailable()
+                val result = service.globalActionResult(normalized)
+                // 实际走的是全局动作：落点回到「不确定」，不能假装是主屏。
+                return attachLanding(
+                    nodeActionJson("press_key", result).let {
+                        JSONObject(it).put("button", normalized).toString()
+                    },
+                    KeyPressRoutePolicy.Route.ACCESSIBILITY_GLOBAL,
+                    null,
+                )
+            }
             else -> return errorJson("INVALID_ARGUMENT", "button 仅支持 BACK/HOME/ENTER/RECENTS/PASTE/NOTIFICATIONS/QUICK_SETTINGS")
         }
-        return inputCommand("input keyevent $keyCode", "press_key", displayId)
+        return attachLanding(
+            inputCommand("input keyevent $keyCode", "press_key", targetDisplay),
+            route,
+            targetDisplay,
+        )
+    }
+
+    /**
+     * 给 `press_key` 的返回补上「这一下落在哪块屏」（fix166）。
+     *
+     * 无障碍全局动作作用于当前焦点窗口，可能跟调用方要求的屏毫无关系；
+     * 以前响应里只有 `executor=accessibility`，模型无从核对。
+     */
+    private fun attachLanding(
+        json: String,
+        route: KeyPressRoutePolicy.Route,
+        displayId: Int?,
+    ): String {
+        val landed = if (route == KeyPressRoutePolicy.Route.ACCESSIBILITY_GLOBAL) {
+            JSONObject()
+                .put("scope", "unknown")
+                .put("id", JSONObject.NULL)
+                .put("route", "accessibility_global")
+                .put(
+                    "note",
+                    "无障碍全局动作作用于当前焦点窗口，不保证是哪块屏；要指定屏请传 display_id",
+                )
+        } else {
+            JSONObject()
+                .put("scope", if (displayId == null || displayId == 0) "main" else "virtual")
+                .put("id", displayId ?: 0)
+                .put(
+                    "route",
+                    if (route == KeyPressRoutePolicy.Route.ROOT_ON_DISPLAY) {
+                        "root_on_display"
+                    } else {
+                        "root_default_display"
+                    },
+                )
+        }
+        return runCatching { JSONObject(json).put("landed", landed).toString() }.getOrDefault(json)
     }
 
     fun waitMs(durationMs: Int): String {

@@ -393,6 +393,9 @@ internal class AgentLocalTools(
                             // 这里原先没传 display_id：虚拟屏上按 BACK/HOME 会作用到**主屏**，
                             // 而返回值仍是 ok —— 模型完全看不出动错了屏。实测缺陷。
                             displayId = displayId,
+                            // fix166：显式写了 display_id 就必须按它注入（含显式 0=主屏），
+                            // 否则会被当成「没指定」而交给无障碍全局动作，落点跟焦点跑。
+                            explicitDisplayId = args.has("display_id"),
                         ),
                         displayId,
                     )

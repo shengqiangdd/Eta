@@ -1353,6 +1353,54 @@ internal object VirtualDisplayDebugHost {
                                     else -> "OK"
                                 },
                             )
+                            // STEP16（fix166）：按键落点必须由 display_id 决定，并在响应里写明。
+                            // 修复前：display_id=0 被归一成 null，走无障碍 globalAction（作用于焦点窗口），
+                            // 而返回只有 executor=accessibility，模型无从核对。
+                            val keyOnDisplay = call(
+                                "press_key",
+                                JSONObject().put("display_id", crossDisplayId).put("button", "BACK"),
+                            )
+                            val keyLanded = keyOnDisplay.optJSONObject("landed")
+                            report.appendLine(
+                                "STEP16a display=$crossDisplayId code=${keyOnDisplay.optString("code")} " +
+                                    "ok=${keyOnDisplay.optBoolean("ok")} " +
+                                    "landedScope=${keyLanded?.optString("scope").orEmpty()} " +
+                                    "landedId=${keyLanded?.optInt("id", -1)} " +
+                                    "route=${keyLanded?.optString("route").orEmpty()}",
+                            )
+                            report.appendLine(
+                                "STEP16a verdict=" + when {
+                                    !keyOnDisplay.optBoolean("ok") ->
+                                        "OK_NOT_ATTEMPTED:" + keyOnDisplay.optString("code")
+                                    keyLanded == null -> "FAIL_NO_LANDED"
+                                    keyLanded.optString("scope") != "virtual" ||
+                                        keyLanded.optInt("id", -1) != crossDisplayId ->
+                                        "FAIL_WRONG_LANDING"
+                                    else -> "OK"
+                                },
+                            )
+                            // 显式主屏：必须走 input -d 0，而不是交给焦点漂移。
+                            // 注意：这会让主屏当前的前台应用退到后台（探针故意放在最后）。
+                            val keyOnMain = call(
+                                "press_key",
+                                JSONObject().put("display_id", 0).put("button", "BACK"),
+                            )
+                            val mainLanded = keyOnMain.optJSONObject("landed")
+                            report.appendLine(
+                                "STEP16b code=${keyOnMain.optString("code")} " +
+                                    "ok=${keyOnMain.optBoolean("ok")} " +
+                                    "landedScope=${mainLanded?.optString("scope").orEmpty()} " +
+                                    "route=${mainLanded?.optString("route").orEmpty()}",
+                            )
+                            report.appendLine(
+                                "STEP16b verdict=" + when {
+                                    !keyOnMain.optBoolean("ok") ->
+                                        "OK_NOT_ATTEMPTED:" + keyOnMain.optString("code")
+                                    mainLanded == null -> "FAIL_NO_LANDED"
+                                    mainLanded.optString("scope") != "main" -> "FAIL_WRONG_LANDING"
+                                    else -> "OK"
+                                },
+                            )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
                         call("virtual_display_release", JSONObject().put("id", inputDisplay.optString("id")))
