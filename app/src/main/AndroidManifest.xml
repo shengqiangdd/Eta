@@ -99,6 +99,17 @@
             </intent-filter>
         </activity>
 
+        <!-- 真机探针专用：提供一个「拒绝 ACTION_SET_TEXT、只接受粘贴」的输入框，
+             让 pasteText 的粘贴兜底分支能被真的走到（fix181）。
+             不导出、没有启动入口、不在任何用户路径上；写入内容随窗口销毁。 -->
+        <activity
+            android:name=".agent.device.PasteOnlyProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="Eta 粘贴兜底探针"
+            android:theme="@android:style/Theme.DeviceDefault.Light"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <activity
             android:name=".agent.voice.EtaVoiceAssistActivity"
             android:excludeFromRecents="true"

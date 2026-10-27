@@ -2131,4 +2131,5 @@
   <string name="agent_notice_compaction_done">上下文压缩完成</string>
   <string name="agent_notice_compaction_failed">上下文压缩失败</string>
   <string name="agent_notice_compaction_stopped">上下文压缩已停止</string>
+  <string name="probe_paste_only_title">探针样本：下面这个输入框拒绝 ACTION_SET_TEXT，只接受粘贴</string>
 </resources>

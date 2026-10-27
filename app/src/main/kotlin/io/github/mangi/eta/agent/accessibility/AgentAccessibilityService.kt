@@ -1015,17 +1015,24 @@ class AgentAccessibilityService : AccessibilityService() {
             node.incrementalTextValidationError()?.let { error ->
                 return@callOnMainSync TextWriteTarget.Rejected(error)
             }
+            val existingText = node.realText()
+            val selectionStart = node.textSelectionStart
+            val selectionEnd = node.textSelectionEnd
             val plan = TextEditPlanner.insertAtSelection(
-                currentText = node.realText(),
+                currentText = existingText,
                 insertedText = text,
-                selectionStart = node.textSelectionStart,
-                selectionEnd = node.textSelectionEnd,
-            ) ?: return@callOnMainSync TextWriteTarget.Rejected(
-                NodeActionResult.failure(
-                    "TEXT_SELECTION_UNAVAILABLE",
-                    "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
-                ),
+                selectionStart = selectionStart,
+                selectionEnd = selectionEnd,
             )
+            if (plan == null) {
+                logTextSelectionUnavailable(node, existingText.length, selectionStart, selectionEnd)
+                return@callOnMainSync TextWriteTarget.Rejected(
+                    NodeActionResult.failure(
+                        "TEXT_SELECTION_UNAVAILABLE",
+                        "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
+                    ),
+                )
+            }
             TextWriteTarget.Ready(node, plan.text, plan.cursor)
         }
         val target = when (prepared) {
@@ -1466,6 +1473,45 @@ class AgentAccessibilityService : AccessibilityService() {
     private fun AccessibilityNodeInfo.realText(): String =
         if (isShowingHintText) "" else text?.toString().orEmpty()
 
+    /** 「读不到正文」和「读不到选区」是两种完全不同的失败，日志必须能分开。 */
+    private fun logTextContentUnavailable(node: AccessibilityNodeInfo, password: Boolean) {
+        android.util.Log.w(
+            "EtaTextWrite",
+            "正文不可用 class=" + node.className +
+                " viewId=" + node.viewIdResourceName +
+                " password=" + password +
+                " hasText=" + (runCatching { node.text != null }.getOrNull() ?: false) +
+                " showingHint=" + node.isShowingHintText +
+                " editable=" + node.isEditable,
+        )
+    }
+
+    /**
+     * 只在「读不到可靠选区」时留一行现场（不记文本内容，只记长度）。
+     *
+     * 为什么需要它（fix181）：夹具的空输入框在 View 层 selection 是 `0,0`，无障碍层却报
+     * `TEXT_SELECTION_UNAVAILABLE`。错误码本身分不清三种原因 —— 文本被当成非空、
+     * selection 是 `-1`、还是 `isShowingHintText` 没被系统置位（于是 hint 被当成正文）——
+     * 少记任何一项都只能靠猜。和 [textReadbackMatches] 的失败现场同一风格：
+     * 正常路径零日志，失败时一行。
+     */
+    private fun logTextSelectionUnavailable(
+        node: AccessibilityNodeInfo,
+        textLength: Int,
+        selectionStart: Int,
+        selectionEnd: Int,
+    ) {
+        android.util.Log.w(
+            "EtaTextWrite",
+            "选区不可用 class=" + node.className +
+                " viewId=" + node.viewIdResourceName +
+                " textLen=" + textLength +
+                " hintLen=" + (runCatching { node.hintText?.length }.getOrNull() ?: -1) +
+                " showingHint=" + node.isShowingHintText +
+                " sel=" + selectionStart + "," + selectionEnd,
+        )
+    }
+
     /**
      * fix176：写入后确认读回。
      *
@@ -1600,6 +1646,7 @@ class AgentAccessibilityService : AccessibilityService() {
     private fun AccessibilityNodeInfo.incrementalTextValidationError(): NodeActionResult? {
         val currentText = text
         if (isPassword || currentText == null) {
+            logTextContentUnavailable(this, isPassword)
             return NodeActionResult.failure(
                 "TEXT_CONTENT_UNAVAILABLE",
                 "当前输入框不允许可靠读取已有文本；请用 replace_text 提供完整值",
@@ -1614,6 +1661,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 selectionEnd = textSelectionEnd,
             )
         ) {
+            logTextSelectionUnavailable(this, currentText.length, textSelectionStart, textSelectionEnd)
             return NodeActionResult.failure(
                 "TEXT_SELECTION_UNAVAILABLE",
                 "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",

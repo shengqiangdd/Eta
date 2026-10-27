@@ -2051,6 +2051,114 @@ internal object VirtualDisplayDebugHost {
                     }
                 }
 
+                // ③d 主屏 + 「只接受粘贴」的输入框（fix181）：
+                // pasteText 的粘贴兜底分支只在目标拒绝 ACTION_SET_TEXT 时才执行，而 Compose 的
+                // BasicTextField 与普通 EditText 都接受 SET_TEXT —— 这条分支（fix177 改过判定）
+                // 一直没有真机样本。PasteOnlyProbeActivity 提供一个受控样本，把这条路真的走一遍。
+                val pasteSeed = "粘贴兜底" + "0123456789".repeat(24) // 244 字 > 200，必走 pasteText
+                // 夹具靠标题确认「前台真的是样本窗口」：只比包名不够 ——
+                // 2026-10-27 实测过探针启动后前台被切回 Eta 主界面，那次 editable 找到的是
+                // Eta 自己的输入框，等于把测试文本写进用户正在用的输入框。
+                val pasteTitle = context.getString(io.github.mangi.eta.R.string.probe_paste_only_title)
+                val pasteLaunched = runCatching {
+                    context.startActivity(
+                        android.content.Intent(context, PasteOnlyProbeActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }.isSuccess
+                var pasteObs = JSONObject()
+                var pasteIndex = -1
+                var pasteWait = 0
+                while (pasteWait < 10) {
+                    Thread.sleep(500L)
+                    pasteObs = call("observe_screen", JSONObject().put("max_nodes", 40), log = false)
+                    val pasteFg = pasteObs.optJSONObject("focus")?.optString("package").orEmpty()
+                    if (pasteFg != context.packageName) {
+                        pasteWait++
+                        continue
+                    }
+                    val candidate = firstEditable(pasteObs)
+                    if (candidate >= 0 && findText(pasteObs, pasteTitle) >= 0) {
+                        pasteIndex = candidate
+                        break
+                    }
+                    pasteWait++
+                }
+                report.appendLine(
+                    "TEXT3g launch=${if (pasteLaunched) "ok" else "FAIL"} " +
+                        "wait=${pasteWait * 500}ms editable=$pasteIndex " +
+                        "foreground=${pasteObs.optJSONObject("focus")?.optString("package").orEmpty()}",
+                )
+                if (pasteIndex < 0) {
+                    report.appendLine("TEXT3g verdict=SKIPPED_NO_PASTE_ONLY_FIELD")
+                    call("press_key", JSONObject().put("button", "BACK"), log = false)
+                } else {
+                    val pasteClipBefore = call("get_clipboard", JSONObject(), log = false)
+                    val pasteWrote = call(
+                        "type_text",
+                        JSONObject().put("mode", "append").put("text", pasteSeed),
+                    )
+                    val pasteAfter = call("observe_screen", JSONObject().put("max_nodes", 60), log = false)
+                    val pasteAfterIndex = firstEditable(pasteAfter)
+                    val pasteDeclared = nodeDeclaredTextLen(pasteAfter, pasteAfterIndex)
+                    val pasteClipAfter = call("get_clipboard", JSONObject(), log = false)
+                    val pasteClipSame =
+                        (!pasteClipBefore.optBoolean("ok") && !pasteClipAfter.optBoolean("ok")) ||
+                            pasteClipBefore.optString("text") == pasteClipAfter.optString("text")
+                    val pasteMethod = pasteWrote.optString("method")
+                    // 契约（RootShellDeviceController.nodeActionJson）：`input_verification`
+                    // 只给 method 含 SET_TEXT 的结果补；ACTION_PASTE 通路只有 `verified: true|false`。
+                    // 只读前者会把真正走通兜底的结果判成失败（2026-10-27 真机踩到）。
+                    val pasteVerified =
+                        pasteWrote.optBoolean("verified") ||
+                            pasteWrote.optString("input_verification") == "verified"
+                    report.appendLine(
+                        "TEXT3g ok=${pasteWrote.optBoolean("ok")} method=$pasteMethod " +
+                            "verified=${pasteWrote.optBoolean("verified")} " +
+                            "verify=${pasteWrote.optString("input_verification")} " +
+                            "idx=$pasteAfterIndex declaredLen=$pasteDeclared seed=${pasteSeed.length} " +
+                            "clipBefore=${pasteClipBefore.optBoolean("ok")} " +
+                            "clipAfter=${pasteClipAfter.optBoolean("ok")} clipSame=$pasteClipSame",
+                    )
+                    report.appendLine("TEXT3g raw=" + pasteWrote.toString().take(400))
+                    report.appendLine(
+                        "TEXT3g verdict=" + when {
+                            !pasteWrote.optBoolean("ok") ->
+                                "FAIL_PASTE_WRITE:" + pasteWrote.optString("code")
+                            // 样本本身没造对（控件接受了 SET_TEXT）：这条不算通过，否则等于
+                            // 「测了一个没走到兜底分支的样本」还报绿。
+                            // 必须是兜底分支本身：`ACTION_SET_TEXT_PASTE` 意思是 SET_TEXT 被
+                            // 接受了（夹具没造对），名字里同样含 PASTE，用 contains 会把它放过去。
+                            pasteMethod != "ACTION_PASTE" ->
+                                "FAIL_NOT_PASTE_FALLBACK:$pasteMethod"
+                            !pasteVerified ->
+                                "FAIL_PASTE_NOT_VERIFIED:" +
+                                    pasteWrote.optBoolean("verified") +
+                                    "/" + pasteWrote.optString("input_verification")
+                            pasteDeclared < pasteSeed.length ->
+                                "FAIL_PASTE_TEXT_LEN_UNDECLARED:$pasteDeclared"
+                            !pasteClipSame -> "FAIL_CLIPBOARD_NOT_RESTORED"
+                            else -> "OK"
+                        },
+                    )
+                    if (!pasteClipSame && pasteClipBefore.optBoolean("ok")) {
+                        val pasteClipFix = call(
+                            "set_clipboard",
+                            JSONObject().put("text", pasteClipBefore.optString("text")),
+                            log = false,
+                        )
+                        report.appendLine("TEXT3g clipboard_recovered=" + pasteClipFix.optBoolean("ok"))
+                    }
+                    // 关掉样本窗口：写入内容只在这个控件里，窗口销毁即消失，不落盘。
+                    call("press_key", JSONObject().put("button", "BACK"), log = false)
+                    Thread.sleep(600L)
+                    val pasteBack = call("observe_screen", JSONObject().put("max_nodes", 20), log = false)
+                    report.appendLine(
+                        "TEXT3g back_foreground=" +
+                            pasteBack.optJSONObject("focus")?.optString("package").orEmpty(),
+                    )
+                }
+
                 // ④ 虚拟屏：带 index 必须被拒结，而不是默默写进当前焦点框。
                 val virtual = call(
                     "virtual_display_create",

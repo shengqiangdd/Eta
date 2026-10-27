@@ -8344,3 +8344,90 @@ truncated = rootNodes.size >= nodeLimit
 - 门禁：566 用例 / 0 失败（含 lint 与打包，产物指纹见提交说明）。
 - **未真机触发**：本机无障碍服务正常工作，观察主屏走的是无障碍路径；要不改设置就走到
   uiautomator 回退分支做不到。所以这条只有单测覆盖，不冒充真机验证。
+
+
+## fix181：`ACTION_PASTE` 兜底终于有了真机正样本 —— 并修掉夹具与判据的三个缺陷（2026-10-27，fix180 之后）
+
+### 一、为什么非要这条样本
+
+`AgentAccessibilityService.pasteText` 的粘贴兜底只在目标**拒绝** `ACTION_SET_TEXT` 时才执行。
+真实的 Compose `BasicTextField` 与普通 `EditText` 都接受 `SET_TEXT`，
+所以 fix177 改过的那段判定（「只看内容是否真的变成目标文本，不再把 `refresh()` 的返回值当证据」）
+一直只有代码级证据。去第三方应用里碰运气找一个「拒绝 SET_TEXT」的控件不现实，
+于是加了受控夹具 `PasteOnlyProbeActivity`（`exported=false`，只在探针 TEXT3g 里启动，关窗即消失、不落盘）。
+
+### 二、三次真机失败与各自的真根因
+
+样本第一次跑就红，而且**三次红的原因完全不同** —— 每修一个才露出下一个：
+
+| 现象 | 真根因 | 性质 |
+| --- | --- | --- |
+| `TEXT_SELECTION_UNAVAILABLE` | 夹具给 EditText 设了 `hint`，无障碍层把 hint 当节点正文，于是「非空正文 + `-1` 选区」被判成不可重建 | 夹具造错 |
+| `TEXT_CONTENT_UNAVAILABLE` | 去掉 hint 后框真空了，但**空 EditText 的无障碍 `text` 是 `null`**，append 通路第一步就拒绝（这是**正确行为**：读不到原有文本就不该猜） | 夹具造错 |
+| `FAIL_PASTE_NOT_VERIFIED:`（字段为空） | 写入其实**完全成功**（`method=ACTION_PASTE`、`verified=true`、`declaredLen=248`），探针却去读 `input_verification` | 探针判据错 |
+
+第三个尤其值得记：契约里 `input_verification` 只由 `RootShellDeviceController.nodeActionJson`
+**给 method 含 `SET_TEXT` 的结果补**，`ACTION_PASTE` 通路只有 `verified: true|false`。
+探针按错字段判定，就把「真的走通了兜底」报成了失败。
+
+### 三、顺带查出的两个「会骗人」的判据
+
+1. **`!pasteMethod.contains("PASTE")`**：兜底失败时会返回 `ACTION_SET_TEXT_PASTE`
+   —— 意思是 SET_TEXT 被接受了（夹具没造对，根本没走兜底），而它**名字里同样含 PASTE**，
+   用 `contains` 会把它当通过。改成精确 `method == "ACTION_PASTE"`，
+   并把失败码改成更诚实的 `FAIL_NOT_PASTE_FALLBACK:<method>`。
+2. **只比包名就认为「前台是样本窗口」**：canary 与正式版 Eta 是同一个前缀包名，
+   实测出现过探针启动样本后前台被切回 Eta 主界面 —— 那次 `firstEditable` 找到的是
+   **用户正在用的输入框**，等于把测试文本写进用户草稿。现在要求「前台是本包**且**屏幕上出现样本标题」才算就绪。
+
+### 四、改法
+
+- 夹具（`PasteOnlyProbeActivity`）：去掉 `hint`、预置种子 `"seed"` 并把光标停在末尾
+  —— 这才是「已有内容还要追加」的真实形态，也让无障碍 `text` 非空、`selection` 可读。
+- 探针（`VirtualDisplayDebugHost` TEXT3g）：
+  - 就绪判定加标题文本校验（`findText`），只比包名不够；
+  - `verified` 读 `verified || input_verification == "verified"`（两种契约都认）；
+  - 报告行同时打印 `verified=` 与 `verify=`，一眼看出是哪条契约。
+- 产品侧（`AgentAccessibilityService`）：**只加失败现场日志，不改行为**。
+  `TEXT_CONTENT_UNAVAILABLE` 与 `TEXT_SELECTION_UNAVAILABLE` 现在各留一行
+  `class / viewId / textLen / hintLen / showingHint / sel / password / hasText`（**不记文本内容**），
+  与 `textReadbackMatches` 的失败现场同风格：正常路径零日志。
+  这一轮要不是缺这两行现场，三次红都得靠猜。
+
+### 五、验证
+
+- 门禁：**566 用例 / 0 失败**；lint 报告无新增（baseline 376 条账目一致，
+  另有 1 条 `GradleDependency` 依赖远端元数据未复现，不阻断）；
+  产物 `app/build/outputs/apk/debug/Eta-v3.3.1-debug.apk` **95,939,681 字节**，
+  sha256 `760d3f5b570a218d…`。
+- 真机（PKX110 / Android 16，canary 包 `io.github.mangi.eta.canary`）：
+  `TEXT3g ok=true method=ACTION_PASTE verified=true declaredLen=248 seed=244 clipSame=true`，
+  整体 verdict **PASS**；报告留档
+  `archive/text-probe-20261027-155709-text-760d3f5b570a.txt`。
+- 反向实验：把判定临时改回 fix177 之前（`refresh() && 文本相等`，
+  APK sha `87512607eee3a51d…`），同一标本 **TEXT3g 仍然 OK**。
+
+### 六、反向实验的结论必须说清楚
+
+**这条样本不能证明 fix177 的判定改进。** 在 `EditText` 夹具上，`ACTION_PASTE` 之后
+`refresh()` 就返回 `true` 且文本已经更新 —— 新旧判定都通过。
+它证明的只是：**粘贴兜底分支在真机上确实可达、确实把文本写进去了、剪贴板被还原**。
+要证明 fix177 的价值（`refresh()` 返回值不可当证据）得回到 Compose 输入框的时序，
+那是 fix176 那条路径的事，本轮不冒充。
+
+### 七、四条教训
+
+1. **判据字段名要以产生方为准**：`input_verification` 与 `verified` 是两条通路的两种契约，
+   照另一个通路的字段写断言 → 把成功报成失败（这次三次红里有两次是「探针自己错」）。
+2. **`contains` 判断「方法名」会把「相似的失败」放过去**：`ACTION_SET_TEXT_PASTE`
+   恰好含 `PASTE`，等于给「没走到兜底」发绿牌。
+3. **只比包名不能确认界面**：前后台切换时会把测试文本写进用户自己的输入框；样本窗口必须靠内容自证。
+4. **APK 字节数不是内容凭据**：本轮两次构建同为 95,939,681 字节，sha 却不同
+   （`697538072c2d…` / `760d3f5b570a…`）。核对「跑的是不是这份代码」只能比 sha，
+   必要时再查 dex 里的特征字符串（本轮用 `FAIL_NOT_PASTE_FALLBACK` / `反向实验临时改动` 两个标记确认过）。
+
+### 八、仍未覆盖
+
+- 密码框、`writeTextPrepared` 的两个 `SERVICE_TIMEOUT` 分支，仍无真机触发样本（旧债）。
+- 长 `hint` 的真机样本仍缺（fix179 只有单测）。
+- 本条 TEXT3g 只覆盖「已有种子文本 + 超长追加」，空框追加是**故意不支持**的（产品语义如此）。

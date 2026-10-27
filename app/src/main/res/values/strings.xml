@@ -2186,4 +2186,6 @@
   <string name="agent_notice_compaction_done">Context compaction finished</string>
   <string name="agent_notice_compaction_failed">Context compaction failed</string>
   <string name="agent_notice_compaction_stopped">Context compaction stopped</string>
+  <!-- 真机探针样本（PasteOnlyProbeActivity）：只在这个探针窗口里显示，不在用户路径上。 -->
+  <string name="probe_paste_only_title">Probe sample: this field rejects ACTION_SET_TEXT and only accepts paste</string>
 </resources>
