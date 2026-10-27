@@ -7253,9 +7253,16 @@ val observedDisplayId = publishedObservation.get().displayId
 
 ```text
 observe_screen(148)                    → 快照属于虚拟屏 148
-press_key(button=BACK, display_id=0)   → 动作在**主屏**
+press_key(button=BACK, display_id=0)   → 参数写着主屏
   after.package=com.oplus.account, after.window_id=w2848   ← 虚拟屏 148 的账号页
 ```
+
+**更正（2026-10-27，写完本节后复读代码时发现）**：这条**不能**用来断言「动作在主屏」。
+`pressKey()` 里 `displayId == null` 时走的是无障碍 `globalAction`，而它作用于
+**焦点窗口**；`display_id=0` 会在 `resolveDisplayId` 里被归一成 null，
+于是这条 BACK 实际也可能落在虚拟屏上 —— 动作与反馈**双双**指向 2848。
+证据成立的部分只是「反馈不是按参数里那块屏给的」；
+「press_key 的落点不受 `display_id` 控制」是另一个缺陷（见本节末尾与 §六）。
 
 同一轮里反向也错：先观察主屏、再 `tap(display_id=148)`，`after` 同样来自 2848 ——
 因为主屏分支用的是 `rootInActiveWindow`（**跨屏的活跃窗口**），刚点过虚拟屏，
@@ -7321,3 +7328,6 @@ requested 为 null 时才把 0 当主屏），已改为在 `plan` 里先归一�
 - `mainDisplayRoot()` 的替换分支只在跨屏场景间接走到，
   没有单独打印那条日志做对照实验。
 - 分屏/画中画（同一 display 多个应用窗口）不在本轮范围。
+- **`press_key` 的落点归属仍是开的**：`display_id=0` 归一成 null 后走无障碍
+  globalAction（作用到焦点窗口），与「动作只在主屏」的声明不一致；
+  本轮 STEP15 的跨屏证据来自 `tap`，不依赖 press_key。
