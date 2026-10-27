@@ -246,7 +246,7 @@ class AgentAccessibilityService : AccessibilityService() {
      * 拿不到就返回 null，让调用方回退到截图路径 —— 不假装成功。
      */
     private fun virtualDisplayRoot(displayId: Int): AccessibilityNodeInfo? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        // minSdk 33 ≥ R(30)，这层 SDK 判断是死的 —— lint 的 ObsoleteSdkInt 就是报它。
         val perDisplay = windowsOnAllDisplays
         if (perDisplay == null) {
             AndroidAgentLogger.warn("virtual-display-tree: windowsOnAllDisplays=null target=$displayId")

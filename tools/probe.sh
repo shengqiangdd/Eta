@@ -60,6 +60,21 @@ REPORT_DIR=${DEV_REPORT_DIR:-/sdcard/Android/data/$PKG/files}
 REPORT=$REPORT_DIR/$REPORT_NAME
 ACTIVITY=$PKG/io.github.mangi.eta.ui.MainActivity
 
+# 收尾钩子必须比装包更早挂上：装完包、预热启动之后，前台就已经是测试包了，
+# 任何一步失败退出都不能把用户丢在测试界面上。
+cleanup_device() {
+  local restore_pkg=${DEV_RESTORE_PKG-io.github.mangi.eta}
+  [ -n "$restore_pkg" ] || return 0
+  [ "$restore_pkg" = "$PKG" ] && return 0
+  timeout 15 am start -n "$restore_pkg/io.github.mangi.eta.ui.MainActivity" \
+    >/tmp/probe-restore.log 2>&1 ||
+    echo "收尾：恢复前台失败（$restore_pkg），见 /tmp/probe-restore.log" >&2
+  if [ "${DEV_STOP_TEST_PKG-1}" = "1" ]; then
+    am force-stop "$PKG" 2>/dev/null || true
+  fi
+}
+trap cleanup_device EXIT
+
 [ -f "$APK" ] || { echo "找不到 APK: $APK" >&2; exit 2; }
 
 # 无障碍预热：装包会 kills 进程，AMS 可能让无障碍服务长时间停在 Binding（本机实测 46 秒
@@ -130,6 +145,15 @@ if ! grep -q "$DONE_MARK" "$REPORT"; then
   head -40 "$REPORT" >&2
   exit 3
 fi
+
+# 报告自证：报告第一行是 BUILD apk_size=…（由 App 自己读 base.apk 写出）。
+# 和刚装的 APK 字节数不一致 → 这份报告是别的包（旧代码）跑出来的，结论不可用。
+REPORT_SIZE=$(sed -n '1s/.*apk_size=\([0-9]*\).*/\1/p' "$REPORT")
+if [ -n "$REPORT_SIZE" ] && [ "$REPORT_SIZE" != "$APK_SIZE" ]; then
+  echo "报告来自另一个 APK：报告 apk_size=$REPORT_SIZE ，本次装的 APK=$APK_SIZE 字节" >&2
+  exit 3
+fi
+echo "report apk_size=${REPORT_SIZE:-<没有 BUILD 行：旧版本 App>}"
 
 # 坑 5：verdict 是唯一判据，前缀固定。
 echo "--- verdict ---"

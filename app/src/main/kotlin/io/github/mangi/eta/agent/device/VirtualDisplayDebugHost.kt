@@ -36,6 +36,29 @@ internal object VirtualDisplayDebugHost {
     /** 探针用来启动的目标应用：系统设置在任何设备上都存在，且首屏有足够多的可点节点。 */
     private const val PROBE_PACKAGE = "com.android.settings"
 
+    /**
+     * 报告自证：这份报告是哪一份 APK 跑出来的。
+     *
+     * 为什么需要：真机踩过一次「`pm install` 报 Success，装的却是另一个包」—— canary 一直是旧包，
+     * 探针拿**旧代码**跑出「新结论」，报告字段格式甚至都对不上，只能靠人肉看格式才发现。
+     * 报告第一行写上包名 / 版本 / base.apk 字节数，事后任何一份报告都能核对，
+     * `tools/probe.sh` 也会拿这里的 apk_size 与刚装的 APK 比对。
+     */
+    private fun buildMarker(context: Context): String {
+        val info = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        }.getOrNull()
+        val sourceDir = info?.applicationInfo?.sourceDir.orEmpty()
+        val size = if (sourceDir.isEmpty()) 0L else runCatching { File(sourceDir).length() }.getOrDefault(0L)
+        return buildString {
+            append("BUILD apk_size=").append(size)
+            append(" package=").append(context.packageName)
+            append(" versionName=").append(info?.versionName.orEmpty())
+            append(" versionCode=").append(info?.longVersionCode ?: 0L)
+            append(" apk=").append(sourceDir)
+        }
+    }
+
     fun create(context: Context): String {
         controller?.let { existing ->
             return "already: " + existing.list().joinToString { "${it.id}@${it.displayId}" }
@@ -262,6 +285,7 @@ internal object VirtualDisplayDebugHost {
         if (!probeRunning.compareAndSet(false, true)) return "step probe already running"
         Thread({
             val report = StringBuilder()
+            report.appendLine(buildMarker(context))
             val tools = AgentLocalTools(
                 context = context.applicationContext,
                 logger = AndroidAgentLogger,
@@ -1631,6 +1655,7 @@ internal object VirtualDisplayDebugHost {
         if (!probeRunning.compareAndSet(false, true)) return "text probe already running"
         Thread({
             val report = StringBuilder()
+            report.appendLine(buildMarker(context))
             val tools = AgentLocalTools(
                 context = context.applicationContext,
                 logger = AndroidAgentLogger,
@@ -1924,6 +1949,7 @@ internal object VirtualDisplayDebugHost {
         if (!probeRunning.compareAndSet(false, true)) return "scope probe already running"
         Thread({
             val report = StringBuilder()
+            report.appendLine(buildMarker(context))
             val tools = AgentLocalTools(
                 context = context.applicationContext,
                 logger = AndroidAgentLogger,

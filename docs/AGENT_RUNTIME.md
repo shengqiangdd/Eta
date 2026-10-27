@@ -7713,3 +7713,76 @@ APK 包名就回落成正式版 `io.github.mangi.eta`。后果两条：
   这条风险由动作前的 text / desc / viewId 校验收窄，但无法为零。
 - 键盘顶起 / 布局变化导致矩形变化时仍报 `STALE_CONTENT` —— 期望行为，模型重看一次即可。
 - 探针只覆盖「空框写入 → 读回 → 同框清空」；append / 选区插入仍未在真机取证。
+
+## fix172：探针报告自证 + 脚本自己收尾 + lint 阶段一直是红的（2026-10-27，fix171 之后）
+
+### 一、报告自证：先证明「跑的是哪份代码」，再谈结论
+
+fix171 里踩过一次最贵的错：`pm install` 报 Success，装的却是正式包，canary 一直停在旧代码上，
+探针拿**旧代码**跑出「新结论」，只有靠人肉比对报告字段格式才发现。当时补的两道防线
+（`tools/apk-package.py`、probe.sh 装完按 base.apk 字节数反查）都只作用在**当时那一刻**，
+报告本身仍然说不出自己是谁写的。
+
+现在每个探针报告第一行是 App 自己写出的自证：
+
+```text
+BUILD apk_size=91784433 package=io.github.mangi.eta.canary versionName=3.3.1-debug versionCode=2026101401 apk=/data/app/…/base.apk
+```
+
+`probe.sh` 随后比对「报告里的 apk_size」与「本次装的 APK 字节数」，不一致就以退出码 3 结束：
+
+```text
+installed io.github.mangi.eta.canary versionName=3.3.1-debug (91784433 bytes)
+report apk_size=91784433
+```
+
+这样一份报告离开现场之后仍然可核对；换上旧 App 跑出来的报告也会当场被拦。
+
+### 二、脚本自己收尾（探针不该在用户设备上留残）
+
+以前收尾全靠人记得：把前台切回正式包、杀掉测试包。漏一次就是「跑完探针，用户手机停在测试界面」。
+`probe.sh` 现在在**装包之前**挂 `trap cleanup_device EXIT`：
+
+- `DEV_RESTORE_PKG`（默认 `io.github.mangi.eta`）：把用户原来的界面拉回来，空字符串表示不恢复；
+- `DEV_STOP_TEST_PKG`（默认 1）：再 force-stop 测试包。
+
+trap 提前挂是关键：装完包、预热启动之后前台就已经是测试包了，**任何一步失败退出**
+（安装未生效 / 报告超时 / 报告来自别的 APK）同样需要还原。
+
+真机取证（同一轮 text 探针）：脚本跑完直接满足收尾条件 ——
+`topResumedActivity=io.github.mangi.eta/.ui.MainActivity`、`pidof io.github.mangi.eta.canary` 为空。
+
+### 三、门禁的 lint 阶段其实一直是红的
+
+`STAGES=test,lint,assemble` 整跑第一次就红在 lint：
+
+```text
+AgentAccessibilityService.kt:249: Error: Unnecessary; SDK_INT is never < 33 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+```
+
+`minSdk 33` 之后 `Build.VERSION_CODES.R`(30) 的判据是死的。这行 `git show HEAD` 里就有
+（引入于更早的提交），不是本轮改出来的 —— 也就是说 **lint 阶段在本轮之前就是红的**，
+只是最近几轮都只跑 `STAGES=test,assemble`（为了绕开 3 分钟以上的 lint 与机器资源），
+红色一直没被看见。已删掉这行死判据，lint 恢复全绿。
+
+同一个文件里还有一处同款死判据（`mainDisplayRoot` 里 `if (SDK_INT < R) return active`），
+**没有**一起删：`app/lint-baseline.xml` 里恰好有 1 条 `ObsoleteSdkInt`，两处同款共用它；
+删掉第一处后账目仍是 379 条一致，要删第二处必须同时更新 baseline 账目。
+lint 自己也没把它报成新增问题 —— 所以别以为「lint 绿了」等于「两处都干净」。
+
+### 四、门禁与产物
+
+`STAGES=test,lint,assemble`：用例 **555 / 0 失败**；lint **report 时间 03:04:48，无新增问题，
+baseline 379 条账目一致**（另有 1 条 `GradleDependency` 本次未复现，依赖远端元数据，不阻断）；
+打包 91,784,433 字节，sha256 `76906a646281ec23…`。
+
+真机（PKX110 / A16 / canary）：`text_probe` 六项 verdict 全 OK（`PASS`），
+报告自证 `apk_size` 与安装包一致，收尾自动还原前台并停掉测试进程。
+
+### 五、限制
+
+- 自证行只证明「这份报告由这份 base.apk 写出」，不证明代码与你本地工作树一致
+  （APK 本身可由 `tools/apk-package.py` + sha256 核对）。
+- 收尾只恢复**前台界面**与测试进程；探针创建过的虚拟屏由各探针自己的 `finally` 释放，
+  若探针在中途被系统杀死，虚拟屏仍可能残留（需人工 `virtual_display_release id=all`）。
