@@ -869,6 +869,8 @@ internal class RootShellDeviceController(
             mode = mode,
             // 传原值：目标与原文完全相同时，判定只能是「未确认」，提示语要说得准。
             beforeText = before?.text,
+            // 传 after：读回来的内容对不上时，要说「被截断 / 改写了」，而不是「读不出文本」。
+            after = after,
         )
             ?.let { note -> json.put("note", note) }
         return json.toString()

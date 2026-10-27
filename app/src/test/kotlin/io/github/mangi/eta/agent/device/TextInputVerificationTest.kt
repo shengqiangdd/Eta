@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.device
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -17,13 +18,16 @@ class TextInputVerificationTest {
         TextInputVerification.Field(text = text, password = password)
 
     @Test
-    fun `text that actually changed is verified`() {
+    fun `replace is verified only when the field holds exactly the typed text`() {
         assertEquals(
             TextInputVerification.Verdict.VERIFIED,
             TextInputVerification.judge(before = field(""), after = field("abc"), typed = "abc"),
         )
+        // 2026-10-27（fix184）：这条原来是 VERIFIED —— 它守着的是「变了就算成功」的旧判据。
+        // 输入框里是「ababc」而不是要写的「abc」：这不是替换成功，是追加（或页面改写了）。
+        // 旧判据报 verified 的后果：模型以为已经原样替换，实际上旧内容还在。
         assertEquals(
-            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.Verdict.UNKNOWN,
             TextInputVerification.judge(before = field("ab"), after = field("ababc"), typed = "abc"),
         )
     }
@@ -51,7 +55,7 @@ class TextInputVerificationTest {
 
     @Test
     fun `password fields are judged by length only`() {
-        // 遮蔽文本可能读成等长占位；长度变了才算输进去。
+        // 遮蔽文本可能读成等长占位；长度与要写入的长度一致才算输进去。
         assertEquals(
             TextInputVerification.Verdict.VERIFIED,
             TextInputVerification.judge(before = field("", password = true), after = field("••", password = true), typed = "ab"),
@@ -59,6 +63,177 @@ class TextInputVerificationTest {
         assertEquals(
             TextInputVerification.Verdict.UNKNOWN,
             TextInputVerification.judge(before = field("••", password = true), after = field("••", password = true), typed = "ab"),
+        )
+        // 2026-10-27（fix184）：长度变了但和目标对不上（要 2 个、读回来 4 个）—— 
+        // 旧判据只比「变没变」，这里会报 verified。现在只能说不确定。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(before = field("••", password = true), after = field("••••", password = true), typed = "ab"),
+        )
+    }
+
+    /**
+     * 密码框的追加。
+     *
+     * 2026-10-27（fix184 自查）：改判据时密码框被统一按 REPLACE 比长度，
+     * 于是「追加成功」（长度 = 原长度 + 新内容）被报成 UNKNOWN。
+     * 方向安全（没说假话），但结论不对：明明写进去了却说「不确定」。
+     */
+    @Test
+    fun `password append compares against original length plus new text`() {
+        val append = TextInputVerification.Mode.APPEND
+        // 原 2 位掩码 + 追加 3 个字 → 5 位。
+        assertEquals(
+            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.judge(
+                before = field("••", password = true),
+                after = field("•••••", password = true),
+                typed = "abc",
+                mode = append,
+            ),
+        )
+        // 长度正好等于要追加的内容：旧内容被整体替换掉了。
+        assertEquals(
+            TextInputVerification.Verdict.NOT_APPLIED,
+            TextInputVerification.judge(
+                before = field("••", password = true),
+                after = field("•••", password = true),
+                typed = "abc",
+                mode = append,
+            ),
+        )
+        // 长度没变：追加被吞。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = field("••", password = true),
+                after = field("••", password = true),
+                typed = "abc",
+                mode = append,
+            ),
+        )
+        // 变了但对不上（固定 6 位掩码）：不确定，不能报成功。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = field("••", password = true),
+                after = field("••••••", password = true),
+                typed = "abc",
+                mode = append,
+            ),
+        )
+    }
+
+    @Test
+    fun `password append note talks about length, never shows field content`() {
+        val verdict = TextInputVerification.Verdict.UNKNOWN
+        val note = TextInputVerification.noteFor(
+            verdict,
+            typed = "abc",
+            hadFocusedField = true,
+            mode = TextInputVerification.Mode.APPEND,
+            beforeText = "••",
+            after = field("••••••", password = true),
+        )
+        assertNotNull(note)
+        // 密码框读不到内容：说「输入框里现在是「abc」」是假话，必须按长度说。
+        assertTrue(note!!.contains("密码框"))
+        assertTrue(note.contains("6"))
+        assertFalse(note.contains("输入框里现在是"))
+    }
+
+    @Test
+    fun `truncated or rewritten text is unconfirmed, not verified`() {
+        // 真实形态：输入框有长度上限（验证码 6 位、昵称 10 字）或自动大写。
+        // 写入 30 个字符，框里只留下 10 个 —— 文本确实变了，但不是要写的内容。
+        val typed = "x".repeat(30)
+        val verdict = TextInputVerification.judge(
+            before = field("seed"),
+            after = field("x".repeat(10)),
+            typed = typed,
+        )
+        assertEquals(TextInputVerification.Verdict.UNKNOWN, verdict)
+        val note = TextInputVerification.noteFor(
+            verdict,
+            typed = typed,
+            hadFocusedField = true,
+            beforeText = "seed",
+            after = field("x".repeat(10)),
+        )
+        assertNotNull(note)
+        // 必须说「对不上」并给出两边长度，不能说成「读不出文本」—— 后者会引导模型重试同一件事。
+        assertTrue(note!!.contains("对不上"))
+        assertTrue(note.contains("10"))
+        assertTrue(note.contains("30"))
+        assertTrue(note != TextInputVerification.noteFor(verdict, typed = typed, hadFocusedField = true))
+    }
+
+    /**
+     * 反向实验：用**真机抓到的样本**去跑旧判据，确认旧代码会误报成功。
+     *
+     * 样本来自 2026-10-27 本机（PKX110 / Android 16）的 STEP9d：
+     * 夹具 LimitedProbeActivity 上限 10 字 + 小写转大写，写入 30 个 `x`，
+     * 无障碍读回的是 `XXXXXXXXXX`（既不是原文 SEED，也不是写进去的 30 个 x）。
+     *
+     * 诚实说明：这里复现的是旧实现的**判定逻辑**（`else -> VERIFIED`），
+     * 不是真机跑旧 APK。它证明的是「同一对前后快照，在旧代码下会得到 verified」——
+     * 也就是 STEP9d 那条 FAIL_CLAIMED_TRUNCATED_WRITTEN 确实能抓住这个回归，
+     * 而不是一个永远只会 OK 的空门禁。
+     */
+    @Test
+    fun `the old change-only judgment would have reported the real truncation as success`() {
+        val before = TextInputVerification.Field(text = "SEED", password = false)
+        val after = TextInputVerification.Field(text = "X".repeat(10), password = false)
+        val typed = "x".repeat(30)
+
+        // 旧实现（fix184 之前的 REPLACE 分支）：只要文本变了就报成功。
+        fun oldJudge(before: TextInputVerification.Field, after: TextInputVerification.Field, typed: String) =
+            when {
+                after.text == typed -> TextInputVerification.Verdict.VERIFIED
+                after.text == before.text -> TextInputVerification.Verdict.NOT_APPLIED
+                else -> TextInputVerification.Verdict.VERIFIED
+            }
+
+        assertEquals(TextInputVerification.Verdict.VERIFIED, oldJudge(before, after, typed))
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(before = before, after = after, typed = typed),
+        )
+    }
+
+    @Test
+    fun `password truncation is not verified`() {
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = field("", password = true),
+                after = field("••••••", password = true), // 固定 6 位掩码
+                typed = "1234",
+            ),
+        )
+    }
+
+    @Test
+    fun `clearing a password field that always reads empty is unconfirmed`() {
+        // 内容读不到时 before/after 都是空串：这与「清空成功」读起来一样，不能报 verified。
+        assertEquals(
+            TextInputVerification.Verdict.UNKNOWN,
+            TextInputVerification.judge(
+                before = field("", password = true),
+                after = field("", password = true),
+                typed = "",
+                mode = TextInputVerification.Mode.CLEAR,
+            ),
+        )
+        // 读到过掩码、之后变空：这才是「确实清了」的证据。
+        assertEquals(
+            TextInputVerification.Verdict.VERIFIED,
+            TextInputVerification.judge(
+                before = field("••", password = true),
+                after = field("", password = true),
+                typed = "",
+                mode = TextInputVerification.Mode.CLEAR,
+            ),
         )
     }
 

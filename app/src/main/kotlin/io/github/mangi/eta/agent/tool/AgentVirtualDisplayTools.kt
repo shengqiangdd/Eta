@@ -361,7 +361,15 @@ internal object AgentVirtualDisplayTools {
         val action = request.action.ifEmpty { "android.intent.action.MAIN" }
         builder.append(" -a ").append(shellQuote(action))
         val explicitComponent = request.component.ifEmpty {
-            if (request.activity.isNotEmpty()) request.packageName + "/" + request.activity else ""
+            when {
+                request.activity.isEmpty() -> ""
+                // 2026-10-27（fix184）：`activity` 来自工具参数，文档要求的是「完整组件名」
+                // （`pkg/.Cls`）。旧写法无条件再拼一次包名，得到 `pkg/pkg/.Cls` ——
+                // am 回 `Activity class {...} does not exist`，看起来像应用没装，
+                // 实际是指令写坏了。含 `/` 就已是组件名，直接用。
+                request.activity.contains('/') -> request.activity
+                else -> request.packageName + "/" + request.activity
+            }
         }
         if (explicitComponent.isNotEmpty()) {
             builder.append(" -n ").append(shellQuote(explicitComponent))

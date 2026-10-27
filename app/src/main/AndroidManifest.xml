@@ -110,6 +110,19 @@
             android:theme="@android:style/Theme.DeviceDefault.Light"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
+        <!-- 真机探针专用：一个会截断到 10 个字符并转大写的输入框（fix184）。
+             用来证明「写入被截断/改写」时不再报 verified。
+             独立 taskAffinity：root 启动它时新建任务，
+             不会把用户主屏上的 Eta 任务搬走。不导出、无启动入口、不在用户路径上。 -->
+        <activity
+            android:name=".agent.device.LimitedProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="Eta 截断改写探针"
+            android:taskAffinity="io.github.mangi.eta.probe.limited"
+            android:theme="@android:style/Theme.DeviceDefault.Light"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <activity
             android:name=".agent.voice.EtaVoiceAssistActivity"
             android:excludeFromRecents="true"

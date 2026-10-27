@@ -8556,3 +8556,114 @@ fix183 同时把 TEXT3g 的追加断言从「够长」收紧为「正好多出 s
   `archive/step-probe-20261027-184635-step-c5323cb6e2c1.txt`。
   首次验证用的是 `5761bb32`（含临时 `diag` 字段），定稿版只删掉该诊断字段，
   行为相同，但按惯例仍用定稿产物重跑了一遍 —— 两份报告都给出 `STEP9c verdict=OK`。
+
+
+## fix184：输入框截断/改写被报成「写进去了」—— REPLACE 只比「变没变」（2026-10-27）
+
+### 一、问题：变了 ≠ 写的是你要的东西
+
+`TextInputVerification.judge` 的 REPLACE 分支原来的判据是：
+
+```kotlin
+after.text == typed      -> VERIFIED
+after.text == before.text -> NOT_APPLIED
+else                     -> VERIFIED   // ← 这里
+```
+
+最后一行把「文本确实变了，但和要写的内容对不上」也算成成功。真实世界里这种输入框很常见：
+验证码 6 位、昵称 10 字上限、自动大写的英文标题、自动加分隔符的格式框。
+后果不是"少报一次失败"，而是模型拿到 `verified` 就去点下一步（提交/搜索），
+而框里根本不是用户要的内容 —— 与 fix159 同一类"结果说成功，但不是那件事"。
+
+密码框更糟：旧判据只比长度**变没变**，写入被截断（要 30 个、只进去 10 个）照样 `verified`。
+
+### 二、改法
+
+- REPLACE：只有 `after.text == typed` 才 `VERIFIED`；`after.text == before.text` 仍 `NOT_APPLIED`；
+  其余一律 `UNKNOWN`（"写的和要的不一样"，不是"没写进去"）。
+- 密码框 REPLACE（`judgePasswordReplace`）：读到过掩码、且 `after.length == typed.length` 才 `VERIFIED`；
+  目标长度与原有长度相同（幂等重写）→ `UNKNOWN`；其余 `UNKNOWN`（截断/固定掩码）。
+- 密码框清空：要求 `before.text.isNotEmpty() && after.text.isEmpty()` 才 `VERIFIED` ——
+  `before` 读出来本来就是空时，"清空成功"与"从来读不到"读起来一样。
+- `noteFor` 新增 `after: Field?`：截断/改写给专属文案（只报长度、不回显内容，框里可能是用户自己的数据），
+  密码框长度对不上给另一条；两者都必须与"读不出文本"分开说。
+
+### 三、真机样本：造一个一定会截断并改写的输入框
+
+判据只有单测没有真机样本，等于没验证过。新增 `LimitedProbeActivity`：
+`InputFilter.LengthFilter(10)` + 小写转大写，预置 `SEED`。写入 30 个 `x` 后，
+无障碍读回的是 `XXXXXXXXXX` —— 既不是原文，也不是写入值。
+
+`VirtualDisplayDebugHost` 的 `STEP9d` 走完整工具链写 30 个 `x`，判据要求：
+
+```kotlin
+verification == "unknown" && afterLen < 30 && note.contains("对不上")
+```
+
+真机（PKX110 / Android 16，canary，PKX110 主屏前台保持不动）：
+
+```
+STEP9d sent=30 verification=unknown afterLen=10 field=[XXXXXXXXXX] note=写入命令执行了（退出码 0），但输入框里现在是 10 个字符，与你要写入的 30
+STEP9d verdict=OK
+```
+
+### 四、卡住的两轮：SKIPPED 其实是「无障碍没连上」
+
+STEP9d 连续两轮报 `verdict=SKIPPED_NO_LIMITED_FIELD`，`editable=-1`，20 次观察全落空。
+一度以为是包名读错或夹具没起来；`dumpsys accessibility` 显示 canary 一直停在
+**Binding services**（`Bound services` 里只有正式版），`observe_screen` 因此退回 uiautomator，
+而**虚拟屏上 uiautomator 返回 0 个节点**（`ui_nodes_shown:0`），标题和输入框都看不到。
+
+重设 `enabled_accessibility_services`（先只留正式版、再加回 canary）后服务重新绑定，
+同一份 APK 立刻 `STEP9d verdict=OK`。顺带让此前两个 `SKIPPED_NO_CLICKABLE_NODE`（STEP13/13b）
+也变成 OK —— **SKIPPED 的根因可以完全不在被测代码里**。
+
+### 五、反向实验：旧判据真的会误报
+
+用**真机抓到的同一对快照**（before=`SEED`、after=`XXXXXXXXXX`、typed=30 个 `x`）跑旧实现：
+
+```kotlin
+fun oldJudge(...) = when {
+    after.text == typed -> VERIFIED
+    after.text == before.text -> NOT_APPLIED
+    else -> VERIFIED          // 旧代码
+}
+```
+
+单测断言：`oldJudge → VERIFIED`，新 `judge → UNKNOWN`。
+诚实说明：这是**逻辑复现**，不是真机跑旧 APK；它证明的是 STEP9d 那条
+`FAIL_CLAIMED_TRUNCATED_WRITTEN` 确实能抓住这个回归，而不是一条永远只会 OK 的空门禁。
+
+### 六、自查发现：密码框 APPEND 被统一按 REPLACE 判
+
+第一版把密码框塞在 `if (before.password) return judgePasswordReplace(...)`，位置在
+`mode == APPEND` **之前**。追加的正确长度是「原长度 + 新内容」，与目标长度必然不同 →
+一次正常的密码框追加会被判 `UNKNOWN`。方向安全（没说假话），但结论不对。
+
+改成按 mode 分派，新增 `judgePasswordAppend`：
+
+```kotlin
+after.length == before.length + typed.length -> VERIFIED
+after.length == typed.length && typed.length != before.length -> NOT_APPLIED
+else -> UNKNOWN
+```
+
+配套 `noteFor` 的密码框追加文案：只谈长度，不说「输入框里现在是「…」」（那是掩码，不是正文）。
+
+### 七、教训
+
+1. **"文本变了"不是判据**：替换的唯一正确结果是"等于要写的"，中间态只能说不确定。
+2. **探针 SKIPPED 先查环境**：`accessibility.available=false` 会让虚拟屏节点整块为空，
+   看起来像"夹具没起来"，实际是服务没绑定。安装覆盖后 canary 会卡在 Binding services。
+3. **改判据要按 mode 想一遍**：同一个函数服务三种语义，密码框那条捷径把 APPEND 带歪了。
+4. 反向实验不必真机跑旧 APK，但必须用**真机抓到的快照**，并写明是逻辑复现。
+
+### 八、产物与门禁
+
+- 门禁：单测 **597 用例 / 0 失败**（新增 3 条：密码追加、密码追加文案、旧判据反向实验）；
+  `STAGES=assemble` 通过，产物 **93,032,497 字节**，sha256 `d302167b6c7fff3f…`。
+- 真机复跑（定稿产物）：`apk_size=93032497`、`STEP9d verdict=OK`；
+  另一次（上一版构建 `apk_size=93031137`）同样 `STEP9d verdict=OK` ——
+  两次都抓到 `afterLen=10`、`verification=unknown`，说明不是"夹具没截断"的假通过。
+- 仍未覆盖：密码框与长 hint 的真机样本、`writeTextPrepared` 的两个 `SERVICE_TIMEOUT` 分支（旧缺口）。
+  本轮 STEP8 因 `com.coloros.note` 首页三轮内没有可编辑节点而 skipped，属环境差异，与 fix184 无关。

@@ -2188,4 +2188,6 @@
   <string name="agent_notice_compaction_stopped">Context compaction stopped</string>
   <!-- 真机探针样本（PasteOnlyProbeActivity）：只在这个探针窗口里显示，不在用户路径上。 -->
   <string name="probe_paste_only_title">Probe sample: this field rejects ACTION_SET_TEXT and only accepts paste</string>
+  <!-- 真机探针样本（LimitedProbeActivity）：输入框会截断到 10 个字符并转大写（fix184）。 -->
+  <string name="probe_limited_title">Probe sample: this field truncates to 10 characters and uppercases what you type</string>
 </resources>

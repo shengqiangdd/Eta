@@ -97,6 +97,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.device.ScrollEvidenceContractTest
   --tests io.github.mangi.eta.agent.tool.CoordinateDimensionPolicyTest
   --tests io.github.mangi.eta.agent.tool.ObservationScopePolicyTest
+  --tests io.github.mangi.eta.agent.tool.AgentVirtualDisplayToolsTest
   --tests io.github.mangi.eta.agent.tool.ImplicitDisplayPolicyTest
   --tests io.github.mangi.eta.agent.tool.DisplayTextTargetPolicyTest
   --tests io.github.mangi.eta.agent.tool.AfterActionScopePolicyTest

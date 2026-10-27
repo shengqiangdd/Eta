@@ -57,9 +57,15 @@ internal object TextInputVerification {
         if (mode == Mode.CLEAR) return judgeCleared(before, after)
         if (typed.isEmpty()) return Verdict.UNKNOWN
         if (before == null || after == null) return Verdict.UNKNOWN
+        // 2026-10-27（fix184 自查）：这里原来不分 mode 一律走 REPLACE 的长度比较。
+        // 追加时正确结果的长度是「原长度 + 新增长度」，与 target 长度必然不同 ——
+        // 于是一次正常的密码框追加会被判成 UNKNOWN（说「不确定」，实际写进去了）。
+        // 不区分 mode 也就等于把「追加」当成「替换」在判：语义错了，结论只会更不可靠。
         if (before.password) {
-            // 遮蔽文本（●●●●）读出来可能是等长占位，只能看长度有没有变化。
-            return if (after.text.length != before.text.length) Verdict.VERIFIED else Verdict.UNKNOWN
+            return when (mode) {
+                Mode.APPEND -> judgePasswordAppend(before, after, typed)
+                else -> judgePasswordReplace(before, after, typed)
+            }
         }
         if (mode == Mode.APPEND) {
             return when {
@@ -76,7 +82,52 @@ internal object TextInputVerification {
         // 2026-10-27：旧写法直接给 NOT_APPLIED，配套文案是「一字未变，多半被页面吞掉了」，
         // 于是「幂等重写同一段文本」被报成失败，模型会再写一遍（甚至去改别的字段）。
         if (typed == before.text) return Verdict.UNKNOWN
-        return if (after.text == before.text) Verdict.NOT_APPLIED else Verdict.VERIFIED
+        return when {
+            after.text == typed -> Verdict.VERIFIED
+            after.text == before.text -> Verdict.NOT_APPLIED
+            // 2026-10-27（fix184）：这里原来是「变了就算成功」（`else -> VERIFIED`）。
+            // 输入框做了截断或改写时（长度上限、自动大写、加分隔符），文本确实变了，
+            // 但和要写的内容对不上 —— 旧判据照样报 verified，模型以为原样写进去了。
+            // 这不是「没写进去」（那是 NOT_APPLIED），而是「写的和要的不一样」，只能说不确定。
+            else -> Verdict.UNKNOWN
+        }
+    }
+
+    /**
+     * 密码框的 REPLACE：读不到内容，只能比长度。
+     *
+     * 2026-10-27（fix184）：旧判据是「长度变了就算输进去」，于是写入被截断（要 30 个、
+     * 只进去 10 个）也报 verified。现在必须**等于要写入的长度**才算数；
+     * 要写入的长度与原有长度相同（幂等重写）时，读出来一样，只能给 UNKNOWN。
+     * 掩码长度固定（例如始终 6 个 ●）的输入框会因此长期停在 UNKNOWN —— 这是安全方向：
+     * 宁可说「不确定」，也不能把截断说成成功。
+     */
+    private fun judgePasswordReplace(before: Field, after: Field, typed: String): Verdict {
+        return when {
+            typed.length == before.text.length -> Verdict.UNKNOWN
+            after.text.length == typed.length -> Verdict.VERIFIED
+            else -> Verdict.UNKNOWN
+        }
+    }
+
+    /**
+     * 密码框的 APPEND：同样只能比长度，但正确结果的长度是「原长度 + 新内容长度」。
+     *
+     * 这条分支是 fix184 自查补上的：改判据时把密码框统一塞进了 REPLACE 的长度比较，
+     * 于是**成功的追加**（长度变长、但不是目标长度）会被报成 UNKNOWN ——
+     * 方向是安全的（没说假话），但结论也不对：明明写进去了却说「不确定」。
+     * 用 `after.text == typed` 作替换判据同样不成立：密码框读出来是掩码，不是原文。
+     */
+    private fun judgePasswordAppend(before: Field, after: Field, typed: String): Verdict {
+        return when {
+            // 追加的正确结果：长度 = 原长度 + 新内容长度。
+            after.text.length == before.text.length + typed.length -> Verdict.VERIFIED
+            // 长度正好等于要追加的内容：旧内容被整体替换掉了。
+            after.text.length == typed.length && typed.length != before.text.length ->
+                Verdict.NOT_APPLIED
+            // 长度没变（追加被吞）或变了但对不上（截断、固定掩码）：只能说不确定。
+            else -> Verdict.UNKNOWN
+        }
     }
 
     /**
@@ -90,7 +141,13 @@ internal object TextInputVerification {
         if (before == null || after == null) return Verdict.UNKNOWN
         if (before.password) {
             // 密码框读不出内容，只能看长度是否归零。
-            return if (after.text.isEmpty()) Verdict.VERIFIED else Verdict.UNKNOWN
+            // 2026-10-27（fix184）：before 读出来本来就是空（内容读不到）时，after 空不能
+            // 证明「清空了」—— 那种情况从前会直接报 verified，等于对读不到的框从不验证。
+            return if (before.text.isNotEmpty() && after.text.isEmpty()) {
+                Verdict.VERIFIED
+            } else {
+                Verdict.UNKNOWN
+            }
         }
         return if (after.text.isEmpty()) Verdict.VERIFIED else Verdict.NOT_APPLIED
     }
@@ -102,6 +159,7 @@ internal object TextInputVerification {
         hadFocusedField: Boolean,
         mode: Mode = Mode.REPLACE,
         beforeText: String? = null,
+        after: Field? = null,
     ): String? {
         if (mode == Mode.CLEAR) return when {
             verdict == Verdict.VERIFIED -> null
@@ -125,6 +183,17 @@ internal object TextInputVerification {
             !hadFocusedField ->
                 "没有看到聚焦的输入框：`input text` 在这种情况下会静默丢弃文本（命令仍退出 0）。" +
                     "请先 tap_element / tap_area 点开目标输入框再重新输入；不要因为 ok=true 就以为已经输入。"
+            // 密码框读不到内容：追加也只能比长度，不能回显「输入框里现在是「…」」（那是掩码或空串）。
+            // 2026-10-27（fix184 自查）：judge 已按 mode 区分，这里同步说清结论，否则模型会去读一段不存在的文本。
+            mode == Mode.APPEND && after?.password == true && verdict != Verdict.VERIFIED ->
+                if (verdict == Verdict.NOT_APPLIED) {
+                    "你要的是「追加」，但输入框是密码框（读不到内容），读回的长度正好等于「${echo(typed)}」本身：" +
+                        "原内容被整体替换了。确实要保留原内容时，只能整段重写（先把新旧内容拼好再整体写入）。"
+                } else {
+                    "输入框是密码框（读不到内容），只能比长度：追加后读回 ${after.text.length} 个字符，" +
+                        "与「原长度 + ${typed.length}」对不上（截断、固定掩码，或没追加上）。" +
+                        "无法确认是否按追加语义写进去，请让用户自行确认。"
+                }
             // 追加语义下的两种「不对」必须分开说：整体替换 vs 说不清。
             mode == Mode.APPEND && verdict == Verdict.NOT_APPLIED ->
                 "你要的是「追加」，但输入框里现在是「${echo(typed)}」而不是「原有内容 + ${echo(typed)}」：" +
@@ -139,6 +208,22 @@ internal object TextInputVerification {
                 "输入框里本来就是「${echo(typed)}」，写入后读到的仍是同一段文本：" +
                     "无法区分是这次写进去的，还是原来就在。按「未确认」上报 —— " +
                     "内容对得上就继续；需要确证时先把内容改成别的值再写回来。"
+            // 写后的内容既不是原文，也不是要写的内容：输入框做了改写或截断（长度上限、自动大写、
+            // 加分隔符），或者只写进去一部分。这与「读不出文本」是两件事，必须分开说（fix184）。
+            // 只报长度、不回显内容：输入框里可能是用户自己的数据。
+            mode != Mode.APPEND && verdict == Verdict.UNKNOWN && after != null &&
+                !after.password && beforeText != null &&
+                after.text != typed && after.text != beforeText ->
+                "写入命令执行了（退出码 0），但输入框里现在是 ${after.text.length} 个字符，" +
+                    "与你要写入的 ${typed.length} 个字符对不上：可能被输入框截断（长度上限）、" +
+                    "自动改写（大写或加分隔符），或者只写进去一部分。请 observe_screen 核对；" +
+                    "不要当成已经原样写入，需要确证时把内容改短到输入框允许的范围再写一次。"
+            // 密码框读不到内容，只能比长度：长度对不上同样不能说「写进去了」。
+            mode != Mode.APPEND && verdict == Verdict.UNKNOWN && after != null &&
+                after.password && beforeText != null &&
+                after.text.length != beforeText.length && after.text.length != typed.length ->
+                "输入框是密码框（读不到内容），只能比长度：写入后长度是 ${after.text.length}，" +
+                    "与你要写入的 ${typed.length} 个字符对不上，无法确认是否原样写入。请让用户自行确认。"
             verdict == Verdict.UNKNOWN ->
                 "看到了输入框，但读不出它的文本（可能是密码框，或无障碍拿不到文本），无法确认是否写进去。" +
                     "请 observe_screen 核对一次再决定下一步。"

@@ -90,7 +90,10 @@ class AgentVirtualDisplayToolsTest {
 
         // 包名 / 组件名会拼进 am 命令行，所以非法字符必须当场拒掉。
         assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("package_name", "com.foo; rm -rf /")))
-        assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("package_name", "com.foo.Bar")))
+        // 2026-10-27：这里原本断的是 `com.foo.Bar` —— 但那是**合法包名**（点分标识符，
+        // 首字符为字母），拿它当反例会把正确行为判成缺陷。真正该拒的是带路径分隔符的形式：
+        // 拼进 `am start -n` 之后就不再是包名了。
+        assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("package_name", "com.foo/Bar")))
         assertNull(
             AgentVirtualDisplayTools.parseCreate(
                 JSONObject().put("package_name", "com.android.settings").put("activity", "Settings"),
@@ -301,6 +304,38 @@ class AgentVirtualDisplayToolsTest {
     fun launcherComponentReturnsNullWhenNothingResolvable() {
         assertNull(AgentVirtualDisplayTools.parseLauncherComponent("No activities found", "com.example.app"))
         assertNull(AgentVirtualDisplayTools.parseLauncherComponent("", "com.example.app"))
+    }
+
+    @Test
+    fun activityThatIsAlreadyAFullComponentIsNotPrefixedTwice() {
+        // 真机案例（fix184）：tool 参数 activity 按文档传完整组件名，
+        // 旧实现拼成 pkg/pkg/...，am 回 "Activity class does not exist"，
+        // 于是 virtual_display_launch 在本包里永远启动不了指定 Activity。
+        val request = AgentVirtualDisplayTools.parseLaunch(
+            JSONObject()
+                .put("id", "vd1")
+                .put("package_name", "io.github.mangi.eta.canary")
+                .put("activity", "io.github.mangi.eta.canary/io.github.mangi.eta.agent.device.LimitedProbeActivity"),
+        )!!
+        val command = AgentVirtualDisplayTools.buildAmStartCommand(9, request)
+        assertTrue(
+            command,
+            command.contains(
+                "-n 'io.github.mangi.eta.canary/io.github.mangi.eta.agent.device.LimitedProbeActivity'",
+            ),
+        )
+        assertFalse("包名被拼了两次", command.contains("io.github.mangi.eta.canary/io.github.mangi.eta.canary/"))
+        // 组件里的类名属于其他包（计算器就是这样）同样保持原样。
+        val cross = AgentVirtualDisplayTools.parseLaunch(
+            JSONObject()
+                .put("id", "vd1")
+                .put("package_name", "com.coloros.calculator")
+                .put("activity", "com.coloros.calculator/com.android.calculator2.Calculator"),
+        )!!
+        assertTrue(
+            AgentVirtualDisplayTools.buildAmStartCommand(2, cross)
+                .contains("-n 'com.coloros.calculator/com.android.calculator2.Calculator'"),
+        )
     }
 
     @Test

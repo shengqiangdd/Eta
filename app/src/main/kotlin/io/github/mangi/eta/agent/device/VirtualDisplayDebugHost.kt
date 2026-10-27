@@ -1098,6 +1098,126 @@ internal object VirtualDisplayDebugHost {
                         } else {
                             report.appendLine("STEP8 skipped pkg=$probePkg 三轮内没有可编辑节点")
                         }
+                        // STEP9d（fix184）：写入被输入框截断/改写时，读回来的内容变了，
+                        // 但不是要写的那段 —— 旧判据只比「和写入前不同」，会报 verified。
+                        // 夹具 LimitedProbeActivity：上限 10 字 + 小写转大写，
+                        // 写入 30 个 x 后最多读到 10 个 X（既不是原文也不是写入值）。
+                        fun limitedNode(
+                            state: JSONObject,
+                            test: (JSONObject) -> Boolean,
+                        ): JSONObject? {
+                            val nodes = state.optJSONArray("ui_nodes") ?: return null
+                            for (i in 0 until nodes.length()) {
+                                val node = nodes.optJSONObject(i) ?: continue
+                                if (test(node)) return node
+                            }
+                            return null
+                        }
+                        fun limitedField(state: JSONObject): JSONObject? =
+                            limitedNode(state) { it.optBoolean("editable") }
+                        fun limitedFieldLen(state: JSONObject): Int {
+                            val node = limitedField(state) ?: return -1
+                            val declared = node.optInt("text_len", 0)
+                            return if (declared > 0) declared else node.optString("text").length
+                        }
+                        val limitedTyped = "x".repeat(30)
+                        val limitedTitle = context.getString(
+                            io.github.mangi.eta.R.string.probe_limited_title,
+                        )
+                        val limitedLaunch = call(
+                            "virtual_display_launch",
+                            JSONObject()
+                                .put("id", inputDisplay.optString("id"))
+                                .put("package_name", context.packageName)
+                                .put(
+                                    "activity",
+                                    context.packageName + "/" + LimitedProbeActivity::class.java.name,
+                                )
+                                // 同包已有任务时工具默认拒；夹具用独立 taskAffinity，
+                                // 实际建的是新任务，不会把主屏上的 Eta 任务搬走。
+                                .put("force", true),
+                        )
+                        var limitedObs = JSONObject()
+                        var limitedIndex = -1
+                        var limitedWait = 0
+                        // 20 × 500ms：Activity 冷启动 + 首帧节点树就绪实测要 2~4 秒。
+                        while (limitedWait < 20) {
+                            Thread.sleep(500L)
+                            limitedObs = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            // 虚拟屏的观察结果把包名放在 accessibility 里（focus 是主屏那套形状），
+                            // 只读 focus 会永远得到空串，于是样本一直等到超时、报成「没就位」。
+                            val limitedFg = limitedObs.optJSONObject("focus")
+                                ?.optString("package").orEmpty()
+                                .ifEmpty {
+                                    limitedObs.optJSONObject("accessibility")
+                                        ?.optString("package").orEmpty()
+                                }
+                            if (limitedFg != context.packageName) {
+                                limitedWait++
+                                continue
+                            }
+                            // 只比包名不够（fix181 的教训）：必须看到样本标题才算就位。
+                            val titleShown =
+                                limitedNode(limitedObs) { it.optString("text").contains(limitedTitle) } != null
+                            val fieldIndex = limitedField(limitedObs)?.optInt("index", -1) ?: -1
+                            if (titleShown && fieldIndex >= 0) {
+                                limitedIndex = fieldIndex
+                                break
+                            }
+                            limitedWait++
+                        }
+                        if (limitedIndex < 0) {
+                            report.appendLine(
+                                "STEP9d launch=${limitedLaunch.optBoolean("ok")} " +
+                                    "launch_code=${limitedLaunch.optString("code")} " +
+                                    "wait=${limitedWait * 500}ms editable=$limitedIndex",
+                            )
+                            report.appendLine("STEP9d verdict=SKIPPED_NO_LIMITED_FIELD")
+                        } else {
+                            val limitedWrote = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("display_id", inputDisplayId)
+                                    .put("text", limitedTyped)
+                                    .put("mode", "replace"),
+                            )
+                            val limitedAfter = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val limitedAfterLen = limitedFieldLen(limitedAfter)
+                            val limitedFieldText = limitedField(limitedAfter)?.optString("text").orEmpty()
+                            val limitedVerification = limitedWrote.optString("input_verification")
+                            val limitedNote = limitedWrote.optString("note")
+                            report.appendLine(
+                                "STEP9d sent=${limitedTyped.length} verification=$limitedVerification " +
+                                    "afterLen=$limitedAfterLen field=[${limitedFieldText.take(24)}] " +
+                                    "note=${limitedNote.take(40)}",
+                            )
+                            report.appendLine(
+                                "STEP9d verdict=" + when {
+                                    !limitedWrote.optBoolean("ok") ->
+                                        "FAIL_WRITE:" + limitedWrote.optString("code")
+                                    limitedWrote.optInt("chars") != limitedTyped.length ->
+                                        "FAIL_SENT_LENGTH:" + limitedWrote.optInt("chars")
+                                    // 样本没造成「截断/改写」：这一条不能算通过（否则等于没测）。
+                                    limitedAfterLen == limitedTyped.length ->
+                                        "FAIL_SAMPLE_NOT_TRUNCATED:after=$limitedAfterLen"
+                                    limitedVerification == "verified" ->
+                                        "FAIL_CLAIMED_TRUNCATED_WRITTEN"
+                                    limitedVerification != "unknown" ->
+                                        "FAIL_VERIFICATION:$limitedVerification"
+                                    !limitedNote.contains("对不上") -> "FAIL_NOTE_UNCLEAR"
+                                    else -> "OK"
+                                },
+                            )
+                            // 关掉夹具窗口：写入只在这个控件里，窗口销毁即消失。
+                            call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
+                            Thread.sleep(600L)
+                        }
                         // STEP11（fix162）：截图坐标系也得是「这块屏的截图」。
                         // 自己建一块屏并启动设置：STEP8 那块输入屏可能已把应用迁回主屏，
                         // 拿它测只会得到「没有可见窗口」，把真正要看的坐标系判断遮住。
