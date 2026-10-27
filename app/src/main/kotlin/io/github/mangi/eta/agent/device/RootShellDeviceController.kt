@@ -2563,7 +2563,17 @@ internal class RootShellDeviceController(
             .put("executor", "accessibility")
         if (result.method.isNotBlank()) json.put("method", result.method)
         if (result.clipboardWritten) json.put("clipboard_written", true)
-        result.verified?.let { verified -> json.put("verified", verified) }
+        result.verified?.let { verified ->
+            json.put("verified", verified)
+            // fix171：文本写入有两条通路，回报形状却不一样 —— root 的 `input text` 给
+            // `input_verification: verified|not_applied|unknown`，无障碍的 ACTION_SET_TEXT
+            // 只给 `verified: true|false`。同一个工具两种字段，按字段判断的模型会漏掉一种。
+            // 这里补齐（保留 verified 兼容旧读取），并且只报能证明的值：
+            // 无障碍通路拿不到「确定没写进去」的证据时不自称 not_applied。
+            if (result.method.contains("SET_TEXT")) {
+                json.put("input_verification", if (verified) "verified" else "unknown")
+            }
+        }
         if (!result.ok) {
             json
                 .put("code", result.code)

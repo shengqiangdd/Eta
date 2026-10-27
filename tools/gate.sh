@@ -102,6 +102,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.tool.ToolArgumentHintPolicyTest
   --tests io.github.mangi.eta.agent.tool.ToolArgumentSchemaTest
   --tests io.github.mangi.eta.agent.accessibility.AccessibleWindowSelectionTest
+  --tests io.github.mangi.eta.agent.accessibility.AccessibilityNodeIdentityTest
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
   --tests io.github.mangi.eta.agent.model.AgentContextSummarizerParallelTest
@@ -125,6 +126,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 一加进列表就是 3 例全红（B.221 只记了 SQLite native，实际是整套 native runtime）。
 # 所以「能在本机跑」是硬前提：需要 Context / AgentLocalTools 这类用 Robolectric 的测试，
 # 本机只能靠真机探针（VirtualDisplayDebugHost 的 STEP*）验证，别往这个列表里塞。
+# 2026-10-27（fix171）同一个坑又踩了：给 `AccessibilityNodeIdentityTest` 新增两条几何指纹用例，
+# 没加进列表 —— 门禁报 547 例全绿，那两条一例没跑；而这条改动正好是「放宽快照过期判定」的，
+# 恰恰最需要单测兑。**结论同前：新增任何能在本机跑的测试类，第一件事就是把它加到这个列表。**
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest

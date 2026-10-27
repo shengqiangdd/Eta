@@ -1619,6 +1619,300 @@ internal object VirtualDisplayDebugHost {
     }
 
     /**
+     * 文本通路的快通道（本机实测约 40 秒）：主屏「带 index 真写入」、同框清空、
+     * 虚拟屏拒绝 index、跨屏快照拒绝。
+     *
+     * 为什么单独一段：这四条的正向样本以前**只有单测**（fix160 / fix164），真机只验过
+     * 「虚拟屏 + index 被拒绝」这一条反向路径。代价不对等：写错一个字的后果是文本落到
+     * **别的输入框**，而返回 ok=true。
+     * 入口：`am start ... --es eta.debug.virtual_display text_probe`
+     */
+    fun textProbe(context: Context, inputProbePackage: String? = null): String {
+        if (!probeRunning.compareAndSet(false, true)) return "text probe already running"
+        Thread({
+            val report = StringBuilder()
+            val tools = AgentLocalTools(
+                context = context.applicationContext,
+                logger = AndroidAgentLogger,
+                browserToolsEnabled = { false },
+                terminalToolsEnabled = { false },
+                deviceDirectToolsEnabled = { false },
+                deviceSensitiveReadToolsEnabled = { false },
+                deviceSensitiveActionToolsEnabled = { false },
+                memoryToolsEnabled = { false },
+                memoryWritable = false,
+                rootAvailable = { true },
+            )
+            fun call(name: String, args: JSONObject, log: Boolean = true): JSONObject {
+                val result = tools.execute(
+                    AgentModelClient.ToolCall(
+                        id = "textprobe-$name",
+                        name = name,
+                        argumentsJson = args.toString(),
+                    ),
+                )
+                val json = runCatching { JSONObject(result.content) }.getOrDefault(JSONObject())
+                if (log) report.appendLine("$name=").appendLine(result.content.take(1_500))
+                return json
+            }
+            fun firstEditable(state: JSONObject): Int {
+                val nodes = state.optJSONArray("ui_nodes") ?: return -1
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optBoolean("editable")) return node.optInt("index", -1)
+                }
+                return -1
+            }
+            fun nodeText(state: JSONObject, index: Int): String {
+                val nodes = state.optJSONArray("ui_nodes") ?: return ""
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optInt("index", -1) == index) return node.optString("text")
+                }
+                return ""
+            }
+            fun isEditable(state: JSONObject, index: Int): Boolean {
+                val nodes = state.optJSONArray("ui_nodes") ?: return false
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optInt("index", -1) == index) return node.optBoolean("editable")
+                }
+                return false
+            }
+
+            /** 按内容找节点：会话列表一直在动，按旧 index 回读会把写成功误判成写丢。 */
+            fun findText(state: JSONObject, needle: String): Int {
+                val nodes = state.optJSONArray("ui_nodes") ?: return -1
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    if (node.optString("text").contains(needle)) return node.optInt("index", -1)
+                }
+                return -1
+            }
+            val probePkg = inputProbePackage?.trim()?.takeIf { it.isNotEmpty() }
+                ?: "com.coloros.calendar"
+            val probeText = "etaprobe"
+            var displayKey = ""
+            try {
+                var waitMs = 0
+                while (waitMs < 30_000) {
+                    val ready = call("observe_screen", JSONObject().put("max_nodes", 1), log = false)
+                    if (ready.optJSONObject("accessibility")?.optBoolean("available") == true) break
+                    Thread.sleep(1_000L)
+                    waitMs += 1_000
+                }
+                report.appendLine("TEXT accessibility_ready_after=${waitMs}ms")
+
+                // ① 主屏带 index 写入：这是 fix160 / fix164 一直缺的正向样本。
+                // 探针会把 canary 自己拉到前台（脚本保证），所以这个输入框是测试包的会话框，
+                // 写完立刻在同一框里清掉，不发送。
+                // 两个真机坑（本机踩到）：
+                //   a. 输入框在会话最底部，首屏快照常只截到列表上半部分（ui_tree_truncated）
+                //      —— 没翻到底不能当成「界面没输入框」；
+                //   b. 系统安全中心会弹出「检测到 Eta 获取无障碍权限」的窗，把主屏整个盖住，
+                //      对着它操作可能点到「关闭无障碍」。前台不是自己就跳过，宁可不测。
+                var mainObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                var mainId = mainObs.optString("observation_id")
+                val foreground = mainObs.optJSONObject("focus")?.optString("package").orEmpty()
+                report.appendLine("TEXT0 foreground=$foreground expected=${context.packageName}")
+                var mainEditable =
+                    if (foreground == context.packageName) firstEditable(mainObs) else -1
+                var scrollRounds = 0
+                while (mainEditable < 0 && scrollRounds < 2 && foreground == context.packageName) {
+                    call("scroll", JSONObject().put("direction", "down").put("amount", "page"))
+                    Thread.sleep(900L)
+                    mainObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                    mainId = mainObs.optString("observation_id")
+                    mainEditable = firstEditable(mainObs)
+                    scrollRounds++
+                }
+                report.appendLine(
+                    "TEXT1 observation=$mainId editable=$mainEditable scrollRounds=$scrollRounds",
+                )
+                if (foreground != context.packageName) {
+                    report.appendLine("TEXT1 verdict=SKIPPED_FOREGROUND_OTHER:$foreground")
+                    report.appendLine("TEXT2 verdict=SKIPPED_FOREGROUND_OTHER")
+                    report.appendLine("TEXT3 verdict=SKIPPED_FOREGROUND_OTHER")
+                } else if (mainEditable < 0) {
+                    report.appendLine("TEXT1 verdict=SKIPPED_NO_EDITABLE")
+                    report.appendLine("TEXT2 verdict=SKIPPED_NO_EDITABLE")
+                    report.appendLine("TEXT3 verdict=SKIPPED_NO_EDITABLE")
+                } else {
+                    val typed = call(
+                        "type_text",
+                        JSONObject()
+                            .put("text", probeText)
+                            .put("index", mainEditable)
+                            .put("observation_id", mainId),
+                    )
+                    val verification = typed.optString("input_verification")
+                    report.appendLine(
+                        "TEXT1 ok=${typed.optBoolean("ok")} code=${typed.optString("code")} " +
+                            "verification=$verification",
+                    )
+                    report.appendLine(
+                        "TEXT1 verdict=" + when {
+                            !typed.optBoolean("ok") ->
+                                "OK_NOT_ATTEMPTED:" + typed.optString("code")
+                            verification == "not_applied" -> "FAIL_NOT_APPLIED"
+                            verification == "verified" -> "OK"
+                            else -> "OK_UNVERIFIED"
+                        },
+                    )
+                    // ② 读回：这串字到底落到哪个节点上？
+                    // 不能按原 index 回读：会话列表一直在动，新快照里同一个 index 已经换了节点
+                    // （真机第一轮就是这么误报 FAIL_FIELD_EMPTY —— 字其实写进去了）。
+                    val afterObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                    val landedIndex = findText(afterObs, probeText)
+                    val landedEditable = landedIndex >= 0 && isEditable(afterObs, landedIndex)
+                    report.appendLine(
+                        "TEXT2 index=$landedIndex editable=$landedEditable " +
+                            "text=${nodeText(afterObs, landedIndex).take(40)}",
+                    )
+                    report.appendLine(
+                        "TEXT2 verdict=" + when {
+                            landedIndex < 0 -> "FAIL_FIELD_EMPTY"
+                            !landedEditable -> "FAIL_WRONG_FIELD:index=$landedIndex"
+                            else -> "OK"
+                        },
+                    )
+                    // ③ 清空：用「刚观察到的那个框」清，跟模型的做法一致。
+                    if (landedIndex < 0) {
+                        report.appendLine("TEXT3 verdict=SKIPPED_NO_LANDED_TEXT")
+                    } else {
+                        val clearObs = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val clearIndex = findText(clearObs, probeText).takeIf { it >= 0 } ?: landedIndex
+                        val cleared = call(
+                            "clear_text",
+                            JSONObject()
+                                .put("observation_id", clearObs.optString("observation_id"))
+                                .put("index", clearIndex),
+                        )
+                        val afterClear = call("observe_screen", JSONObject().put("max_nodes", 60))
+                        val leftover = findText(afterClear, probeText)
+                        report.appendLine(
+                            "TEXT3 clearIndex=$clearIndex ok=${cleared.optBoolean("ok")} " +
+                                "code=${cleared.optString("code")} " +
+                                "verification=${cleared.optString("input_verification")} " +
+                                "leftover=$leftover",
+                        )
+                        report.appendLine(
+                            "TEXT3 verdict=" + when {
+                                !cleared.optBoolean("ok") ->
+                                    "OK_NOT_ATTEMPTED:" + cleared.optString("code")
+                                leftover >= 0 -> "FAIL_NOT_CLEARED"
+                                else -> "OK"
+                            },
+                        )
+                    }
+                }
+
+                // ④ 虚拟屏：带 index 必须被拒结，而不是默默写进当前焦点框。
+                val virtual = call(
+                    "virtual_display_create",
+                    JSONObject()
+                        .put("width", 720)
+                        .put("height", 1280)
+                        .put("density_dpi", 320)
+                        .put("purpose", "text probe")
+                        .put("package_name", probePkg)
+                        .put("force", true),
+                )
+                displayKey = virtual.optString("id")
+                val displayId = virtual.optInt("display_id", -1)
+                report.appendLine(
+                    "TEXT0 display=$displayId launched=${virtual.optBoolean("launched")} pkg=$probePkg",
+                )
+                if (displayId <= 0) {
+                    report.appendLine("TEXT4 verdict=SKIPPED_CREATE_FAILED")
+                    report.appendLine("TEXT5 verdict=SKIPPED_CREATE_FAILED")
+                    report.appendLine("TEXT6 verdict=SKIPPED_CREATE_FAILED")
+                } else {
+                    val virtualTyped = call(
+                        "type_text",
+                        JSONObject()
+                            .put("display_id", displayId)
+                            .put("index", 0)
+                            .put("text", "x"),
+                    )
+                    report.appendLine(
+                        "TEXT4 type code=${virtualTyped.optString("code")} " +
+                            "ok=${virtualTyped.optBoolean("ok")}",
+                    )
+                    report.appendLine(
+                        "TEXT4 verdict=" + when {
+                            virtualTyped.optBoolean("ok") -> "FAIL_INDEX_ACCEPTED"
+                            virtualTyped.optString("code") ==
+                                DisplayTextErrors.INDEX_ON_VIRTUAL_DISPLAY -> "OK"
+                            else -> "FAIL_OTHER_CODE:" + virtualTyped.optString("code")
+                        },
+                    )
+                    val virtualCleared = call(
+                        "clear_text",
+                        JSONObject().put("display_id", displayId).put("index", 0),
+                    )
+                    report.appendLine(
+                        "TEXT5 clear code=${virtualCleared.optString("code")} " +
+                            "ok=${virtualCleared.optBoolean("ok")}",
+                    )
+                    report.appendLine(
+                        "TEXT5 verdict=" + when {
+                            virtualCleared.optBoolean("ok") -> "FAIL_INDEX_ACCEPTED"
+                            virtualCleared.optString("code") ==
+                                DisplayTextErrors.INDEX_ON_VIRTUAL_DISPLAY -> "OK"
+                            else -> "FAIL_OTHER_CODE:" + virtualCleared.optString("code")
+                        },
+                    )
+                    // ⑥ 跳屏：快照在虚拟屏，却要操作主屏的 index。
+                    val virtualObs = call(
+                        "observe_screen",
+                        JSONObject().put("display_id", displayId).put("max_nodes", 20),
+                    )
+                    val crossClear = call(
+                        "clear_text",
+                        JSONObject()
+                            .put("display_id", 0)
+                            .put("index", 0)
+                            .put("observation_id", virtualObs.optString("observation_id")),
+                    )
+                    report.appendLine(
+                        "TEXT6 snapshot=${virtualObs.optString("observation_id")} " +
+                            "code=${crossClear.optString("code")} ok=${crossClear.optBoolean("ok")}",
+                    )
+                    report.appendLine(
+                        "TEXT6 verdict=" + when {
+                            crossClear.optBoolean("ok") -> "FAIL_CROSS_SCOPE_ACCEPTED"
+                            crossClear.optString("code") ==
+                                ObservationScopeErrors.OTHER_DISPLAY -> "OK"
+                            else -> "FAIL_OTHER_CODE:" + crossClear.optString("code")
+                        },
+                    )
+                }
+            } catch (error: Throwable) {
+                report.appendLine("EXCEPTION=${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                if (displayKey.isNotEmpty()) {
+                    runCatching {
+                        tools.execute(
+                            AgentModelClient.ToolCall(
+                                id = "textprobe-release",
+                                name = "virtual_display_release",
+                                argumentsJson = JSONObject().put("id", displayKey).toString(),
+                            ),
+                        )
+                    }
+                }
+                runCatching { tools.close() }
+                runCatching {
+                    File(context.getExternalFilesDir(null), "text-probe.txt").writeText(report.toString())
+                }
+                probeRunning.set(false)
+            }
+        }, "eta-text-probe").start()
+        return "text probe started"
+    }
+
+    /**
      * 只跑 STEP15~18 的快通道（本机实测约 30 秒）。
      *
      * 建两块屏：设置屏给「跨屏 after」当观察源，便签屏给按键 / 节点手势用，

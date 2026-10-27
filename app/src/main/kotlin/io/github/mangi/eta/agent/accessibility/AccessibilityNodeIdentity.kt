@@ -39,4 +39,23 @@ internal object AccessibilityIdentityFreshnessPolicy {
         identityMatchCount: Int,
     ): Boolean =
         identityMatchCount == 1 && (hasUniqueId || !snapshotTruncated)
+
+    /**
+     * 输入框在内容变化的窗口里的兜底判定。
+     *
+     * 为什么需要它：空的输入框没有 text / desc / uniqueId，文本指纹根本用不上；
+     * 有内容的输入框在**截断快照**里也无法证明自己的文本全局唯一
+     * （`canBypassContentChange` 要求 `!snapshotTruncated`）—— 而输入框恰恰是最常被写入的控件，
+     * 宿主窗口又常常一直在变（打字动画、光标闪烁、来消息）。
+     * 真机证据：Eta 自己的会话输入框，写入首次与自动重试两次都是 STALE_CONTENT，一个字没写进去。
+     *
+     * 换成几何指纹：同一窗口内「类名 + viewId + 提示语 + 屏幕矩形」唯一，
+     * 且刷新后矩形/类名/viewId 未变。矩形是几何事实，与其他语义指纹不同，
+     * 不受快照截断影响（被截掉的节点不可能和它同矩形同时可见）；
+     * 写完要改什么语义，仍由动作前的 `identityMatches` 再校一遍。
+     */
+    fun canBypassContentChangeForInputField(
+        structuralMatchCount: Int,
+        refreshedStructureUnchanged: Boolean,
+    ): Boolean = structuralMatchCount == 1 && refreshedStructureUnchanged
 }

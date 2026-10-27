@@ -27,15 +27,23 @@ case "$MODE" in
   scope)
     EXTRA=scope_probe
     REPORT_NAME=scope-probe.txt
+    DONE_MARK='STEP18c verdict='
     WAIT_S=${DEV_WAIT:-180}
     ;;
   step)
     EXTRA=step_probe
     REPORT_NAME=step-probe.txt
+    DONE_MARK='STEP18c verdict='
     WAIT_S=${DEV_WAIT:-300}
     ;;
+  text)
+    EXTRA=text_probe
+    REPORT_NAME=text-probe.txt
+    DONE_MARK='TEXT6 verdict='
+    WAIT_S=${DEV_WAIT:-150}
+    ;;
   *)
-    echo "用法: sh probe.sh [scope|step]" >&2
+    echo "用法: sh probe.sh [scope|step|text]" >&2
     exit 2
     ;;
 esac
@@ -68,8 +76,22 @@ if ! grep -q Success /tmp/probe-install.log; then
   echo "安装失败: $(cat /tmp/probe-install.log)" >&2
   exit 2
 fi
+
+# 坑 7（真机踩到，最贵的一个）：`pm install` 报 Success，装的却不是这个包。
+# 有一次 APK 编译时漏了 `-Peta.applicationIdSuffix=.canary`，包名回落成正式版
+# `io.github.mangi.eta` —— 安装照样 Success，canary 一直是上一次的旧包，
+# 探针拿旧代码跑出新结论（报告格式都对不上），而且还误把用户日常用的 App 覆盖了。
+# 所以用已安装 base.apk 的字节数反查：数量对不上就停，不继续测。
+APK_SIZE=$(wc -c < "$APK" | tr -d ' ')
+BASE=$(pm path "$PKG" 2>/dev/null | sed -n '1s/^package://p')
+BASE_SIZE=$( [ -n "$BASE" ] && wc -c < "$BASE" 2>/dev/null | tr -d ' ' )
+BASE_SIZE=${BASE_SIZE:-0}
+if [ "$BASE_SIZE" != "$APK_SIZE" ]; then
+  echo "安装未生效（可能装到了别的包）：$PKG base=$BASE_SIZE 字节，APK=$APK_SIZE 字节" >&2
+  exit 2
+fi
 VER=$(dumpsys package "$PKG" | grep -m1 versionName | tr -d ' ')
-echo "installed $PKG $VER"
+echo "installed $PKG $VER ($APK_SIZE bytes)"
 
 # 坑 6：装包 kills 进程，AMS 可能让无障碍服务卡在 Binding（虚拟屏 UI 树全靠它）。
 warmup
@@ -89,10 +111,10 @@ if ! pidof "$PKG" >/dev/null 2>&1; then
   exit 3
 fi
 
-# 报告写完才落盘，所以「最后一条 verdict（现在是 18c）」出现即可判定结束。
+# 报告写完才落盘，所以「最后一条 verdict」出现即可判定结束。
 i=0
 while [ $i -lt "$WAIT_S" ]; do
-  if [ -f "$REPORT" ] && grep -q 'STEP18c verdict=' "$REPORT"; then
+  if [ -f "$REPORT" ] && grep -q "$DONE_MARK" "$REPORT"; then
     break
   fi
   sleep 2
@@ -103,7 +125,7 @@ if [ ! -f "$REPORT" ]; then
   echo "没产出报告（等 ${WAIT_S}s）: $REPORT" >&2
   exit 3
 fi
-if ! grep -q 'STEP18c verdict=' "$REPORT"; then
+if ! grep -q "$DONE_MARK" "$REPORT"; then
   echo "报告不完整（等 ${WAIT_S}s），先给已有内容：" >&2
   head -40 "$REPORT" >&2
   exit 3

@@ -69,6 +69,34 @@ class AccessibilityNodeIdentityTest {
         )
     }
 
+    @Test
+    fun `input field can act even when window content changes`() {
+        assertTrue(
+            AccessibilityIdentityFreshnessPolicy.canBypassContentChangeForInputField(
+                structuralMatchCount = 1,
+                refreshedStructureUnchanged = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `input field needs a unique structure and an unchanged rect`() {
+        // 同矩形/同类名的候选多于一个：不再当作"就是它"。
+        assertFalse(
+            AccessibilityIdentityFreshnessPolicy.canBypassContentChangeForInputField(
+                structuralMatchCount = 2,
+                refreshedStructureUnchanged = true,
+            ),
+        )
+        // 刷新后控件换了位置：宁可报快照过期，也不能写进别的框。
+        assertFalse(
+            AccessibilityIdentityFreshnessPolicy.canBypassContentChangeForInputField(
+                structuralMatchCount = 1,
+                refreshedStructureUnchanged = false,
+            ),
+        )
+    }
+
     private fun identity(
         uniqueId: String = "",
         text: String = "条目",

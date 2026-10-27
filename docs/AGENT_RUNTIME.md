@@ -7636,3 +7636,80 @@ STEP18c verdict=OK
 - 反向漂移仍无门禁：如果某个工具**实现里读了 schema 没声明的参数**，提示就会误报
   「这个参数不会被使用」。这类只能靠真实调用踩到；要根治得让实现从 schema 取参数名
   （工程量大，暂不做）。
+
+## fix171：文本写不进「一直在动」的窗口（2026-10-27，fix170 之后）
+
+### 一、缺陷（三轮真机才收敛，两次失败的原因不是同一个）
+
+真机 `text_probe`（主屏带 index 写入）三轮：
+
+1. **第一轮**：`type_text` 首次与自动重试**两次都是 `STALE_CONTENT`**，一个字没写进去。
+   `validateNode` 的门槛是「窗口内容变了 → 必须能证明身份」：空输入框没有
+   text / desc / uniqueId（`strong=false`）；有了内容之后，文本指纹又因为快照截断
+   （`ui_tree_truncated=true`）不算唯一。而输入框恰恰是最常被写入的控件，
+   宿主窗口（会话 / 聊天 / 搜索）又一直在动（打字动画、光标闪烁、来消息）。
+2. **第二轮**（只放行空框）：TEXT1 通过了，但 TEXT3「同一框清空」拿到 `IDENTITY_CHANGED`
+   —— 写入后框里已经有文本，空框条件不再适用。
+3. 第二轮还暴露**探针自身的错**：按**原 index** 回读，会话列表一动同一个 index 已经换了节点
+   → 把「写成功」误报成 `FAIL_FIELD_EMPTY`（是 TEXT3 的 `left=etaprobe` 揭穿的）。
+
+### 二、修法
+
+1. **几何指纹放行**（`AccessibilityIdentityFreshnessPolicy.canBypassContentChangeForInputField`）：
+   同一窗口内「类名 + viewId + 提示语 + 屏幕矩形」唯一，且刷新后矩形 / 类名 / viewId 未变，
+   就允许在窗口内容变化时继续动作。矩形是几何事实，与文本指纹不同，不受快照截断影响
+   （被截掉的节点不可能和它同矩形同时可见）；动作前的 `identityMatches` 仍会再校一遍
+   text / desc / viewId / password。
+2. `validateNode` 把 `node.refresh()` 提到内容判定**之前**（几何判定要看刷新后的矩形）。
+3. **文本工具补自动重试**：`type_text` / `clear_text` 的 index 路径补上
+   `retryStaleNodeAction`（replace / clear 幂等），与 `tap_element` 三件套对齐。
+4. **两个执行器的回报形状统一**：root 的 `input text` 给
+   `input_verification: verified|not_applied|unknown`，无障碍的 ACTION_SET_TEXT 以前只给
+   `verified: true|false`。同一个工具两种字段，按字段判断的模型会漏掉一种 —— 现在 SET_TEXT 类
+   动作也带 `input_verification`（只报能证明的 verified / unknown；无障碍通路拿不到
+   「确定没写进去」的证据时不自称 not_applied）。
+5. **探针改成按内容找节点**：TEXT2 / TEXT3 用「新快照里谁含有这串字」定位，不再按旧 index 回读。
+
+### 三、真机取证（PKX110 / A16 / canary）
+
+```text
+TEXT1 ok=true verification=verified verdict=OK
+TEXT2 index=43 editable=true text=etaprobe verdict=OK
+TEXT3 clearIndex=43 ok=true verification=verified leftover=-1 verdict=OK
+TEXT4 type code=INDEX_NOT_SUPPORTED_ON_VIRTUAL_DISPLAY verdict=OK
+TEXT5 clear code=INDEX_NOT_SUPPORTED_ON_VIRTUAL_DISPLAY verdict=OK
+TEXT6 snapshot=o9 code=OBSERVATION_OTHER_DISPLAY verdict=OK
+整体 PASS
+```
+
+同一 APK 回归 `scope_probe`：**8 项 verdict 全 OK**（`PASS`）。
+
+### 四、门禁
+
+用例 **547 → 555，0 失败**。这里**又踩了同一个老坑**：新增的两条用例在
+`AccessibilityNodeIdentityTest`，而它不在 `FAST_TEST_FILTERS` 里 —— 第一次跑门禁报
+「547 例全绿」，那两条一例都没跑（**用例数没变就是信号**）。本次改动恰恰是「放宽快照过期判定」，
+最需要单测兑，漏跑等于没兑。已把该测试类加进列表，并在 gate.sh 注释里记为第四次。
+
+### 五、装机前必须核对包名（这轮差点造成不可逆改动）
+
+`pm install -r` 报 Success，**装的不一定是这个包**：手工 `./gradlew :app:assembleDebug` 漏了
+`-Peta.applicationIdSuffix=.canary`（环境变量 `ETA_APP_ID_SUFFIX` 只有 gate.sh 会翻译成属性），
+APK 包名就回落成正式版 `io.github.mangi.eta`。后果两条：
+
+- canary 一直是旧包，探针拿**旧代码**跑出「新结论」（报告字段格式都对不上）；
+- 用户日常用的正式包被这次 debug 包覆盖了（同一 debug 签名，`-r` 直接成功）。
+
+新增两处防线：
+
+- `tools/apk-package.py`：装机前读 APK 的 AndroidManifest 字符串池确认包名
+  （`--expect` 不符退出码 3）；
+- `tools/probe.sh`：装完用「已安装 base.apk 字节数 == APK 字节数」反查，对不上立刻停并说明原因。
+
+### 六、限制（如实记）
+
+- 几何指纹假设「同窗口内同矩形 + 同类名 + 同 viewId + 同提示语」的输入框只有一个；
+  若应用在同一位置**原地换成另一个同类输入框**，且在观察与动作之间完成，仍可能写进新框。
+  这条风险由动作前的 text / desc / viewId 校验收窄，但无法为零。
+- 键盘顶起 / 布局变化导致矩形变化时仍报 `STALE_CONTENT` —— 期望行为，模型重看一次即可。
+- 探针只覆盖「空框写入 → 读回 → 同框清空」；append / 选区插入仍未在真机取证。

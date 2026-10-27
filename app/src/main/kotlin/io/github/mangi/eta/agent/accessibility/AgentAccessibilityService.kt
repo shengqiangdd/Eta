@@ -1828,18 +1828,20 @@ class AgentAccessibilityService : AccessibilityService() {
                 NodeActionResult.failure("STALE_WINDOW", "活动窗口已经变化，请重新观察屏幕"),
             )
         }
-        if (
-            windowContentGeneration(snapshot.windowId) != snapshot.contentGeneration &&
-            !snapshot.hasUnambiguousIdentity(indexed)
-        ) {
-            return NodeValidation.Invalid(
-                NodeActionResult.failure("STALE_CONTENT", "窗口内容已经变化，请重新观察屏幕"),
-            )
-        }
         val node = indexed.node
+        // fix171：先 refresh 再判「内容变化」——空输入框的兜底判定要看刷新后的几何指纹。
         if (!runCatching { node.refresh() }.getOrDefault(false)) {
             return NodeValidation.Invalid(
                 NodeActionResult.failure("STALE_NODE", "目标节点已经失效，请重新观察屏幕"),
+            )
+        }
+        if (
+            windowContentGeneration(snapshot.windowId) != snapshot.contentGeneration &&
+            !snapshot.hasUnambiguousIdentity(indexed) &&
+            !snapshot.canActOnInputDespiteContentChange(indexed, node)
+        ) {
+            return NodeValidation.Invalid(
+                NodeActionResult.failure("STALE_CONTENT", "窗口内容已经变化，请重新观察屏幕"),
             )
         }
         if (!indexed.identityMatches(node)) {
@@ -2334,6 +2336,24 @@ class AgentAccessibilityService : AccessibilityService() {
                 identityMatchCount = matches,
             )
         }
+
+        /**
+         * fix171：输入框在内容变化窗口里的兜底（见 `canBypassContentChangeForInputField`）。
+         *
+         * 为什么不能用空框条件：输入框一旦有了内容，文本指纹在截断快照里仍然不算唯一；
+         * 真机 TEXT3（同框清空）就是因此拿到 IDENTITY_CHANGED，文本留在框里没清掉。
+         */
+        internal fun canActOnInputDespiteContentChange(
+            target: IndexedNode,
+            refreshed: AccessibilityNodeInfo,
+        ): Boolean {
+            if (!target.editable) return false
+            val structuralMatches = indexedNodes.count(target::sameStructuralIdentity)
+            return AccessibilityIdentityFreshnessPolicy.canBypassContentChangeForInputField(
+                structuralMatchCount = structuralMatches,
+                refreshedStructureUnchanged = target.structurallyUnchanged(refreshed),
+            )
+        }
     }
 
     data class UiNode(
@@ -2388,6 +2408,29 @@ class AgentAccessibilityService : AccessibilityService() {
         val scrollTarget: NodeActionTarget?,
     ) {
         fun hasStrongIdentity(): Boolean = identity().strong
+
+        /** 空输入框的几何身份：类名 + viewId + 提示语 + 屏幕矩形（不含 text/desc）。 */
+        private fun structuralIdentityKey(): String =
+            listOf(
+                windowId.toString(),
+                packageName,
+                className,
+                viewId,
+                hint,
+                "${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}",
+            ).joinToString("\u0000")
+
+        fun sameStructuralIdentity(other: IndexedNode): Boolean =
+            editable && other.editable && structuralIdentityKey() == other.structuralIdentityKey()
+
+        /** 刷新后仍是同一个位置的同一类控件（矩形、类名、viewId 都没变）。 */
+        fun structurallyUnchanged(refreshed: AccessibilityNodeInfo): Boolean {
+            val rect = Rect()
+            refreshed.getBoundsInScreen(rect)
+            return bounds == rect &&
+                className == refreshed.className?.toString().orEmpty() &&
+                viewId == refreshed.viewIdResourceName.orEmpty()
+        }
 
         fun sameSemanticIdentity(other: IndexedNode): Boolean =
             windowId == other.windowId &&

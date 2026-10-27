@@ -1384,17 +1384,22 @@ internal class AgentLocalTools(
             )
         }
         val index = args.optNullableInt("index")
-        val observation = if (index != null) {
-            requireElementObservation(args) ?: return observationError(args)
-        } else {
-            null
+        val text = args.requiredText("text")
+        if (index == null) {
+            return deviceController.replaceText(text = text, index = null, observation = null)
         }
-        if (index != null) requireSameObservationScope(null, "type_text")
-        return deviceController.replaceText(
-            text = args.requiredText("text"),
-            index = index,
-            observation = observation,
-        )
+        val observation = requireElementObservation(args) ?: return observationError(args)
+        requireSameObservationScope(null, "type_text")
+        val node = observation.nodes.firstOrNull { it.index == index }
+            ?: return errorResult("INVALID_NODE_INDEX", "观察快照中不存在节点 index=$index")
+        // fix171：节点动作早就会「过期就重观察再试」，文本写入一直不会 ——
+        // 真机探针（TEXT1）每次拿到 STALE_CONTENT，模型只能重看一次屏幕、重找一个 index。
+        // replace 本身幂等，重试不会重复输入。
+        val result = deviceController.replaceText(text = text, index = index, observation = observation)
+        if (result.isOkJson()) return result
+        return retryStaleNodeAction(result, observation, node) { fresh, target ->
+            deviceController.replaceText(text = text, index = target.index, observation = fresh)
+        }
     }
 
     private fun clearText(args: JSONObject): String {
@@ -1410,13 +1415,19 @@ internal class AgentLocalTools(
             )
         }
         val index = args.optNullableInt("index")
-        val observation = if (index != null) {
-            requireElementObservation(args) ?: return observationError(args)
-        } else {
-            null
+        if (index == null) {
+            return deviceController.clearText(index = null, observation = null)
         }
-        if (index != null) requireSameObservationScope(null, "clear_text")
-        return deviceController.clearText(index = index, observation = observation)
+        val observation = requireElementObservation(args) ?: return observationError(args)
+        requireSameObservationScope(null, "clear_text")
+        val node = observation.nodes.firstOrNull { it.index == index }
+            ?: return errorResult("INVALID_NODE_INDEX", "观察快照中不存在节点 index=$index")
+        // fix171：同 replaceText —— 清空幂等，快照过期就该自动重观察再试一次。
+        val result = deviceController.clearText(index = index, observation = observation)
+        if (result.isOkJson()) return result
+        return retryStaleNodeAction(result, observation, node) { fresh, target ->
+            deviceController.clearText(index = target.index, observation = fresh)
+        }
     }
 
     private fun setClipboard(args: JSONObject): String =
