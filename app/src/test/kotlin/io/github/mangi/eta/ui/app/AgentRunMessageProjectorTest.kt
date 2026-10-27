@@ -730,4 +730,26 @@ class AgentRunMessageProjectorTest {
         assertFalse(interruptedNotice.running)
         assertEquals(base + completed, projector.finishContextCompaction(runId, base + completed, "上下文压缩已中断"))
     }
+
+    /**
+     * 工具开始时间必须落在消息上（而不是只存在界面里）。
+     *
+     * 这是「切换会话 / 重启后秒数重新计数」的直接回归点：
+     * 起点跟着消息落盘，重新渲染时才能接着算。
+     */
+    @Test
+    fun toolStartCarriesWallClockSoTimerSurvivesReload() {
+        val projector = AgentRunMessageProjector(
+            nowElapsedRealtime = { 1_000L },
+            nowWallClock = { 1_700_000_000_000L },
+        )
+        val messages = projector.startTool(
+            "run-timer",
+            AgentEvent.ToolStarted(round = 1, toolCallId = "t1", name = "acp_delegate", argsPreview = "委派"),
+            emptyList(),
+        )
+        val tool = messages.filterIsInstance<ToolActivityMessageUi>().single()
+        assertEquals(1_700_000_000_000L, tool.startedAtMs)
+        assertEquals(ToolActivityStatusUi.Running, tool.status)
+    }
 }

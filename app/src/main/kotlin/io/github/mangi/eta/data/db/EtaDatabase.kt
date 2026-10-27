@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 数据库版本号：实体改动必须同步 +1 并补一条 MIGRATION，单测会卡住不一致的情况。 */
-internal const val ETA_DATABASE_VERSION = 23
+internal const val ETA_DATABASE_VERSION = 24
 
 @Database(
     entities = [
@@ -105,6 +105,17 @@ internal abstract class EtaDatabase : RoomDatabase() {
         /** 会话置顶：布尔列，默认 0；老数据自然是非置顶。 */
         internal val MIGRATION_22_23 = Migration(22, 23) { database ->
             database.execSQL("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        }
+
+        /**
+         * 工具开始时间：让「已运行多久」不再只存在于内存。
+         *
+         * 默认 0 = 老数据没记录过，界面据此退回旧的近似计时（而不是当成 1970 年）。
+         */
+        internal val MIGRATION_23_24 = Migration(23, 24) { database ->
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0")
+            // 长时工具的最后一条进度也落盘：否则切走会话 / 进程重建后卡片只剩标题。
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN progress_line TEXT")
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -312,6 +323,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
             MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
+            MIGRATION_23_24,
         )
     }
 }

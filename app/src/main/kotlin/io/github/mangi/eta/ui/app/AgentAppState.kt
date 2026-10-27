@@ -129,6 +129,15 @@ internal class AgentAppState(
     private var persistencePaused = false
 
     /**
+     * 会话落盘是否失败。
+     *
+     * 失败原本只写日志 —— 用户侧的表现是「切会话 / 重启后消息不见了」，
+     * 而界面上没有任何提示，看起来像数据凭空消失。这个标记让失败能被说出来。
+     */
+    var persistenceFailed by mutableStateOf(false)
+        private set
+
+    /**
      * 会话还没从库里载入完时收到的分享内容。
      *
      * 不能直接落库：`applyLoadedSnapshot` 会用库里的整体状态替换内存，此时新建的会话
@@ -1129,6 +1138,9 @@ internal class AgentAppState(
         // 即使消息不到阈值，history/journal 也可能常驻；退后台时一起释放。
         val releaseRuntime = !state.historyDeferred || !state.journalDeferred
         if (!releaseMessages && !releaseRuntime) return
+        // 先落盘再释放：释放会把内存基线与状态一起标成「未载入」，
+        // 如果之前还有没写进库的消息，先释放就等于丢 —— 进程随后被系统回收时再也补不回来。
+        persistConversations().await()
         val rows = state.messages.size
         updateConversation(
             activeId,
@@ -2057,7 +2069,15 @@ internal class AgentAppState(
         for (id in conversationIds.distinct()) {
             if (requireSelected && selectedConversationId != id) continue
             if (conversationsById[id]?.messagesDeferred != true) continue
-            val loaded = runCatching { AgentConversationStore.loadMessages(appContext, id) }
+            // 界面自己发起的 run 也并进去：切走再切回来时，运行时可能已经把主 run 让给了别人。
+            val locallyObservedRunId = withContext(Dispatchers.Main) { currentRunId }
+            val loaded = runCatching {
+                AgentConversationStore.loadMessages(
+                    appContext,
+                    id,
+                    extraRunIds = setOfNotNull(locallyObservedRunId),
+                )
+            }
                 .onFailure { error ->
                     AndroidAgentLogger.error(
                         "Agent conversation messages load failed: ${error.safeLogType()}",
@@ -3028,6 +3048,18 @@ internal class AgentAppState(
         return matches
     }
 
+    /**
+     * 立刻把当前内存状态落盘。
+     *
+     * 用在退到后台时：进程随后被系统回收，不会再有下一次「用户操作触发保存」，
+     * 最后一批消息就只能丢。没有选中会话时什么也不做。
+     */
+    fun flushPersistence() {
+        if (selectedConversationId == null) return
+        if (persistencePaused) return
+        persistConversations()
+    }
+
     private fun persistConversations(onSaved: (() -> Unit)? = null): Deferred<Boolean> {
         val selected = selectedConversationId
         val conversations = conversationsById
@@ -3044,6 +3076,9 @@ internal class AgentAppState(
                     persistence.save(appContext,
                         AgentConversationStore.Snapshot(selected, conversations, titles, timestamps))
                     onSaved?.invoke()
+                    if (persistenceFailed) {
+                        withContext(Dispatchers.Main) { persistenceFailed = false }
+                    }
                     true
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -3051,6 +3086,18 @@ internal class AgentAppState(
                     AndroidAgentLogger.error(
                         "Agent conversation persistence failed: type=${throwable.safeLogType()}"
                     )
+                    // 只记日志等于「静默丢数据」：用户看不到任何异常，只会发现消息没了。
+                    // 从 false 翻到 true 时提示一次，避免高频重试刷屏。
+                    withContext(Dispatchers.Main) {
+                        if (!persistenceFailed) {
+                            persistenceFailed = true
+                            Toast.makeText(
+                                appContext,
+                                appContext.getString(R.string.conversation_save_failed_retry),
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
                     false
                 }
             }.also { persistenceJob = it }

@@ -313,6 +313,7 @@ internal class AgentTraceFormatter {
         if (toolName in AgentTerminalToolCatalog.names || toolName == "run_command") {
             return summarizeTerminalResult(toolName, json)
         }
+        if (toolName == "acp_delegate") return summarizeAcpDelegate(json, result)
         if (json?.optString("status") == "unconfirmed") return "操作已提交，效果未确认"
         if (!isSuccessResult(result)) return summarizeFailure(json)
         return when (toolName) {
@@ -464,6 +465,50 @@ internal class AgentTraceFormatter {
             if (json.has("line_count")) add("${json.optInt("line_count")} 行")
             if (json.has("bytes")) add("${json.optInt("bytes")} 字节")
         }.joinToString(" · ")
+
+    /**
+     * ACP 委派：卡片上要能看出「跑了多久 / 几步 / 花了多少上下文 / 最后说了什么」。
+     *
+     * 真机（PKX110，2026-10-27）：一次 90 秒、两步的委派在卡片上只显示「完成」，
+     * 用户根本不知道代理做了什么 —— 这就是「回传信息太简陋」。
+     */
+    private fun summarizeAcpDelegate(
+        json: JSONObject?,
+        result: AgentModelClient.ToolResult,
+    ): String {
+        if (json == null) return if (isSuccessResult(result)) "完成" else "失败"
+        return buildList {
+            add(if (json.optBoolean("ok", false)) "完成" else "失败")
+            if (json.has("elapsed_ms")) add(formatAcpDuration(json.optLong("elapsed_ms")))
+            json.optJSONArray("steps")?.let { steps ->
+                if (steps.length() > 0) {
+                    val failed = (0 until steps.length()).count { index ->
+                        steps.optJSONObject(index)?.optString("status") in FAILED_STEP_STATUSES
+                    }
+                    add(if (failed > 0) "${steps.length()} 步（$failed 失败）" else "${steps.length()} 步")
+                }
+            }
+            json.optJSONObject("usage")?.let { usage ->
+                val size = usage.optLong("size")
+                val used = usage.optLong("used")
+                when {
+                    size > 0L -> add("上下文 ${(used * 100 / size)}%")
+                    used > 0L -> add("${used / 1000}k tokens")
+                }
+            }
+            val snippet = if (json.optBoolean("ok", false)) {
+                json.optString("text")
+            } else {
+                json.optString("message").ifBlank { json.optString("text") }
+            }
+            snippet.lineSequence()
+                .firstOrNull { it.isNotBlank() }
+                ?.let { add(it.trim().take(60)) }
+        }.joinToString(" · ")
+    }
+
+    private fun formatAcpDuration(ms: Long): String =
+        if (ms < 1_000L) "${ms}ms" else String.format(java.util.Locale.US, "%.1fs", ms / 1000.0)
 
     private fun summarizeGenericResult(
         json: JSONObject,
@@ -735,6 +780,9 @@ internal class AgentTraceFormatter {
 
     private companion object {
         const val BROWSER_TOOL_NAME = "browser_use"
+
+        /** 委派步骤里算「失败」的状态；决定卡片是否带「（n 失败）」。 */
+        val FAILED_STEP_STATUSES = setOf("failed", "error", "cancelled", "canceled")
         const val MAX_DETAIL_CHARS = 4_000
         const val MAX_DISPLAY_COMMAND_CHARS = 4_000
         const val MAX_QUERY_SUMMARY_CHARS = 30

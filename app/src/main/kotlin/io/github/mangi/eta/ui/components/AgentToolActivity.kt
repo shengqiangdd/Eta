@@ -122,10 +122,16 @@ internal fun ToolActivityRow(
             else -> null
         }
     }
-    // 执行中进度优先于 outcome：outcome 只在终态有值，但 ACP 这类长时工具的中间过程
-    // 必须现在就看得到，否则卡片在几十秒里只有一行不变的标题，用户无法判断它是否卡住。
+    // 执行中或中断后优先显示最后一条进展：ACP 这类长时工具的中间过程必须看得见，
+    // 否则卡片只有一行不变的标题，用户无法判断它是否卡住。
+    // 成功时让位给结论（结果已完整），失败时让位给失败原因。
     val progressLine = remember(message.progressLine, message.status) {
-        message.progressLine?.takeIf { it.isNotBlank() && running }
+        message.progressLine?.takeIf { line ->
+            line.isNotBlank() && (
+                message.status == ToolActivityStatusUi.Running ||
+                    message.status == ToolActivityStatusUi.Unknown
+                )
+        }
     }
     val subtitle = progressLine ?: browserLine ?: outcome
     // 结果只有一行且已作为结论显示时，展开不会带来新信息，不提供展开入口。
@@ -135,7 +141,7 @@ internal fun ToolActivityRow(
         !message.resultDetail.isNullOrBlank() ||
         message.elapsedMs != null ||
         showBrowserShortcut
-    val elapsedSeconds = rememberRunningSeconds(message.id, running)
+    val elapsedSeconds = rememberRunningSeconds(message.id, running, message.startedAtMs)
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -173,7 +179,7 @@ internal fun ToolActivityRow(
                         } else {
                             MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f)
                         },
-                        maxLines = 1,
+                        maxLines = if (progressLine != null) PROGRESS_SUBTITLE_LINES else 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = if (showTitle) 1.dp else 0.dp),
                     )
@@ -403,17 +409,24 @@ private fun formatElapsed(ms: Long): String = when {
 }
 
 /**
- * 运行计时只在工具执行中组合，每秒仅使这一小段文字重组。起点按条目身份保存，
- * 滚出视口再回来时继续计时；它是界面侧的近似值，不写入归档。
+ * 运行计时只在工具执行中组合，每秒仅使这一小段文字重组。
+ *
+ * 起点优先用 [startedAtMs]（随消息落盘的墙上时间）：切换会话、进程重建后仍能接着算。
+ * 旧数据没有这个值时才退回界面侧近似起点（[rememberSaveable]），
+ * 那种情况下重建会从 0 开始 —— 这是可接受的降级，但**不能再当成默认可行为**：
+ * 用户看到的「秒数重新计数」就是它。
  */
 @Composable
-private fun rememberRunningSeconds(id: String, running: Boolean): Int? {
+private fun rememberRunningSeconds(id: String, running: Boolean, startedAtMs: Long?): Int? {
     if (!running) return null
-    val startedAt = rememberSaveable(id) { SystemClock.elapsedRealtime() }
-    var seconds by remember(id) { mutableIntStateOf(0) }
-    LaunchedEffect(id, startedAt) {
+    val fallbackStart = rememberSaveable(id) { System.currentTimeMillis() }
+    val start = startedAtMs?.takeIf { it > 0L } ?: fallbackStart
+    fun currentSeconds(): Int =
+        ((System.currentTimeMillis() - start) / 1_000).toInt().coerceAtLeast(0)
+    var seconds by remember(id, start) { mutableIntStateOf(currentSeconds()) }
+    LaunchedEffect(id, start) {
         while (true) {
-            seconds = ((SystemClock.elapsedRealtime() - startedAt) / 1_000).toInt()
+            seconds = currentSeconds()
             delay(1_000)
         }
     }
@@ -432,6 +445,14 @@ private fun ToolActivityStatusUi.dotColor() = when (this) {
 }
 
 private const val RUNNING_TIMER_THRESHOLD_SECONDS = 3
+
+/**
+ * 运行中进度最多显示几行。
+ *
+ * 一行不够用：ACP 委派期间整个外部代理回合都包在一次工具调用里，
+ * 只给一行时用户看到的就是「卡着不动的标题」，看不到代理在说什么。
+ */
+private const val PROGRESS_SUBTITLE_LINES = 3
 private const val MAX_RESULT_LINES = 12
 
 /**

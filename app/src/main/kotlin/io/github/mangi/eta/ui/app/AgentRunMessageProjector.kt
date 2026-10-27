@@ -15,6 +15,11 @@ import io.github.mangi.eta.ui.model.UserMessageUi
 
 internal class AgentRunMessageProjector(
     private val nowElapsedRealtime: () -> Long = { SystemClock.elapsedRealtime() },
+    /**
+     * 工具开始时间用**墙上时间**：要和数据库、重启后的当前时间比，
+     * elapsedRealtime 在重启后归零，比不了。测试可注入固定值。
+     */
+    private val nowWallClock: () -> Long = { System.currentTimeMillis() },
 ) {
     private val thinkingStartedAt = mutableMapOf<String, Long>()
 
@@ -392,6 +397,9 @@ internal class AgentRunMessageProjector(
             command = event.command,
             askQuestion = event.askQuestion,
             askOptions = event.askOptions,
+            // 起点写进消息本身（会随会话落盘）：切换会话 / 重启后卡片能接着算，
+            // 而不是从 0 重新数秒。
+            startedAtMs = nowWallClock(),
         )
         if (messages.any { it.id == message.id }) return messages
         return messages + message
@@ -476,6 +484,8 @@ internal class AgentRunMessageProjector(
             toolName = event.name,
             status = ToolActivityStatusUi.Running,
             argumentsSummary = "",
+            // 与 startTool 一致：起点必须随消息走，否则托管工具（子代理等）重新进入会话后从 0 计。
+            startedAtMs = nowWallClock(),
         )
         return if (messages.any { it.id == message.id }) messages else messages + message
     }

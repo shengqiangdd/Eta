@@ -2136,4 +2136,6 @@
   <string name="probe_plain_title">探针样本：下面这个输入框会原样保留你写入的内容</string>
   <string name="probe_password_title">探针样本：密码输入框（内容被遮蔽），提示语很长</string>
   <string name="probe_password_hint">这段提示语刻意写得很长，如果它被当成输入框里的正文，读回的长度和内容都会被污染，从而让判据出错——所以它必须被识别为提示语，而不是输入框里的内容。</string>
+  <!-- 会话落盘失败时的提示：静默失败在用户侧等价于「消息凭空消失」。 -->
+  <string name="conversation_save_failed_retry">会话保存失败：最近的改动可能丢失，下一次操作会重试。</string>
 </resources>

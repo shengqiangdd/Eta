@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.runtime.AgentRuntimeClient
 import io.github.mangi.eta.agent.roleplay.RoleplayBinding
 import io.github.mangi.eta.agent.terminal.SessionWorkspaceStore
 import io.github.mangi.eta.agent.terminal.TerminalPrivateStorage
@@ -47,6 +48,26 @@ internal object AgentConversationStore {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
+
+    /**
+     * sort_index 是否为严格递增的行序。
+     *
+     * 不能要求「从窗口起始行号开始」：历史被裁剪过的会话，库里只剩尾部，首行 sort_index 可能是
+     * 12328 而不是 0。以前用 `row.sortIndex != windowStart + index` 判定，等于给这类会话永久打上
+     * 「未对齐」标记 —— 它不进保存基线，每次保存都被当成新会话按行偏移重写，删除范围又把行偏移
+     * 当 sort_index 用，直接把窗口之前的行删掉。用户看到的就是「切走再回来 / 重启后消息少一大截」。
+     */
+    internal fun areSortIndexesIncreasing(indexes: List<Int>): Boolean =
+        indexes.withIndex().all { (index, value) -> index == 0 || indexes[index - 1] < value }
+
+    /**
+     * 重写消息后缀时的真实 sort_index 起点。
+     *
+     * 优先用「按行偏移回查到的 sort_index」（精确，不依赖 sort_index 与行号相等）；
+     * 该行不存在（窗口比库还长）时退化为最大 sort_index + 1，最后才是空表的 0。
+     */
+    internal fun resolveMessageRewindStart(sortIndexAtOffset: Int?, maxSortIndex: Int?): Int =
+        sortIndexAtOffset ?: ((maxSortIndex ?: -1) + 1)
 
     data class Snapshot(
         val selectedConversationId: String?,
@@ -96,10 +117,21 @@ internal object AgentConversationStore {
         val windowStart: Int = 0,
     )
 
-    suspend fun loadMessages(context: Context, conversationId: String): LoadedMessages =
+    suspend fun loadMessages(
+        context: Context,
+        conversationId: String,
+        extraRunIds: Set<String> = emptySet(),
+    ): LoadedMessages =
         withContext(Dispatchers.IO) {
             val dao = EtaDatabase.get(context.applicationContext).conversationDao()
-            loadMessageRows(dao, conversationId, start = 0, count = Int.MAX_VALUE, label = "full")
+            loadMessageRows(
+                dao = dao,
+                conversationId = conversationId,
+                start = 0,
+                count = Int.MAX_VALUE,
+                label = "full",
+                activeRunIds = { queryActiveRunIds(context, extraRunIds) },
+            )
         }
 
     /**
@@ -138,6 +170,7 @@ internal object AgentConversationStore {
         start: Int,
         count: Int,
         label: String,
+        activeRunIds: () -> Set<String> = { emptySet() },
     ): LoadedMessages {
         val startedNs = System.nanoTime()
         val rows = buildList {
@@ -151,15 +184,17 @@ internal object AgentConversationStore {
                 offset += page.size
             }
         }
-        val restored = rows.mapNotNull { it.toMessageOrNull() }
+        // 只有库里确实存在「标着 Running」的工具行时才去问运行时谁还在跑，普通载入不多付一次 IPC。
+        val activeRuns = if (rows.any { it.hasPendingRunningToolStatus() }) activeRunIds() else emptySet()
+        val restored = rows.mapNotNull { it.toMessageOrNull(activeRuns) }
         AndroidAgentLogger.info(
             "msgload $label ${conversationId.take(13)} rows=${rows.size} from=$start " +
-                "ms=${(System.nanoTime() - startedNs) / 1_000_000}"
+                "runs=${activeRuns.size} ms=${(System.nanoTime() - startedNs) / 1_000_000}"
         )
         return LoadedMessages(
             messages = restored,
             unaligned = restored.size != rows.size ||
-                rows.withIndex().any { (index, row) -> row.sortIndex != start + index },
+                !areSortIndexesIncreasing(rows.map { it.sortIndex }),
             windowStart = start,
         )
     }
@@ -370,15 +405,25 @@ internal object AgentConversationStore {
                                     prefix++
                                 }
                                 if (old == null || prefix != oldTail.size || prefix != newTail.size) {
-                                    val dbFrom = overlapStart + prefix
+                                    // sort_index 不是行号：历史被裁剪过的会话，库里只剩尾部（首行可能从 12328 起）。
+                                    // 以前直接拿 `overlapStart + prefix` 当 sort_index 删除，SQL 又是
+                                    // `sort_index >= :from`，于是把窗口之前的整段历史一起删了 ——
+                                    // 表现为「切走再回来 / 重启后消息越来越少」。这里按行偏移回查真实 sort_index。
+                                    val rowOffset = overlapStart + prefix
+                                    val dbFrom = resolveMessageRewindStart(
+                                        dao.messageSortIndexAt(id, rowOffset),
+                                        dao.messageMaxSortIndex(id),
+                                    )
                                     phase = "delete_message_suffix"
                                     dao.deleteMessagesFrom(id, dbFrom)
-                                    for (index in prefix until newTail.size) {
-                                        phase = "encode_message"
-                                        val row = newTail[index].toEntityOrNull(id, overlapStart + index) ?: continue
-                                        phase = "write_message"
-                                        dao.insertMessages(listOf(row))
+                                    // 一次编码完、一次插入：以前是逐条 insert（每条一次事务内的
+                                    // 分块文本写入），大会话重写时会把主线程之外的时间拉得很长。
+                                    phase = "encode_message"
+                                    val rows = newTail.drop(prefix).mapIndexedNotNull { offset, message ->
+                                        message.toEntityOrNull(id, dbFrom + offset)
                                     }
+                                    phase = "write_message"
+                                    dao.insertMessages(rows)
                                 }
                             }
                         }
@@ -519,7 +564,12 @@ internal object AgentConversationStore {
                 } else {
                     emptyList()
                 }
-                rows to rows.mapNotNull { it.toMessageOrNull() }
+                val activeRuns = if (rows.any { it.hasPendingRunningToolStatus() }) {
+                    queryActiveRunIds(context, emptySet())
+                } else {
+                    emptySet()
+                }
+                rows to rows.mapNotNull { it.toMessageOrNull(activeRuns) }
             }
             if (isSelected) {
                 AndroidAgentLogger.infoPersisted(
@@ -529,7 +579,7 @@ internal object AgentConversationStore {
             }
             if (isSelected &&
                 (restored.size != messages.size ||
-                    messages.withIndex().any { (index, row) -> row.sortIndex != windowStart + index })
+                    !areSortIndexesIncreasing(messages.map { it.sortIndex }))
             ) {
                 unaligned += conversation.id
             }
@@ -699,6 +749,9 @@ internal object AgentConversationStore {
                 argumentsSummary = argumentsSummary,
                 resultSummary = resultSummary,
                 imageCount = imageCount,
+                // 0 在库里表示「旧数据没记录过」，不能写入一个假的当前时间。
+                startedAtMs = startedAtMs ?: 0L,
+                progressLine = progressLine,
             )
 
             is ToolSummaryMessageUi -> ConversationMessageEntity(
@@ -713,7 +766,9 @@ internal object AgentConversationStore {
             else -> null
         }
 
-    private fun ConversationMessageEntity.toMessageOrNull(): AgentChatMessageUi? =
+    private fun ConversationMessageEntity.toMessageOrNull(
+        activeRunIds: Set<String> = emptySet(),
+    ): AgentChatMessageUi? =
         when (type) {
             TYPE_USER -> UserMessageUi(
                 id = id,
@@ -756,11 +811,13 @@ internal object AgentConversationStore {
             TYPE_TOOL -> ToolActivityMessageUi(
                 id = id,
                 toolName = toolName.orEmpty(),
-                status = toolStatus.orEmpty().toToolStatus(),
+                status = ToolStatusRestore.resolve(toolStatus, id, activeRunIds),
                 argumentsSummary = argumentsSummary.orEmpty(),
                 command = content.takeIf(String::isNotBlank),
                 resultSummary = resultSummary,
                 imageCount = imageCount,
+                startedAtMs = startedAtMs.takeIf { it > 0L },
+                progressLine = progressLine,
             )
 
             TYPE_TOOL_SUMMARY -> ToolSummaryMessageUi(
@@ -771,12 +828,26 @@ internal object AgentConversationStore {
             else -> null
         }
 
-    private fun String.toToolStatus(): ToolActivityStatusUi =
-        runCatching { ToolActivityStatusUi.valueOf(this) }.getOrNull()
-            ?.let { status ->
-                if (status == ToolActivityStatusUi.Running) ToolActivityStatusUi.Unknown else status
+    /** 库里有没有「标着 Running」的工具行：只有存在时才值得去问运行时谁还在跑。 */
+    private fun ConversationMessageEntity.hasPendingRunningToolStatus(): Boolean =
+        type == TYPE_TOOL && toolStatus == ToolActivityStatusUi.Running.name
+
+    /**
+     * 仍然活跃的 run：运行时回报的主 run，加上界面自己发起的那一个（[extraRunIds]）。
+     *
+     * 只在确有 Running 行时才被调用 —— 普通会话加载不会因为这一层多付一次 IPC。
+     */
+    private fun queryActiveRunIds(context: Context, extraRunIds: Set<String>): Set<String> {
+        val fromRuntime = runCatching {
+            when (
+                val query = AgentRuntimeClient(context.applicationContext, AndroidAgentLogger).queryActiveRun()
+            ) {
+                is AgentRuntimeClient.ActiveRunQuery.Known -> setOfNotNull(query.runId)
+                AgentRuntimeClient.ActiveRunQuery.Unavailable -> emptySet()
             }
-            ?: ToolActivityStatusUi.Unknown
+        }.getOrDefault(emptySet())
+        return fromRuntime + extraRunIds.filter(String::isNotBlank)
+    }
 
     private fun List<String>.toJsonArrayString(): String =
         JSONArray().also { array ->

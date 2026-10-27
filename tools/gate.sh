@@ -109,7 +109,16 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
   --tests io.github.mangi.eta.agent.model.AgentContextSummarizerParallelTest
-  --tests io.github.mangi.eta.agent.tool.AgentAfterActionSummaryVolumeTest'
+  --tests io.github.mangi.eta.agent.tool.AgentAfterActionSummaryVolumeTest
+  --tests io.github.mangi.eta.ui.app.AgentRunMessageProjectorTest
+  --tests io.github.mangi.eta.agent.acp.AcpProtocolTest
+  --tests io.github.mangi.eta.agent.acp.AcpOrphanReaperTest
+  --tests io.github.mangi.eta.agent.acp.AcpFatalStderrTest
+  --tests io.github.mangi.eta.agent.acp.AcpPermissionPolicyTest
+  --tests io.github.mangi.eta.agent.acp.AcpUpdateAccumulatorTest
+  --tests io.github.mangi.eta.agent.acp.AcpDelegateSummaryTest
+  --tests io.github.mangi.eta.ui.app.MessageSortAlignmentTest
+  --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
 # 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆

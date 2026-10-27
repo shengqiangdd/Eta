@@ -183,6 +183,17 @@ data class ToolActivityMessageUi(
     /** 文件编辑类工具改的完整路径；用于直接打开只读预览。 */
     val filePath: String? = null,
     val elapsedMs: Long? = null,
+    /**
+     * 这条工具开始执行的**墙上时间**（毫秒）。
+     *
+     * 为什么不能只靠界面里的 remember：切换会话、进程重建都会让 Compose 的
+     * rememberSaveable 丢掉起点，于是同一张卡片每次都从 0 开始数秒 ——
+     * 用户看到的是「重新进入会话秒数又归零」，会以为任务重跑了。
+     * 落盘后重启也能算出真实已运行时长。
+     *
+     * null = 旧数据（落盘前没有这一列），此时退回界面侧近似值。
+     */
+    val startedAtMs: Long? = null,
     val imageCount: Int = 0,
     /** 仅 ask_user：问题原文与候选答案；用于渲染「等你回答」卡片。 */
     val askQuestion: String? = null,

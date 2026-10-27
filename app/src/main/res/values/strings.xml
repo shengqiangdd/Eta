@@ -2195,4 +2195,6 @@
   <!-- 真机探针样本（PasswordProbeActivity）：密码框 + 超长提示语（fix185）。 -->
   <string name="probe_password_title">Probe sample: password field (content is masked) with a very long hint</string>
   <string name="probe_password_hint">This hint is deliberately longer than sixty characters so that treating it as the field content would corrupt both the readback length and the readback text.</string>
+  <!-- 会话落盘失败时的提示：静默失败在用户侧等价于「消息凭空消失」。 -->
+  <string name="conversation_save_failed_retry">Couldn\'t save this conversation. Recent changes may be lost; the next action will retry.</string>
 </resources>

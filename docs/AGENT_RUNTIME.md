@@ -8888,3 +8888,97 @@ STEP9d 与 STEP8b 共用。
    而不是调大等待时间。
 4. **重试要区分「不确定」与「已确定」**：对 `AXIS_MISMATCH` 重试 3 次只是把
    2 秒变成 6 秒，结论一模一样。
+
+## ACP 委派：三个「看起来在跑、其实什么都没发生」的真缺陷（2026-10-27 夜，PKX110/A16）
+
+用户反馈「等了 100 多秒还是什么内容都没有」。逐层查下来不是一个 bug，是三个串联的：
+
+### 1. 权限请求的 JSON-RPC `id` 是 UUID 字符串，被当成数字回话了
+
+- 现象：委派一开始模型能吐一句话，然后就再也不动，直到超时；`stderr` 干净，`unsupported_requests` 为空。
+- 证据：在 Linux 环境里直接跑 codex-acp 并复刻客户端行为（`/tmp/acp_perm_probe.py`），
+  看到它发起 `session/request_permission` 时 `id` 是 `"3e8676c5-73af-…"`（UUID），
+  回 `{"outcome":"selected","optionId":"approved"}` 后 0.1 秒就出现 `tool_call: sleep 8` 并正常结束。
+- 根因：`AcpClient` 用 `msg.optInt("id", -1)` 解析，回了个 `id: -1` 的应答；代理匹配不上应答，
+  永远等不到权限结论 → 回合挂住。
+- 修法：`AcpProtocol` 的 id 参数改成 `Any?` 并**原样回声**（`idValue()`，缺失时写 JSON null）。
+  单测：`permissionReplyEchoesStringIdVerbatim`、`unsupportedReplyAlsoEchoesTheSameId`。
+
+### 2. 「危险词」表把**每一次**命令请求都拒绝了
+
+- 现象：修好 id 之后，委派 16 秒就返回 `stop_reason=cancelled`，正文只有一句「我会先…」。
+- 根因：旧表是 `exec / shell / command / run / terminal / 执行 / 命令 …`，而它匹配的是**整个 toolCall 文本**
+  （标题 + 参数）。任何「让代理跑命令」的请求必然命中，于是每一发都被 reject，代理拿到拒绝就结束回合。
+- 修法：判据反过来 —— 默认放行，只挡不可逆操作（`rm -rf /`、格式化工具、块设备覆写、刷机、重启 …），
+  实现在 `AcpPermissionPolicy.kt`（纯函数 + 3 组单测）。委派本来就是「让它改代码、跑测试」，
+  全拒绝等于这个工具不存在。
+
+### 3. 收尾只杀了 `su` 那一层，代理进程一路漏
+
+- 证据：真机 `ps` 抓到 **8 个** `codex-acp` 残留，其中 6 个父链还挂着 App（孤儿判据根本选不中它们），
+  另 2 个被 init 收养（PPID=1）。
+- 更深一层的证据：App（uid 10629）读 root 进程的 `/proc/<pid>/cmdline` 是 **DENIED**、发信号也是 DENIED
+  → 旧的 `AcpOrphanReaper` 是**静默失效**的，「清理」什么也没清。
+- 修法：
+  1. 委派脚本里 `export ETA_ACP_SESSION=<sessionId>`，收尾时按环境变量标签找进程并 TERM/KILL
+     （Android 的 `java.lang.Process` **没有 `pid()`**，只能这么认人）；
+  2. `AcpOrphanReaper` 的扫描与 kill 全部改走 `su -c`（否则读不到别人的 /proc），
+     判据从「祖先 pid 是不是 App」改成「祖先 uid 是不是 Eta」，并把「每进程只扫一次」改成 60 秒节流。
+- 验证：真机 8 → **0**。
+
+### 验证（都在本机 PKX110 真机完成）
+
+- 短任务：`只回复 OK` → 18.1s，`end_turn`，text=`OK`。
+- 长任务（真的跑命令）：`先 sleep 50，再统计 .kt 数量` → **90.2s，`end_turn`**，
+  text=`…DONE 690`，`tool_activity` 里有 `→ sleep 50 (execute)` 与 `→ Search *.kt in kotlin (search)`。
+  这正是之前「会一直卡到超时」的那类任务。
+- 执行中界面（22:09 抓屏，55s 时刻）：卡片副标题
+  `已运行 40s｜最近：我会先等待 50 秒，再统计指定目录中的 .kt 文件。` ——
+  心跳、执行中正文、计时连续三项同时在界面可见（心跳 20s 一条，所以显示值最多滞后 20s）。
+- 消息条数：4078 → 4124 → 4486 → 4534，只增不减；`started_at` 落库（wall clock），
+  重开界面按它算耗时，不会归零。
+
+### 门禁自身的坑（又踩了一次）
+
+新增 `AcpPermissionPolicyTest` 后门禁报 657 例全绿，但那 3 条一条没跑 ——
+门禁用的是 `FAST_TEST_FILTERS` 白名单，**漏加的表现是「用例数不变」**。
+已把新类加进 `tools/gate.sh`（现 661 例）。同日第二次踩，说明「靠提醒」不够，
+但做自动拦截需要按目录判断「这目录里的测试是不是应该全部跑」，本轮没做，先如实记在这里。
+
+## 计时消失的真因：Running 被无条件降级成 Unknown（2026-10-27 深夜，PKX110/A16）
+
+### 现象与根因
+
+用户报告「切会话 / 重开界面后工具计时归零」。上一节写的「`started_at` 落库，重开界面按它算耗时，
+不会归零」只对了一半：起点确实是对的，**但计时根本没被显示**。
+
+- `AgentConversationStore` 里从库读状态时，把 `Running` **无条件**转成 `Unknown`。
+- 界面侧 `rememberRunningSeconds(running=false)` 直接返回 null → 计时整段消失，
+  标题的呼吸动画同时停掉，看起来就是「卡死」。
+- 当初降级的理由成立：进程被杀后库里会留下没写终态的 Running 行，保留它会让卡片永远转圈。
+  问题在于判据只看「是不是 Running」，没看「这个 run 是否还活着」。
+
+### 修法
+
+- 新增 `ToolStatusRestore.resolve(rawStatus, messageId, activeRunIds)`（纯函数，8 条单测）：
+  - 消息 id 由 `AgentRunMessageProjector` 生成，形如 `"$runId-tool-$round-$callId"`；
+  - runId 在活跃集合里 → 保留 `Running`，计时按 `started_at` 接着算；
+  - 不在 → 降级 `Unknown`，如实表示「已经不在跑了」。
+- 活跃集合 = 运行时回报的主 run（`AgentRuntimeClient.queryActiveRun()`）+ 界面自己的 `currentRunId`
+  （`loadMessages(extraRunIds=)` 并入，切走再切回来时运行时可能已把主 run 让给别的会话）。
+- **惰性查询**：只有这一批消息里确实存在 `tool_status='Running'` 行时才去问运行时，
+  普通会话载入不多付一次 IPC。日志 `msgload … runs=N` 可核对这条路有没有走到。
+
+### 证据
+
+- `ToolStatusRestoreTest` **8/8 通过**（含「别的 run 的 Running 不算活跃」「空 runId 不得匹配」
+  「assistant 消息不参与判定」）。已加入 `tools/gate.sh` 的 `FAST_TEST_FILTERS`，
+  门禁用例数 669 → **677**（说明新类真的跑了，不是「用例数不变」）。
+- 门禁 `STAGES=test,assemble`：**677 例、失败 0**；APK 94,011,809 字节，
+  sha256 `cc6831b09fe246fd…`。
+- 真机长任务（新包 c368a963，本轮修改前构建）：sleep 60 委派 **85.5s 完成**，
+  `stop_reason=end_turn`，steps `sleep 60 completed 59958ms`，usage `30775/258400`，
+  委派结束后 `ps` 无 codex 残留。
+- **未验证（如实）**：切会话在真机界面上「计时接着走」需要 GUI 操作（切走再切回），
+  本轮只到单测 + 载入路径日志这一层；旧包 22:09 的抓屏证明执行中卡片
+  （心跳 + 正文 + 计时）本身是可见的。

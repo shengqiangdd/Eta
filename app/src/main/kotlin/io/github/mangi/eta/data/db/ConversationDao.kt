@@ -357,6 +357,16 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("DELETE FROM conversation_messages WHERE conversation_id = :conversationId AND sort_index >= :fromIndex")
     suspend fun deleteMessagesFrom(conversationId: String, fromIndex: Int)
 
+    /** 按**行偏移**查真实 sort_index：sort_index 不等于行号，两者不能混用。 */
+    @Query(
+        "SELECT sort_index FROM conversation_messages WHERE conversation_id = :conversationId " +
+            "ORDER BY sort_index ASC LIMIT 1 OFFSET :rowOffset"
+    )
+    suspend fun messageSortIndexAt(conversationId: String, rowOffset: Int): Int?
+
+    @Query("SELECT MAX(sort_index) FROM conversation_messages WHERE conversation_id = :conversationId")
+    suspend fun messageMaxSortIndex(conversationId: String): Int?
+
     @Query("DELETE FROM conversation_context_checkpoints")
     suspend fun deleteContextCheckpoints()
 

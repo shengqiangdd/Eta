@@ -218,11 +218,17 @@ fun AgentAppRoot(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                RootAccess.refresh(context)
-                appViewModel.refreshKimiWeb()
-                permissionHealth.refreshPermissionHealth()
-                agentState.refreshRuntimeResults()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    RootAccess.refresh(context)
+                    appViewModel.refreshKimiWeb()
+                    permissionHealth.refreshPermissionHealth()
+                    agentState.refreshRuntimeResults()
+                }
+                // 退到后台立刻落盘：进程随后可能被系统回收，
+                // 不会再有下一次「用户操作触发保存」的机会。
+                Lifecycle.Event.ON_STOP -> agentState.flushPersistence()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

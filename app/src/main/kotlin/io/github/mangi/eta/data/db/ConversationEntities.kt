@@ -117,4 +117,18 @@ internal data class ConversationMessageEntity(
     @ColumnInfo(name = "result_summary") val resultSummary: String? = null,
     @ColumnInfo(name = "image_count") val imageCount: Int = 0,
     @ColumnInfo(name = "tools_json") val toolsJson: String = "[]",
+    /**
+     * 工具开始执行的墙上时间（毫秒）；0 表示旧数据没有记录。
+     *
+     * 用途：切换会话 / 重启后重新渲染时，运行中的工具卡片要能算出「已经跑了多久」，
+     * 而不是从 0 重新计数（那会被当成「又重启了一次」）。
+     */
+    @ColumnInfo(name = "started_at", defaultValue = "0") val startedAtMs: Long = 0L,
+    /**
+     * 长时工具（ACP 委派）最后一条执行中进度。
+     *
+     * 不落盘时，切走会话 / 进程重建后卡片只剩标题 —— 用户看到的就是
+     * 「委派卡住、什么也看不到」。落下来至少能看到代理最后在做什么。
+     */
+    @ColumnInfo(name = "progress_line") val progressLine: String? = null,
 )

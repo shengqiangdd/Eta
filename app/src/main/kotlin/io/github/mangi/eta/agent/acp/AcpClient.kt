@@ -90,6 +90,18 @@ internal class AcpClient(
     ) {
         val text = StringBuilder()
         val tools = StringBuilder()
+        /** 「这次委派到底做了什么」的结构化汇总（步骤 / token / plan）。 */
+        val stats = AcpUpdateAccumulator()
+        /** 思考增量字数：只在结果里给个规模，不进正文（否则正文会被內部独白淹没）。 */
+        var thoughtChars = 0
+        /**
+         * 代理请求过、而 Eta 没有实现的能力方法名（fs 读文件、terminal 执行等）。
+         *
+         * 记下来的理由：这类请求是「卡住」的高发原因 —— 回错格式代理不会降级，
+         * 只会一直等。把方法名带进结果，下次看结果就知道卡在哪一步，
+         * 而不是只有一个 ACP_TIMEOUT。
+         */
+        val unsupported = LinkedHashSet<String>()
         /** 代理往 stderr 写的东西：启动失败、崩溃原因都在这里。 */
         val stderr = StringBuilder()
         var finished = false
@@ -187,6 +199,8 @@ internal class AcpClient(
         if (!rootAvailable()) {
             return false to errorJson("ROOT_REQUIRED", "ACP 委派需要 Root 以进入 Linux 环境")
         }
+        // App 重启不会带走上一代留下的代理进程：每次委派前先扫一遍（每个进程只扫一次）。
+        AcpOrphanReaper.reapOnce()
         val resolution = resolveAgent(spec)
         if (resolution.path.isEmpty()) {
             return false to errorJson(
@@ -219,7 +233,7 @@ internal class AcpClient(
         val startedAt = System.currentTimeMillis()
         val deadline = startedAt + timeoutSeconds * 1000L
         try {
-            awaitCompletion(handle, deadline)
+            awaitCompletion(handle, deadline, startedAt)
         } finally {
             // 无论成功、超时还是异常，都不能把进程和线程留在系统里。
             // 同时从 live 里摘掉：委派是阻塞调用，返回时结果已经交给调用方，
@@ -240,6 +254,26 @@ internal class AcpClient(
             .put("text", handle.text.toString().take(MAX_RESULT_CHARS))
             .put("tool_activity", handle.tools.toString().take(MAX_TOOL_CHARS))
             .put("stderr_tail", stderrTail(handle))
+            // 结构化回传：不只给一句正文，而是「跑了哪几步、每步多久、用了多少上下文」。
+            // 真机（2026-10-27）：以前 90 秒、两步的委派在界面上只剩「完成」两个字。
+            .put("steps", handle.stats.stepsJson())
+            .put(
+                "usage",
+                JSONObject()
+                    .put("used", handle.stats.usageUsed)
+                    .put("size", handle.stats.usageSize),
+            )
+            .put("plan", JSONObject().put("done", handle.stats.planDone).put("total", handle.stats.planTotal))
+            .put("thought_chars", handle.thoughtChars)
+            // 代理请求过但 Eta 没实现的能力：超时 / 卡住时这是最直接的线索。
+            .put(
+                "unsupported_requests",
+                JSONArray().also { array ->
+                    // 拷贝一份再写：不在持有集合锁时调 JSONArray，避免将来改成回调时死锁。
+                    val methods = synchronized(handle.unsupported) { handle.unsupported.toList() }
+                    methods.forEach { method -> array.put(method) }
+                },
+            )
         if (!ok) {
             result.put("code", if (handle.error != null) "ACP_PROTOCOL_ERROR" else "ACP_TIMEOUT")
             val detail = handle.error ?: "超过 ${timeoutSeconds}s 未完成，已终止代理进程"
@@ -262,6 +296,13 @@ internal class AcpClient(
             .put("text", handle.text.toString().take(MAX_RESULT_CHARS))
             .put("tool_activity", handle.tools.toString().take(MAX_TOOL_CHARS))
             .put("stderr_tail", stderrTail(handle))
+            .put("steps", handle.stats.stepsJson())
+            .put(
+                "usage",
+                JSONObject()
+                    .put("used", handle.stats.usageUsed)
+                    .put("size", handle.stats.usageSize),
+            )
             .toString()
     }
 
@@ -482,7 +523,10 @@ internal class AcpClient(
             append("exec ").append(shellQuote(executablePath))
         }
         // 凭据在**环境内** export：值不经过宿主 shell，也不会出现在宿主 ps 的命令行里。
-        val envExports = spec.credentialEnvKeys
+        // 环境变量标签：收尾时靠它捞出整棵进程树（Android 的 Process 没有 pid()，
+        // destroyForcibly 又只杀 su 那一层）。子进程会继承它。
+        val sessionMarker = "export ETA_ACP_SESSION=${shellQuote(sessionId)}; "
+        val envExports = sessionMarker + spec.credentialEnvKeys
             .mapNotNull { key ->
                 System.getenv(key)?.takeIf { it.isNotBlank() }?.let { "export $key=${shellQuote(it)}; " }
             }
@@ -520,6 +564,11 @@ internal class AcpClient(
                             live_.stderr.delete(0, live_.stderr.length - MAX_STDERR_CHARS)
                         }
                     }
+                    // 代理把「初始化失败」写在 stderr 里而不是退出：worker 已经死了，进程却还活着。
+                    // 不在这里失败，就只能等到 timeout（真机 90 秒），界面上看着就是「卡住」。
+                    if (live_.error == null && isFatalStderrLine(line)) {
+                        live_.error = "代理初始化失败：${line.trim().take(MAX_STDERR_CHARS / 3)}"
+                    }
                 }
             }
         }.apply {
@@ -532,8 +581,13 @@ internal class AcpClient(
             runCatching {
                 performHandshake(live_, task)
             }.onFailure { throwable ->
-                if (live_.error == null) {
-                    live_.error = throwable.message ?: throwable.javaClass.simpleName
+                val raw = throwable.message.orEmpty()
+                // teardown() 关流会让阻塞中的 readLine 抛 IOException（"read interrupted by close()
+                // on another thread"）。这是我们自己收尾的副产物，不是代理的错误：
+                // 记进 error 会把「超时」误报成「协议错误」，真原因（超时 / stderr 致命行）反而被盖住。
+                val selfClosed = isSelfClosedStreamRead(raw)
+                if (live_.error == null && !selfClosed) {
+                    live_.error = raw.ifBlank { throwable.javaClass.simpleName }
                 }
             }
         }
@@ -583,18 +637,39 @@ internal class AcpClient(
             val msg = runCatching { JSONObject(line) }.getOrNull() ?: continue
             when {
                 msg.has("method") && msg.has("id") -> {
-                    // 代理发来的 request：权限请求要回答，其它直接回空结果。
-                    val replyId = msg.optInt("id", -1)
+                    // 代理发来的 request（客户端能力）。
+                    //
+                    // 只有 session/request_permission 有确定应答结构。其余方法
+                    // （fs/read_text_file、fs/write_text_file、terminal/create …）属于
+                    // **客户端能力**：不支持就必须按 JSON-RPC 回 -32601，代理才知道
+                    // 「这条路走不通」，从而改用自己进程内的实现。
+                    //
+                    // 旧实现给所有方法都回 {"result":{"outcome":{}}}：对权限请求合法，
+                    // 对 fs/read_text_file 却是畸形响应（缺 content 字段）。代理侧解析失败后
+                    // 既不会降级、也不会结束回合 —— 现象就是「acp_delegate 一直卡着到超时」，
+                    // 而日志里没有任何错误。
+                    // 代理的请求 id 必须**原样回声**：codex-acp 的 session/request_permission
+                    // 用 UUID 字符串当 id，旧代码 optInt 取成 -1，应答就匹配不上，
+                    // 代理永远等不到权限结论 —— 表现是「说完一句就再也不动」。
+                    val replyId = msg.opt("id")
                     val method = msg.optString("method")
-                    val outcome = if (method == "session/request_permission") {
-                        permissionDecision(msg.optJSONObject("params"))
-                    } else {
-                        JSONObject()
+                    if (method != AcpProtocol.PERMISSION_METHOD) {
+                        synchronized(handle.unsupported) {
+                            if (handle.unsupported.size < MAX_UNSUPPORTED_METHODS) {
+                                handle.unsupported.add(method)
+                            }
+                        }
                     }
-                    val reply = JSONObject()
-                        .put("jsonrpc", "2.0")
-                        .put("id", replyId)
-                        .put("result", JSONObject().put("outcome", outcome))
+                    // 应答结构统一由 AcpProtocol 构造（有单测守着「不支持就回 -32601」）。
+                    val reply = AcpProtocol.reply(
+                        replyId = replyId,
+                        method = method,
+                        permissionOutcome = if (method == AcpProtocol.PERMISSION_METHOD) {
+                            permissionDecision(msg.optJSONObject("params"))
+                        } else {
+                            null
+                        },
+                    )
                     synchronized(handle.writer) {
                         handle.writer.write(reply.toString())
                         handle.writer.newLine()
@@ -649,15 +724,19 @@ internal class AcpClient(
     }
 
     /**
-     * 权限决策：只读放行，写文件/执行命令一律拒绝。
-     * 理由：Eta 的工具调用里没有办法弹窗征询用户，
-     * 而"允许代理改用户磁盘"是不可逆的。拒绝会让代理停下来把情况写进文本，交由用户决定。
+     * 权限决策。
+     *
+     * 旧策略是「危险词命中就拒绝」，而那张表里有 exec / shell / command / run / 执行 / 命令 ——
+     * 匹配的又是整个 toolCall 文本。真机结果（PKX110，2026-10-27）：**每一次命令请求都被拒**，
+     * codex 拿到 reject 就结束回合（`stop_reason=cancelled`，16 秒收场），委派完全不可用。
+     *
+     * 现在：默认放行（委派的本意就是让代理改代码、跑测试），只挡不可逆的破坏性操作，
+     * 判据见 [shouldDenyAcpCommand]。Eta 的调用里仍然无法弹窗征询用户。
      */
     private fun permissionDecision(params: JSONObject?): JSONObject {
         val options = params?.optJSONArray("options") ?: JSONArray()
-        val rawKind = collectText(params?.optJSONObject("toolCall"))
-        val destructive = DESTRUCTIVE_HINTS.any { rawKind.contains(it, ignoreCase = true) }
-        if (destructive) {
+        val rawToolCall = collectText(params?.optJSONObject("toolCall"))
+        if (shouldDenyAcpCommand(rawToolCall)) {
             val reject = firstOption(options, reject = true)
             if (reject != null) return reject
         }
@@ -703,6 +782,8 @@ internal class AcpClient(
 
     private fun collectUpdate(handle: Live, update: JSONObject?) {
         if (update == null) return
+        // 先交给累加器：步骤/用量这类信息不需要逐条推给界面，但必须一条不漏地记下来。
+        handle.stats.onUpdate(update)
         when (update.optString("sessionUpdate")) {
             "agent_message_chunk" -> {
                 val text = update.optJSONObject("content")?.optString("text").orEmpty()
@@ -716,6 +797,7 @@ internal class AcpClient(
                 val text = update.optJSONObject("content")?.optString("text").orEmpty()
                 if (text.isNotEmpty()) {
                     synchronized(handle.text) { handle.text.append("[thought] ").append(text) }
+                    handle.thoughtChars += text.length
                     emitProgress(handle, "thought", text)
                 }
             }
@@ -759,12 +841,27 @@ internal class AcpClient(
      */
     private fun emitProgress(handle: Live, kind: String, detail: String) {
         val observer = handle.progress ?: return
-        val line = detail.trim().take(MAX_PROGRESS_CHARS).replace('\n', ' ')
+        // text / thought 是**增量**：单独一条常常只是「的」「了」这种碎片，贴到卡片上等于没有信息。
+        // 改用累积正文的尾部 —— 用户能连着读，看到代理此刻在说什么，而不是只有工具标题。
+        val source = if (kind == "text" || kind == "thought") {
+            synchronized(handle.text) {
+                val all = handle.text.toString()
+                if (all.length <= MAX_PROGRESS_CHARS) {
+                    all
+                } else {
+                    "…" + all.takeLast(MAX_PROGRESS_CHARS - 1)
+                }
+            }
+        } else {
+            detail.take(MAX_PROGRESS_CHARS)
+        }
+        val line = source.trim().replace('\n', ' ')
         if (line.isEmpty()) return
         runCatching { observer.onProgress(kind, line) }
     }
 
-    private fun awaitCompletion(handle: Live, deadlineMs: Long) {
+    private fun awaitCompletion(handle: Live, deadlineMs: Long, startedAtMs: Long) {
+        var lastBeatAt = System.currentTimeMillis()
         while (System.currentTimeMillis() < deadlineMs) {
             if (handle.finished) return
             if (handle.error != null) return
@@ -775,6 +872,11 @@ internal class AcpClient(
                 handle.error = "代理进程已退出（exit=${runCatching { handle.process.exitValue() }.getOrDefault(-1)}）"
                 return
             }
+            val now = System.currentTimeMillis()
+            if (now - lastBeatAt >= PROGRESS_HEARTBEAT_MS) {
+                lastBeatAt = now
+                emitHeartbeat(handle, startedAtMs)
+            }
             Thread.sleep(80)
         }
         if (!handle.finished) {
@@ -783,8 +885,30 @@ internal class AcpClient(
         }
     }
 
+    /**
+     * 委派期间的心跳。
+     *
+     * 代理跑长任务时可能几分钟不产出任何事件，卡片完全静止 —— 用户无法区分「在干活」和「已卡死」。
+     * 每 [PROGRESS_HEARTBEAT_MS] 发一条「已运行 Ns + 最近一条输出」，至少让人知道它还活着，
+     * 也知道卡在哪一步。
+     */
+    private fun emitHeartbeat(handle: Live, startedAtMs: Long) {
+        val elapsed = (System.currentTimeMillis() - startedAtMs) / 1000
+        val recent = synchronized(handle.text) {
+            handle.text.toString().trim().takeLast(HEARTBEAT_EXCERPT_CHARS).replace('\n', ' ')
+        }
+        emitProgress(
+            handle,
+            "heartbeat",
+            if (recent.isEmpty()) "已运行 ${elapsed}s，代理尚未输出内容" else "已运行 ${elapsed}s｜最近：$recent",
+        )
+    }
+
     private fun teardown(handle: Live) {
         handle.stopped.set(true)
+        // 先收整棵树：只杀直接子进程（su）会把 sh/node/平台二进制留下，
+        // 它们被 init 收养后继续跑（真机抓到 8 个，其中 6 个父链还挂着 App，孤儿判据收不到）。
+        runCatching { AcpOrphanReaper.killSessionProcesses(handle.session.id) }
         runCatching { handle.process.destroyForcibly() }
         runCatching { handle.process.errorStream.close() }
         stderrPumpRef.remove(handle.session.id)
@@ -815,18 +939,23 @@ internal class AcpClient(
         /** 同时存活的 ACP 会话上限（每个都是一个进程 + 一个线程）。 */
         const val MAX_LIVE_SESSIONS = 4
 
-        /** 单条进度行的长度上限：界面副标题只有一行，长了只会被截断。 */
-        const val MAX_PROGRESS_CHARS = 160
-
         /**
-         * 命中这些关键词的工具调用一律拒绝代理执行。
-         * 宁可漏放（让代理停下来问），不可错放（替用户改盘）。
+         * 单条进度文本的长度上限。
+         *
+         * 原来是 160（「副标题只有一行」）。但 ACP 委派期间循环里只有这一条信息流，
+         * 160 字连一段工具输出都放不下 —— 用户看到的就是「卡着不动」。
+         * 现在卡片在运行中显示最多 3 行，这个上限按 3 行的可读量给。
          */
-        val DESTRUCTIVE_HINTS = listOf(
-            "write", "edit", "patch", "create", "delete", "remove", "move", "rename",
-            "exec", "shell", "command", "terminal", "bash", "run",
-            "写", "改", "删", "执行", "命令", "终端",
-        )
+        const val MAX_PROGRESS_CHARS = 400
+
+        /** 委派没有新事件时的心跳间隔：界面上「还在跑」与「已卡死」必须能区分。 */
+        const val PROGRESS_HEARTBEAT_MS = 20_000L
+
+        /** 心跳里带上的最近输出长度。 */
+        const val HEARTBEAT_EXCERPT_CHARS = 120
+
+        /** 结果里最多回报多少个「未实现的能力方法」，够定位就停。 */
+        const val MAX_UNSUPPORTED_METHODS = 8
 
         /**
          * 内置代理。
@@ -864,3 +993,45 @@ internal class AcpClient(
         const val PROBE_TIMEOUT_MS = 4_000L
     }
 }
+
+/**
+ * 代理 stderr 里的「致命」行。
+ *
+ * 真机实测（PKX110，2026-10-27）：codex-acp 的初始化通知发不出去（设备访问不了
+ * `https://chatgpt.com/backend-api/wham/apps`），它把
+ * `ERROR rmcp::transport::worker: worker quit with fatal: ...` 写进 stderr，
+ * 但进程本身还活着、也不退出。旧实现会一直等到 timeout（实测 90 秒），
+ * 用户看到的就是「ACP 委派卡住，一句话都不回」。
+ *
+ * 只认几种明确的致命措辞，不拿 `ERROR` 当判据：代理正常工作时也会往 stderr 写 ERROR。
+ * 每组是「必须同时出现」的片段，多段的组就是为了不把可重试的普通报错当成致命。
+ */
+private val FATAL_STDERR_PATTERNS: List<List<String>> = listOf(
+    listOf("worker quit with fatal"),
+    listOf("fatal error"),
+    listOf("panic:"),
+    listOf("failed to initialize"),
+    // 2026-10-27 真机（PKX110）：codex-acp 报
+    // `codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit`，
+    // 进程活着、不回话、也不退出 → 用户干等 180 秒。要求同时出现 timeout，
+    // 免得一次可重试的刷新失败就把还能用的回合杀掉。
+    listOf("failed to refresh available models", "timeout"),
+    listOf("timeout waiting for child process to exit"),
+)
+
+internal fun isFatalStderrLine(line: String): Boolean {
+    val lower = line.lowercase()
+    return FATAL_STDERR_PATTERNS.any { group -> group.all { lower.contains(it) } }
+}
+
+/**
+ * 这个异常是不是「我们自己关流」造成的。
+ *
+ * 超时 / 取消时 [AcpClient.teardown] 会关掉管道，阻塞在 readLine 的握手线程随即抛 IOException。
+ * 它不是代理的错误，不能写进 error：否则超时会被报成「协议错误」，
+ * 用户拿到的就是一句毫无信息量的 "read interrupted by close() on another thread"
+ * 而看不到真正的原因（超时 / stderr 致命行）。
+ */
+internal fun isSelfClosedStreamRead(message: String): Boolean =
+    message.contains("close()", ignoreCase = true) ||
+        message.contains("Stream closed", ignoreCase = true)
