@@ -1124,56 +1124,53 @@ internal object VirtualDisplayDebugHost {
                         val limitedTitle = context.getString(
                             io.github.mangi.eta.R.string.probe_limited_title,
                         )
-                        val limitedLaunch = call(
+                        // 夹具就位判定：包名 + 标题 + 可编辑节点三者都要对上。
+                        // 只比包名不够（fix181 的教训）；虚拟屏的包名在 accessibility.package，
+                        // 只读 focus 会永远得到空串 —— fix184 实测过，样本一直等到超时、报成「没就位」。
+                        // 返回 (可编辑节点 index, 已等毫秒数)：index < 0 表示超时。
+                        fun waitProbeField(title: String): Pair<Int, Int> {
+                            var waited = 0
+                            // 20 × 500ms：Activity 冷启动 + 首帧节点树就绪实测要 2~4 秒。
+                            while (waited < 20) {
+                                Thread.sleep(500L)
+                                val state = call(
+                                    "observe_screen",
+                                    JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                                )
+                                val fg = state.optJSONObject("focus")?.optString("package").orEmpty()
+                                    .ifEmpty {
+                                        state.optJSONObject("accessibility")
+                                            ?.optString("package").orEmpty()
+                                    }
+                                if (fg == context.packageName) {
+                                    val titleShown =
+                                        limitedNode(state) { it.optString("text").contains(title) } != null
+                                    val index = limitedField(state)?.optInt("index", -1) ?: -1
+                                    if (titleShown && index >= 0) return index to (waited * 500)
+                                }
+                                waited++
+                            }
+                            return -1 to (waited * 500)
+                        }
+
+                        fun launchProbe(activityName: String): JSONObject = call(
                             "virtual_display_launch",
                             JSONObject()
                                 .put("id", inputDisplay.optString("id"))
                                 .put("package_name", context.packageName)
-                                .put(
-                                    "activity",
-                                    context.packageName + "/" + LimitedProbeActivity::class.java.name,
-                                )
+                                .put("activity", context.packageName + "/" + activityName)
                                 // 同包已有任务时工具默认拒；夹具用独立 taskAffinity，
                                 // 实际建的是新任务，不会把主屏上的 Eta 任务搬走。
                                 .put("force", true),
                         )
-                        var limitedObs = JSONObject()
-                        var limitedIndex = -1
-                        var limitedWait = 0
-                        // 20 × 500ms：Activity 冷启动 + 首帧节点树就绪实测要 2~4 秒。
-                        while (limitedWait < 20) {
-                            Thread.sleep(500L)
-                            limitedObs = call(
-                                "observe_screen",
-                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
-                            )
-                            // 虚拟屏的观察结果把包名放在 accessibility 里（focus 是主屏那套形状），
-                            // 只读 focus 会永远得到空串，于是样本一直等到超时、报成「没就位」。
-                            val limitedFg = limitedObs.optJSONObject("focus")
-                                ?.optString("package").orEmpty()
-                                .ifEmpty {
-                                    limitedObs.optJSONObject("accessibility")
-                                        ?.optString("package").orEmpty()
-                                }
-                            if (limitedFg != context.packageName) {
-                                limitedWait++
-                                continue
-                            }
-                            // 只比包名不够（fix181 的教训）：必须看到样本标题才算就位。
-                            val titleShown =
-                                limitedNode(limitedObs) { it.optString("text").contains(limitedTitle) } != null
-                            val fieldIndex = limitedField(limitedObs)?.optInt("index", -1) ?: -1
-                            if (titleShown && fieldIndex >= 0) {
-                                limitedIndex = fieldIndex
-                                break
-                            }
-                            limitedWait++
-                        }
+
+                        val limitedLaunch = launchProbe(LimitedProbeActivity::class.java.name)
+                        val (limitedIndex, limitedWaitMs) = waitProbeField(limitedTitle)
                         if (limitedIndex < 0) {
                             report.appendLine(
                                 "STEP9d launch=${limitedLaunch.optBoolean("ok")} " +
                                     "launch_code=${limitedLaunch.optString("code")} " +
-                                    "wait=${limitedWait * 500}ms editable=$limitedIndex",
+                                    "wait=${limitedWaitMs}ms editable=$limitedIndex",
                             )
                             report.appendLine("STEP9d verdict=SKIPPED_NO_LIMITED_FIELD")
                         } else {
@@ -1215,6 +1212,54 @@ internal object VirtualDisplayDebugHost {
                                 },
                             )
                             // 关掉夹具窗口：写入只在这个控件里，窗口销毁即消失。
+                            call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
+                            Thread.sleep(600L)
+                        }
+                        // STEP8b（fix184 后续）：给「正常写入 → verified」留一条稳定的真机正样本。
+                        // STEP8 拿第三方应用当目标（便签），它一改版就整段 skipped；
+                        // 于是两个方向只剩 STEP9d 那条负向。这里用应用自带夹具：不截断、不改写。
+                        val plainTitle = context.getString(
+                            io.github.mangi.eta.R.string.probe_plain_title,
+                        )
+                        val plainLaunch = launchProbe(PlainTextProbeActivity::class.java.name)
+                        val (plainIndex, plainWaitMs) = waitProbeField(plainTitle)
+                        if (plainIndex < 0) {
+                            report.appendLine(
+                                "STEP8b launch=${plainLaunch.optBoolean("ok")} " +
+                                    "launch_code=${plainLaunch.optString("code")} " +
+                                    "wait=${plainWaitMs}ms editable=$plainIndex",
+                            )
+                            report.appendLine("STEP8b verdict=SKIPPED_NO_PLAIN_FIELD")
+                        } else {
+                            val plainWrote = call(
+                                "type_text",
+                                JSONObject()
+                                    .put("display_id", inputDisplayId)
+                                    .put("text", "eta")
+                                    .put("mode", "replace"),
+                            )
+                            val plainAfter = call(
+                                "observe_screen",
+                                JSONObject().put("display_id", inputDisplayId).put("max_nodes", 60),
+                            )
+                            val plainText = limitedField(plainAfter)?.optString("text").orEmpty()
+                            val plainVerification = plainWrote.optString("input_verification")
+                            report.appendLine(
+                                "STEP8b sent=eta verification=$plainVerification " +
+                                    "chars=${plainWrote.optInt("chars")} field=[${plainText.take(16)}] " +
+                                    "note=${plainWrote.optString("note").take(28)}",
+                            )
+                            report.appendLine(
+                                "STEP8b verdict=" + when {
+                                    !plainWrote.optBoolean("ok") ->
+                                        "FAIL_WRITE:" + plainWrote.optString("code")
+                                    plainVerification != "verified" ->
+                                        "FAIL_NOT_VERIFIED:$plainVerification"
+                                    // 说成功了、读回来却不是要写的内容 —— 与 STEP9d 相反方向的假成功。
+                                    plainText != "eta" -> "FAIL_FIELD_MISMATCH:$plainText"
+                                    else -> "OK"
+                                },
+                            )
                             call("press_key", JSONObject().put("button", "BACK").put("display_id", inputDisplayId))
                             Thread.sleep(600L)
                         }
@@ -1493,10 +1538,9 @@ internal object VirtualDisplayDebugHost {
                             runDisplayScopeSteps(
                                 call = { toolName, toolArgs -> call(toolName, toolArgs) },
                                 report = report,
-                                // 原先这里直接写 `id`（virtual_display_create 返回的字符串 id）当
-                                // display_id 用，数值恰好一致才没暴露；抽取后统一成数字 id。
                                 settingsDisplayId = displayId,
                                 inputDisplay = inputDisplay,
+                                selfPackage = context.packageName,
                             )
                             call("virtual_display_release", JSONObject().put("id", shotDisplay.optString("id")))
                         }
@@ -1531,6 +1575,7 @@ internal object VirtualDisplayDebugHost {
         report: StringBuilder,
         settingsDisplayId: Int,
         inputDisplay: JSONObject,
+        selfPackage: String,
     ) {
 
         // STEP15（fix165）：动作在哪块屏，after 就必须是哪块屏的反馈。
@@ -1550,15 +1595,21 @@ internal object VirtualDisplayDebugHost {
                 .put("y", 900),
         )
         var crossTap = crossTapAction()
+        // 是否走过「这块屏没窗口 → 自己拉夹具」的兜底。
+        // 它会顺手把已发布快照换成同一块屏，于是「跨屏不该比 diff」这个前提就消失了，
+        // 判据必须分开看（否则会把一次正常的同屏 diff 报成跨屏污染）。
+        var crossRelaunched = false
         if (crossTap.optString("code") == "DISPLAY_NO_VISIBLE_WINDOW") {
-            // 全量探针里 STEP8 会在这块屏上做输入测试，应用可能已被系统迁回主屏，
-            // 到 STEP15 这块屏上就没窗口了（实测），tap 会被正确拒掉、整段退化成
-            // NOT_ATTEMPTED。这里兜一次：按原包重新拉起再点，否则这一段等于没跑。
+            // 全量探针里 STEP8/9d 会在这块屏上做输入测试，夹具退出后这块屏可能就没窗口了
+            // （实测：两次报告都是 DISPLAY_NO_VISIBLE_WINDOW）。按原应用重拉不一定成功
+            // （它可能已被系统搬回主屏），而这一段只关心「动作的 after 落在哪块屏」，
+            // 与具体是哪个应用无关 —— 直接用自带夹具把窗口造出来。
             val relaunch = call(
                 "virtual_display_launch",
                 JSONObject()
                     .put("id", inputDisplay.optString("id"))
-                    .put("package_name", inputDisplay.optString("package_name"))
+                    .put("package_name", selfPackage)
+                    .put("activity", selfPackage + "/" + PlainTextProbeActivity::class.java.name)
                     .put("force", true),
             )
             report.appendLine(
@@ -1566,8 +1617,10 @@ internal object VirtualDisplayDebugHost {
                     "launched=${relaunch.optBoolean("launched")} " +
                     "code=${relaunch.optString("code")}",
             )
-            Thread.sleep(1_500L)
+            // 2.5s：仅 1.5s 时首帧还没画完，tap 会再拿一次 DISPLAY_NO_VISIBLE_WINDOW。
+            Thread.sleep(2_500L)
             crossTap = crossTapAction()
+            crossRelaunched = true
         }
         val crossAfter = crossTap.optJSONObject("after")
         val crossAfterDisplay = crossAfter?.optJSONObject("display")
@@ -1576,7 +1629,7 @@ internal object VirtualDisplayDebugHost {
             ?.optJSONObject("changes")?.optBoolean("available", true) ?: true
         report.appendLine(
             "STEP15 snapshot=${scopeObs.optString("observation_id")} session=$settingsDisplayId " +
-                "actionDisplay=$crossDisplayId " +
+                "actionDisplay=$crossDisplayId relaunch=$crossRelaunched " +
                 "code=${crossTap.optString("code")} ok=${crossTap.optBoolean("ok")} " +
                 "afterScope=${crossAfterDisplay?.optString("scope").orEmpty()} " +
                 "afterId=$crossAfterId package=${crossAfter?.optString("package").orEmpty()} " +
@@ -1588,6 +1641,9 @@ internal object VirtualDisplayDebugHost {
                     "OK_NOT_ATTEMPTED:" + crossTap.optString("code")
                 crossAfterDisplay == null -> "FAIL_AFTER_WITHOUT_DISPLAY"
                 crossAfterId != crossDisplayId -> "FAIL_AFTER_OTHER_DISPLAY"
+                // 兜底后快照已经是同一块屏，这时的 diff 是合法的同屏对比，不再算跨屏污染；
+                // 但这时的「跨屏 diff 隔离」并没测到 —— 记成 NOT_ATTEMPTED，不冒充干净通过。
+                crossRelaunched -> "OK_NOT_ATTEMPTED:RELAUNCHED"
                 crossDiffAvailable -> "FAIL_CROSS_DISPLAY_DIFF"
                 else -> "OK"
             },
@@ -2741,6 +2797,7 @@ internal object VirtualDisplayDebugHost {
                         report = report,
                         settingsDisplayId = settingsDisplayId,
                         inputDisplay = inputDisplay,
+                        selfPackage = context.packageName,
                     )
                 } else {
                     report.appendLine("SCOPE skipped create_failed")

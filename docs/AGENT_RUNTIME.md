@@ -8667,3 +8667,85 @@ else -> UNKNOWN
   两次都抓到 `afterLen=10`、`verification=unknown`，说明不是"夹具没截断"的假通过。
 - 仍未覆盖：密码框与长 hint 的真机样本、`writeTextPrepared` 的两个 `SERVICE_TIMEOUT` 分支（旧缺口）。
   本轮 STEP8 因 `com.coloros.note` 首页三轮内没有可编辑节点而 skipped，属环境差异，与 fix184 无关。
+
+
+## fix184a：让探针自己修环境，并补回「正常写入 = verified」的正向覆盖（2026-10-27）
+
+### 一、脚本层的空档：SKIPPED 被当成「这一段不适用」
+
+fix184 的两轮白跑（STEP9d 一直 `SKIPPED_NO_LIMITED_FIELD`）根因不在判定逻辑：
+装包后 canary 的无障碍服务卡在 `Binding services`，`observe_screen` 退回 uiautomator，
+而 **uiautomator 在虚拟屏上返回 0 个节点**，标题与输入框都看不到。
+
+`tools/probe.sh` 原本的处理是「两次 warmup + sleep」，并且注释里就写着这条路 ——
+但它**从不检查绑定结果**。环境没准备好时，脚本照样跑完，产出一堆 SKIPPED，
+最后按 `PASS_WITH_SKIPS` 收场：看起来"只是有些项不适用"，实际是整轮没测到。
+
+改法：
+
+- `a11y_bound()`：`dumpsys accessibility` 的 `Bound services` 段里找本包服务；
+- `a11y_rebind()`：把本包从 `enabled_accessibility_services` **摘掉再加回**
+  （只改一次值系统认为状态没变；不用 `force-stop`，那会把服务从 enabled 列表里删掉）；
+- 新增模式 `sh probe.sh a11y`：装完包立刻自检，不跑探针；
+- 装包流程里在两次 warmup 之后调用 `a11y_ensure`，修不好就 `exit 4`，
+  **不再拿环境故障当结论**。
+
+验证（PKX110 / Android 16）：已绑定时 `sh probe.sh a11y` 输出「无障碍绑定正常」并 `exit 0`。
+**自动重绑分支没有在真机触发过** —— 我试图用 `settings put` 摘掉 canary 来造未绑定状态，
+系统（或某个看护）立刻把它写了回去，两次都失败。所以这一段目前只有代码正确性，
+没有「真的修好了」的证据，如实记在这里。
+
+### 二、正向覆盖缺口：STEP8 一改版就整段 skipped
+
+`STEP8` 拿第三方应用（便签）当输入目标，本轮报告是
+`STEP8 skipped pkg=com.coloros.note 三轮内没有可编辑节点` ——
+于是「正常写入应当被判 verified」这条**正向**断言在真机上就没有覆盖了，
+只剩 `STEP9d` 那条负向（截断必须报 unknown）。两个方向只留一个。
+
+新增 `PlainTextProbeActivity`（与 `LimitedProbeActivity` 同构，但**不加任何 InputFilter**）
+与 `STEP8b`，判据是 `verification=verified` **且** 字段内容严格等于写入值：
+
+```
+STEP8b sent=eta verification=verified chars=3 field=[eta] note=
+STEP8b verdict=OK
+```
+
+顺带把两段重复的「等夹具就位」抽成 `waitProbeField(title)`（包名 + 标题 + 可编辑节点三者都要对上），
+STEP9d 与 STEP8b 共用。
+
+### 三、STEP15：判据的前提被自己的兜底破坏了
+
+全量探针跑到 STEP15 时，`STEP8/9d` 已经把夹具关掉，那块屏常常没有可见窗口 →
+`OK_NOT_ATTEMPTED:DISPLAY_NO_VISIBLE_WINDOW`（实测两次）。
+
+第一版兜底是「按原包名重新拉起」，但它可能已被系统搬回主屏；
+且**即使拉起成功，`virtual_display_launch` 会把已发布快照换成同一块屏** ——
+于是「跨屏动作不该比 diff」的前提消失了，第二次 tap 得到一次合法的同屏 diff，
+判据却把它读成 `FAIL_CROSS_DISPLAY_DIFF`（报告 `6868c9c1` 就是这样）。
+
+改法：兜底改成启动自带夹具（这一段只关心动作的 after 落在哪块屏，与具体应用无关），
+等待从 1.5s 提到 2.5s（1.5s 时首帧没画完，tap 会再拿一次 `DISPLAY_NO_VISIBLE_WINDOW`），
+并把判据按前提分开：
+
+- 第一次 tap 就成功 → 仍然严格要求 `changes.available == false`（这才是跨屏隔离）；
+- 走过兜底 → 记 `OK_NOT_ATTEMPTED:RELAUNCHED`：作用域验到了，**跨屏 diff 隔离没验到**，
+  不冒充干净通过（脚本会因此判 `PASS_WITH_SKIPS`）。
+
+报告 `edf3a729`：`STEP15 relaunch ok=true ... afterId=168 diffAvailable=true` →
+`verdict=OK_NOT_ATTEMPTED:RELAUNCHED`，`STEP16a verdict=OK`（此前是 NOT_ATTEMPTED）。
+
+### 四、教训
+
+1. **脚本替人判断「环境好了没」必须落到实处**：`sleep` 不是判据，`dumpsys` 才是。
+2. 兜底动作会改变被测前提：`virtual_display_launch` 顺手换了已发布快照，
+   于是「跨屏」变成了「同屏」—— 判据要跟着前提分叉，不能一条规则套两种情形。
+3. 记 `NOT_ATTEMPTED` 比记 `FAIL` 诚实，也比记 `OK` 诚实：
+   它说的是"这一段我没测到"，而不是"功能坏了"或"功能好了"。
+
+### 五、产物与门禁
+
+- 门禁：单测 **597 / 0**；`assemble` 通过，产物 **93,036,401 字节**，sha256 `edf3a729f6c0…`。
+- 真机（定稿 `edf3a729`）：`STEP8b OK`、`STEP9d OK`、`STEP15 OK_NOT_ATTEMPTED:RELAUNCHED`、
+  `STEP16a OK`；`STEP17b` 这次是 `SKIPPED_MAIN_UNSTABLE:ACTION_OUTCOME_UNKNOWN`（主屏动作结果不确定，
+  上一轮是 OK）—— 属主屏时序波动，脚本按设计记 SKIPPED。整轮结论 `PASS_WITH_SKIPS`，不是干净 PASS。
+- 仍缺：`a11y_rebind` 的真机证据、STEP15「跨屏 diff 隔离」的干净覆盖（当前总走兜底）。

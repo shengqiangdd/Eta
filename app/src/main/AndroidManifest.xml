@@ -123,6 +123,18 @@
             android:theme="@android:style/Theme.DeviceDefault.Light"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
+        <!-- 真机探针专用：普通输入框（不截断、不改写）。
+             STEP8 依赖第三方应用，便签首页改版后会整段 skipped，
+             于是「正常写入应当 verified」的正向断言在真机上就没有覆盖了（fix184 后续）。 -->
+        <activity
+            android:name=".agent.device.PlainTextProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="Eta 输入探针"
+            android:taskAffinity="io.github.mangi.eta.probe.plain"
+            android:theme="@android:style/Theme.DeviceDefault.Light"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <activity
             android:name=".agent.voice.EtaVoiceAssistActivity"
             android:excludeFromRecents="true"

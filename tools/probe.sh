@@ -22,8 +22,70 @@
 # 退出码：0 = 报告里的 verdict 全部不含 FAIL；1 = 有 FAIL；2 = 参数错；3 = 没产出报告。
 set -u
 
+PKG=${DEV_PKG:-io.github.mangi.eta.canary}
+A11Y_SERVICE="$PKG/io.github.mangi.eta.agent.accessibility.AgentAccessibilityService"
+
+# ---- 无障碍绑定检查 / 修复 ----------------------------------------------
+# 为什么需要：装包会 kills 进程，AMS 可能让无障碍服务长时间停在 `Binding`，
+# 而虚拟屏的 UI 树完全依赖这个服务 —— 它没绑上时 uiautomator 在虚拟屏上返回 0 个节点，
+# 探针把「环境没准备好」记成一堆 SKIPPED（2026-10-27 实测就因此白跑两轮）。
+a11y_bound() {
+  dumpsys accessibility 2>/dev/null |
+    sed -n '/Bound services:/,/Binding services:/p' | grep -q -F "$A11Y_SERVICE"
+}
+
+# 强制重新绑定：先把本包从 enabled 列表摘掉、再原样加回。
+# 只「改一次值」没用（系统认为状态没变）；摘掉才会真的解绑，加回才会重新 bind。
+# 不用 force-stop：它会把无障碍服务直接禁用（从 enabled 列表里删掉），反而更难恢复。
+a11y_rebind() {
+  cur=$(settings get secure enabled_accessibility_services)
+  rest=$(printf '%s' "$cur" | tr ':' '\n' | grep -v -F "$A11Y_SERVICE" | grep -v '^$' | tr '\n' ':')
+  rest=${rest%:}
+  settings put secure enabled_accessibility_services "$rest"
+  sleep 2
+  if [ -n "$rest" ]; then
+    settings put secure enabled_accessibility_services "$rest:$A11Y_SERVICE"
+  else
+    settings put secure enabled_accessibility_services "$A11Y_SERVICE"
+  fi
+}
+
+wait_a11y_bound() {
+  waited=0
+  while [ "$waited" -lt "${1:-20}" ]; do
+    a11y_bound && return 0
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+a11y_ensure() {
+  if a11y_bound; then
+    return 0
+  fi
+  echo "无障碍未绑定：$A11Y_SERVICE —— 重设 enabled_accessibility_services" >&2
+  a11y_rebind
+  if wait_a11y_bound 30; then
+    echo "无障碍已重新绑定（摘掉再加回）" >&2
+  else
+    echo "无障碍仍未绑定。如果是系统弹窗拦住了，屏幕上应能看到「检测到 … 获取无障碍权限」：" >&2
+    echo "点「保持开启」后重跑本脚本（这个弹窗会拦掉无障碍点击，脚本代点不了）。" >&2
+    return 1
+  fi
+  echo "提示：若屏幕出现「保持开启」弹窗，请点它（脚本代点不了：该弹窗拦无障碍点击）" >&2
+}
+
 MODE=${1:-scope}
 case "$MODE" in
+  # 只检查/修复无障碍绑定，不跑探针：装完包立刻跑一次，避免后续探针白跑。
+  a11y)
+    if a11y_ensure; then
+      echo "无障碍绑定正常：$A11Y_SERVICE"
+      exit 0
+    fi
+    exit 4
+    ;;
   scope)
     EXTRA=scope_probe
     REPORT_NAME=scope-probe.txt
@@ -43,12 +105,11 @@ case "$MODE" in
     WAIT_S=${DEV_WAIT:-150}
     ;;
   *)
-    echo "用法: sh probe.sh [scope|step|text]" >&2
+    echo "用法: sh probe.sh [scope|step|text|a11y]" >&2
     exit 2
     ;;
 esac
 
-PKG=${DEV_PKG:-io.github.mangi.eta.canary}
 APK=${DEV_APK:-/data/local/tmp/Eta-debug.apk}
 # 空 = 用 APK 里的默认值（scope: 联系人；step: 设置）。别写死便签：它常被用户留在主屏。
 if [ -n "${DEV_INPUT_PKG:-}" ]; then
@@ -126,6 +187,10 @@ warmup
 sleep 5
 warmup
 sleep 8
+# 预热不等于绑上了：实测有装完之后 30 秒还停在 Binding 的情况，
+# 而上一版脚本只靠两次 warmup + sleep，会直接拿一堆 SKIPPED 当结论。
+# 这里改成「检查 → 不绑就摘掉再加回 → 再检查」，失败也不跑探针（exit 4）。
+a11y_ensure || exit 4
 
 # 坑 2：报告必须在这之后删，前面预热那次的 extra 不该产生报告。
 rm -f "$REPORT"
