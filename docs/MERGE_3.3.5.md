@@ -61,3 +61,7 @@
 - `app/schemas/.../25.json` 加入版本控制（`exportSchema=true` 的产物）。
 - 4 个 splash 资源（`splash_counter_rotation.xml`、`ic_splash_animated.xml`、`splash_exit.xml`、`values/splash.xml`）随上游删除；工作区无引用。
 - 去掉临时 graft（`git replace -d`），保留备份分支 `backup/pre-merge-3.3.5`。
+
+## 6. 测试源集
+
+`app/src/testPending/` 保留两个上游新增的 Robolectric 用例（`AgentRuntimeScreenOnTest`、`AgentAppStateConversationLoadingTest`）：它们依赖 PC 端 Robolectric native runtime，在 aarch64 Linux 上既不能跑也不能编进测试源集，故移出 `src/test` 留档，待换 x86 环境或改用无 native 依赖的断言后再放回。

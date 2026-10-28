@@ -1049,7 +1049,7 @@ internal class AgentLocalTools(
         if (scaled !== cropped && !cropped.isRecycled) cropped.recycle()
         if (!bitmap.isRecycled) bitmap.recycle()
         val encoded = io.github.mangi.eta.agent.media.AgentImageCodec
-            .fromScreenBytes(png, source = "virtual") ?: return null
+            .fromScreenBytes(png, source = "virtual")
         return CroppedImage(
             image = encoded,
             sourceLeft = left,
