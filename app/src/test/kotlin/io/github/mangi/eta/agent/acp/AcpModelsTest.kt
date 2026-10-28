@@ -93,6 +93,44 @@ class AcpModelsTest {
     }
 
     @Test
+    fun `config model equal to request needs no switch`() {
+        val info = AcpModels.parse(sessionNew("gpt-5.6-sol/low", listOf("gpt-5.6-sol/low")))
+        assertNull(AcpModels.chooseWithConfig("gpt-5.6-sol", "gpt-5.6-sol", info))
+    }
+
+    @Test
+    fun `request missing from list keeps config model instead of failing`() {
+        val info = AcpModels.parse(sessionNew("gpt-5.6-sol/low", listOf("gpt-5.6-sol/low")))
+        assertNull(AcpModels.chooseWithConfig("gpt-9-nope", "gpt-5.6-sol", info))
+    }
+
+    @Test
+    fun `request only present with tier suffix is not switched`() {
+        val info = AcpModels.parse(
+            sessionNew("gpt-5.6-sol/low", listOf("gpt-5.6-sol/low", "gpt-6.1-sol/high")),
+        )
+        // 清单里只有带档位的 `gpt-6.1-sol/high`：切过去会 Internal error，所以保持 config。
+        assertNull(AcpModels.chooseWithConfig("gpt-6.1-sol", "gpt-5.6-sol", info))
+    }
+
+    @Test
+    fun `request listed and different from config is switched`() {
+        val info = AcpModels.parse(
+            sessionNew("gpt-5.6-sol/low", listOf("gpt-5.6-sol/low", "gpt-6.1-sol/high")),
+        )
+        assertEquals(
+            AcpModels.Choice.Use("gpt-6.1-sol/high", verified = true),
+            AcpModels.chooseWithConfig("gpt-6.1-sol/high", "gpt-5.6-sol", info),
+        )
+    }
+
+    @Test
+    fun `without config the request is checked as before`() {
+        val info = AcpModels.parse(sessionNew("m", listOf("m")))
+        assertTrue(AcpModels.chooseWithConfig("nope", null, info) is AcpModels.Choice.Reject)
+    }
+
+    @Test
     fun `describe carries count even when list is capped`() {
         val many = (1..40).map { "model-$it" }
         val described = AcpModels.describe(AcpModels.parse(sessionNew("model-1", many)))

@@ -22,6 +22,7 @@ import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.safeStackTrace
+import io.github.mangi.eta.ui.components.ChatNoticeDismissalPrefs
 import io.github.mangi.eta.ui.model.AgentChatHomeUiState
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
@@ -435,6 +436,7 @@ internal object AgentConversationStore {
                     }
                     // 文件系统清理放在事务外：删目录可能很慢，不能占着数据库事务。
                     deletedConversationIds.forEach { conversationId ->
+                        ChatNoticeDismissalPrefs.clearScope(appContext, conversationId)
                         SessionWorkspaceStore.clear(appContext, conversationId)
                         TerminalPrivateStorage.deleteSessionWorkspace(appContext.filesDir, conversationId)
                     }

@@ -66,7 +66,6 @@ import io.github.mangi.eta.ui.model.AgentToolsAction
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.model.LOCAL_NETWORK_PERMISSION_ITEM_ID
 import io.github.mangi.eta.ui.model.PermissionHealthAction
-import io.github.mangi.eta.ui.model.PermissionStatusUi
 import io.github.mangi.eta.ui.model.projectToolGroups
 import io.github.mangi.eta.ui.model.roleplayChatUi
 import io.github.mangi.eta.ui.navigation.AgentNavigator
@@ -516,8 +515,8 @@ fun AgentAppRoot(
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
-                        missingPermissionCount = permissionHealth.permissionHealthState.items
-                            .count { it.status != PermissionStatusUi.Available },
+                        missingPermissionIds = permissionHealth.permissionHealthState.issueIds,
+                        permissionIssuesKnown = permissionHealth.permissionHealthState.loaded,
                         onOpenPermissions = { pushRoute(AppRoute.Permissions) },
                         systemExit = agentState.lastExitCause,
                         onDismissSystemExit = { agentState.dismissExitNotice() },
@@ -831,8 +830,7 @@ fun AgentAppRoot(
                     ).sumOf { group -> group.tools.size }
                 }
                 CapabilityOverviewScreen(
-                    missingPermissionCount = permissionHealth.permissionHealthState.items
-                        .count { it.status != PermissionStatusUi.Available },
+                    missingPermissionCount = permissionHealth.permissionHealthState.issueCount,
                     toolCount = toolCount,
                     skillTotal = skills.skillsState.skills.size,
                     skillEnabled = skills.skillsState.skills.count { it.enabled },

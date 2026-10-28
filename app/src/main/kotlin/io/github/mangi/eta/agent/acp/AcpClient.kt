@@ -109,6 +109,17 @@ internal class AcpClient(
         var error: String? = null
         /** 本次委派请求的模型（null = 用代理默认）。 */
         var requestedModel: String? = null
+        /**
+         * 写进临时 CODEX_HOME 的 config.toml 的模型（null = 没生成配置）。
+         *
+         * 与 [requestedModel] 相同就不要再去 `session/set_model`：“配置里已经写好了”，
+         * 再切一次不但没用，还会把本来能跑的会话弄失败 —— 真机上 codex-acp 的可用清单
+         * 是 `gpt-5.6-sol[low]` 这种带档位的形式，而 config 里的 `gpt-5.6-sol` 本来就能用，
+         * 切到带档位的反而回 Internal error（2026-10-28）。
+         */
+        var configModel: String? = null
+        /** 本次委派显式指定的 Eta 提供商 id；null = 用代理自己的默认配置。 */
+        var providerId: String? = null
         /** `session/new` 报的当前模型。 */
         var defaultModel: String? = null
         /** 设置成功后实际生效的模型。 */
@@ -200,6 +211,7 @@ internal class AcpClient(
         cwd: String,
         timeoutSeconds: Int,
         model: String? = null,
+        provider: AcpProvider.Config? = null,
         onProgress: ProgressObserver? = null,
     ): Pair<Boolean, String> {
         val spec = BUILTIN_AGENTS.firstOrNull { it.id == agentId }
@@ -221,7 +233,9 @@ internal class AcpClient(
         // 空列表 = 这个代理不需要凭据（例如本地脚本）。旧写法用 none{}，
         // 空列表会返回 true，于是「不需要凭据」被当成「缺凭据」，永远无法委派。
         val envPresent = spec.credentialEnvKeys.any { System.getenv(it)?.isNotBlank() == true }
-        val credentialMissing = spec.credentialEnvKeys.isNotEmpty() &&
+        // 走 Eta 提供商时，key 来自内存里的 ProviderSetting 而不是环境变量/auth.json，
+        // 不能再用旧判据把「Eta 已经有 key」误判成缺凭据。
+        val credentialMissing = provider == null && spec.credentialEnvKeys.isNotEmpty() &&
             !envPresent && !credentialFilePresent(spec)
         if (credentialMissing) {
             return false to errorJson(
@@ -230,7 +244,7 @@ internal class AcpClient(
                     "或在该环境里完成一次代理登录（例如 codex login）后重试",
             )
         }
-        val launched = runCatching { launch(spec, resolution.path, task, cwd, model) }
+        val launched = runCatching { launch(spec, resolution.path, task, cwd, model, provider) }
         if (launched.isFailure) {
             val reason = launched.exceptionOrNull()?.message ?: "无法启动代理进程"
             return false to errorJson("ACP_LAUNCH_FAILED", reason)
@@ -257,6 +271,7 @@ internal class AcpClient(
             .put("tool", "acp_delegate")
             .put("session_id", handle.session.id)
             .put("agent", spec.id)
+            .put("provider", provider?.id ?: JSONObject.NULL)
             // 用户问的就是这个：这次委派用的是哪个模型。
             .put("model", handle.activeModel ?: handle.defaultModel ?: JSONObject.NULL)
             .put("model_requested", handle.requestedModel ?: JSONObject.NULL)
@@ -303,6 +318,7 @@ internal class AcpClient(
             .put("tool", "acp_session_status")
             .put("session_id", sessionId)
             .put("agent", handle.session.agentId)
+            .put("provider", handle.providerId ?: JSONObject.NULL)
             .put("model", handle.activeModel ?: handle.defaultModel ?: JSONObject.NULL)
             .put("age_seconds", handle.session.ageSeconds)
             .put("finished", handle.finished)
@@ -518,8 +534,22 @@ internal class AcpClient(
     }
 
     /** stderr 只保留尾部：代理可能刷几十万行日志，报错永远在最后几行。 */
-    private fun stderrTail(handle: Live): String =
-        synchronized(handle.stderr) { handle.stderr.toString().takeLast(MAX_STDERR_CHARS) }
+    /**
+     * stderr 尾部。
+     *
+     * 正常结束时滤掉「我们自己 kill 出来的噪声」：teardown 用 destroyForcibly 收进程树，
+     * ash/busybox 会往 stderr 写 `Terminated`，于是**成功**的委派结果里永远挂着
+     * `stderr_tail: Terminated`（真机 2026-10-28 每次都是），看着像出错。
+     * 失败时原样返回 —— 那时每一行都可能是线索。
+     */
+    private fun stderrTail(handle: Live): String {
+        val raw = synchronized(handle.stderr) { handle.stderr.toString() }
+        return AcpStderrTail.tail(
+            raw = raw,
+            finishedOk = handle.finished && handle.error == null,
+            maxChars = MAX_STDERR_CHARS,
+        )
+    }
 
     private fun launch(
         spec: AgentSpec,
@@ -527,6 +557,7 @@ internal class AcpClient(
         task: String,
         cwd: String,
         model: String? = null,
+        provider: AcpProvider.Config? = null,
     ): Live {
         // 每次委派都是一个真实进程 + 一个 HandlerThread；没有上限时并发委派会把内存和 PID 一起吃光。
         if (live.size >= MAX_LIVE_SESSIONS) {
@@ -537,8 +568,15 @@ internal class AcpClient(
         val sessionId = "acp${System.currentTimeMillis().toString(36)}"
         val thread = HandlerThread("eta-acp-$sessionId").apply { start() }
         val handler = Handler(thread.looper)
+        val effectiveModel = model?.trim()?.takeIf { it.isNotEmpty() }
+            ?: provider?.defaultModel?.trim()?.takeIf { it.isNotEmpty() }
+        if (provider != null && effectiveModel == null) {
+            throw IllegalStateException("指定了 Eta 提供商，但该提供商没有可用模型")
+        }
         // 代理在 Linux rootfs 里运行：cwd 与可执行路径都按容器内视角给。
         val innerScript = buildString {
+            // 只有走 Eta 提供商时才生成临时 CODEX_HOME；不碰用户全局 ~/.codex/config.toml。
+            provider?.let { append(AcpProvider.launchScript(sessionId, it, requireNotNull(effectiveModel))) }
             append("cd ").append(shellQuote(cwd)).append(" 2>/dev/null || cd /workspace; ")
             append("exec ").append(shellQuote(executablePath))
         }
@@ -546,7 +584,10 @@ internal class AcpClient(
         // 环境变量标签：收尾时靠它捞出整棵进程树（Android 的 Process 没有 pid()，
         // destroyForcibly 又只杀 su 那一层）。子进程会继承它。
         val sessionMarker = "export ETA_ACP_SESSION=${shellQuote(sessionId)}; "
-        val envExports = sessionMarker + spec.credentialEnvKeys
+        val providerExport = provider?.let {
+            "export ${AcpProvider.ENV_KEY}=${shellQuote(it.apiKey)}; "
+        } ?: ""
+        val envExports = sessionMarker + providerExport + spec.credentialEnvKeys
             .mapNotNull { key ->
                 System.getenv(key)?.takeIf { it.isNotBlank() }?.let { "export $key=${shellQuote(it)}; " }
             }
@@ -574,6 +615,8 @@ internal class AcpClient(
         )
         live[sessionId] = live_
         live_.requestedModel = model?.trim()?.takeIf { it.isNotEmpty() }
+        live_.configModel = provider?.let { effectiveModel }
+        live_.providerId = provider?.id
         // stderr 必须持续读走：管道缓冲区（常见 64KB）写满后代理会卡在 write 上，
         // 表现为「initialize 之后一个字都不回」，而且看不出原因。只留尾部用于报错。
         val stderrPump = Thread {
@@ -745,8 +788,17 @@ internal class AcpClient(
                         val models = AcpModels.parse(result)
                         handle.availableModels = models.available
                         handle.defaultModel = models.currentModelId
-                        when (val choice = AcpModels.choose(handle.requestedModel, models)) {
-                            null -> sendPrompt()
+                        // 配置里已经有模型时：只有「请求的模型确实在代理清单里」才去切，
+                        // 否则就用配置里的那个。理由：清单里是 `gpt-5.6-sol[low]` 这种带档位的
+                        // 名字，切过去反而 Internal error；而不在清单里请求本来也切不成。
+                        // 结果里的 model / model_requested 两列会把「实际用了谁」说清楚。
+                        val configModel = handle.configModel
+                        val choice = AcpModels.chooseWithConfig(handle.requestedModel, configModel, models)
+                        when (choice) {
+                            null -> {
+                                handle.activeModel = configModel ?: handle.requestedModel
+                                sendPrompt()
+                            }
                             is AcpModels.Choice.Reject -> {
                                 handle.error = choice.message
                                 handle.finished = true
@@ -973,6 +1025,26 @@ internal class AcpClient(
             synchronized(handle.writer) { handle.writer.close() }
         }
         handle.thread.quitSafely()
+        // 临时 CODEX_HOME 里可能含自定义头的值（部分中转站把 key 放在头里）。
+        // 会话结束就删，不指望 /tmp 的周期性清理。
+        if (handle.providerId != null) purgeCodexHome(handle.session.id)
+    }
+
+    /**
+     * 删除这次委派的临时 CODEX_HOME。
+     *
+     * 路径是 **guest 内** 的 `/tmp/...`，必须用 [linuxShell] 包装后再从宿主执行，
+     * 否则删的是宿主同名目录。放到后台线程：teardown 可能发生在主线程，
+     * 一个 `su` 进程就足够卡出掉帧。
+     */
+    private fun purgeCodexHome(sessionId: String) {
+        val wrapped = linuxShell("rm -rf " + shellQuote("/tmp/eta-codex-$sessionId")) ?: return
+        Thread {
+            runCatching {
+                val process = ProcessBuilder("su", "-c", wrapped).start()
+                if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun errorJson(code: String, message: String): String =

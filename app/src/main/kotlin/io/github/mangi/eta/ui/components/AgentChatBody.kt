@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalResources
@@ -121,6 +122,7 @@ import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -133,6 +135,10 @@ import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.SearchBar
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
+import top.yukonga.miuix.kmp.basic.SnackbarHost
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
+import top.yukonga.miuix.kmp.basic.SnackbarResult
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.blur.BlendColorEntry
@@ -175,7 +181,11 @@ internal fun AgentChatBody(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
     canCompactContext: Boolean,
-    missingPermissionCount: Int = 0,
+    missingPermissionIds: Set<String> = emptySet(),
+    /** 权限检查是否已经出结果；未出结果时不能拿空的 id 集合去清忽略记录。 */
+    permissionIssuesKnown: Boolean = false,
+    /** 当前会话 id：会话内的提示按它分开记；null 表示新建会话，不落盘。 */
+    noticeScopeKey: String? = null,
     journalDeferred: Boolean = false,
     messagesDeferred: Boolean = false,
     systemExit: AppExitCause = AppExitCause.NONE,
@@ -400,7 +410,9 @@ internal fun AgentChatBody(
             onReasoningEffortChange = onReasoningEffortChange,
             onCompactContext = onCompactContext,
             canCompactContext = canCompactContext,
-            missingPermissionCount = missingPermissionCount,
+            missingPermissionIds = missingPermissionIds,
+            permissionIssuesKnown = permissionIssuesKnown,
+            noticeScopeKey = noticeScopeKey,
             journalDeferred = journalDeferred,
             messagesDeferred = messagesDeferred,
             systemExit = systemExit,
@@ -622,7 +634,11 @@ private fun AgentChatScaffold(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
     canCompactContext: Boolean,
-    missingPermissionCount: Int = 0,
+    missingPermissionIds: Set<String> = emptySet(),
+    /** 权限检查是否已经出结果；未出结果时不能拿空的 id 集合去清忽略记录。 */
+    permissionIssuesKnown: Boolean = false,
+    /** 当前会话 id：会话内的提示按它分开记；null 表示新建会话，不落盘。 */
+    noticeScopeKey: String? = null,
     journalDeferred: Boolean = false,
     messagesDeferred: Boolean = false,
     systemExit: AppExitCause = AppExitCause.NONE,
@@ -663,6 +679,7 @@ private fun AgentChatScaffold(
     currentBrowserMessageId: String?,
     modifier: Modifier = Modifier,
 ) {
+    val missingPermissionCount = missingPermissionIds.size
     val surfaceColor = MiuixTheme.colorScheme.surface
     val frostEnabled = hasMessages && LocalBlurEnabled.current && isRuntimeShaderSupported()
     val messageBackdrop = rememberLayerBackdrop {
@@ -671,9 +688,91 @@ private fun AgentChatScaffold(
         drawContent()
     }
 
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val noticeUndoScope = rememberCoroutineScope()
+    var noticeUndoJob by remember { mutableStateOf<Job?>(null) }
+    var noticeDismissal by remember {
+        mutableStateOf(
+            ChatStatusNoticeDismissal(
+                dismissedPermissionIssueIds = ChatNoticeDismissalPrefs.dismissedPermissionIssueIds(context),
+                // 会话内的提示按会话记：切走再回来、去设置页转一圈回来，都不该又弹一次。
+                dismissedKeys = noticeScopeKey
+                    ?.let { ChatNoticeDismissalPrefs.dismissedKeys(context, it) }
+                    .orEmpty(),
+            ),
+        )
+    }
+    // 统一入口：改状态 + 落盘，并返回「改之前」的状态（撤销要用）。null = 没变化。
+    val applyNoticeDismissal: (ChatStatusNoticeDismissal) -> ChatStatusNoticeDismissal? = { next ->
+        val previous = noticeDismissal
+        if (next == previous) {
+            null
+        } else {
+            noticeDismissal = next
+            if (next.dismissedPermissionIssueIds != previous.dismissedPermissionIssueIds) {
+                ChatNoticeDismissalPrefs.setDismissedPermissionIssueIds(context, next.dismissedPermissionIssueIds)
+            }
+            if (noticeScopeKey != null && next.dismissedKeys != previous.dismissedKeys) {
+                ChatNoticeDismissalPrefs.setDismissedKeys(context, noticeScopeKey, next.dismissedKeys)
+            }
+            previous
+        }
+    }
+    // 条件消失后清掉记忆：同一条提示下次真的再发生时还要能提醒。
+    // permissionIssuesKnown 也作为 key：首次检查完成时要重新对账一次。
+    LaunchedEffect(
+        permissionIssuesKnown,
+        missingPermissionIds,
+        messagesDeferred,
+        journalDeferred,
+        hiddenMessageCount,
+    ) {
+        applyNoticeDismissal(
+            noticeDismissal.reconcile(
+                currentPermissionIssueIds = missingPermissionIds,
+                permissionIssuesKnown = permissionIssuesKnown,
+                messagesDeferred = messagesDeferred,
+                journalDeferred = journalDeferred,
+                hiddenMessageCount = hiddenMessageCount,
+            ),
+        )
+    }
+    val visibleStatusNotices = chatStatusNotices(
+        missingPermissionCount = missingPermissionCount,
+        journalDeferred = journalDeferred,
+        messagesDeferred = messagesDeferred,
+        hiddenMessageCount = hiddenMessageCount,
+        systemExit = systemExit,
+    ).filterNot { notice -> noticeDismissal.hides(notice, missingPermissionIds, viewMode) }
+    val dismissNotice: (ChatStatusNoticeKind) -> Unit = { notice ->
+        val before = noticeDismissal
+        val after = before.dismiss(notice, missingPermissionIds, viewMode)
+        if (after != before && applyNoticeDismissal(after) != null) {
+            // 整行可点本来就容易误触：给一次撤销，别让误点变成「永久关掉且找不回来」。
+            noticeUndoJob?.cancel()
+            noticeUndoJob = noticeUndoScope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = context.getString(R.string.chat_notice_dismissed),
+                    actionLabel = context.getString(R.string.chat_notice_undo),
+                    withDismissAction = false,
+                    // 10 秒而不是 4 秒：撤销的价值全在窗口长度上 —— 整行可点太容易误触，
+                    // 用户往往要先反应过来「刚才那条不见了」才去找撤销按钮。
+                    duration = SnackbarDuration.Long,
+                )
+                // 撤销只回滚这一次关掉的那一条：期间关掉的其它提示保留，
+                // 否则会出现「点了撤销，另一条又弹回来」。
+                if (result == SnackbarResult.ActionPerformed) {
+                    applyNoticeDismissal(noticeDismissal.undoDismissal(before = before, after = after))
+                }
+            }
+        }
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
+        snackbarHost = { SnackbarHost(state = snackbarHostState) },
         contentWindowInsets = WindowInsets(
             left = 0.dp,
             top = 0.dp,
@@ -683,13 +782,7 @@ private fun AgentChatScaffold(
         bottomBar = {
             Column {
                 ChatStatusNoticeBar(
-                    notices = chatStatusNotices(
-                        missingPermissionCount = missingPermissionCount,
-                        journalDeferred = journalDeferred,
-                        messagesDeferred = messagesDeferred,
-                        hiddenMessageCount = hiddenMessageCount,
-                        systemExit = systemExit,
-                    ),
+                    notices = visibleStatusNotices,
                     missingPermissionCount = missingPermissionCount,
                     hiddenMessageCount = hiddenMessageCount,
                     systemExit = systemExit,
@@ -697,6 +790,7 @@ private fun AgentChatScaffold(
                     viewMode = viewMode,
                     onShowAllMessages = onShowAllMessages,
                     onOpenPermissions = onOpenPermissions,
+                    onDismiss = dismissNotice,
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
                 AgentChatBottomBar(

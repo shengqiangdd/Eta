@@ -349,7 +349,7 @@
 - 长期偏好：</string>
   <string name="ui_apk_analysis_95ad17">APK 分析</string>
   <string name="ui_agent_and_local_tools_can_still_be_used_but_the_syst_b14479">Agent 与本地工具仍可使用，系统助手接管、Gemini 和一圈即搜设置暂不可修改</string>
-  <string name="ui_endpoint_mode_3c8546">Endpoint 模式</string>
+  <string name="ui_endpoint_mode_3c8546">Eta 请求协议</string>
   <string name="ui_eta_system_assistant_003e9b">数字助理应用</string>
   <string name="ui_lsposed_service_is_not_connected_44734d">LSPosed 服务未连接</string>
   <string name="ui_linux_tool_environment_314d22">Linux 工具环境</string>
@@ -739,8 +739,8 @@
   <string name="page_this_message_and_subsequent_content_will_be_replaced_086779">发送后将替换此消息及之后内容</string>
   <string name="page_this_message_will_be_replaced_after_sending_fb95e4">发送后将替换此消息</string>
   <string name="page_unauthorized_86bddc">未授权</string>
-  <string name="page_use_standard_chat_completions_ee4b1a">使用 Chat Completions API</string>
-  <string name="page_using_typed_items_with_semantic_streaming_events_f9c906">使用 Responses API、typed Items 与语义化流式事件</string>
+  <string name="page_use_standard_chat_completions_ee4b1a">使用 Chat Completions API；委派 Codex 时固定使用 Responses API</string>
+  <string name="page_using_typed_items_with_semantic_streaming_events_f9c906">使用 Responses API、typed Items 与语义化流式事件；委派 Codex 同样走 Responses API</string>
   <string name="voice_input_request">输入请求</string>
   <string name="voice_completed">已完成</string>
   <string name="voice_failed">Eta 执行失败</string>
@@ -1467,6 +1467,12 @@
   <string name="chat_turn_previous">上一个回合</string>
   <string name="chat_turn_next">下一个回合</string>
   <string name="chat_dialog_only_show_all">显示全部消息</string>
+  <string name="chat_notice_review_permissions">去处理</string>
+  <string name="chat_notice_dismiss">关闭提示</string>
+  <string name="chat_notice_more">还有 %1$d 条</string>
+  <string name="chat_notice_collapse">收起</string>
+  <string name="chat_notice_dismissed">已关闭提示</string>
+  <string name="chat_notice_undo">撤销</string>
   <plurals name="chat_view_mode_hidden_process">
     <item quantity="other">只看对话 · 已收起 %d 条过程消息</item>
   </plurals>

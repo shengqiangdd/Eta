@@ -360,7 +360,7 @@
 - Long-term preferences:</string>
   <string name="ui_apk_analysis_95ad17">APK analysis</string>
   <string name="ui_agent_and_local_tools_can_still_be_used_but_the_syst_b14479">Agent and local tools remain available. System assistant takeover, Gemini, and Circle to Search settings cannot be changed right now.</string>
-  <string name="ui_endpoint_mode_3c8546">Endpoint mode</string>
+  <string name="ui_endpoint_mode_3c8546">Eta request protocol</string>
   <string name="ui_eta_system_assistant_003e9b">Digital assistant app</string>
   <string name="ui_lsposed_service_is_not_connected_44734d">LSPosed service is not connected</string>
   <string name="ui_linux_tool_environment_314d22">Linux tool environment</string>
@@ -757,8 +757,8 @@
   <string name="page_this_message_and_subsequent_content_will_be_replaced_086779">This message and subsequent content will be replaced after sending</string>
   <string name="page_this_message_will_be_replaced_after_sending_fb95e4">This message will be replaced after sending</string>
   <string name="page_unauthorized_86bddc">Unauthorized</string>
-  <string name="page_use_standard_chat_completions_ee4b1a">Uses the Chat Completions API</string>
-  <string name="page_using_typed_items_with_semantic_streaming_events_f9c906">Uses the Responses API with typed Items and semantic streaming events</string>
+  <string name="page_use_standard_chat_completions_ee4b1a">Uses the Chat Completions API; Codex delegation always uses the Responses API</string>
+  <string name="page_using_typed_items_with_semantic_streaming_events_f9c906">Uses the Responses API with typed Items and semantic streaming events; Codex delegation also uses the Responses API</string>
   <string name="injected_reasoning">Eta is reasoning…</string>
   <string name="injected_executing">Eta is working…</string>
   <string name="injected_completed">Eta completed this task</string>
@@ -1494,6 +1494,12 @@
   <string name="chat_turn_previous">Previous turn</string>
   <string name="chat_turn_next">Next turn</string>
   <string name="chat_dialog_only_show_all">Show all messages</string>
+  <string name="chat_notice_review_permissions">Review</string>
+  <string name="chat_notice_dismiss">Dismiss</string>
+  <string name="chat_notice_more">%1$d more</string>
+  <string name="chat_notice_collapse">Show less</string>
+  <string name="chat_notice_dismissed">Notice dismissed</string>
+  <string name="chat_notice_undo">Undo</string>
   <plurals name="chat_view_mode_hidden_process">
     <item quantity="one">Dialog only · %d process message hidden</item>
     <item quantity="other">Dialog only · %d process messages hidden</item>

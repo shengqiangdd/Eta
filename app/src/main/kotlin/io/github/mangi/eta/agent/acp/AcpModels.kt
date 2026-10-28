@@ -68,6 +68,30 @@ internal object AcpModels {
         return Choice.Reject("代理没有模型「$wanted」。可用：$listed$suffix")
     }
 
+    /**
+     * 带 config 的选择：只有当「值得切」时才切。
+     *
+     * 有临时 config 时，模型其实已经写进去了。此时：
+     * - 请求的就是 config 里的那个 → 不切（切了没意义）；
+     * - 请求的名字不在代理清单里（含「只有 `model/low` 这类带档位变体」的情况）→ 不切，用 config
+     *   里的，**不失败**。真机上清单是 `gpt-5.6-sol/low` 这种带档位的名字，而 config 里不带档位的
+     *   `gpt-5.6-sol` 本来就能跑；把带档位名字交给 `session/set_model` 反而 `Internal error`
+     *   （2026-10-28 实测）。旧行为会直接 Reject，把可选参数变成「委派彻底不能用」。
+     * - 其余（确实在清单里、且不是 config 那个）→ 走 [choose] 的本地校验。
+     *
+     * 实际用了谁看结果里的 `model` / `model_requested` 两列。
+     */
+    fun chooseWithConfig(requested: String?, configModel: String?, info: Info): Choice? {
+        val wanted = requested?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (configModel == null) return choose(wanted, info)
+        if (wanted == configModel) return null
+        // 清单里没有精确同名项（含「只有 `model/low` 这类带档位变体」）时**不切**：
+        // 带档位的名字交给 set_model 会 Internal error，而 config 里不带档位的名字本来就能跑。
+        // 宁可实际用 config 的模型（结果里 model / model_requested 两列会暴露差异），也不要失败。
+        if (wanted !in info.available) return null
+        return choose(wanted, info)
+    }
+
     /** 结果里回传的模型清单（数量有上限，避免把 41 个模型名塞进每一次工具结果）。 */
     fun availableJson(info: Info, limit: Int = MAX_LISTED_MODELS): JSONArray =
         JSONArray().also { array ->

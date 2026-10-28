@@ -389,6 +389,31 @@ Robolectric 用例（含本轮新增的 `aDeferredConversationKeepsItsStoredMess
 
 真机核对（独立 applicationId 的 canary 包，测完已卸载）：卡片单行、右侧箭头，整行点击进入「权限与状态」；未授权项为 0 时整条不出现。未覆盖：`journalDeferred` 那一行没有在真机点验 —— 需要把真实大数据库塞进 canary 才会出现，本轮未做。
 
+### 提示条的关闭与占地（2026-10-27，取代上一节的点击行为）
+
+问题：结论条一旦常驻就变成新的干扰 —— 权限项常年不齐时，那张卡片永远挂在输入框上方，长会话里正好占掉内容和回合导航的位置，而且关不掉。
+
+交互规则：
+
+- **整行点一下就关**（右侧 × 只是把这个动作明说出来），关闭后立刻不占位；
+- **关了要记住，但不能记死**：权限按问题 id 集合持久化（`ChatNoticeDismissalPrefs`）。忽略集合只保留「现在仍然缺的」—— 修好一项就忘掉一项（之后再被关掉时能重新提醒），出现新的问题 id 也会重新提醒；
+- **首次权限检查完成前不对账**：`PermissionHealthUiState.loaded = false` 时 id 集合必然是空的，此时不能拿它去清记录，否则每次冷启动都会把「已关闭」抹掉；
+- **占地有上限**：默认最多两条，其余折成一行「还有 N 条」（`chatNoticeLayout`）；展开是临时动作，条数掉回两条以内自动收回；
+- 会话内的状态（载入中 / 历史过大 / 视图过滤）**按会话持久化**（`dismissed_keys:<conversationId>`）：切走再回来、去设置页转一圈回来都不再弹；草稿会话没有 id，只在内存里生效。条件消失即清除；视图过滤按模式分别记忆；
+- 「去处理」只跳转、不动忽略记录：用户没修好就回来时，提示应该还在。
+
+### 提示条的撤销与按会话记忆（2026-10-27 第二轮）
+
+第一轮把「关掉」做成了一去不返：整行可点本来就容易误触，误点之后既没有撤销、也找不到重新打开的地方。第二轮补三件事：
+
+1. **关闭后给一个「撤销」**：底部 Snackbar 显示「已关闭提示 · 撤销」（10 秒 = `SnackbarDuration.Long`；4 秒的 Short 不够用户反应过来）。撤销**只回滚这一次关掉的那一条**（`ChatStatusNoticeDismissal.undoDismissal(before, after)`）：按 `after - before` 精确算出本次新增的 id / key，再从当前状态里减掉。不用「整份回滚」是因为几秒内用户可能又关了别的提示，整份回滚会把后来的操作一起抹掉，表现为「点了撤销，另一条又弹回来」。
+2. **按会话记忆**：`ChatNoticeDismissalPrefs` 新增 `dismissed_keys:<conversationId>` 键，`AgentHomeScreen` 把 `conversationKey` 作为 `noticeScopeKey` 传进 `AgentChatBody`。A 会话关掉的「载入中」不该让 B 会话也静默。
+3. **首次检查完成前不清空记忆**（`permissionIssuesKnown`）：冷启动那一刻权限 id 集合必然是空的，此时对账会把持久化的忽略记录全抹掉，用户看到的就是「每次开机提示又回来了」。
+
+落盘是同一个入口 `applyNoticeDismissal`：改状态、按需写权限集合与会话 key，返回「改之前」的状态供撤销使用。判定、忽略、折叠与撤销都是纯函数，`ChatStatusNoticeTest` 扩到 **31 条**（新增撤销后重现、撤销不抹掉期间关掉的其它提示、撤销权限只减本次 id、撤销视图过滤只恢复该视图、撤销已失效记录时状态不变）。
+
+仍未做的：真机点验「点关闭 → 撤销回来」「关掉后冷启动不反弹」「A / B 两个会话互不影响」—— 本轮只到编译、单测与装机一致性。
+
 ## 只看对话视图（2026-10-20，已升级为三态视图 · 历史章节）
 
 > **本节是实现历史，不是当前代码。** `ChatDialogOnly.kt`、`filterDialogOnly`、`AppearanceSettings.dialogOnlyChat` 与两个「只看对话」界面入口都已在同日被下一节的三态视图取代并删除；只有 DataStore 仍保留旧键 `appearance_dialog_only_chat` 的**读取**，用于一次性迁移。下面的设计与真机数字是当时的记录，保留下来是为了说明「为什么最后变成三态」。
@@ -2195,6 +2220,72 @@ wire_api = "responses"
 stderr 里还有一条无害告警：`failed to load models cache: unknown variant \`max\``（模型缓存里的
 reasoning 档位写了个 `max`，codex 只认 `none/minimal/low/medium/high/xhigh`），不影响调用。
 
+## 委派 codex 的 provider 翻译：临时 CODEX_HOME + 自定义头（2026-10-28）
+
+上面那段 sq6 配置是手工改 `~/.codex/config.toml` 的历史做法。现在 Eta 自己翻译提供商：
+`AcpProvider.configToml` 在每次委派时生成一个 **临时 CODEX_HOME**（`/tmp/eta-codex-<sessionId>`），
+不碰用户全局配置；key 只通过 `ETA_CODEX_API_KEY` 环境变量传，不落文件。
+
+**这一轮补的缺口**：`customHeaders` 原来完全没写进去。中转站把鉴权 / 路由 / 版本号放在自定义头里时，
+Eta 自己的请求正常（那条链路本来就带 `customHeaders`），**委派 codex 却 401/403**，而且看不出原因。
+
+现在：
+
+```toml
+[model_providers.<id>.http_headers]
+"X-Api-Version" = "2026-01"
+```
+
+- 子表必须排在 `[model_providers.<id>]` 的键之后（否则前面的键会被 TOML 算进子表）；
+- 头名统一用引号包，兼容 `X-Foo` 之外的任意字符；空白名字直接跳过；
+- 值是 TOML 基本字符串，走同一套转义（引号 / 反斜杠 / 换行 / 控制字符）。
+
+**安全**：config.toml 里可能有凭据类头的值，所以临时目录 `chmod 700`、文件 `chmod 600`；
+会话结束（`teardown`）就会删掉整个目录 —— 路径是 **guest 内** 的 `/tmp/...`，
+必须用 `linuxShell` 包装后再从宿主执行，否则删的是宿主同名目录；删除放在后台线程，
+免得一次 `su` 卡在主线程上。
+
+**端到端证据（本机，2026-10-28）**：起一个本地假 server（Python）收请求并回 401，
+config 里写 `X-Test-Header` / `X-Api-Version`，跑 `codex exec`，服务端记录到：
+
+```json
+{"x-test-header": "hello-from-eta", "x-api-version": "2026-01", "authorization": "Bearer sk-dummy"}
+```
+
+即 codex 0.164 确实支持 `[model_providers.<id>.http_headers]`（`ModelProviderInfo` 里有该字段），
+不需要再靠 `env_http_headers` 之类的间接引用。单测 `AcpProviderTest` 8 条（新增子表输出、转义与空名跳过、
+无头时保持干净、临时目录权限）。
+
+未验证：真机上用真实中转站委派一次看鉴权是否过 —— 需要一次真实 `acp_delegate`。
+
+### 重试上限（同轮，已实测依据）
+
+首次真实委派（wkby / `cn:deepseek-v4-pro`）跑了 **248 秒**后被 240s 超时终止，
+`stderr_tail` 只有 `Terminated` —— 用户只能看到「一直在跑」。
+
+拿假 server 量了 codex 的重试行为：
+
+| 配置 | 结果 |
+|---|---|
+| 默认 | **6 次**请求，7 秒（连接层很快拒） |
+| `request_max_retries = 0` + `stream_max_retries = 0` | **1 次**请求，1 秒 |
+
+即默认会重试到 6 次。真实上游每次要 40 秒才「等不到响应」时，就是 240 秒黑洞。
+现在固定写 `request_max_retries = 1`、`stream_max_retries = 1`（最多 2 次尝试）：
+保留吸收抖动的能力，最坏等待大约减到原来的三分之一。
+
+另外试过 `stream_idle_timeout_ms = 5000` 对付「上游完全不回」：**无效** —— 挂起的 server
+下 codex 90 秒仍未失败（该参数管的是流开始之后的空闲，不管「连上但没响应」）。
+所以没有把它写进配置，不假装它有用。
+
+**这次失败与 header 改动无关**，有两层证据：
+
+1. 委派期间探针抓到临时目录 `dir=700`、`file=600`，且 `config.toml` 里 **grep 不到 `http_headers`**
+   —— 该 provider 没有配自定义头，生成的配置与改动前逐字节相同；
+2. 失败模式是「无响应 + 重试」，不是 4xx/5xx（那会立刻报错）。
+
+真实委派仍待一次可用的上游来跑通；本轮只把「无响应时的等待时长」压下来了。
+
 ## ACP 执行中进度：轮次跨线程丢失（fix25，已真机对照验证）
 
 ### 背景：界面为什么是一片静止
@@ -2694,4 +2785,51 @@ scope.launch(Dispatchers.IO) {
 
 编译通过；本机可跑的 67 个相关单测全过；`UiNode` 匹配用例需要 Robolectric，
 本机 aarch64 无 native runtime 未运行；**真机接线未验证**。
+
+## 委派收尾：成功结果不该带 `Terminated`（fix119 的工程口径）
+
+一轮真机取证（PKX110 / Android 16，2026-10-28）暴露的都是「看起来像错误、其实不是」的东西。
+
+### 一、模型选择只在一处判断
+
+`AcpClient` 曾在 `session/new` 回调里内联实现「要不要 `session/set_model`」，与
+`AcpModels.chooseWithConfig` 逻辑重复且已经漂移：内联版把「清单里存在 `name[档位]` 变体」
+当作可切换，而 `choose` 只认精确同名 → 真机上请求 `gpt-5.6-sol` 会被判 `Reject`，
+一个可选参数直接变成「委派不能用」。现在统一走 `chooseWithConfig`：
+**精确同名才切；同名不在清单里就保持 config 里的模型，不失败**。
+`AcpModelsTest` 14 条（新增 5 条覆盖「等于 config / 不在清单 / 只有带档位变体 / 精确命中 / 无 config」）。
+
+### 二、成功的结果里不该出现 `stderr_tail: Terminated`
+
+收尾用 `destroyForcibly()` 杀进程树，ash 会把 `Terminated` 写进 stderr，
+而结果 JSON 在 `teardown()` 之后构造 → **每次成功的委派都挂着 `stderr_tail: Terminated`**。
+现在只在 `finished && error == null` 时过滤这类收尾噪声（`Terminated` / `Killed`），
+失败路径原样保留 —— 那时每一行都可能是线索。
+
+### 三、删会话要连提示条记录一起清
+
+`dismissed_keys:<会话 id>` 只在关闭提示时写入，会话被删除后从来没人清 → prefs 里持续累积。
+`ChatNoticeDismissalPrefs.clearScope()` 已接进 `AgentConversationStore` 的删除清理循环
+（与 `SessionWorkspaceStore.clear` / 目录删除同一处，事务外）。
+
+### 四、环境侧：`codex-acp.real` 必须是**独立副本**
+
+排查时发现一个会自我放大的坑：`bin/codex-acp.real` 原本是指向 `dist/index.js` 的符号链接。
+一旦 `dist/index.js` 被本地启动器改写成 `exec /usr/local/bin/codex-acp-active "$@"`，
+包装链就是 `index.js → codex-acp-active → codex-acp.real → index.js → …` **无限递归**，
+表现为 `initialize` 60 秒无响应（真机 188 秒 `ACP_TIMEOUT`，无任何可读错误）。
+现已复制出 `dist/index.real.js` 并让 `codex-acp.real` 指向它，链有终点：
+`codex-acp.real --version` = `@agentclientprotocol/codex-acp 2.3.0` 实测。
+
+### 五、`customBody` 仍不通传（如实记录，不假装支持）
+
+codex 0.164 的 provider 配置里只有 `http_headers` 这类字段，没有「自定义请求体」的入口，
+所以 `ProviderSetting.customBody` 在委派链路上**无法生效**；依赖自定义 body 的中转在委派里
+仍可能失败。Eta 侧不为此做假的兼容。
+
+### 验证状态
+
+编译无告警；`AcpModelsTest` 14/14；真机（`gpt-5.6-sol` + sq6）两次委派成功，
+成功结果的 `stderr_tail` 为空，临时 `CODEX_HOME` 收尾后不存在。
+**「删除会话后 prefs 键消失」未真机点验**（需要删掉用户自己的会话，这一轮没做）。
 

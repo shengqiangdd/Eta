@@ -60,6 +60,7 @@ private fun buildPermissionHealthState(context: Context): PermissionHealthUiStat
     val usageAccessEnabled = io.github.mangi.eta.agent.tool.AgentPersonalContextTools.hasUsageAccess(context)
 
     return PermissionHealthUiState(
+        loaded = true,
         items = listOfNotNull(
             PermissionHealthItemUi(
                 id = "background",

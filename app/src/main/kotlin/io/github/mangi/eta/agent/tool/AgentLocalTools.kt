@@ -18,12 +18,18 @@ import io.github.mangi.eta.agent.device.VirtualDisplayBudget
 import io.github.mangi.eta.agent.device.VirtualDisplayController
 import io.github.mangi.eta.agent.device.VirtualDisplayTasks
 import io.github.mangi.eta.agent.acp.AcpClient
+import io.github.mangi.eta.agent.acp.AcpModels
+import io.github.mangi.eta.agent.acp.AcpProvider
 import io.github.mangi.eta.agent.acp.AgentAcpTools
 import io.github.mangi.eta.agent.plugin.AgentPluginTools
 import io.github.mangi.eta.agent.plugin.PluginMcpRegistry
 import io.github.mangi.eta.agent.plugin.PluginRuntime
 import io.github.mangi.eta.agent.plugin.PluginPackageInstaller
+import io.github.mangi.eta.data.model.CustomProviderSetting
+import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
+import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.repository.McpServerRepository
+import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.agent.plugin.PluginManifest
 import io.github.mangi.eta.agent.model.AgentAskUserToolCatalog
 import io.github.mangi.eta.agent.model.AgentModelClient
@@ -1943,6 +1949,121 @@ internal class AgentLocalTools(
         }
     }
 
+    private sealed interface AcpProviderResolution {
+        data class Use(val config: AcpProvider.Config, val model: String) : AcpProviderResolution
+        data class Error(val code: String, val message: String) : AcpProviderResolution
+    }
+
+    private fun codexProviders(): List<ProviderSetting> = runCatching {
+        runBlocking { ProviderRepository.allProviders() }
+    }.getOrDefault(emptyList())
+
+    private fun ProviderSetting.isCodexCompatible(): Boolean =
+        (this is OpenAiCompatibleProviderSetting || this is CustomProviderSetting) &&
+            isEnabled && baseUrl.isNotBlank()
+
+    private fun ProviderSetting.codexReady(): Boolean =
+        isCodexCompatible() && apiKey.isNotBlank() &&
+            models.any { model -> model.isEnabled && model.modelId.isNotBlank() }
+
+    private fun ProviderSetting.codexModelIds(): List<String> =
+        models.filter { model -> model.isEnabled && model.modelId.isNotBlank() }
+            .map { model -> model.modelId }
+
+    /**
+     * 把用户说的 provider 名 / id / 模型名解析成 Eta 里真实配置的提供商。
+     * 只有显式指定 provider 时才报错；未指定且没有可用提供商时返回 null，
+     * 保留「用 codex 自己的 ~/.codex/config.toml」这条旧路径。
+     */
+    private fun resolveAcpProvider(requested: String?, model: String?): AcpProviderResolution? {
+        val compatible = codexProviders().filter { provider -> provider.isCodexCompatible() }
+        val wanted = requested?.trim()?.takeIf { it.isNotEmpty() }
+        if (wanted == null) {
+            val settings = runCatching { runBlocking { ProviderRepository.settings() } }.getOrNull()
+            val chosen = compatible.firstOrNull { provider ->
+                provider.id == settings?.selectedProviderId && provider.codexReady()
+            } ?: compatible.firstOrNull { provider -> provider.codexReady() }
+                ?: return null
+            val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
+                ?: settings?.selectedModelId?.takeIf { id ->
+                    settings.selectedProviderId == chosen.id && chosen.models.any { it.modelId == id }
+                }
+                ?: chosen.codexModelIds().firstOrNull()
+                ?: return null
+            return AcpProviderResolution.Use(
+                config = AcpProvider.Config(
+                    id = chosen.id,
+                    name = chosen.name,
+                    baseUrl = chosen.baseUrl,
+                    apiKey = chosen.apiKey,
+                    wireApi = AcpProvider.CODEX_WIRE_API,
+                    defaultModel = chosenModel,
+                    // 中转站的自定义头在 Eta 自己请求里有效，委派 codex 时也必须带上。
+                    customHeaders = chosen.customHeaders,
+                ),
+                model = chosenModel,
+            )
+        }
+
+        val chosen = compatible.firstOrNull { provider -> provider.id.equals(wanted, ignoreCase = true) }
+            ?: compatible.firstOrNull { provider -> provider.name.equals(wanted, ignoreCase = true) }
+            ?: compatible.firstOrNull { provider ->
+                provider.models.any { m ->
+                    m.modelId.equals(wanted, ignoreCase = true) ||
+                        m.displayName.equals(wanted, ignoreCase = true)
+                }
+            }
+            ?: return AcpProviderResolution.Error(
+                "ACP_PROVIDER_UNKNOWN",
+                "Eta 中没有提供商「$wanted」。可用：" +
+                    compatible.joinToString("、") { provider -> provider.name }.ifEmpty { "无" },
+            )
+        if (!chosen.codexReady()) {
+            return AcpProviderResolution.Error(
+                "ACP_PROVIDER_NOT_READY",
+                "提供商「${chosen.name}」还不能用于 Codex：需要启用、填写 API key，并至少有一个模型",
+            )
+        }
+        val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
+            ?: chosen.codexModelIds().firstOrNull()
+            ?: return AcpProviderResolution.Error(
+                "ACP_PROVIDER_NO_MODEL",
+                "提供商「${chosen.name}」没有可用模型",
+            )
+        return AcpProviderResolution.Use(
+            config = AcpProvider.Config(
+                id = chosen.id,
+                name = chosen.name,
+                baseUrl = chosen.baseUrl,
+                apiKey = chosen.apiKey,
+                wireApi = AcpProvider.CODEX_WIRE_API,
+                defaultModel = chosenModel,
+                customHeaders = chosen.customHeaders,
+            ),
+            model = chosenModel,
+        )
+    }
+
+    private fun acpProvidersJson(providers: List<ProviderSetting>, selectedId: String?): JSONArray =
+        JSONArray().also { array ->
+            providers.filter { provider -> provider.isCodexCompatible() }.forEach { provider ->
+                val models = provider.codexModelIds()
+                val modelsJson = JSONArray()
+                models.take(AcpModels.MAX_LISTED_MODELS).forEach(modelsJson::put)
+                array.put(
+                    JSONObject()
+                        .put("id", provider.id)
+                        .put("name", provider.name)
+                        .put("base_url", provider.baseUrl)
+                        .put("codex_wire_api", AcpProvider.CODEX_WIRE_API)
+                        .put("model_count", models.size)
+                        .put("models", modelsJson)
+                        .put("ready", provider.codexReady())
+                        .put("selected", provider.id == selectedId),
+                )
+            }
+        }
+
     /**
      * @param toolCallId 调用方（AgentLoop）给出的本次调用 id，进度事件靠它挂回同一张工具卡片。
      */
@@ -1954,11 +2075,15 @@ internal class AgentLocalTools(
         when (name) {
             "acp_agent_list" -> {
                 val agents = acpClient.agents()
+                val providers = codexProviders()
+                val settings = runCatching { runBlocking { ProviderRepository.settings() } }.getOrNull()
+                val providerReady = providers.any { provider -> provider.codexReady() }
                 textResult(
                     JSONObject()
                         .put("ok", true)
                         .put("tool", "acp_agent_list")
                         .put("default_agent", acpClient.defaultAgentId())
+                        .put("providers", acpProvidersJson(providers, settings?.selectedProviderId))
                         .put(
                             "agents",
                             JSONArray().also { array ->
@@ -1971,7 +2096,10 @@ internal class AgentLocalTools(
                                             .put("resolved_path", agent.resolvedPath)
                                             .put("source", agent.source)
                                             .put("installed", agent.installed)
-                                            .put("credential_present", agent.credentialPresent)
+                                            .put(
+                                                "credential_present",
+                                                agent.credentialPresent || (agent.id == "codex" && providerReady),
+                                            )
                                             .put("credential_env_keys", JSONArray(agent.credentialEnvKeys))
                                             .put(
                                                 "note",
@@ -1979,6 +2107,8 @@ internal class AgentLocalTools(
                                                     !agent.installed ->
                                                         "在 Linux 工具环境内没找到可执行文件（已按显式路径、" +
                                                             "通配目录与 PATH 依次查找），请先在该环境安装"
+                                                    agent.id == "codex" && providerReady ->
+                                                        "可用（使用 Eta 模型提供商）"
                                                     !agent.credentialPresent -> "缺少供应商凭证，需要 " + agent.credentialEnvKeys.joinToString(" 或 ")
                                                     else -> "可用"
                                                 },
@@ -2015,6 +2145,20 @@ internal class AgentLocalTools(
                         )
                     )
                 val agent = request.agent.ifBlank { acpClient.defaultAgentId() }
+                if (request.provider != null && agent != "codex") {
+                    return textResult(errorResult("ACP_PROVIDER_UNSUPPORTED", "provider 参数目前只支持 codex 代理"))
+                }
+                val providerResolution = if (agent == "codex") {
+                    resolveAcpProvider(request.provider, request.model)
+                } else {
+                    null
+                }
+                if (providerResolution is AcpProviderResolution.Error) {
+                    return textResult(errorResult(providerResolution.code, providerResolution.message))
+                }
+                val providerConfig = (providerResolution as? AcpProviderResolution.Use)?.config
+                val effectiveModel = request.model
+                    ?: (providerResolution as? AcpProviderResolution.Use)?.model
                 // 进度桥：ACP 读线程 → AgentEvent.ToolProgress → 既有事件流 → 工具卡片副标题。
                 // 节流放在这里而不是 AcpClient：那里不知道"多少频率人才看得清"，
                 // 而 text 类增量在代理写文件时可以每几十毫秒来一次。
@@ -2025,7 +2169,8 @@ internal class AgentLocalTools(
                     task = request.task,
                     cwd = request.cwd,
                     timeoutSeconds = request.timeoutSeconds,
-                    model = request.model,
+                    model = effectiveModel,
+                    provider = providerConfig,
                     onProgress = progressSink?.let { sink ->
                         AcpClient.ProgressObserver { kind, detail ->
                             val now = System.currentTimeMillis()

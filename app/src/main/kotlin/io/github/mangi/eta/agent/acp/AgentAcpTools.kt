@@ -30,8 +30,8 @@ internal object AgentAcpTools {
                     name = "acp_agent_list",
                     description =
                         "列出已配置的 ACP 编码代理（如 Codex）。返回代理 id、可执行文件路径、" +
-                            "是否具备凭据、以及当前存活的委派会话。**委派前先调用它**，" +
-                            "不要把任务发给一个没有凭据或没装的代理。",
+                            "是否具备凭据、当前存活的委派会话，以及 Eta 中可用的 Codex 模型提供商。" +
+                            "**委派前先调用它**，不要把任务发给一个没有凭据或没装的代理。",
                     parameters = JSONObject().put("type", "object").put("properties", JSONObject()),
                 )
             )
@@ -82,8 +82,19 @@ internal object AgentAcpTools {
                                         .put(
                                             "description",
                                             "指定代理用的模型（可选）。用户说「用 X 模型」时传 X；" +
-                                                "留空则用代理默认模型。可用值看上一次结果的 available_models。" +
+                                                "留空则用提供商默认模型。可用值看上一次结果的 available_models。" +
                                                 "名字必须在代理清单里，否则会直接失败（代理自己不校验）。",
+                                        ),
+                                )
+                                .put(
+                                    "provider",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put(
+                                            "description",
+                                            "Eta 中配置的模型提供商 id 或名称（可选，仅 codex 使用）。" +
+                                                "用户说「用 lingzhan 跑」时传 lingzhan；留空则用 Eta 当前选中的提供商。" +
+                                                "提供商必须已在 Eta 的模型提供商设置里配置好 API key。",
                                         ),
                                 ),
                         )
@@ -136,6 +147,7 @@ internal object AgentAcpTools {
         val cwd: String,
         val timeoutSeconds: Int,
         val model: String? = null,
+        val provider: String? = null,
     )
 
     data class SessionRequest(val sessionId: String)
@@ -155,7 +167,11 @@ internal object AgentAcpTools {
         if (model != null && (model.length > AcpModels.MAX_MODEL_ID_CHARS || model.any { it.isISOControl() })) {
             return null
         }
-        return DelegateRequest(agent, task, cwd, timeout, model)
+        val provider = args.optString("provider").trim().takeIf { it.isNotEmpty() }
+        if (provider != null && (provider.length > MAX_PROVIDER_CHARS || provider.any { it.isISOControl() })) {
+            return null
+        }
+        return DelegateRequest(agent, task, cwd, timeout, model, provider)
     }
 
     fun parseSession(args: JSONObject): SessionRequest? {
@@ -169,6 +185,7 @@ internal object AgentAcpTools {
     }
 
     const val MAX_TASK_CHARS = 8_000
+    const val MAX_PROVIDER_CHARS = 120
     const val DEFAULT_CWD = "/workspace"
     const val DEFAULT_TIMEOUT_SECONDS = 600
     const val MIN_TIMEOUT_SECONDS = 30
