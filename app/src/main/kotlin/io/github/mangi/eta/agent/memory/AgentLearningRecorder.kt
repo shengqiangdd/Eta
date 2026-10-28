@@ -37,14 +37,11 @@ internal object AgentLearningRecorder {
         if (content.trimStart().firstOrNull() != '{') return false
         val json = JSONObject(content)
         if (json.optBoolean("ok", true)) return false
-        val code = json.optString("code").trim().ifBlank { FALLBACK_CODE }
+        val (code, message) = describeFailure(json)
         val signature = tool.lowercase() + "|" + code.lowercase()
         val now = System.currentTimeMillis()
         val previous = lastWriteAt[signature]
         if (previous != null && now - previous < COOLDOWN_MS) return false
-        val message = json.optString("message")
-            .ifBlank { json.optString("error") }
-            .ifBlank { "工具返回失败" }
         lastWriteAt[signature] = now
         return AgentMemoryRepository.recordLearning(
             tool = tool,
@@ -53,6 +50,28 @@ internal object AgentLearningRecorder {
             date = LocalDate.now().toString(),
         )
     }
+
+    /**
+     * 从工具结果里抽出「错误码 + 错误首行」。
+     *
+     * 真机实测：`terminal` 这类工具失败时只给 `exit_code` / `stderr`，既没有 `code` 也没有 `message`，
+     * 早期实现退化成 `ERR · 工具返回失败` —— 记忆里只留下「有条坑」却不知道是什么坑，
+     * 等于白记。所以这里按「显式 code → exit_code → stderr 首行 → stdout 首行」逐级回退。
+     */
+    fun describeFailure(json: JSONObject): Pair<String, String> {
+        val exitCode = json.optInt("exit_code", Int.MIN_VALUE)
+        val code = json.optString("code").trim()
+            .ifBlank { if (exitCode > 0) "EXIT_$exitCode" else FALLBACK_CODE }
+        val message = json.optString("message").trim()
+            .ifBlank { json.optString("error").trim() }
+            .ifBlank { firstLine(json.optString("stderr")) }
+            .ifBlank { firstLine(json.optString("stdout")) }
+            .ifBlank { "工具返回失败" }
+        return code to message
+    }
+
+    private fun firstLine(text: String): String =
+        text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
 
     /** 进程/测试隔离用：清掉冷却表，避免上一个用例影响下一个。 */
     fun resetCooldownForTest() {
