@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.navigation
 
 import kotlinx.serialization.Serializable
+import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import top.yukonga.miuix.kmp.nav.core.NavKey
 
 @Serializable
@@ -9,7 +10,7 @@ sealed interface AppRoute : NavKey {
     data object Home : AppRoute
 
     @Serializable
-    data object Browser : AppRoute
+    data class Browser(val sessionKey: String = BrowserSessionRegistry.MANUAL_SESSION_KEY) : AppRoute
 
     @Serializable
     data object Terminal : AppRoute
@@ -18,11 +19,17 @@ sealed interface AppRoute : NavKey {
     data object Tools : AppRoute
 
     @Serializable
+    data object WebToolsSettings : AppRoute
+
+    @Serializable
     data object Skills : AppRoute
 
     /** 插件管理：已安装插件的能力、开关与卸载。 */
     @Serializable
     data object Plugins : AppRoute
+
+    @Serializable
+    data object Subagents : AppRoute
 
     @Serializable
     data object Characters : AppRoute
@@ -119,4 +126,4 @@ sealed interface AppRoute : NavKey {
 }
 
 @Serializable
-enum class NewProviderType { OpenAiCompatible, Anthropic }
+enum class NewProviderType { OpenAiCompatible, Anthropic, Gemini }

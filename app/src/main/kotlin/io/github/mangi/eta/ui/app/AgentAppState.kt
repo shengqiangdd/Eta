@@ -64,6 +64,7 @@ import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.model.MessageEditUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
+import io.github.mangi.eta.ui.model.QueuedMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
@@ -1330,6 +1331,99 @@ internal class AgentAppState(
             SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
         },
     )
+
+    /**
+     * 运行中「插话发送」：先把这条消息入队并请求中止当前 run，run 收尾后优先发出。
+     *
+     * 与 [sendCurrentMessage] 的运行中行为（steering，见 [steerCurrentRun]）刻意区分：
+     * steering 不中断当前 run，只把补充指令送进去；插话则明确要「别按现在的方案继续」。
+     * 空闲时没有可插的话，直接退回普通发送。
+     */
+    fun interruptAndSendCurrentMessage(submittedText: String? = null) {
+        if (rejectWhileMessagesLoading()) return
+        if (homeState.isCompacting) return
+        val prompt = (submittedText ?: homeState.input).trim()
+        val pendingImages = homeState.pendingImages
+        val pendingFileReferences = homeState.pendingFileReferences
+        if (prompt.isBlank() && pendingImages.isEmpty() && pendingFileReferences.isEmpty()) return
+        if (!homeState.isStreaming) {
+            sendCurrentMessage(submittedText)
+            return
+        }
+        if (selectedConversationId?.isReadOnlyExternalArchiveConversation() == true) return
+        val queued = QueuedMessageUi(
+            id = "queue-${UUID.randomUUID()}",
+            content = prompt,
+            pendingImages = pendingImages,
+            pendingFileReferences = pendingFileReferences,
+            immediateInterrupt = true,
+        )
+        updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, queued))
+        requestInterruptCurrentRun()
+    }
+
+    /** 把队列里的某条提升为「立即插话」：运行中打断当前 run，空闲时直接发出。 */
+    fun steerQueuedMessage(id: String) {
+        val (nextState, promoted) = AgentMessageQueueReducer.promoteToInterrupt(homeState, id)
+        if (promoted == null) return
+        updateCurrentConversation(nextState)
+        if (nextState.isStreaming && !nextState.isCompacting) {
+            requestInterruptCurrentRun()
+        } else {
+            dispatchQueuedMessage(promoted)
+        }
+    }
+
+    /** 撤回排队消息继续编辑：与输入框里的草稿合并，不覆盖用户正在打的内容。 */
+    fun recallQueuedMessage(id: String, currentDraftText: String) {
+        val nextState = AgentMessageQueueReducer.recallToDraft(
+            state = homeState,
+            currentInputText = currentDraftText,
+            id = id,
+        ) ?: return
+        updateCurrentConversation(nextState)
+    }
+
+    fun removeQueuedMessage(id: String) {
+        val nextState = AgentMessageQueueReducer.remove(homeState, id)
+        if (nextState !== homeState) updateCurrentConversation(nextState)
+    }
+
+    /**
+     * 发出队列里的这条消息。
+     *
+     * 只有输入框为空时才自动占用草稿位：用户正在打字时把消息插进去会吞掉他没发的内容。
+     * 附件无法直接走发送路径，恢复成草稿让用户确认后再发。
+     */
+    private fun dispatchQueuedMessage(item: QueuedMessageUi) {
+        if (homeState.isStreaming || homeState.isCompacting) return
+        if (item.pendingImages.isEmpty() && item.pendingFileReferences.isEmpty()) {
+            if (homeState.input.isNotBlank()) return
+            updateCurrentConversation(homeState.copy(input = item.content))
+            sendCurrentMessage(item.content)
+            return
+        }
+        if (homeState.input.isBlank() && homeState.pendingImages.isEmpty() &&
+            homeState.pendingFileReferences.isEmpty()
+        ) {
+            updateCurrentConversation(
+                homeState.copy(
+                    input = item.content,
+                    pendingImages = item.pendingImages,
+                    pendingFileReferences = item.pendingFileReferences,
+                ),
+            )
+        }
+    }
+
+    /** 请求中止当前会话的 run，但**不清空队列**：插话及队列续发都靠它。 */
+    private fun requestInterruptCurrentRun() {
+        val runId = runIdForConversation(selectedConversationId) ?: return
+        if (!stopRequestedRunIds.add(runId)) return
+        scope.launch(Dispatchers.IO) {
+            AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
+        }
+    }
 
     fun sendCurrentMessage(submittedText: String? = null) {
         if (rejectWhileMessagesLoading()) return

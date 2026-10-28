@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.model
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
 import java.util.UUID
@@ -47,7 +48,11 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
                     add("Authorization", "Bearer ${config.apiKey}")
                 }
             }
-            .also { ProviderRequestHeaders.mergeInto(it, config.baseUrl, config.customHeaders, request.sessionId) }
+            .also {
+                ProviderRequestHeaders.mergeInto(
+                    it, config.baseUrl, config.customHeaders, request.sessionId, config.authMode, config.model,
+                )
+            }
             .build()
 
         val requestJson = buildRequestJson(config, request.messages, request.effectiveTools).apply {
@@ -66,44 +71,37 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
             .post(requestBody)
             .build()
 
-        val call = AgentHttpClient.modelClient(request.purpose).newCall(httpRequest)
-        val binding = runController.register { call.cancel() }
+        runController.throwIfCancelled()
+        onEvent(ProviderEvent.RequestStarted)
 
-        try {
-            runController.throwIfCancelled()
-            onEvent(ProviderEvent.RequestStarted)
+        return AuthorizedProviderHttp.execute(
+            client = AgentHttpClient.modelClient(request.purpose),
+            providerId = config.providerId,
+            authMode = config.authMode,
+            request = httpRequest,
+            controller = runController,
+        ) { response ->
+            onEvent(
+                ProviderEvent.ResponseHeaders(
+                    httpCode = response.code,
+                    retryAfterSeconds = AgentRetryPolicy.parseRetryAfter(response.header("Retry-After")),
+                ),
+            )
 
-            call.execute().use { response ->
-                val code = response.code
-                onEvent(
-                    ProviderEvent.ResponseHeaders(
-                        httpCode = code,
-                        retryAfterSeconds = AgentRetryPolicy.parseRetryAfter(response.header("Retry-After")),
-                    ),
-                )
-                runController.throwIfCancelled()
-
-                if (!response.isSuccessful) {
-                    val errorBody = response.peekBody(16_384).string()
-                    throw AgentModelFailure.http(code, errorBody)
-                }
-
-                val assistantMessage = readStreamingAssistantMessage(
-                    response.body.byteStream(), runController, existingToolCallIds, onEvent,
-                )
-                onEvent(ProviderEvent.Completed(assistantMessage.optString("finish_reason").ifBlank { null }))
-                return ProviderResponse(assistantMessage)
+            if (!response.isSuccessful) {
+                val errorBody = response.peekBody(16_384).string()
+                throw AgentModelFailure.http(response.code, errorBody)
             }
-        } catch (throwable: Throwable) {
-            runCatching { runController.throwIfCancelled() }
-                .getOrElse { interruption -> throw interruption }
-            throw throwable
-        } finally {
-            binding.close()
+
+            val assistantMessage = readStreamingAssistantMessage(
+                response.body.byteStream(), runController, existingToolCallIds, onEvent,
+            )
+            onEvent(ProviderEvent.Completed(assistantMessage.optString("finish_reason").ifBlank { null }))
+            ProviderResponse(assistantMessage)
         }
     }
 
-    private fun buildRequestJson(
+    internal fun buildRequestJson(
         config: AgentModelClient.ModelConfig,
         messages: JSONArray,
         tools: JSONArray
@@ -127,6 +125,19 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
                 mergeExtraBody(request, config.extraBodyJson)
                 RequestBodyMerge.mergeCustomBody(request, config.customBody)
                 ProviderReasoning.applyOpenAiCompatibleRequest(request, config)
+                if (config.authMode == ProviderAuthModes.XAI_GROK) {
+                    // 代理按请求头路由模型，正文必须与同一配置一致，并保持订阅所需的流式调用。
+                    request.put("model", config.model)
+                    request.put("stream", true)
+                    request.put("messages", OpenAiRequestMessages.forChatCompletions(messages))
+                    if (tools.length() > 0) {
+                        request.put("tools", tools)
+                        request.put("tool_choice", "auto")
+                    } else {
+                        request.remove("tools")
+                        request.remove("tool_choice")
+                    }
+                }
             }
     }
 

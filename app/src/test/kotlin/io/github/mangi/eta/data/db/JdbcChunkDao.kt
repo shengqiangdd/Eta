@@ -1,5 +1,6 @@
 package io.github.mangi.eta.data.db
 
+import android.database.Cursor
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -38,6 +39,9 @@ internal class JdbcChunkDao(
     }
 
     fun close() = connection.close()
+
+    override fun textChunkCursor(table: String, owner: String, field: String): Cursor =
+        throw UnsupportedOperationException("测试实现不提供 Cursor 路径")
 
     override suspend fun insertTextChunk(chunk: AgentTextChunkEntity) {
         inserts++

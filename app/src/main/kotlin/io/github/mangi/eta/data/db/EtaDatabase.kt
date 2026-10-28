@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 数据库版本号：实体改动必须同步 +1 并补一条 MIGRATION，单测会卡住不一致的情况。 */
-internal const val ETA_DATABASE_VERSION = 24
+internal const val ETA_DATABASE_VERSION = 25
 
 @Database(
     entities = [
@@ -116,6 +116,16 @@ internal abstract class EtaDatabase : RoomDatabase() {
             database.execSQL("ALTER TABLE conversation_messages ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0")
             // 长时工具的最后一条进度也落盘：否则切走会话 / 进程重建后卡片只剩标题。
             database.execSQL("ALTER TABLE conversation_messages ADD COLUMN progress_line TEXT")
+        }
+
+        /**
+         * 上游 3.3.2 的订阅登录：provider 鉴权方式（api_key / oauth）。
+         *
+         * 本地已把 22→23 用于会话置顶、23→24 用于工具开始时间，所以上游这条同一个
+         * 22→23 迁移必须另外排到 24→25，否则打开旧库会直接撞上「列已存在」而崩。
+         */
+        internal val MIGRATION_24_25 = Migration(24, 25) { database ->
+            database.execSQL("ALTER TABLE model_providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'api_key'")
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -324,6 +334,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
             MIGRATION_21_22,
             MIGRATION_22_23,
             MIGRATION_23_24,
+            MIGRATION_24_25,
         )
     }
 }

@@ -29,6 +29,7 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_OVERLAY_CAPSULE_ENABLED to true,
                 Prefs.Keys.AGENT_OVERLAY_GLOW_ENABLED to true,
                 Prefs.Keys.AGENT_PLAN_MODE to false,
+                Prefs.Keys.AGENT_SUBAGENT_ENABLED to true,
             ),
             Prefs.Keys.BOOLEAN_DEFAULTS,
         )
@@ -52,6 +53,7 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_OVERLAY_CAPSULE_ENABLED,
                 Prefs.Keys.AGENT_OVERLAY_GLOW_ENABLED,
                 Prefs.Keys.AGENT_PLAN_MODE,
+                Prefs.Keys.AGENT_SUBAGENT_ENABLED,
             ),
             Prefs.Keys.LOCAL_AGENT_KEYS,
         )

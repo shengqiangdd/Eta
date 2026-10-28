@@ -407,7 +407,7 @@ private fun ModelPickerRow(
 }
 
 @Composable
-private fun ModelBrandMark(
+internal fun ModelBrandMark(
     modelId: String?,
     sourceType: String?,
     size: Dp,

@@ -35,6 +35,7 @@ data class ConversationSummaryUi(
     val isActiveRun: Boolean = false,
     /** 运行中的 run 是否被用户暂停（会话列表里给出可见标记）。 */
     val isPaused: Boolean = false,
+    val runStatus: String? = null,
     val characterName: String? = null,
     val characterAvatarPath: String? = null,
     /**

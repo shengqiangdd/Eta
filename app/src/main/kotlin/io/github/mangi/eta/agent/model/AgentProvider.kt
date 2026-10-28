@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.model
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.data.provider.ProviderConnectionProfile
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,7 +31,8 @@ internal data class ProviderCapabilities(
 internal enum class EndpointKind {
     CHAT_COMPLETIONS,
     RESPONSES,
-    ANTHROPIC_MESSAGES
+    ANTHROPIC_MESSAGES,
+    GEMINI_INTERACTIONS,
 }
 
 internal enum class ProviderRequestPurpose {
@@ -47,20 +49,32 @@ internal data class ProviderRequest(
     val purpose: ProviderRequestPurpose = ProviderRequestPurpose.CHAT,
 ) {
     val effectiveConfig: AgentModelClient.ModelConfig
-        get() = when {
-            purpose.allowsTools -> config
-            purpose == ProviderRequestPurpose.COMPACTION -> config.copy(
-                hostedWebSearchEnabled = false,
-                extraBodyJson = "",
-                customBody = emptyList(),
-                thinkingEnabled = false,
-                reasoningEffort = summaryReasoningEffort(config),
-            )
-            else -> config.copy(
-                hostedWebSearchEnabled = false,
-                extraBodyJson = "",
-                customBody = emptyList(),
-            )
+        get() {
+            // 订阅登录（OAuth）的 provider 由连接档案决定实际端点，密钥不进配置。
+            val connected = ProviderConnectionProfile.forAuthMode(config.authMode)?.let { profile ->
+                config.copy(
+                    baseUrl = profile.baseUrl,
+                    providerType = profile.providerType,
+                    providerSourceType = profile.sourceType,
+                    openAiEndpointMode = profile.endpointMode,
+                    apiKey = "",
+                )
+            } ?: config
+            return when {
+                purpose.allowsTools -> connected
+                purpose == ProviderRequestPurpose.COMPACTION -> connected.copy(
+                    hostedWebSearchEnabled = false,
+                    extraBodyJson = "",
+                    customBody = emptyList(),
+                    thinkingEnabled = false,
+                    reasoningEffort = summaryReasoningEffort(connected),
+                )
+                else -> connected.copy(
+                    hostedWebSearchEnabled = false,
+                    extraBodyJson = "",
+                    customBody = emptyList(),
+                )
+            }
         }
     val effectiveTools: JSONArray get() = if (purpose.allowsTools) tools else JSONArray()
 
@@ -185,6 +199,11 @@ internal sealed interface ProviderEvent {
         val id: String,
         val name: String,
         val success: Boolean,
+    ) : ProviderEvent
+
+    data class SearchSuggestions(
+        val index: Int,
+        val html: String,
     ) : ProviderEvent
 
     data class Completed(

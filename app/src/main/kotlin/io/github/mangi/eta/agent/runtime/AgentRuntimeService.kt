@@ -126,6 +126,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 AgentExecutionService.updateRunStatus(
                     this@AgentRuntimeService,
                     next.status.takeIf { activeSession?.isTerminal == false },
+                    // 本地 Runtime 只有 primary 一条主 run；并发 run 计数交给租约数兜底。
+                    activeRunCount = if (activeSession?.isTerminal == false) 1 else 0,
                 )
             }
     }
@@ -989,6 +991,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         AgentExecutionService.updateRunStatus(
             this,
             state.value.status.takeIf { primary != null && !primary.isTerminal },
+            activeRunCount = if (primary != null && !primary.isTerminal) 1 else 0,
         )
     }
 

@@ -33,12 +33,12 @@ internal fun StaticMarkdown(
     val style = rememberMarkdownStyle(tone)
     val reusable = parsed?.takeIf { it.inlineStyle == style.inline }
     val document = reusable ?: produceState(
-        initialValue = StaticDocumentCache.get(content, style.inline),
+        initialValue = staticMarkdownDocumentCache.get(content, style.inline),
         content,
         style.inline,
     ) {
-        value = StaticDocumentCache.get(content, style.inline)
-            ?: withContext(Dispatchers.Default) { StaticDocumentCache.parse(content, style.inline) }
+        value = staticMarkdownDocumentCache.get(content, style.inline)
+            ?: withContext(Dispatchers.Default) { staticMarkdownDocumentCache.parse(content, style.inline) }
     }.value
     if (document == null) {
         // 解析完成前以同字号原文占位，高度与最终排版接近，避免列表越界绘制。

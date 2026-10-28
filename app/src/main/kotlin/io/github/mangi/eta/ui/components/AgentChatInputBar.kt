@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -81,6 +82,7 @@ import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
+import io.github.mangi.eta.ui.model.QueuedMessageUi
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.Icon
@@ -117,6 +119,7 @@ internal fun AgentChatInputBar(
     availableReasoningEfforts: List<ReasoningEffort>,
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
+    queuedMessages: List<QueuedMessageUi> = emptyList(),
     isEditingMessage: Boolean,
     editHasLaterTurns: Boolean,
     preserveFollowingMessages: Boolean,
@@ -125,6 +128,11 @@ internal fun AgentChatInputBar(
     canCompactContext: Boolean,
     onModelSelected: (String) -> Unit,
     onSubmit: (String) -> Unit,
+    /** 运行中「插话」：先入队再打断当前 run；空闲时退回 [onSubmit]。 */
+    onInterruptAndSubmit: (String) -> Unit = onSubmit,
+    onSteerQueuedMessage: (String) -> Unit = {},
+    onRecallQueuedMessage: (String, String) -> Unit = { _, _ -> },
+    onRemoveQueuedMessage: (String) -> Unit = {},
     onStop: () -> Unit,
     onTogglePause: () -> Unit,
     onAttachImage: (String) -> Unit,
@@ -197,6 +205,20 @@ internal fun AgentChatInputBar(
             .fillMaxWidth(),
     ) {
         SpeechInputFeedback(dictation)
+        AnimatedVisibility(
+            visible = queuedMessages.isNotEmpty(),
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(100)) + shrinkVertically(tween(150)),
+        ) {
+            AgentChatQueueStrip(
+                queuedMessages = queuedMessages,
+                isStreaming = isStreaming,
+                onSteer = onSteerQueuedMessage,
+                onRecall = { id -> onRecallQueuedMessage(id, textFieldState.text.toString()) },
+                onRemove = onRemoveQueuedMessage,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
         AnimatedVisibility(
             visible = pendingFileReferences.isNotEmpty(),
             enter = fadeIn(tween(160)),
@@ -391,6 +413,30 @@ internal fun AgentChatInputBar(
                                     } else {
                                         MiuixTheme.colorScheme.onSurfaceVariantActions
                                     },
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(2.dp))
+                        }
+
+                        if (isStreaming && canSend) {
+                            // 插话：明确「别按现在的方案继续」，入队后打断当前 run。
+                            // 与主按钮的 steering（不打断、只补一句）刻意分开，避免误触。
+                            IconButton(
+                                onClick = {
+                                    dictation.cancel()
+                                    val submittedText = textFieldState.text.toString()
+                                    textFieldState.clearText()
+                                    onInterruptAndSubmit(submittedText)
+                                },
+                                minWidth = ChatInputActionSize,
+                                minHeight = ChatInputActionSize,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Send,
+                                    contentDescription = stringResource(R.string.chat_interrupt_send),
+                                    modifier = Modifier.size(SendIconSize),
+                                    tint = MiuixTheme.colorScheme.primary,
                                 )
                             }
 

@@ -100,6 +100,18 @@ internal object AgentRuntimeWire {
      */
     const val MSG_UPDATE_MODEL = 19
 
+    /**
+     * client -> service：枚举已接纳、尚未发布终态的运行（多会话并行）。
+     *
+     * 上游 3.3.5 原来用 16/17，与本地 3.3.1 的 [MSG_SUPPLEMENT]/[MSG_PAUSE_RUN] 撞号；
+     * 合并时重编号为 20/21，保证两端写入的 what 值唯一 —— 撞号会让「查询活跃 run」
+     * 被当成「追加补充指令」处理，且不会有任何报错。
+     */
+    const val MSG_QUERY_ACTIVE_RUNS = 20
+
+    /** service -> client：返回各运行的会话归属与当前阶段。 */
+    const val MSG_QUERY_ACTIVE_RUNS_RESPONSE = 21
+
     /** MSG_SUPPLEMENT 的补充正文键。 */
     const val KEY_SUPPLEMENT_TEXT = "supplement_text"
 
@@ -202,6 +214,27 @@ internal object AgentRuntimeWire {
                     ?.takeIf { it.isNotBlank() } ?: runId
             }
     }
+
+    /** 活跃 run 的阶段；上游多会话并行用它区分「在跑 / 等 GUI / 已暂停」。 */
+    enum class RunPhase(val wireValue: String) {
+        Preparing("preparing"),
+        Running("running"),
+        WaitingForGui("waiting_for_gui"),
+        Paused("paused"),
+        Committing("committing");
+
+        companion object {
+            fun fromWireValue(value: String): RunPhase = entries.firstOrNull { it.wireValue == value } ?: Running
+        }
+    }
+
+    data class ActiveRunSnapshot(
+        val runId: String,
+        val conversationId: String,
+        val phase: RunPhase = RunPhase.Running,
+        val operation: String = OP_CHAT,
+        val handoffSource: String = "",
+    )
 
     /**
      * 单张图片在 IPC 层的表示。远程 URL 可直接放入 Bundle，本地或内联图片只传只读文件描述符。
@@ -652,6 +685,35 @@ internal object AgentRuntimeWire {
     fun runningCountFromBundle(bundle: Bundle): Int =
         bundle.getInt(KEY_RUN_COUNT, UNKNOWN_RUN_COUNT)
 
+    fun activeRunsToBundle(runs: List<ActiveRunSnapshot>): Bundle = Bundle().apply {
+        putParcelableArrayList(
+            "active_runs",
+            ArrayList(
+                runs.map { run ->
+                    Bundle().apply {
+                        putString(KEY_RUN_ID, run.runId)
+                        putString("conversation_id", run.conversationId)
+                        putString("phase", run.phase.wireValue)
+                        putString("operation", run.operation)
+                        putString("handoff_source", run.handoffSource)
+                    }
+                },
+            ),
+        )
+    }
+
+    fun activeRunsFromBundle(bundle: Bundle): List<ActiveRunSnapshot> =
+        bundle.getParcelableArrayList("active_runs", Bundle::class.java).orEmpty().mapNotNull { item ->
+            val runId = runIdFromBundle(item).takeIf(String::isNotBlank) ?: return@mapNotNull null
+            ActiveRunSnapshot(
+                runId = runId,
+                conversationId = item.getString("conversation_id").orEmpty(),
+                phase = RunPhase.fromWireValue(item.getString("phase").orEmpty()),
+                operation = item.getString("operation") ?: OP_CHAT,
+                handoffSource = item.getString("handoff_source").orEmpty(),
+            )
+        }
+
     fun attachRunResponseBundle(runId: String, attached: Boolean): Bundle = Bundle().apply {
         putString(KEY_RUN_ID, runId)
         putBoolean(KEY_OK, attached)
@@ -687,6 +749,11 @@ internal object AgentRuntimeWire {
     /** 将 [AgentEvent] 打包为可跨进程传递的 [Bundle]。 */
     fun eventToBundle(event: AgentEvent): Bundle = Bundle().apply {
         when (event) {
+            is AgentEvent.GuiControlChanged -> {
+                putString(KEY_TYPE, "gui_control_changed")
+                putString("status", event.status.wireValue)
+            }
+
             is AgentEvent.RunStarted -> {
                 putString(KEY_TYPE, "run_started")
                 putInt("initial_images", event.initialImages)
@@ -765,6 +832,14 @@ internal object AgentRuntimeWire {
                 putString("name", event.name)
                 putInt("content_chars", event.contentChars)
                 putString("replacement_content", event.replacementContent)
+            }
+
+            is AgentEvent.SearchSuggestions -> {
+                require(SearchSuggestionsPayload.isValidHtml(event.html)) { "SEARCH_SUGGESTIONS_INVALID_PAYLOAD" }
+                putString(KEY_TYPE, "search_suggestions")
+                putInt("round", event.round)
+                putInt("index", event.index)
+                putString("html", event.html)
             }
 
             is AgentEvent.AssistantReceived -> {
@@ -847,6 +922,15 @@ internal object AgentRuntimeWire {
                 event.elapsedMs?.let { putLong("elapsed_ms", it) }
             }
 
+            is AgentEvent.SubagentProgress -> {
+                putString(KEY_TYPE, "subagent_progress")
+                putInt("round", event.round)
+                putString("tool_call_id", event.toolCallId)
+                putString("subagent_id", event.subagentId)
+                putString("subagent_type", event.subagentType)
+                putString("snapshot_json", event.snapshotJson.boundedText(MAX_DRAIN_CONTENT_CHARS))
+            }
+
             is AgentEvent.RunFinished -> {
                 putString(KEY_TYPE, "run_finished")
                 putInt("round", event.round)
@@ -862,6 +946,9 @@ internal object AgentRuntimeWire {
 
     /** 将 [Bundle] 还原为 [AgentEvent]，无法识别时返回 null。 */
     fun eventFromBundle(bundle: Bundle): AgentEvent? = when (bundle.getString(KEY_TYPE)) {
+        "gui_control_changed" -> GuiControlStatus.fromWireValue(bundle.getString("status").orEmpty())
+            ?.let { AgentEvent.GuiControlChanged(it) }
+
         "run_started" -> AgentEvent.RunStarted(
             initialImages = bundle.getInt("initial_images"),
             initialImageBytes = bundle.getInt("initial_image_bytes"),
@@ -938,6 +1025,13 @@ internal object AgentRuntimeWire {
             replacementContent = bundle.getString("replacement_content"),
         )
 
+        "search_suggestions" -> bundle.getString("html")
+            ?.takeIf(SearchSuggestionsPayload::isValidHtml)
+            ?.let { html ->
+                AgentEvent.SearchSuggestions(bundle.getInt("round"), bundle.getInt("index"), html)
+                    .takeIf { it.round >= 0 && it.index >= 0 }
+            }
+
         "assistant_received" -> AgentEvent.AssistantReceived(
             round = bundle.getInt("round"),
             contentChars = bundle.getInt("content_chars"),
@@ -1007,6 +1101,14 @@ internal object AgentRuntimeWire {
             kind = bundle.getString("kind").orEmpty(),
             detail = bundle.getString("detail").orEmpty(),
             elapsedMs = bundle.optionalElapsedMs("elapsed_ms"),
+        )
+
+        "subagent_progress" -> AgentEvent.SubagentProgress(
+            round = bundle.getInt("round"),
+            toolCallId = bundle.getString("tool_call_id").orEmpty(),
+            subagentId = bundle.getString("subagent_id").orEmpty(),
+            subagentType = bundle.getString("subagent_type").orEmpty(),
+            snapshotJson = bundle.getString("snapshot_json").orEmpty(),
         )
 
         "run_finished" -> AgentEvent.RunFinished(

@@ -590,6 +590,8 @@ internal class AgentLoop(
                 name = name,
                 success = success,
             )
+            // 上游 3.3.5：模型直出的搜索建议（搜索建议胶囊）随事件流下发。
+            is ProviderEvent.SearchSuggestions -> AgentEvent.SearchSuggestions(round, index, html)
             is ProviderEvent.Completed -> null
         }
 

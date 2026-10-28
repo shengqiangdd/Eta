@@ -548,6 +548,9 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.Browser -> stringResource(R.string.route_browser)
     is AppRoute.Terminal -> stringResource(R.string.route_terminal)
     is AppRoute.Tools -> stringResource(R.string.route_tools)
+    is AppRoute.WebToolsSettings -> stringResource(R.string.web_tools_settings_title)
+    // 上游 3.3.5 的标题表：Subagent 页没有对应字符串资源，沿用其硬编码标题。
+    is AppRoute.Subagents -> "Subagent"
     is AppRoute.Skills -> stringResource(R.string.route_skills)
     is AppRoute.Plugins -> stringResource(R.string.route_plugins)
     is AppRoute.Usage -> stringResource(R.string.route_usage)

@@ -30,6 +30,7 @@ import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.repository.McpServerRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
+import io.github.mangi.eta.data.repository.WebToolsSettingsRepository
 import io.github.mangi.eta.agent.plugin.PluginManifest
 import io.github.mangi.eta.agent.model.AgentAskUserToolCatalog
 import io.github.mangi.eta.agent.model.AgentModelClient
@@ -46,6 +47,7 @@ import io.github.mangi.eta.agent.overlay.AgentHapticFeedback
 import io.github.mangi.eta.agent.overlay.AgentOverlayClearance
 import io.github.mangi.eta.agent.overlay.GestureIndicator
 import io.github.mangi.eta.agent.runtime.AgentAppContext
+import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.model.AgentGoal
 import io.github.mangi.eta.agent.model.AgentGoalPhase
@@ -152,9 +154,15 @@ internal class AgentLocalTools(
      * 调用线程是 ACP 读线程，实现方负责切到主线程；默认空转保持既有行为不变。
      */
     private val onToolProgress: ((AgentEvent.ToolProgress) -> Unit)? = null,
+    /**
+     * 浏览器会话；上游 3.3.5 起 [AgentBrowserSession] 由 object 改为 class（每会话一实例），
+     * 调用方不传时按需懒创建，保持单会话路径的既有行为。
+     */
+    browserSession: AgentBrowserSession? = null,
 ) : AgentModelClient.ToolExecutor, AutoCloseable {
 
     private val closed = AtomicBoolean(false)
+    private val browserSessionRef = lazy { browserSession ?: AgentBrowserSession() }
     private val todoStore by lazy { AgentTodoStore.forApp(context) }
     private val goalStore by lazy { AgentGoalStore.forApp(context) }
     private val runFileChanges by lazy { AgentRunFileChanges.forApp(context) }
@@ -229,6 +237,9 @@ internal class AgentLocalTools(
     private val webTools = AgentWebTools(
         transport = WebHttpTransport(AgentHttpClient.client),
         localNetworkAccess = { LocalNetworkPermission.accessState(context).name.lowercase(Locale.ROOT) },
+        // 用户在「网页搜索与读取」页保存的后端/密钥/模板，必须在每次调用时解析，
+        // 否则设置页能保存但工具永远用内置默认值。
+        runtimeConfig = { runBlocking { WebToolsSettingsRepository.resolveRuntimeConfig(context) } },
     )
     val terminalExecutionContext = LinuxEnvironmentSettingsRepository.current(context).terminalEnvironment.let { environment ->
         TerminalExecutionContext(
@@ -298,7 +309,7 @@ internal class AgentLocalTools(
         virtualDisplays.close()
         acpClient.close()
         publishedObservation.set(PublishedObservation())
-        AgentBrowserSession.interruptAgentAction(browserRunId)
+        if (browserSessionRef.isInitialized()) browserSessionRef.value.interruptAgentAction(browserRunId)
         webTools.close()
         deviceController.closeVirtualImeGuard()
         terminalController.interruptAll()
@@ -794,11 +805,12 @@ internal class AgentLocalTools(
         if (!browserToolsEnabled()) {
             return textResult(errorResult("BROWSER_TOOLS_DISABLED", "请先启用网页浏览工具"))
         }
-        val result = AgentBrowserSession.execute(
+        val result = browserSessionRef.value.execute(
             context = context,
             args = args,
             runId = browserRunId,
             toolCallId = toolCallId,
+            checkCancellation = { if (closed.get()) throw AgentRunCancelledException() },
         )
         return AgentModelClient.ToolResult(
             content = result.content,

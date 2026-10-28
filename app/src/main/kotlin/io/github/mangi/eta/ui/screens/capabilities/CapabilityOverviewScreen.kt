@@ -407,7 +407,7 @@ private fun capabilityGroups(
                     id = "browser",
                     title = stringResource(R.string.route_browser),
                     summary = stringResource(R.string.capability_overview_browser_summary),
-                    route = AppRoute.Browser,
+                    route = AppRoute.Browser(),
                     keywords = listOf("browser", "web", "浏览器", "网页"),
                 ),
             ),

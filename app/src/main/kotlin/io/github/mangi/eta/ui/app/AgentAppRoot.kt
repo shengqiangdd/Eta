@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceLocationProvider
 import io.github.mangi.eta.agent.device.RootAccess
@@ -90,10 +91,12 @@ import io.github.mangi.eta.ui.screens.memory.AgentMemoryScreen
 import io.github.mangi.eta.ui.screens.permissions.PermissionHealthScreen
 import io.github.mangi.eta.ui.screens.plugins.AgentPluginsScreen
 import io.github.mangi.eta.ui.screens.skills.AgentSkillsScreen
+import io.github.mangi.eta.ui.screens.subagent.SubagentSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.EnvVarsScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxFilesScreen
 import io.github.mangi.eta.ui.screens.terminal.SharedFoldersScreen
+import io.github.mangi.eta.ui.screens.tools.WebToolsSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.TerminalEntryScreen
 import io.github.mangi.eta.ui.screens.terminal.WorkspaceScreen
 import io.github.mangi.eta.ui.screens.tools.AgentToolsScreen
@@ -364,7 +367,7 @@ fun AgentAppRoot(
             canStopKimiWeb = appViewModel.kimiWebState.canStop,
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
-            onOpenBrowser = { pushRoute(AppRoute.Browser) },
+            onOpenBrowser = { pushRoute(AppRoute.Browser()) },
             onOpenCapabilities = { pushRoute(AppRoute.Capabilities) },
             onOpenWorkspace = { pushRoute(AppRoute.Workspace) },
             chatViewMode = chatViewMode,
@@ -529,6 +532,22 @@ fun AgentAppRoot(
                                 is AgentHomeAction.ReasoningEffortChanged ->
                                     agentState.updateReasoningEffort(action.effort)
                                 AgentHomeAction.CompactContext -> agentState.compactCurrentContext()
+                                // 历史分页（上游 3.3.5 的 messageWindow 纵向改造）尚未移植到本分支的
+                                // 会话存储：本地一次加载整个会话，没有「更早分页」可拉，先显式忽略。
+                                AgentHomeAction.LoadEarlierMessages -> Unit
+                                is AgentHomeAction.HistoryViewportChanged -> Unit
+                                AgentHomeAction.RetryConversationLoad -> Unit
+                                is AgentHomeAction.InterruptAndSubmitMessage -> {
+                                    requestExecutionNotifications()
+                                    agentState.interruptAndSendCurrentMessage(action.text)
+                                }
+                                is AgentHomeAction.SteerQueuedMessage -> {
+                                    requestExecutionNotifications()
+                                    agentState.steerQueuedMessage(action.id)
+                                }
+                                is AgentHomeAction.RecallQueuedMessage ->
+                                    agentState.recallQueuedMessage(action.id, action.currentDraftText)
+                                is AgentHomeAction.RemoveQueuedMessage -> agentState.removeQueuedMessage(action.id)
                                 is AgentHomeAction.ModelSelected -> agentState.selectModel(action.modelId)
                                 is AgentHomeAction.SubmitMessage -> { requestExecutionNotifications(); agentState.sendCurrentMessage(action.text) }
                                 AgentHomeAction.StopRun -> agentState.stopCurrentRun()
@@ -561,7 +580,7 @@ fun AgentAppRoot(
                                 AgentHomeAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
                                 AgentHomeAction.OpenSystemEnhance -> pushRoute(AppRoute.SystemEnhance)
                                 AgentHomeAction.OpenSettings -> pushRoute(AppRoute.Settings)
-                                AgentHomeAction.OpenBrowser -> pushRoute(AppRoute.Browser)
+                                AgentHomeAction.OpenBrowser -> pushRoute(AppRoute.Browser())
                                 AgentHomeAction.ExpandRunTrace -> Unit
                             }
                         },
@@ -570,8 +589,14 @@ fun AgentAppRoot(
                 }
             }
             entry<AppRoute.Browser>(swipeDismiss = swipeDismiss) {
-                RoutedShell(route = AppRoute.Browser) {
-                    AgentBrowserScreen()
+                // 浏览器会话按 sessionKey 隔离（上游 3.3.5）：手动浏览与各会话各用一页，退出再进来不丢页面。
+                val browserSessionKey = (backStack.lastOrNull() as? AppRoute.Browser)?.sessionKey
+                    ?: BrowserSessionRegistry.MANUAL_SESSION_KEY
+                RoutedShell(route = AppRoute.Browser(browserSessionKey)) {
+                    AgentBrowserScreen(
+                        session = BrowserSessionRegistry.get(browserSessionKey),
+                        onBack = { popRoute() },
+                    )
                 }
             }
             entry<AppRoute.Terminal>(swipeDismiss = swipeDismiss) {
@@ -593,7 +618,8 @@ fun AgentAppRoot(
                     onAction = { action ->
                         when (action) {
                             AgentToolsAction.NavigateBack -> popRoute()
-                            AgentToolsAction.OpenBrowser -> pushRoute(AppRoute.Browser)
+                            AgentToolsAction.OpenBrowser -> pushRoute(AppRoute.Browser())
+                            AgentToolsAction.OpenWebToolsSettings -> pushRoute(AppRoute.WebToolsSettings)
                             AgentToolsAction.OpenEnhancements -> pushRoute(AppRoute.SystemEnhance)
                             AgentToolsAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
                         }
@@ -877,6 +903,12 @@ fun AgentAppRoot(
             }
             entry<AppRoute.SpeechOss>(swipeDismiss = swipeDismiss) {
                 SpeechOssScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.WebToolsSettings>(swipeDismiss = swipeDismiss) {
+                WebToolsSettingsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.Subagents>(swipeDismiss = swipeDismiss) {
+                SubagentSettingsScreen(onBack = ::popRoute)
             }
             entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeDismiss) {
                 AppearanceSettingsScreen(onBack = ::popRoute)

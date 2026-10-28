@@ -7,6 +7,8 @@ import android.content.ComponentCallbacks2
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
+import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.VirtualDisplayImeRestore
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
@@ -135,10 +137,13 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         super.onTrimMemory(level)
         when {
             level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                BrowserSessionRegistry.releaseIdlePages()
                 CharacterImageCache.evictAll()
                 StaticDocumentCache.evictAll()
             }
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                // 上游 3.3.5 补充：低内存时先释放离屏浏览器页 —— 它最占内存且可随时重建。
+                BrowserSessionRegistry.releaseIdlePages()
                 CharacterImageCache.trimTo(16 * 1024 * 1024)
                 StaticDocumentCache.evictAll()
             }
@@ -147,6 +152,7 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onLowMemory() {
         super.onLowMemory()
+        BrowserSessionRegistry.releaseIdlePages()
         CharacterImageCache.evictAll()
         StaticDocumentCache.evictAll()
     }

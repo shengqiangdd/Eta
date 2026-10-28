@@ -99,7 +99,7 @@ internal object AgentContextAppToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "observe_screen",
-                    description = "观察当前手机屏幕，默认只返回前台应用、屏幕尺寸、observation_id 与可见 UI 节点，不附截图。节点为空、目标无法唯一识别、界面以 Canvas/地图/图片/二维码等视觉内容为主，或任务依赖颜色、图像、空间布局时，显式设置 include_screenshot=true；补截图时保持 include_ui_tree=true，以同一次新观察刷新节点和 observation_id，禁止把新截图与旧节点混用。节点动作必须原样携带同一次观察的 observation_id。结果里的 ui_nodes_shown 是真正带回的节点数：ui_nodes_truncated=true 表示已按上下文体积裁掉尾部（此时把 max_nodes 调到 120 也拿不到更多，应先 scroll 让目标进入视野再观察）；ui_tree_truncated=true 才是无障碍层的截断。不要仅因截断请求截图。",
+                    description = "取得手机操作权并观察当前屏幕；其他会话占用时由 Runtime 等待。默认只返回前台应用、屏幕尺寸、observation_id 与可见 UI 节点，不附截图。节点为空、目标无法唯一识别、界面以 Canvas/地图/图片/二维码等视觉内容为主，或任务依赖颜色、图像、空间布局时，显式设置 include_screenshot=true；补截图时保持 include_ui_tree=true，以同一次新观察刷新节点和 observation_id，禁止把新截图与旧节点混用。节点动作必须原样携带同一次观察的 observation_id。结果里的 ui_nodes_shown 是真正带回的节点数：ui_nodes_truncated=true 表示已按上下文体积裁掉尾部（此时把 max_nodes 调到 120 也拿不到更多，应先 scroll 让目标进入视野再观察）；ui_tree_truncated=true 才是无障碍层的截断。不要仅因截断请求截图。手机操作阶段完成后调用 release_gui，让其他会话继续；释放或用户接管后必须重新观察才能操作。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -141,6 +141,16 @@ internal object AgentContextAppToolCatalog {
                                         .put("description", "仅虚拟屏截图：裁剪并放大该区域，格式 \"x,y,w,h\"（归一化 0–999），例如 \"420,380,160,80\"。返回的坐标仍按整屏 normalized 换算，不是裁剪图坐标。")
                                 )
                         )
+                )
+            )
+            .put(
+                AgentToolSchema.function(
+                    name = "release_gui",
+                    description = "结束当前手机操作阶段并释放操作权，让其他会话使用手机。纯思考、网页、Shell 或文件工作不需要继续占用手机。释放后旧观察、节点与坐标全部失效；再次操作前先 observe_screen。没有持有操作权时调用也会成功。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put("properties", JSONObject())
+                        .put("additionalProperties", false),
                 )
             )
     }

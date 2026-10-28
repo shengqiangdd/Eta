@@ -1,5 +1,6 @@
 package io.github.mangi.eta.data.db
 
+import android.database.Cursor
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,6 +15,9 @@ class ChunkedTextDaoAccessTest {
         private val rows = LinkedHashMap<Triple<String, String, String>, MutableList<String>>()
 
         private fun key(table: String, owner: String, field: String) = Triple(table, owner, field)
+
+        override fun textChunkCursor(table: String, owner: String, field: String): Cursor =
+            throw UnsupportedOperationException("测试实现不提供 Cursor 路径")
 
         override suspend fun insertTextChunk(chunk: AgentTextChunkEntity) {
             rows.getOrPut(key(chunk.ownerTable, chunk.ownerId, chunk.field)) { mutableListOf() }
