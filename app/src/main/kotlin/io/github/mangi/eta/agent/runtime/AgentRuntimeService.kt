@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Message
+import android.os.PowerManager
 import android.os.Messenger
 import android.os.Process
 import android.provider.Settings
@@ -100,6 +101,25 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         get() = primaryRunId?.let { sessions[it] }
     private val pendingStartRequests = java.util.concurrent.ConcurrentHashMap<Long, PendingStartRequest>()
     private val startRequestCounter = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
+     * Runtime 自己持一把 PARTIAL_WAKE_LOCK，不再只依赖前台服务。
+     *
+     * 真机上出现过「root 已授权 → FGS 启动被后台限制 → allowBoundFallback 放行」的路径：
+     * run 在跑，但没有前台服务、也没有任何 wake lock，息屏后 CPU 进入 suspend，
+     * 界面看起来就是「任务停住，亮屏才继续」。这把锁只按 session 存活持有，10 分钟续期一次，
+     * 60 分钟超时只是防泄漏兜底。
+     */
+    private var runtimeWakeLock: PowerManager.WakeLock? = null
+    private val runtimeWakeLockRenew = object : Runnable {
+        override fun run() {
+            if (sessions.values.none { !it.isTerminal }) {
+                releaseRuntimeWakeLock()
+                return
+            }
+            acquireRuntimeWakeLock()
+        }
+    }
 
     private data class PendingStartRequest(
         val generation: Long,
@@ -189,6 +209,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
      * 这里按 runId 存，每条 run 只读自己那一条。
      */
     private val runOpenTargets = java.util.concurrent.ConcurrentHashMap<String, RunOpenTarget>()
+    /** 供多会话状态同步判断这是不是 App 内发起的 run。 */
+    private val runHandoffSources = java.util.concurrent.ConcurrentHashMap<String, String>()
     private class RunSupplements {
         val lock = Any()
         val items = mutableListOf<AgentUiHandoffPayload.Supplement>()
@@ -252,6 +274,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         pendingStartRequests.clear()
         sessions.values.toList().forEach { it.cancel("Agent Runtime 服务已停止") }
         sessions.clear()
+        releaseRuntimeWakeLock()
         primaryRunId = null
         synchronized(completedContextsLock) { completedContexts.clear() }
         resultIo.shutdownNow()
@@ -390,6 +413,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     )
                 }
 
+                AgentRuntimeWire.MSG_QUERY_ACTIVE_RUNS -> sendActiveRuns(msg.replyTo)
+
                 AgentRuntimeWire.MSG_ATTACH_RUN -> {
                     attachRun(
                         runId = AgentRuntimeWire.runIdFromBundle(msg.data ?: return),
@@ -495,6 +520,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             return
         }
         sessions[request.runId] = session
+        acquireRuntimeWakeLock()
         primaryRunId = request.runId
         synchronized(completedContextsLock) { completedContexts.remove(request.runId) }
         runCatching {
@@ -512,6 +538,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         overlayRevealed = false
         val openTarget = request.openTarget()
         runOpenTargets[request.runId] = openTarget
+        runHandoffSources[request.runId] = request.handoff?.source.orEmpty()
         resultConversationId = openTarget.conversationId
         resultArchive = openTarget.archiveSource?.let { source ->
             openTarget.archiveKey?.let { key -> source to key }
@@ -715,6 +742,30 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         runCatching { manager.notify(session.runId.hashCode(), notification) }
     }
 
+    private fun acquireRuntimeWakeLock() {
+        val manager = getSystemService(PowerManager::class.java) ?: return
+        val lock = runtimeWakeLock ?: manager
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, RUNTIME_WAKE_LOCK_TAG)
+            .apply { setReferenceCounted(false) }
+            .also { runtimeWakeLock = it }
+        runCatching { lock.acquire(RUNTIME_WAKE_LOCK_TIMEOUT_MS) }
+            .onFailure { failure ->
+                AndroidAgentLogger.warn("Runtime wake lock failed: type=${failure.safeLogType()}")
+            }
+        mainHandler.removeCallbacks(runtimeWakeLockRenew)
+        mainHandler.postDelayed(runtimeWakeLockRenew, RUNTIME_WAKE_LOCK_RENEW_MS)
+    }
+
+    private fun releaseRuntimeWakeLockIfIdle() {
+        if (sessions.values.any { !it.isTerminal }) return
+        releaseRuntimeWakeLock()
+    }
+
+    private fun releaseRuntimeWakeLock() {
+        mainHandler.removeCallbacks(runtimeWakeLockRenew)
+        runtimeWakeLock?.let { lock -> if (lock.isHeld) runCatching { lock.release() } }
+    }
+
     private fun postTerminalOverlay(
         session: AgentRuntimeSession,
         result: AgentRuntimeWire.RunResult,
@@ -723,8 +774,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     ) {
         mainHandler.post {
             val openTarget = runOpenTargets.remove(session.runId)
+            runHandoffSources.remove(session.runId)
             if (sessions[session.runId] !== session) return@post
             sessions.remove(session.runId)
+            releaseRuntimeWakeLockIfIdle()
             supplementsByRun.remove(session.runId)
             val showOverlay = primaryRunId == session.runId || primaryRunId == null
             if (primaryRunId == session.runId) primaryRunId = null
@@ -865,6 +918,33 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         }.onFailure { throwable ->
             AndroidAgentLogger.warnThrottled("runtime_drain_results_failed") {
                 "Agent runtime drain results failed: type=${throwable.safeLogType()}"
+            }
+        }
+    }
+
+    /**
+     * 多会话并发时只回 primary 不够：后台会话没有 primary，界面就无法把它标成运行中。
+     * 这里一次性返回所有非终态 run（含会话 ID、操作与暂停态），由 App 侧逐条对齐。
+     */
+    private fun sendActiveRuns(replyTo: Messenger?) {
+        runCatching {
+            val runs = sessions.values
+                .filter { !it.isTerminal }
+                .map { session ->
+                    AgentRuntimeWire.ActiveRunSnapshot(
+                        runId = session.runId,
+                        conversationId = runOpenTargets[session.runId]?.conversationId.orEmpty(),
+                        operation = session.operation,
+                        handoffSource = runHandoffSources[session.runId].orEmpty(),
+                        paused = session.controller.isPaused,
+                    )
+                }
+            val msg = Message.obtain(null, AgentRuntimeWire.MSG_QUERY_ACTIVE_RUNS_RESPONSE)
+            msg.data = AgentRuntimeWire.activeRunsToBundle(runs)
+            replyTo?.send(msg)
+        }.onFailure { throwable ->
+            AndroidAgentLogger.warnThrottled("runtime_active_runs_delivery_failed") {
+                "Agent runtime active runs delivery failed: type=${throwable.safeLogType()}"
             }
         }
     }
@@ -1749,6 +1829,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     private companion object {
+        /** 与 AgentExecutionService 同量级：10 分钟续期、60 分钟兜底。 */
+        private const val RUNTIME_WAKE_LOCK_TAG = "eta:agent-runtime"
+        private const val RUNTIME_WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
+        private const val RUNTIME_WAKE_LOCK_RENEW_MS = 10L * 60L * 1000L
         const val ACTION_KEEP_ALIVE = "io.github.mangi.eta.agent.runtime.KEEP_ALIVE"
         const val RESULT_CARD_HEIGHT_RATIO = 0.5f
         private const val RESULT_OPEN_REQUEST_CODE = 1108

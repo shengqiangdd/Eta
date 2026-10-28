@@ -273,6 +273,17 @@ internal object AgentPromptBuilder {
                 appendLine(context.headingIndex)
                 appendLine("</memory_headings>")
             }
+            if (context.learnings.isNotBlank()) {
+                appendLine()
+                appendLine("<memory_learnings>")
+                appendLine("以下是系统自动记录的工具失败经验（同签名按 hits 累加）。遇到同类环境/命令问题先按这里的结论绕开，不要原样重试。")
+                appendLine(context.learnings)
+                val hidden = context.learningsTotal - context.learningsShown
+                if (hidden > 0) {
+                    appendLine("[还有 $hidden 条未展示，需要时调用 memory_get(section=\"经验教训\")]")
+                }
+                appendLine("</memory_learnings>")
+            }
         }.trim()
         return systemMessage(body)
     }

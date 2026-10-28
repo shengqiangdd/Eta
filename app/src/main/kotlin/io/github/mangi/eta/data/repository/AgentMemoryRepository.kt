@@ -3,6 +3,7 @@ package io.github.mangi.eta.data.repository
 import android.content.Context
 import android.util.AtomicFile
 import io.github.mangi.eta.data.datastore.SettingsDataStore
+import io.github.mangi.eta.agent.memory.AgentMemoryLearnings
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -137,6 +138,47 @@ internal class AgentMemoryStore(
         }
         writeLocked(updated)
         AgentMemoryWriteResult.Success(snapshotOf(updated))
+    }
+
+    /**
+     * 记录一条工具失败经验到「经验教训」章节。
+     *
+     * 返回 true 表示确实改写了文件。调用方在工具执行路径上，任何异常都不能影响这次工具结果，
+     * 因此顶层 [AgentMemoryRepository.recordLearning] 会把异常收成 false。
+     */
+    fun recordLearning(
+        tool: String,
+        code: String,
+        message: String,
+        date: String,
+    ): Boolean = synchronized(lock) {
+        val snapshot = snapshotLocked()
+        val sections = AgentMemoryDocument.sections(snapshot.content)
+        val existing = sections.firstOrNull { it.title == AgentMemoryLearnings.SECTION_TITLE }
+        val merged = AgentMemoryLearnings.merge(
+            body = existing?.body.orEmpty(),
+            tool = tool,
+            code = code,
+            message = message,
+            date = date,
+        )
+        if (!merged.changed) return@synchronized false
+        val updated = if (existing != null) {
+            AgentMemoryDocument.replaceSection(snapshot.content, existing, merged.body)
+        } else {
+            buildString {
+                append(snapshot.content.trimEnd('\n'))
+                if (isNotEmpty()) append("\n\n")
+                append(AgentMemoryLearnings.SECTION_HEADING)
+                append("\n\n")
+                append(AgentMemoryLearnings.SECTION_NOTE)
+                append("\n\n")
+                append(merged.body)
+                append('\n')
+            }
+        }
+        writeLocked(updated)
+        true
     }
 
     fun replaceAll(content: String): AgentMemorySnapshot = synchronized(lock) {
@@ -405,6 +447,21 @@ internal object AgentMemoryRepository {
     fun replaceAll(content: String): AgentMemorySnapshot {
         ensureInitialized()
         return store.replaceAll(content)
+    }
+
+    /**
+     * 工具失败经验入库（同步、尽力而为）。
+     *
+     * 为什么吞异常：这是工具执行链路里的旁路记账，磁盘满/文件损坏都不该让一次正常调用失败。
+     */
+    fun recordLearning(
+        tool: String,
+        code: String,
+        message: String,
+        date: String,
+    ): Boolean {
+        if (!::store.isInitialized) return false
+        return runCatching { store.recordLearning(tool, code, message, date) }.getOrDefault(false)
     }
 
     fun enabledFlow(): Flow<Boolean> = SettingsDataStore.memoryEnabledFlow()

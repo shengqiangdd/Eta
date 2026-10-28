@@ -9,6 +9,8 @@ sealed interface AgentHomeAction {
     data object CompactContext : AgentHomeAction
     data class ReasoningEffortChanged(val effort: ReasoningEffort) : AgentHomeAction
     data class ModelSelected(val modelId: String) : AgentHomeAction
+    /** 输入框草稿变化；只写内存，不落盘、不触发聊天区重组。 */
+    data class DraftChanged(val text: String) : AgentHomeAction
     data class SubmitMessage(val text: String) : AgentHomeAction
     data class InterruptAndSubmitMessage(val text: String) : AgentHomeAction
     data class SteerQueuedMessage(val id: String) : AgentHomeAction

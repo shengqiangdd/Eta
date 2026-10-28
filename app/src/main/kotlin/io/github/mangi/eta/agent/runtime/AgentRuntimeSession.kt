@@ -17,7 +17,7 @@ internal class AgentRuntimeSession(
     val controller: AgentRunController = AgentRunController(),
     eventSink: ((AgentEvent) -> Unit)? = null,
     resultSink: ((AgentRuntimeWire.RunResult) -> Unit)? = null,
-    private val operation: String = AgentRuntimeWire.OP_CHAT,
+    val operation: String = AgentRuntimeWire.OP_CHAT,
     private val beforeTerminalPublish: (AgentRuntimeWire.RunResult) -> Unit = {},
 ) {
     private enum class State {

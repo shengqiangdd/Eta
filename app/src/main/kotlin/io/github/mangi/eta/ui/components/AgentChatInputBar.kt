@@ -50,6 +50,8 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -142,6 +144,8 @@ internal fun AgentChatInputBar(
     onAttachFilePath: (String) -> Unit,
     onRemoveFileReference: (String) -> Unit,
     onCancelMessageEdit: () -> Unit,
+    /** 草稿同步：只写内存里的会话状态，不逐字触发聊天区重组。 */
+    onDraftChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -153,6 +157,15 @@ internal fun AgentChatInputBar(
         focusManager.clearFocus(force = true)
     }
     val textFieldState = rememberTextFieldState(initialText = input)
+    // 草稿必须跟着会话走：切换会话、收到恢复提示时，输入框不能凭本地状态被清空。
+    // 这里不让草稿进入 Compose 状态（否则每个字符都会重排整段聊天），只交给 AppState 的普通 map。
+    val draftSink = LocalAgentDraftSink.current
+    LaunchedEffect(textFieldState, draftSink) {
+        snapshotFlow { textFieldState.text.toString() }.collect { text ->
+            draftSink?.invoke(text)
+            onDraftChange(text)
+        }
+    }
     // 虚拟屏中文输入走进程内注入：直接改 TextFieldState，不经过 IME、不碰剪贴板。
     DisposableEffect(Unit) {
         AgentComposerBridge.attach { text ->
@@ -194,10 +207,10 @@ internal fun AgentChatInputBar(
     }
 
     LaunchedEffect(isStreaming, isCompacting) {
-        if (isStreaming && !isCompacting) {
-            // 发送按钮、建议词和外部恢复都可能启动流式任务，统一清掉本地草稿。
-            textFieldState.clearText()
-        }
+        // 只取消听写。过去这里在 isStreaming 变 true 时清空本地草稿：
+        // 恢复一条「任务已中断」的 run 也会把 isStreaming 推成 true，
+        // 用户正在打的字就被一条系统提示清掉了。发送路径自己会 clearText()，不依赖这里。
+        dictation.cancel()
     }
 
     Column(

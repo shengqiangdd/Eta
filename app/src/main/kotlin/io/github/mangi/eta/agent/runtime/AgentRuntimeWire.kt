@@ -234,6 +234,7 @@ internal object AgentRuntimeWire {
         val phase: RunPhase = RunPhase.Running,
         val operation: String = OP_CHAT,
         val handoffSource: String = "",
+        val paused: Boolean = false,
     )
 
     /**
@@ -696,6 +697,7 @@ internal object AgentRuntimeWire {
                         putString("phase", run.phase.wireValue)
                         putString("operation", run.operation)
                         putString("handoff_source", run.handoffSource)
+                        putBoolean("paused", run.paused)
                     }
                 },
             ),
@@ -711,6 +713,7 @@ internal object AgentRuntimeWire {
                 phase = RunPhase.fromWireValue(item.getString("phase").orEmpty()),
                 operation = item.getString("operation") ?: OP_CHAT,
                 handoffSource = item.getString("handoff_source").orEmpty(),
+                paused = item.getBoolean("paused", false),
             )
         }
 

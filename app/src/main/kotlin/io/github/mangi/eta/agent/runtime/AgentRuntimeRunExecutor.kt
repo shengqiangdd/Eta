@@ -2,7 +2,10 @@ package io.github.mangi.eta.agent.runtime
 
 import android.content.Context
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityKeeper
+import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.model.AgentConversationToolCatalog
+import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
+import io.github.mangi.eta.agent.subagent.SubagentExecutor
 import io.github.mangi.eta.agent.tool.ConversationHistorySource
 import io.github.mangi.eta.agent.tool.ConversationHistoryTool
 import io.github.mangi.eta.agent.tool.JsonArrayElementScanner
@@ -18,6 +21,7 @@ import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.agent.model.AgentHttpClient
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
+import io.github.mangi.eta.agent.memory.AgentLearningRecorder
 import io.github.mangi.eta.agent.memory.ConversationMemoryPins
 import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
@@ -39,6 +43,7 @@ import io.github.mangi.eta.agent.voice.EtaAssistantOverlayService
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
+import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -79,6 +84,7 @@ internal class AgentRuntimeRunExecutor(
         var entrySurfaceGuard: EntrySurfaceGuard? = null
         var toolExecutor: AutoCloseable? = null
         var toolsBinding: AgentRunController.ResourceBinding? = null
+        var browserBinding: AutoCloseable? = null
         var response: AgentModelClient.ModelResponse.Text? = null
         var cancelled = false
         var checkpointRecorder: AgentRunCheckpointRecorder? = null
@@ -219,10 +225,15 @@ internal class AgentRuntimeRunExecutor(
                         progressRounds.exit(toolCallId)
                     }
                 }
+            // 页面按会话复用：同会话的下一轮运行、以及用户点开的浏览器面板，
+            // 必须看到同一组 WebView，否则 Agent 打开的页面在界面上凭空消失。
+            val browserKey = AgentConversationIdentity.fromHandoff(request.handoff, request.runId)
+            browserBinding = BrowserSessionRegistry.acquireRun(browserKey, request.runId)
             val executor = AgentLocalTools(
                 context = appContext,
                 logger = AndroidAgentLogger,
                 browserRunId = request.runId,
+                browserSession = BrowserSessionRegistry.get(browserKey),
                 browserToolsEnabled = {
                     request.config.browserTools && currentPermissions().browserTools
                 },
@@ -325,12 +336,58 @@ internal class AgentRuntimeRunExecutor(
                     override fun liveMessages(): List<AgentModelClient.ConversationMessage> = session.transcript
                 })
             }
+            // Subagent 工具：开关打开时注册 schema，实际执行前再用当前权限裁决一次；
+            // 权限可能在运行期间被关掉，所以判断放在调用时而不是注册时。
+            val subagentAllowed = {
+                request.config.subagentTools && currentPermissions().subagentTools
+            }
+            val subagentExecutor = SubagentExecutor(
+                // 子代理会话按会话隔离：同一会话内 resume 可用，跨会话互不可见。
+                conversationKey = conversationId ?: request.runId,
+                parentController = runController,
+                configProvider = {
+                    val rawSubagentConfig = runBlocking {
+                        RuntimeConfigRepository.subagentRuntimeConfig(request.config)
+                    }
+                    AgentRuntimePolicy.constrain(rawSubagentConfig, currentPermissions())
+                },
+                capabilitiesProvider = { AgentToolCapabilities.capture(appContext) },
+                baseToolExecutor = routingExecutor,
+                skillContext = skillContext,
+                memoryContext = memoryContext,
+                mcpTools = mcpTools,
+                executionContext = executor.terminalExecutionContext,
+                onProgress = { progressEvent ->
+                    acceptEvent(
+                        session,
+                        progressEvent,
+                        archivedEvents,
+                        entrySurfaceGuard,
+                        checkpointRecorder,
+                    )
+                },
+            )
             val runTools = JSONArray(mcpTools.toString()).also { tools ->
+                if (subagentAllowed()) AgentSubagentToolCatalog.appendSchemas(tools)
                 if (historyTool != null) tools.put(AgentConversationToolCatalog.schema())
                 if (characterMemoryTools != null && memoryEnabled) CharacterMemoryTools.appendSchemas(tools)
             }
             val runToolExecutor = AgentModelClient.ToolExecutor { call ->
-                if (call.name == AgentConversationToolCatalog.READ_HISTORY && historyTool != null) {
+                if (call.name in AgentSubagentToolCatalog.names) {
+                    if (!subagentAllowed()) {
+                        AgentModelClient.ToolResult(
+                            JSONObject()
+                                .put("ok", false)
+                                .put("code", "SUBAGENT_DISABLED")
+                                .put("message", "Subagent 权限已关闭")
+                                .toString(),
+                        )
+                    } else if (call.name == AgentSubagentToolCatalog.PROFILE_TOOL_NAME) {
+                        subagentExecutor.executeProfileManagement(call)
+                    } else {
+                        subagentExecutor.execute(call.round, call)
+                    }
+                } else if (call.name == AgentConversationToolCatalog.READ_HISTORY && historyTool != null) {
                     historyTool.execute(call)
                 } else if (call.name in CharacterMemoryTools.NAMES && characterMemoryTools != null) {
                     characterMemoryTools.execute(call)
@@ -339,6 +396,16 @@ internal class AgentRuntimeRunExecutor(
                         runCatching { JSONObject(result.content) }.getOrNull()
                             ?.takeIf { it.optBoolean("ok") }
                             ?.let { ConversationMemoryPins.recordOwnWrite(conversationId, it.optString("revision")) }
+                    }
+                    /*
+                     * 失败经验旁路记账：工具名 + 错误码 + 错误首行写进 MEMORY.md 的「经验教训」章节，
+                     * 下一次系统提示会带上高频条目。这里是同步写（几十毫秒级），但每次 run 每签名只落一次、
+                     * 跨 run 还有 60 秒冷却，且失败静默，不影响工具结果。
+                     */
+                    // 角色会话里记忆是只读的（memoryWritable=false）：工具失败经验也不该写进用户的
+                    // MEMORY.md —— 那是现实记忆，剧情 run 没有权限往里追加内容。
+                    if (memoryEnabled && roleplayContext == null) {
+                        AgentLearningRecorder.record(call.name, result.content)
                     }
                 }
             }
@@ -471,6 +538,7 @@ internal class AgentRuntimeRunExecutor(
         } finally {
             runCatching { toolsBinding?.close() }
             runCatching { toolExecutor?.close() }
+            runCatching { browserBinding?.close() }
         }
 
         if (cancelled && session.isTerminal) {

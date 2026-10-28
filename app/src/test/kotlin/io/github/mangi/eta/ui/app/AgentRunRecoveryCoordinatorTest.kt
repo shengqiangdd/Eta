@@ -1,9 +1,11 @@
 package io.github.mangi.eta.ui.app
 
+import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCheckpointStore
 import io.github.mangi.eta.agent.runtime.AgentRuntimeProcessIdentity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -167,9 +169,27 @@ class AgentRunRecoveryCoordinatorTest {
         assertNull(plan.reattach)
     }
 
+    /**
+     * 终态事件已落盘 = AgentLoop 跑完了，只是结果没来得及发布。
+     * 再判「被系统中断」就会在完整回答后面补一条「任务已中断」。
+     */
+    @Test
+    fun finishedCheckpointIsNotTreatedAsInterrupted() {
+        val finished = checkpoint("run-finished").copy(
+            events = listOf(AgentEvent.RunFinished(round = 2, contentChars = 12)),
+        )
+        val running = checkpoint("run-running").copy(
+            events = listOf(AgentEvent.RoundStarted(round = 2, messageCount = 12)),
+        )
+
+        assertTrue(AgentRunRecoveryCoordinator.finishedBeforeResult(finished))
+        assertFalse(AgentRunRecoveryCoordinator.finishedBeforeResult(running))
+    }
+
     private fun checkpoint(
         runId: String,
         owner: String = AgentRuntimeProcessIdentity.id,
+        events: List<AgentEvent> = emptyList(),
     ) = AgentRunCheckpointStore.Checkpoint(
         runId = runId,
         ownerInstanceId = owner,
@@ -178,7 +198,7 @@ class AgentRunRecoveryCoordinatorTest {
             source = AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
             payload = "conversation-1",
         ),
-        events = emptyList(),
+        events = events,
         createdAt = 1L,
         updatedAt = 2L,
     )

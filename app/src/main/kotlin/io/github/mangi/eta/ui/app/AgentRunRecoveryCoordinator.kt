@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.app
 
+import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCheckpointStore
 import io.github.mangi.eta.agent.runtime.AgentRuntimeProcessIdentity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
@@ -74,6 +75,15 @@ internal object AgentRunRecoveryCoordinator {
             interrupted = (staleFromPreviousProcess + interruptedCurrent).distinctBy { it.runId },
         )
     }
+
+    /**
+     * checkpoint 里已有终态事件 = AgentLoop 已经跑完，缺的只是结果发布（进程被杀在两步之间）。
+     *
+     * 这种 run 不能再判「被系统中断」：真机上用户会看到一段完整回答后面又跟一条
+     * 「任务已中断」，而且每次重启都会再来一条。
+     */
+    fun finishedBeforeResult(checkpoint: AgentRunCheckpointStore.Checkpoint): Boolean =
+        checkpoint.events.any { it is AgentEvent.RunFinished }
 
     internal val AgentRuntimeWire.CompletedRun.stableRunId: String
         get() = result.runId.ifBlank { handoff.id }

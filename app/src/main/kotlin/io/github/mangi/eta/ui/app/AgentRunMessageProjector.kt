@@ -133,16 +133,29 @@ internal class AgentRunMessageProjector(
         val replaySupplementIds = replaySupplementIndexes.mapTo(mutableSetOf()) { index ->
             AgentPendingResultRecovery.supplementMessageId(runId, index)
         }
-        return messages.filterNot { message ->
-            when (message) {
-                is AgentMessageUi -> isAssistantMessageForRun(message.id, runId)
-                is ThinkingMessageUi -> message.id.startsWith("$runId-thinking-")
-                is ToolActivityMessageUi -> message.id.startsWith("$runId-tool-")
-                is SystemNoticeMessageUi ->
-                    isAssistantMessageForRun(message.id, runId) || message.id == "interrupted-$runId"
-                is UserMessageUi -> message.id in replaySupplementIds
-                else -> false
-            }
+        // 判据与插入位置共用同一个函数：两份清单迟早会分叉，
+        // 分叉后要么重建轨迹与旧消息重叠，要么删掉别的 run 的消息。
+        return messages.filterNot { message -> isRunTraceMessage(runId, message, replaySupplementIds) }
+    }
+
+    /**
+     * 把提示插在该 run 轨迹的末尾。
+     *
+     * 不能直接 `messages + notice`：恢复发生在重启之后，用户可能已经发了下一条消息，
+     * 追加到列表尾会让「任务已中断」落在更新的对话下面，像是刚发生的一样。
+     */
+    fun insertRunNotice(
+        runId: String,
+        notice: SystemNoticeMessageUi,
+        messages: List<AgentChatMessageUi>,
+    ): List<AgentChatMessageUi> {
+        if (messages.any { it.id == notice.id }) return messages
+        val lastRunIndex = messages.indexOfLast { message -> isRunTraceMessage(runId, message, emptySet()) }
+        if (lastRunIndex < 0) return messages + notice
+        return buildList(messages.size + 1) {
+            addAll(messages.subList(0, lastRunIndex + 1))
+            add(notice)
+            addAll(messages.subList(lastRunIndex + 1, messages.size))
         }
     }
 
@@ -676,6 +689,16 @@ internal class AgentRunMessageProjector(
         "$runId-tool-$round-${toolCallId.ifBlank { "unknown" }}"
 
     companion object {
+        /** 去掉该 run 的「任务已中断」提示；终态结果到达后它就是误报。 */
+        fun withoutInterruptedNotice(
+            runId: String,
+            messages: List<AgentChatMessageUi>,
+        ): List<AgentChatMessageUi> {
+            val id = "interrupted-$runId"
+            if (messages.none { it is SystemNoticeMessageUi && it.id == id }) return messages
+            return messages.filterNot { it is SystemNoticeMessageUi && it.id == id }
+        }
+
         /**
          * 手动压缩 run 的结果与压缩事件共用同一条时间线标记：事件标记已携带压缩前后的
          * token 信息，成功时原样保留；仍在进行中、失败或事件缺失时才改写或补写。

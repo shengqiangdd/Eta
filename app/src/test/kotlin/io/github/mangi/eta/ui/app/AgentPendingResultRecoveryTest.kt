@@ -283,6 +283,85 @@ class AgentPendingResultRecoveryTest {
     }
 
     @Test
+    fun appliedRunDropsStaleInterruptedNoticeLeftByCheckpointRestore() {
+        val answer = AgentMessageUi(
+            id = "assistant-run-done-3-1",
+            content = "是最新版。以下三项校验结果一致。",
+            isStreaming = false,
+            renderMarkdown = true,
+        )
+        val staleNotice = SystemNoticeMessageUi(
+            id = "interrupted-run-done",
+            code = SystemNoticeCode.Interrupted,
+        )
+        val following = AgentMessageUi(id = "assistant-run-next-1-1", content = "下一轮回答")
+        val state = AgentChatUiState(
+            messages = listOf(answer, staleNotice, following),
+            history = listOf(
+                AgentModelClient.ConversationMessage(role = "assistant", content = answer.content)
+            ),
+            input = "",
+            isStreaming = false,
+            thinkingEnabled = false,
+            appliedRuntimeRunIds = listOf("run-done"),
+        )
+
+        val repaired = AgentPendingResultRecovery.apply(
+            state = state,
+            runId = "run-done",
+            result = AgentRuntimeWire.RunResult(
+                runId = "run-done",
+                ok = true,
+                content = answer.content,
+                transcript = state.history,
+            ),
+            supplements = emptyList(),
+        )
+
+        assertTrue(repaired.alreadyApplied)
+        assertEquals(listOf(answer.id, following.id), repaired.state.messages.map { it.id })
+        assertEquals(answer, repaired.state.messages.first())
+        assertEquals(following, repaired.state.messages.last())
+        assertFalse(repaired.state.isStreaming)
+    }
+
+    @Test
+    fun appliedRunBackfillsFinalBodyWhenOnlyStreamedPrefixSurvived() {
+        val partial = AgentMessageUi(
+            id = "assistant-run-done-1-1",
+            content = "我已确认",
+            isStreaming = false,
+            renderMarkdown = true,
+        )
+        val staleNotice = SystemNoticeMessageUi(
+            id = "interrupted-run-done",
+            code = SystemNoticeCode.Interrupted,
+        )
+        val state = AgentChatUiState(
+            messages = listOf(partial, staleNotice),
+            input = "",
+            isStreaming = false,
+            thinkingEnabled = false,
+            appliedRuntimeRunIds = listOf("run-done"),
+        )
+
+        val repaired = AgentPendingResultRecovery.apply(
+            state = state,
+            runId = "run-done",
+            result = AgentRuntimeWire.RunResult(
+                runId = "run-done",
+                ok = true,
+                content = "我已确认，三项校验结果一致。",
+            ),
+            supplements = emptyList(),
+        )
+
+        assertTrue(repaired.alreadyApplied)
+        assertEquals(listOf(partial.id), repaired.state.messages.map { it.id })
+        assertEquals("我已确认，三项校验结果一致。", (repaired.state.messages.single() as AgentMessageUi).content)
+    }
+
+    @Test
     fun continuationPromptIsAddedToUiAndDurableHistoryOnce() {
         val prompt = AgentUiHandoffPayload.Supplement(
             index = 1,

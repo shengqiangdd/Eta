@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
@@ -104,6 +105,7 @@ import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+import io.github.mangi.eta.ui.model.ConversationHistoryLoadState
 import io.github.mangi.eta.ui.model.MessageEditUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
@@ -221,6 +223,13 @@ internal fun AgentChatBody(
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     isDrawerOpen: Boolean = false,
+    /** 窗口首条消息在库里的下标；>0 表示更早的消息还在库里，可继续上翻。 */
+    messageStartIndex: Int = 0,
+    /** 是否还有更早的消息；通常等价于 [messageStartIndex] > 0。 */
+    hasEarlierMessages: Boolean = false,
+    historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
+    onLoadEarlierMessages: () -> Unit = {},
+    onHistoryViewportChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -410,6 +419,11 @@ internal fun AgentChatBody(
             showEmptySuggestions = !isKeyboardVisible,
             keepBottomAnchored = keepBottomAnchored,
             onBottomAnchorChanged = { keepBottomAnchored = it },
+            messageStartIndex = messageStartIndex,
+            hasEarlierMessages = hasEarlierMessages,
+            historyLoadState = historyLoadState,
+            onLoadEarlierMessages = onLoadEarlierMessages,
+            onHistoryViewportChanged = onHistoryViewportChanged,
             onSubmit = { text ->
                 sentFromKeyboard = true
                 // 发送即重新锚定底部：用户从历史上方直接发送时，同帧内 isStreaming 与
@@ -648,6 +662,11 @@ private fun AgentChatScaffold(
     showEmptySuggestions: Boolean,
     keepBottomAnchored: Boolean,
     onBottomAnchorChanged: (Boolean) -> Unit,
+    messageStartIndex: Int = 0,
+    hasEarlierMessages: Boolean = false,
+    historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
+    onLoadEarlierMessages: () -> Unit = {},
+    onHistoryViewportChanged: (Boolean) -> Unit = {},
     onSubmit: (String) -> Unit,
     onInterruptAndSubmit: (String) -> Unit = onSubmit,
     onSteerQueuedMessage: (String) -> Unit = {},
@@ -896,6 +915,11 @@ private fun AgentChatScaffold(
                 bottomInset = bottomPadding,
                 keepBottomAnchored = keepBottomAnchored,
                 onBottomAnchorChanged = onBottomAnchorChanged,
+                messageStartIndex = messageStartIndex,
+                hasEarlierMessages = hasEarlierMessages,
+                historyLoadState = historyLoadState,
+                onLoadEarlierMessages = onLoadEarlierMessages,
+                onHistoryViewportChanged = onHistoryViewportChanged,
                 onSuggestionClick = onSuggestionClick,
                 onRunTraceClick = onRunTraceClick,
                 onOpenBrowser = onOpenBrowser,
@@ -934,6 +958,11 @@ internal fun AgentConversationMessages(
     bottomInset: Dp,
     keepBottomAnchored: Boolean,
     onBottomAnchorChanged: (Boolean) -> Unit,
+    messageStartIndex: Int = 0,
+    hasEarlierMessages: Boolean = false,
+    historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
+    onLoadEarlierMessages: () -> Unit = {},
+    onHistoryViewportChanged: (Boolean) -> Unit = {},
     assistantOverlay: Boolean = false,
     onSuggestionClick: (String) -> Unit = {},
     onRunTraceClick: () -> Unit = {},
@@ -988,7 +1017,10 @@ internal fun AgentConversationMessages(
     // 流式消息的渲染会话按 id 提升到列表层持有：item 滚出视口被 LazyColumn 销毁后，
     // 滑回时复用同一解析会话与打字机进度，避免整段内容重新解析并重放显现动画。
     val streamingMarkdownStates = remember { mutableStateMapOf<String, StreamingMarkdownState>() }
-    val bottomItemIndex = timelineEntries.size
+    // 边界项（「载入更早」）占一个 item 索引，末尾哨兵必须跟着偏移，
+    // 否则有更早消息时可滚到的地方比实际少一条，底部对不齐。
+    val earlierMessagesItemCount = if (hasEarlierMessages) 1 else 0
+    val bottomItemIndex = timelineEntries.size + earlierMessagesItemCount
     val isUserDragging by scrollState.interactionSource.collectIsDraggedAsState()
     val isAtBottom by remember(scrollState) {
         derivedStateOf { !scrollState.canScrollForward }
@@ -1231,11 +1263,26 @@ internal fun AgentConversationMessages(
                 currentTurnIndex(entryTurns, scrollState.firstVisibleItemIndex, atEnd = isAtBottom)
             }
         }
+        val historyPaging = rememberChatHistoryPaging(
+            scrollState = scrollState,
+            entries = timelineEntries,
+            messageStartIndex = messageStartIndex,
+            messageCount = visibleMessages.size,
+            hasEarlier = hasEarlierMessages,
+            loadState = historyLoadState,
+            enabled = !isStreaming && editTargetMessageId == null,
+            canReleasePages = !isTailRendering && !isBottomSettling,
+            keepBottomAnchored = keepBottomAnchored,
+            onBottomAnchorChanged = onBottomAnchorChanged,
+            onLoadEarlier = onLoadEarlierMessages,
+            onViewportChanged = onHistoryViewportChanged,
+        )
         LazyColumn(
             state = scrollState,
             verticalArrangement = Arrangement.Top,
             modifier = Modifier
                 .fillMaxSize()
+                .nestedScroll(historyPaging.scrollConnection)
                 .scrollEndHaptic()
                 .overScrollVertical()
                 .onGloballyPositioned { coordinates ->
@@ -1248,6 +1295,15 @@ internal fun AgentConversationMessages(
             ),
             overscrollEffect = null,
         ) {
+            if (hasEarlierMessages) {
+                item(key = ChatHistoryBoundaryKey) {
+                    AgentHistoryLoadStatus(
+                        state = historyLoadState,
+                        enabled = !isStreaming && editTargetMessageId == null,
+                        onRetry = historyPaging.retry,
+                    )
+                }
+            }
             items(
                 items = timelineEntries,
                 key = { it.key },

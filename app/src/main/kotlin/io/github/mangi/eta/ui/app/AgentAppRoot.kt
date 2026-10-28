@@ -532,10 +532,9 @@ fun AgentAppRoot(
                                 is AgentHomeAction.ReasoningEffortChanged ->
                                     agentState.updateReasoningEffort(action.effort)
                                 AgentHomeAction.CompactContext -> agentState.compactCurrentContext()
-                                // 历史分页（上游 3.3.5 的 messageWindow 纵向改造）尚未移植到本分支的
-                                // 会话存储：本地一次加载整个会话，没有「更早分页」可拉，先显式忽略。
-                                AgentHomeAction.LoadEarlierMessages -> Unit
-                                is AgentHomeAction.HistoryViewportChanged -> Unit
+                                AgentHomeAction.LoadEarlierMessages -> agentState.loadEarlierMessages()
+                                is AgentHomeAction.HistoryViewportChanged ->
+                                    agentState.updateHistoryViewport(action.atLatest)
                                 AgentHomeAction.RetryConversationLoad -> Unit
                                 is AgentHomeAction.InterruptAndSubmitMessage -> {
                                     requestExecutionNotifications()
@@ -548,6 +547,7 @@ fun AgentAppRoot(
                                 is AgentHomeAction.RecallQueuedMessage ->
                                     agentState.recallQueuedMessage(action.id, action.currentDraftText)
                                 is AgentHomeAction.RemoveQueuedMessage -> agentState.removeQueuedMessage(action.id)
+                                is AgentHomeAction.DraftChanged -> agentState.updateDraft(action.text)
                                 is AgentHomeAction.ModelSelected -> agentState.selectModel(action.modelId)
                                 is AgentHomeAction.SubmitMessage -> { requestExecutionNotifications(); agentState.sendCurrentMessage(action.text) }
                                 AgentHomeAction.StopRun -> agentState.stopCurrentRun()
@@ -584,6 +584,8 @@ fun AgentAppRoot(
                                 AgentHomeAction.ExpandRunTrace -> Unit
                             }
                         },
+                        historyLoadState = agentState.historyLoadState,
+                        isLoadingConversation = agentState.isLoadingSelectedConversation,
                         isDrawerOpen = conversationPaneOpen,
                     )
                 }

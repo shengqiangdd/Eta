@@ -49,7 +49,16 @@ internal object AgentPendingResultRecovery {
                 }
             ) + result.transcript,
         )
-        if (history.alreadyApplied) return Outcome(state, alreadyApplied = true)
+        // applied 标记只证明模型历史已接入，不证明界面上的旧提示仍然成立。
+        // 终态结果晚于「已中断」判定到达时（真机 run-dcc2e794 / run-54650d8e），
+        // 这里原先直接 return，导致「完整回答 + 任务已中断」永远留在会话里。
+        if (history.alreadyApplied) {
+            val repaired = repairAppliedRun(runId, result, stateWithSupplements.messages)
+            return Outcome(
+                state = repaired?.let { stateWithSupplements.copy(messages = it, isStreaming = false) } ?: state,
+                alreadyApplied = true,
+            )
+        }
         if (result.operation == AgentRuntimeWire.OP_COMPACT) {
             return Outcome(history.state.copy(isStreaming = false, isCompacting = false,
                 messages = AgentRunMessageProjector.mergeCompactionResultNotice(
@@ -115,6 +124,32 @@ internal object AgentPendingResultRecovery {
             ).let { RoleplayConversationReducer.linkRun(it, runId) },
             alreadyApplied = false,
         )
+    }
+
+    /**
+     * 已接入历史的 run 再收到终态时，修掉恢复阶段留下的误报。
+     *
+     * 只做两件可证明安全的事：删除 `interrupted-<runId>`；正文缺失或只留流式前缀时补写终态正文。
+     * 正文已经等长或更长时不动，避免覆盖用户看到/编辑过的内容。
+     */
+    private fun repairAppliedRun(
+        runId: String,
+        result: AgentRuntimeWire.RunResult,
+        messages: List<AgentChatMessageUi>,
+    ): List<AgentChatMessageUi>? {
+        var updated = AgentRunMessageProjector.withoutInterruptedNotice(runId, messages)
+        val content = result.content.takeIf { result.ok && it.isNotBlank() }
+        if (content != null) {
+            val target = updated
+                .getOrNull(AgentRunMessageProjector.resultTargetIndex(runId, updated)) as? AgentMessageUi
+            val needsBody = target == null ||
+                target.content.isBlank() ||
+                (target.content.length < content.length && content.startsWith(target.content))
+            if (needsBody) {
+                updated = AgentRunMessageProjector.applyResult(runId, updated, content, notice = null)
+            }
+        }
+        return updated.takeIf { it != messages }
     }
 
     private fun AgentChatMessageUi.copyWithId(id: String): AgentChatMessageUi = when (this) {

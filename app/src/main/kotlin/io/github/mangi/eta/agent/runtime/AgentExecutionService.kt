@@ -31,6 +31,17 @@ internal class AgentExecutionService : Service() {
     private var foregroundActive = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakeLockRenewedAtElapsed = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
+    /** 长时间没有状态刷新（例如一个几十分钟的编译）时也要续期，不能只靠 notify 触发。 */
+    private val wakeLockRenew = object : Runnable {
+        override fun run() {
+            if (!foregroundActive) {
+                releaseWakeLock()
+                return
+            }
+            renewWakeLock()
+        }
+    }
     private val openPendingIntent by lazy {
         PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
@@ -162,12 +173,15 @@ internal class AgentExecutionService : Service() {
         try {
             lock.acquire(WAKE_LOCK_TIMEOUT_MS)
             wakeLockRenewedAtElapsed = now
+            mainHandler.removeCallbacks(wakeLockRenew)
+            mainHandler.postDelayed(wakeLockRenew, WAKE_LOCK_RENEW_INTERVAL_MS)
         } catch (failure: RuntimeException) {
             AndroidAgentLogger.warn("Execution service wake lock failed: type=${failure.safeLogType()}")
         }
     }
 
     private fun releaseWakeLock() {
+        mainHandler.removeCallbacks(wakeLockRenew)
         wakeLockRenewedAtElapsed = 0L
         val lock = wakeLock ?: return
         if (lock.isHeld) runCatching { lock.release() }
@@ -213,7 +227,7 @@ internal class AgentExecutionService : Service() {
         /** 防泄漏上限；每次任务状态刷新都会续期。 */
         private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
         /** 锁过半才续期，减少状态刷新带来的 wakelock 重获取。 */
-        private const val WAKE_LOCK_RENEW_INTERVAL_MS = 30L * 60L * 1000L
+        private const val WAKE_LOCK_RENEW_INTERVAL_MS = 10L * 60L * 1000L
         private val leases = ExecutionLeaseRegistry()
         private val ownerSequence = AtomicLong()
         private val mainHandler = Handler(Looper.getMainLooper())
