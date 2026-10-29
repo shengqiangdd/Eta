@@ -1361,3 +1361,137 @@ if (sessions.isNotEmpty() || pendingStartRequests.isNotEmpty()) {
   的行为、以及多会话时胶囊/浮层在**主屏**上的实际呈现（本轮全程虚拟屏，浮层属于系统层，
   虚拟屏上不显示）。
 
+
+## 25. 2026-10-29 第十八轮：把 §24.6 那两个可观测性缺口补上
+
+§24.6 记了两条「只记录、未改代码」的缺口。本轮把两条都改掉，并在同一台机器
+（PKX110 / Android 16 / sdk 36）上真机跑通。下面每条结论都标了「实测」还是「只读代码」。
+
+### 25.1 缺口是什么
+
+1. `pauseRun(runId)` / `resumeRun(runId)` **一行日志都没有**。用户报「点了暂停没反应」时，
+   logcat 上没有任何痕迹，只能靠界面按钮的 `desc` 或 `queryActiveRun` 反推（§24 就是这么拿到证据的）。
+2. 收尾那条 `Agent runtime stopped` **不带 runId**。它和后面 `Agent run returned: id=…` 的先后关系
+   是唯一线索，中间夹了别的输出就分不清是谁停的。
+
+### 25.2 改了什么（代码）
+
+`app/src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeService.kt`：
+
+| 位置 | 新日志 | 语义 |
+|---|---|---|
+| `cancelRun` 的 pending 分支 | `Agent run stop requested: id=… state=pending` | 还没派发就点了停止（此时没有 session，也没有 primary） |
+| `cancelRun` session 为 null | `Agent run stop ignored: id=… reason=session_missing` | 服务端没有这条 run |
+| `cancelRun` 已终态 | `Agent run stop ignored: id=… reason=terminal` | 收到时它已经结束了 |
+| `cancelRun` 正常路径 | `Agent run stop requested: id=… state=running primary=…` | **打在 `controller.cancel()` 之前** |
+| `pauseRun` 前置判断失败 | `Agent run pause ignored: id=… reason=session_missing\|terminal` | 同一条命令为什么没生效 |
+| `pauseRun` 正常路径 | `Agent run paused: id=… gui_lock=… primary=…` | 打完这行时暂停已经落实 |
+| `resumeRun` 前置判断失败 | `Agent run resume ignored: id=… reason=…` | |
+| `resumeRun` 正常路径 | `Agent run resumed: id=… gui_lock=… primary=…` | |
+
+`AgentRuntimeRunExecutor.kt:516`：`Agent runtime stopped` → `Agent runtime stopped: id=…`。
+打它的条件是 `cancelled`（执行器被取消后收尾），所以它和 `stop requested` 是同一个暂停/停止动作的两端。
+
+几个字段的口径（都对照代码确认过）：
+
+- `id` 是 `take(8)`，即 `run-` + UUID 前 4 位（`run-9cb7`）。这与本文件既有的
+  `Agent run prepared / dispatch / superseded` 完全一致；完整 id 由
+  `agent_round_model run=run-9cb7e398-…` 那行提供，用前缀对齐即可。
+- `primary` = 这条 run 是否是界面正在显示的那条（`primaryRunId == runId`）。
+- `gui_lock` = 暂停/恢复是否交给 `GuiControlCoordinator` 处理（即这个 run 当时持有 GUI 控制权）。
+  `pauseForUser` / `resumeForUser` 返回 true 时，协调器会在「当前动作真正结束」后再置
+  `UserPaused` 并推进代号（`GuiControlCoordinator.kt:43-76`）；false 表示纯文本推理 run，
+  直接 `controller.pause()/resume()`。
+- `stop requested` 放在 `cancel()` **之前**：如果 cancel 抛错或阻塞，这行就永远不会出现，
+  事后分不清「没收到停止请求」和「收到了但停不下来」。
+
+### 25.3 真机验证（第一版构建）：四条链路
+
+现场：canary 包 `pid 2366`，虚拟屏 `display=11`（`vdmvt8gi7x`）；会话 `暂停-A`（DebugHang →
+`127.0.0.1:18080` 永不返回）。全部操作在虚拟屏上完成，主屏未参与。
+
+| 时间 | 操作 | 日志 | 界面侧对照（无障碍树） |
+|---|---|---|---|
+| 15:40:27.920 | 发「§25 暂停恢复日志验证」 | `Agent run dispatch: id=run-9cb7` | 输入栏出现 `[暂停][停止]` |
+| 15:41:15.782 | 点「暂停」 | `Agent run paused: id=run-9cb7 gui_lock=false primary=true` | 同一颗按钮 `desc` 由 `暂停`→`继续` |
+| 15:42:11.561 | 点「继续」 | `Agent run resumed: id=run-9cb7 gui_lock=false primary=true` | `继续`→`暂停` |
+| 15:42:22.132 | 再点「暂停」 | `Agent run paused: id=run-9cb7 gui_lock=false primary=true` | `暂停`→`继续` |
+| 15:42:38.731 | 会话列表长按 →「停止运行」 | `Agent run stop requested: id=run-9cb7 primary=true`（第一版格式） | 该行变「已停止」 |
+| 15:42:38.736 | — | `Agent runtime stopped: id=run-9cb7` | |
+| 15:42:38.747 | — | `Agent run returned: id=run-9cb7 ok=false err=已停止` | |
+
+这一条同时补掉了 §24.8 里留的「**暂停状态下长按停止**」——点停止时 run 确实是暂停态
+（15:42:22 那条 paused 之后 16.6 秒才 stop），走的是同一条 `cancelRun`，没有特殊分支。
+
+接着在同一个会话发第二条（`run-a869`）验证**运行中直接点输入栏「停止」按钮**：
+
+```
+15:43:23.465  Agent run dispatch: id=run-a869 foreground=true rootFallback=true
+15:43:28.483  Agent run stop requested: id=run-a869 primary=true
+15:43:28.485  Agent runtime stopped: id=run-a869
+15:43:28.494  Agent run returned: id=run-a869 ok=false err=已停止
+```
+
+两条路径（列表长按 / 输入栏按钮）最终都走同一个客户端出口：
+`AgentAppState.stopConversationRun()` 与 `stopCurrentRun()` 都进 `requestStop()` →
+`AgentRuntimeClient.cancelRun()`（读代码确认，`AgentAppState.kt:2860-2877`），
+所以日志形态一致；服务端只有 `cancelRun` 一个入口。
+
+### 25.4 第二版构建：`requested` 挪到动作之前 + 补 pending 分支，重验
+
+第一版跑完发现 `stop requested` 是**先 `cancel()` 再打日志**，与「requested」这个名字的承诺不符，
+于是改成先打日志、再 cancel；同时给 pending 分支补一行（否则「点了停止但什么都没发生」依然无痕）。
+重装（`pm install -r`）后新进程 `pid 9061`，同一个会话发第三条：
+
+```
+15:46:40.572  Agent run dispatch: id=run-d70b foreground=true rootFallback=true
+15:46:46.082  Agent run paused: id=run-d70b gui_lock=false primary=true
+15:47:03.534  Agent run resumed: id=run-d70b gui_lock=false primary=true
+15:47:14.734  Agent run stop requested: id=run-d70b state=running primary=true
+15:47:14.736  Agent runtime stopped: id=run-d70b
+15:47:14.748  Agent run returned: id=run-d70b ok=false err=已停止
+```
+
+`state=running` 这一行按代码保证打在 `cancel()` 之前，2ms 后出现 `runtime stopped`，
+顺序就是「意图 → 结果」。
+
+### 25.5 未实测的分支（如实留着）
+
+1. **`ignored: reason=session_missing`**：要拿一个服务端根本没有的 runId 去停/暂停/恢复。
+   界面走不到；§22 那个 debug 注入入口只支持「忘掉本地运行态」（`AgentDebugInjections.forgetLocalRunState`），
+   不支持任意 runId 的命令 → **只读代码，未实测**。
+2. **`ignored: reason=terminal`**：session 在 `postTerminalOverlay` 里被移除（`mainHandler.post`），
+   从「执行器置终态」到「post 执行」之间是个很窄的窗口。它是竞态守卫，手工点不出来 → **未实测**。
+3. **`state=pending`**：pending 窗口只存在于 prepare 到 dispatch 之间，本轮实测就是
+   15:46:40.477 → 15:46:40.572（约 95ms）→ 界面点不进去 → **未实测**。
+4. **`gui_lock=true`**：本轮两个 run 都卡在模型请求上（DebugHang 一个 token 都没回），从未持有 GUI 锁，
+   所以看到的全是 `gui_lock=false`。持锁路径的暂停/恢复（协调器等动作结束再置 UserPaused、
+   恢复后旧观察快照作废）本轮没造出来 → **未实测**。
+
+### 25.6 单测与构建
+
+- `./gradlew :app:assembleDebug -Peta.applicationIdSuffix=.canary --offline` **成功**。
+- `./gradlew :app:testDebugUnitTest --tests "io.github.mangi.eta.agent.runtime.*" --offline`：
+  **240 个用例，167 通过 / 73 失败**；把 73 条失败消息去重统计，**全部**是同一句
+  `java.lang.AssertionError: The Robolectric native runtime is not supported on Linux (aarch64)`
+  —— 本机是 aarch64 Linux，这是环境限制（与 §20 记录的口径一致），不是本次改动引入的失败。
+  之所以要按失败消息去重、而不是数条数就说「都是环境问题」：这里 73 条失败来自 73 个不同测试类，
+  只有对过消息才能排除「恰好也报了这个错」的巧合。
+
+### 25.7 本轮新增的两个操作坑
+
+1. **重装 APK 后旧 logcat job 会跟着旧 pid 一起变成死水**：`pm install -r` 杀掉进程，
+   `logcat --pid 2366` 还在跑但永远不再产出。判 pid 要重新 `pidof`，日志 job 要重开。
+   这轮一开始差点用旧日志的「没有新行」得出「停止没有触发日志」的错结论。
+2. **虚拟屏动作返回的 `after` 快照可能落后于真实状态**：点「暂停」时 `after` 报
+   `screen_changed=false`、树里连那颗按钮都不见了，但日志证明 15:46:46.082 暂停已生效，
+   下一次 `observe_screen` 才看到 `desc=继续`。判「有没有生效」要看日志或重新观察，
+   不能只看 `after` 的 `screen_changed`。
+
+### 25.8 证据
+
+- `/data/local/tmp/eta/evidence/section25-pause-resume-stop.log`
+  （第一版构建：四条事件链 + `run-9cb7` / `run-a869` 全轨迹）
+- `/data/local/tmp/eta/evidence/section25-logcat-build1.log`（`logcat -v time --pid 2366` 整段）
+- `/data/local/tmp/eta/evidence/section25-pause-resume-stop-build2.log`
+  （第二版构建：`state=running` + `run-d70b` 全轨迹）
