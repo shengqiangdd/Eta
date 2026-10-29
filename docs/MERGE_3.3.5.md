@@ -2346,3 +2346,88 @@ canary 保持安装，主包未动。
 判定「进程被停掉了没有」，不能只看 `am force-stop` 的返回值和紧接着的 `pidof`——
 有启用中的无障碍服务/前台服务时，系统会立刻把进程拉回来。要么多等一会儿再看，
 要么直接看 `dumpsys activity processes` 里的服务连接记录。
+
+### 32.10 第四轮：输入栏与队列条按 dsh 收口（2026-10-29 晚，canary 覆盖安装 + 虚拟屏实测）
+
+**用户要求**：插话与消息队列参考 dsh，去掉一堆单独占地方的小图标。
+
+**参考对象（真源码，不是印象）**
+
+- `QueueDock.tsx`：单条时不显示计数头，行内才带 lead 图标；多条时收起成一行计数，
+  展开才列条目；面板 `radius lg lg 0 0`、`margin-bottom: calc(-gap - 3px)` 贴住输入卡、`max-height:180px`。
+- `InputBar.tsx`：只有「+ 命令」「停止（仅运行中且主按钮不是停止）」「主按钮」；
+  `canSteerQueue = !locked && !machineBusy && !commandMenuOpen && empty && running && steeringAvailable && queue.length>0`
+  —— **输入框必须是空的**才允许插话。
+
+**改法（对照 dsh，不照抄视觉）**
+
+- `AgentChatInputBar.kt`：删掉运行中并排常驻的「暂停」「插话」两个 `IconButton`。流式中只留一个主按钮：
+  空输入=停止（点击=停止、长按=暂停）；有草稿=「排队发送（本轮结束后发出）」（点击=入队、长按=打断并立即发送）；
+  暂停中=继续（点击=继续、长按=停止）。长按语义全部走 `combinedClickable` + `onLongClickLabel`
+  与 `Role.Button`，无障碍可读。
+- `AgentChatQueueStrip.kt`：收起条件由「用户是否手动折叠」改为「是否只有一条」——
+  `hasMultiple` 决定形态，单条不再套计数头（dsh 同构）；多条收起时**行内图标全部收进展开列表**，
+  只留「排队中 · N」+ chevron；展开后每行「序号 + 预览 + 插话/删除」。
+
+**同轮挖出并修掉的真缺陷：有草稿时点插话，白停一轮**
+
+`drainQueueAfterRun` 的守卫是「草稿非空则不抢草稿位」（正确，消息绝不丢），
+但 `steerQueuedMessage` 会**先** `requestInterruptCurrentRun()` 再等接力 —— 于是这条链路是：
+点插话 → 打断当前 run → 收尾接力看到草稿非空整段跳过 → 队列条停在「插话中」，用户以为在插话。
+
+改法：`steerQueuedMessage` 顶部加 `homeState.input.isNotBlank()` 拦截，弹
+`chat_queue_steer_blocked_by_draft` 后 return（三语各一条）；队列条新增 `hasDraft`，
+`steerEnabled = !isEditingMessage && !hasDraft` —— 与 §32.9 的编辑态置灰同一处口径。
+
+**门禁与产物**
+
+`ETA_APP_ID_SUFFIX=.canary STAGES=test,assemble sh tools/gate.sh` → 单测 **719 用例 / 0 失败**，
+打包 `Eta-v3.3.5-debug.apk` **34,463,566 字节**（sha256 `3fbd404aeddad696…`，
+md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.github.mangi.eta.canary"`。
+
+**lint 口径（如实记录：转绿靠基线，不是靠修完）**
+
+`STAGES=lint` 在 HEAD 上本来就是红的（43 条 / 41 errors，与本轮改动无关）。本轮只修了触及文件里的
+4 条（`LocalContextGetResourceValueCall` 等），其余 **37 条既有告警按既有口径登记进
+`app/lint-baseline.xml`**（+37 新增、−2 已消失；`tools/lint_baseline_audit.py` 的账目与文件一致，412 条）。
+所以「lint 通过」的准确含义是「没有**新增**告警」，不是「零告警」。
+
+**覆盖安装（未卸载，用户授权）**
+
+`pm install -r -d` → `Success`；`lastUpdateTime` 21:05:10 → **23:01:24**，
+`firstInstallTime` 始终 **16:35:18**；主包 `io.github.mangi.eta` `lastUpdateTime` 仍是 18:22:55 —— 没碰主包。
+
+**真机实测（虚拟屏 display 5 / PKX110 / Android 16，全部本构建）**
+
+| 场景 | 观测到的节点事实 |
+|---|---|
+| 运行中 + 空输入 | 输入栏右侧只有一个按钮，`desc="停止"`，`long_clickable=true` |
+| 运行中 + 有草稿 | 两个按钮：`desc="停止"` 与 `desc="排队发送（本轮结束后发出）"`（后者 `long_clickable=true`） |
+| 点「排队发送」 | 输入框清空；队列条出现：`排队中` + 预览文本 + `立即插话发送` + `移除排队消息` |
+| 再排一条 | 收起为单行 `排队中 · 2`，预览与两个图标全部消失 |
+| 点收起行 | 展开为 `1 / 2` 两行，各自带预览与「立即插话发送」「移除排队消息」 |
+| 本轮自然结束（草稿已空） | 队首自动发出成聊天消息，队列减一，并起新一轮 |
+| 本轮结束但草稿非空 | 队列**原样保留**（连续多轮都不发），清空草稿后的下一轮才发出 |
+| 长按「停止」 | 主按钮变成 `desc="继续"`（真暂停，非停止） |
+| 暂停中点「继续」 | 重试序列继续推进（1/4 → 4/4） |
+| 有草稿时的「立即插话发送」 | `clickable=true` 的 View 容器**消失**，只剩裸 `ImageView`（点不动） |
+| 清空草稿后 | 同一个节点又变回 `clickable=true` 的 View |
+| 草稿为空点插话 | 当前 run 被打断（出现「已停止」→ 新回合 24/24），队列条目作为消息发出 |
+
+**容易误判的一点（我自己在验证中踩到）**
+
+测试时如果一直往输入框里打字，「队列自动发出」看起来像完全失效 —— 其实是设计：
+`drainQueueAfterRun` 见草稿非空就整段跳过，避免抢用户正在输入的草稿位。要验证 auto-drain，
+必须**把输入框清空**再看，否则会把正确行为误记成 bug。
+
+**仍未验证（不要当成已验证）**
+
+- 暂停中长按 = 停止；长按「排队发送」= 打断并立即发送 —— 两条只按语义接好，未在真机点过。
+- `chat_queue_steer_blocked_by_draft` 的 Toast 可见性：按钮置灰后 UI 路径不可达，
+  键盘/无障碍/恢复态入口在这台机器上没构造成 —— 仍是防御性代码（同 §32.9 的 edit 版）。
+- 展开态里点预览正文「撤回输入框」未单独实测（单条形态下同一控件沿用 §32.8 的结论）。
+
+**收尾**
+
+虚拟屏 `vdmvto8o8x` 已释放（释放时连带移除屏上任务，避免被迁回主屏）；测试产生的排队消息均已发出、
+输入框已清空；canary 保持安装，主包未动。
