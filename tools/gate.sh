@@ -119,6 +119,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.acp.AcpDelegateSummaryTest
   --tests io.github.mangi.eta.agent.acp.AcpModelsTest
   --tests io.github.mangi.eta.ui.app.MessageSortAlignmentTest
+  --tests io.github.mangi.eta.ui.app.AgentMessageQueueReducerTest
   --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，

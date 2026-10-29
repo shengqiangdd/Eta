@@ -67,6 +67,7 @@ private val WHITESPACE_REGEX = Regex("\\s+")
 internal fun AgentChatQueueStrip(
     queuedMessages: List<QueuedMessageUi>,
     isStreaming: Boolean,
+    modifier: Modifier = Modifier,
     /**
      * 编辑某条既有消息期间禁用「立即插话发送」。
      *
@@ -75,10 +76,16 @@ internal fun AgentChatQueueStrip(
      * 用户完全看不出发生了什么。这里直接置灰，比点完没反应诚实。
      */
     isEditingMessage: Boolean = false,
+    /**
+     * 输入框里有未发送草稿时同样禁用（与 dsh 的 canSteerQueue 要求输入框为空一致）。
+     *
+     * 插话会先打断 run，而接力发出的那一步见草稿非空会整段跳过 —— 同样白停一轮，
+     * 而且队列条会停在「插话中」。真机实测复现过，所以这里一并置灰。
+     */
+    hasDraft: Boolean = false,
     onSteer: (String) -> Unit,
     onRecall: (String) -> Unit,
     onRemove: (String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     if (queuedMessages.isEmpty()) return
 
@@ -156,7 +163,8 @@ internal fun AgentChatQueueStrip(
                 }
             }
 
-            if (!expanded) {
+            if (!hasMultiple) {
+                // 单条：预览 + 操作（撤回 / 插话 / 删除）。
                 Spacer(modifier = Modifier.width(8.dp))
                 QueuedMessagePreviewText(
                     item = first,
@@ -166,11 +174,13 @@ internal fun AgentChatQueueStrip(
                 QueuedMessageItemActions(
                     item = first,
                     isStreaming = isStreaming,
-                    steerEnabled = !isEditingMessage,
+                    steerEnabled = !isEditingMessage && !hasDraft,
                     onSteer = { onSteer(first.id) },
                     onRemove = { onRemove(first.id) },
                 )
             } else {
+                // 多条且收起时只留一行计数（参考 dsh 的 QueueDock）：行内图标全部收进展开后的列表，
+                // 否则光胶囊就占掉两行高度，输入框正上方始终是一堆小图标。
                 Spacer(modifier = Modifier.weight(1f))
             }
         }
@@ -216,7 +226,7 @@ internal fun AgentChatQueueStrip(
                         QueuedMessageItemActions(
                             item = item,
                             isStreaming = isStreaming,
-                            steerEnabled = !isEditingMessage,
+                            steerEnabled = !isEditingMessage && !hasDraft,
                             onSteer = { onSteer(item.id) },
                             onRemove = { onRemove(item.id) },
                         )

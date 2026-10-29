@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,9 +43,7 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.runtime.Composable
@@ -74,6 +73,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -111,6 +113,8 @@ private val InputContainerShape = RoundedCornerShape(20.dp)
 @Composable
 internal fun AgentChatInputBar(
     input: String,
+    // Compose 约定：modifier 必须是第一个可选参数，否则 lint ModifierParameter 报错。
+    modifier: Modifier = Modifier,
     /** 外部写入 [input] 的序号：变化时强制同步一次，避免草稿/撤回在界面上不生效。 */
     inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
@@ -148,7 +152,6 @@ internal fun AgentChatInputBar(
     onCancelMessageEdit: () -> Unit,
     /** 草稿同步：只写内存里的会话状态，不逐字触发聊天区重组。 */
     onDraftChange: (String) -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
@@ -237,6 +240,7 @@ internal fun AgentChatInputBar(
                 queuedMessages = queuedMessages,
                 isStreaming = isStreaming,
                 isEditingMessage = isEditingMessage,
+                hasDraft = textFieldState.text.isNotBlank(),
                 onSteer = onSteerQueuedMessage,
                 onRecall = { id -> onRecallQueuedMessage(id, textFieldState.text.toString()) },
                 onRemove = onRemoveQueuedMessage,
@@ -416,22 +420,20 @@ internal fun AgentChatInputBar(
                             onModelSelected = onModelSelected,
                         )
 
-                        if (isStreaming) {
-                            IconButton(
-                                onClick = onTogglePause,
-                                minWidth = ChatInputActionSize,
-                                minHeight = ChatInputActionSize,
+                        // 运行中只保留两个入口（参考 dsh）：主按钮负责「排队发送」，停止/继续单独一个。
+                        // 暂停、插话这类低频或破坏性操作折叠进长按 —— 旧布局四个并排图标把右侧挤满，
+                        // 而且有草稿时根本没有「停止」（只能先删字才能停）。
+                        if (isStreaming && canSend) {
+                            ChatHoldActionButton(
+                                description = stringResource(if (isPaused) R.string.chat_resume_run else R.string.chat_stop),
+                                onClick = { if (isPaused) onTogglePause() else onStop() },
+                                onLongClickLabel = stringResource(if (isPaused) R.string.chat_stop else R.string.chat_pause_run),
+                                onLongClick = { if (isPaused) onStop() else onTogglePause() },
                             ) {
                                 Icon(
-                                    imageVector = if (isPaused) {
-                                        Icons.Rounded.PlayArrow
-                                    } else {
-                                        Icons.Rounded.Pause
-                                    },
-                                    contentDescription = stringResource(
-                                        if (isPaused) R.string.chat_resume_run else R.string.chat_pause_run
-                                    ),
-                                    modifier = Modifier.size(SendIconSize),
+                                    imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Stop,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(if (isPaused) SendIconSize else StopIconSize),
                                     tint = if (isPaused) {
                                         MiuixTheme.colorScheme.primary
                                     } else {
@@ -443,51 +445,61 @@ internal fun AgentChatInputBar(
                             Spacer(modifier = Modifier.width(2.dp))
                         }
 
-                        if (isStreaming && canSend) {
-                            // 插话：明确「别按现在的方案继续」，入队后打断当前 run。
-                            // 与主按钮的 steering（不打断、只补一句）刻意分开，避免误触。
-                            IconButton(
-                                onClick = {
-                                    dictation.cancel()
-                                    val submittedText = textFieldState.text.toString()
-                                    textFieldState.clearText()
-                                    onInterruptAndSubmit(submittedText)
-                                },
-                                minWidth = ChatInputActionSize,
-                                minHeight = ChatInputActionSize,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Send,
-                                    contentDescription = stringResource(R.string.chat_interrupt_send),
-                                    modifier = Modifier.size(SendIconSize),
-                                    tint = MiuixTheme.colorScheme.primary,
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(2.dp))
+                        // 主按钮：空闲=发送，运行中+有草稿=排队（长按立即插话），
+                        // 运行中+空输入=停止（长按暂停），暂停中=继续（长按停止）。
+                        val primaryGlyph = when {
+                            isStreaming && !canSend && isPaused -> ChatPrimaryGlyph.Resume
+                            isStreaming && !canSend -> ChatPrimaryGlyph.Stop
+                            else -> ChatPrimaryGlyph.Send
                         }
-
-                        IconButton(
-                            // 运行中优先发送：有文本时把这条输入当作补充指令（steering），
-                            // 只有输入框为空才把按钮当“停止”。
+                        val primaryDescription = stringResource(
+                            when {
+                                primaryGlyph == ChatPrimaryGlyph.Resume -> R.string.chat_resume_run
+                                primaryGlyph == ChatPrimaryGlyph.Stop -> R.string.chat_stop
+                                isEditingMessage && preserveFollowingMessages -> R.string.chat_save_message
+                                isStreaming -> R.string.chat_send_queue
+                                else -> R.string.chat_send
+                            }
+                        )
+                        ChatHoldActionButton(
+                            description = primaryDescription,
                             onClick = {
-                                if (canSend) {
-                                    dictation.cancel()
-                                    val submittedText = textFieldState.text.toString()
-                                    textFieldState.clearText()
-                                    onSubmit(submittedText)
-                                } else if (isStreaming) {
-                                    onStop()
+                                when {
+                                    canSend -> {
+                                        dictation.cancel()
+                                        val submittedText = textFieldState.text.toString()
+                                        textFieldState.clearText()
+                                        onSubmit(submittedText)
+                                    }
+                                    isStreaming && isPaused -> onTogglePause()
+                                    isStreaming -> onStop()
                                 }
                             },
+                            onLongClickLabel = when {
+                                isStreaming && canSend -> stringResource(R.string.chat_interrupt_send)
+                                isStreaming && isPaused -> stringResource(R.string.chat_stop)
+                                isStreaming -> stringResource(R.string.chat_pause_run)
+                                else -> null
+                            },
+                            onLongClick = when {
+                                isStreaming && canSend -> {
+                                    {
+                                        dictation.cancel()
+                                        val submittedText = textFieldState.text.toString()
+                                        textFieldState.clearText()
+                                        onInterruptAndSubmit(submittedText)
+                                    }
+                                }
+                                isStreaming && isPaused -> ({ onStop() })
+                                isStreaming -> ({ onTogglePause() })
+                                else -> null
+                            },
                             enabled = isStreaming || canSend,
-                            minWidth = ChatInputActionSize,
-                            minHeight = ChatInputActionSize,
                         ) {
                             // 保留统一的点击区域，仅让可见圆形与相邻操作图标保持同一尺寸。
                             val sendButtonColor by animateColorAsState(
                                 targetValue = when {
-                                    isStreaming && !canSend -> MiuixTheme.colorScheme.onSurface
+                                    primaryGlyph == ChatPrimaryGlyph.Stop -> MiuixTheme.colorScheme.onSurface
                                     canSend -> MiuixTheme.colorScheme.primary
                                     else -> MiuixTheme.colorScheme.surfaceContainerHigh
                                 },
@@ -502,7 +514,7 @@ internal fun AgentChatInputBar(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 AnimatedContent(
-                                    targetState = isStreaming && !canSend,
+                                    targetState = primaryGlyph,
                                     transitionSpec = {
                                         (fadeIn(tween(130)) + scaleIn(tween(160), initialScale = 0.72f))
                                             .togetherWith(
@@ -511,26 +523,19 @@ internal fun AgentChatInputBar(
                                             )
                                     },
                                     label = "send_stop_icon",
-                                ) { stopIcon ->
+                                ) { glyph ->
                                     Icon(
-                                        imageVector = if (stopIcon) {
-                                            Icons.Rounded.Stop
-                                        } else {
-                                            Icons.Rounded.ArrowUpward
+                                        imageVector = when (glyph) {
+                                            ChatPrimaryGlyph.Stop -> Icons.Rounded.Stop
+                                            ChatPrimaryGlyph.Resume -> Icons.Rounded.PlayArrow
+                                            ChatPrimaryGlyph.Send -> Icons.Rounded.ArrowUpward
                                         },
-                                        contentDescription = when {
-                                            stopIcon -> stringResource(R.string.chat_stop)
-                                            isEditingMessage && preserveFollowingMessages -> stringResource(R.string.chat_save_message)
-                                            // 运行中发送已改成「排队」，文案得跟上：否则读屏与长按提示
-                                            // 还会把它说成「发送」，用户无从得知这条会等到本轮结束。
-                                            isStreaming -> stringResource(R.string.chat_send_queue)
-                                            else -> stringResource(R.string.chat_send)
-                                        },
+                                        contentDescription = null,
                                         modifier = Modifier.size(
-                                            if (stopIcon) StopIconSize else SendIconSize
+                                            if (glyph == ChatPrimaryGlyph.Stop) StopIconSize else SendIconSize
                                         ),
                                         tint = when {
-                                            stopIcon -> MiuixTheme.colorScheme.surface
+                                            glyph == ChatPrimaryGlyph.Stop -> MiuixTheme.colorScheme.surface
                                             canSend -> MiuixTheme.colorScheme.onPrimary
                                             else -> MiuixTheme.colorScheme.onSurfaceVariantActions
                                         },
@@ -671,5 +676,42 @@ private fun PendingImageStrip(
                 }
             }
         }
+    }
+}
+
+/** 主按钮当前显示的图形；排队与发送共用向上箭头（区别在文案与长按）。 */
+private enum class ChatPrimaryGlyph { Send, Stop, Resume }
+
+/**
+ * 带长按的动作按钮：短按是安全的主操作，长按是低频或破坏性操作。
+ *
+ * 为什么需要它（参考 dsh 的输入栏）：运行中原来并排摆着「暂停 / 插话 / 排队 / 停止」四个图标，
+ * 既挤占输入框右侧，又让人分不清哪个会打断当前回合。收敛成「主按钮 + 停止」之后，
+ * 插话挪到长按与队列条、暂停挪到停止键长按，破坏性操作不再是一个容易误触的独立图标。
+ */
+@Composable
+private fun ChatHoldActionButton(
+    description: String,
+    onClick: () -> Unit,
+    onLongClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(ChatInputActionSize)
+            .clip(CircleShape)
+            .combinedClickable(
+                enabled = enabled,
+                role = Role.Button,
+                onLongClickLabel = onLongClickLabel,
+                onLongClick = onLongClick,
+                onClick = onClick,
+            )
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }

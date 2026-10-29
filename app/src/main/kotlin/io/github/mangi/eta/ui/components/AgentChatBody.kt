@@ -734,6 +734,9 @@ private fun AgentChatScaffold(
     }
 
     val context = LocalContext.current
+    // 资源从 LocalResources 取：LocalContext.getString 不感知 Configuration 变化，
+    // 切语言/深色后可能拿到旧值（lint LocalContextGetResourceValueCall）。
+    val resources = LocalResources.current
     val snackbarHostState = remember { SnackbarHostState() }
     val noticeUndoScope = rememberCoroutineScope()
     var noticeUndoJob by remember { mutableStateOf<Job?>(null) }
@@ -798,8 +801,8 @@ private fun AgentChatScaffold(
             noticeUndoJob?.cancel()
             noticeUndoJob = noticeUndoScope.launch {
                 val result = snackbarHostState.showSnackbar(
-                    message = context.getString(R.string.chat_notice_dismissed),
-                    actionLabel = context.getString(R.string.chat_notice_undo),
+                    message = resources.getString(R.string.chat_notice_dismissed),
+                    actionLabel = resources.getString(R.string.chat_notice_undo),
                     withDismissAction = false,
                     // 10 秒而不是 4 秒：撤销的价值全在窗口长度上 —— 整行可点太容易误触，
                     // 用户往往要先反应过来「刚才那条不见了」才去找撤销按钮。

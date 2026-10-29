@@ -2235,6 +2235,8 @@
   <string name="chat_queue_steer_now">立即插话发送</string>
   <string name="chat_queue_remove">移除排队消息</string>
   <string name="chat_queue_steer_blocked_by_edit">正在编辑消息，先取消编辑再插话</string>
+  <string name="chat_queue_steer_blocked_by_draft">输入框里还有草稿，先发出去或清空再插话</string>
+  <string name="chat_queue_steer_while_compacting">正在压缩上下文，稍后再插话</string>
   <string name="chat_queue_images_only">[%1$d 张图片]</string>
   <string name="chat_queue_files_only">[%1$d 个文件]</string>
   <string name="browser_opening">正在打开网页</string>

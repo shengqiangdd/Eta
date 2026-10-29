@@ -3,6 +3,7 @@ package io.github.mangi.eta.ui.app
 import io.github.mangi.eta.agent.model.AgentFileReference
 import io.github.mangi.eta.agent.model.AgentFileReferenceKind
 import io.github.mangi.eta.ui.model.AgentChatUiState
+import io.github.mangi.eta.ui.model.MessageEditUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
 import io.github.mangi.eta.ui.model.QueuedMessageUi
@@ -10,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -202,6 +204,182 @@ class AgentMessageQueueReducerTest {
                 errorLooksStopped = true,
             )
         )
+    }
+
+    /**
+     * `planDispatch` 的契约：调用方已经把它从队列里弹出来了，所以**每条发不出去的路径
+     * 都必须把消息放回某处**（队列或输入框）。这里逐条钉住 —— 「压缩中」「带附件但
+     * 草稿位被占」这两个口子以前都是直接丢消息。
+     */
+    @Test
+    fun planDispatchSendsTextOnlyMessageWhenIdleAndDraftIsEmpty() {
+        val idle = baseState(isStreaming = false)
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(
+            state = idle,
+            item = QueuedMessageUi(id = "q-1", content = "第一条"),
+        )
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.SendNow, plan)
+        // 正文由调用方塞进输入框再发，状态在这里不动
+        assertSame(idle, next)
+    }
+
+    @Test
+    fun planDispatchPutsMessageBackWhenStreamingOrCompacting() {
+        val item = QueuedMessageUi(id = "q-1", content = "别丢")
+        val streaming = baseState(isStreaming = true)
+        val compacting = baseState(isStreaming = false).copy(isCompacting = true)
+        for (state in listOf(streaming, compacting)) {
+            val (next, plan) = AgentMessageQueueReducer.planDispatch(state, item)
+            assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+            assertEquals(listOf("q-1"), next.queuedMessages.map { it.id })
+            assertEquals("", next.input)
+            assertFalse(next.queuedMessages.first().immediateInterrupt)
+        }
+    }
+
+    @Test
+    fun planDispatchDefersWhileEditingWithoutTouchingTheEditedText() {
+        val edit = MessageEditUiState(
+            targetMessageId = "m-1",
+            previousInput = "",
+            previousImages = emptyList(),
+            previousFileReferences = emptyList(),
+            hasLaterTurns = false,
+        )
+        val state = baseState(isStreaming = true, input = "改了一半").copy(messageEdit = edit)
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(
+            state = state,
+            item = QueuedMessageUi(id = "q-1", content = "别丢"),
+        )
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+        assertEquals("改了一半", next.input)
+        assertEquals(edit, next.messageEdit)
+        assertEquals(listOf("q-1"), next.queuedMessages.map { it.id })
+    }
+
+    @Test
+    fun planDispatchKeepsTheDraftWhenUserIsTyping() {
+        val state = baseState(isStreaming = false, input = "我正在打的半句话")
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(
+            state = state,
+            item = QueuedMessageUi(id = "q-1", content = "排队的话", immediateInterrupt = true),
+        )
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+        // 草稿一个字都不能少：以前这里走 enqueue，会把 input 清空
+        assertEquals("我正在打的半句话", next.input)
+        assertNull(next.messageEdit)
+        assertEquals(listOf("q-1"), next.queuedMessages.map { it.id })
+        assertFalse(next.queuedMessages.first().immediateInterrupt)
+    }
+
+    @Test
+    fun planDispatchMovesAttachmentMessageToDraftWhenTheSlotIsFree() {
+        val image = PendingImageUi(id = "img-1", uri = "file:///1.jpg", dataUrl = "data:image/jpeg;base64,1", mimeType = "image/jpeg")
+        val state = baseState(isStreaming = false)
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(
+            state = state,
+            item = QueuedMessageUi(id = "q-1", content = "看图", pendingImages = listOf(image)),
+        )
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.MovedToDraft, plan)
+        assertEquals("看图", next.input)
+        assertEquals(listOf(image), next.pendingImages)
+        assertTrue(next.queuedMessages.isEmpty())
+    }
+
+    @Test
+    fun planDispatchPutsAttachmentMessageBackWhenDraftSlotIsTaken() {
+        val image = PendingImageUi(id = "img-1", uri = "file:///1.jpg", dataUrl = "data:image/jpeg;base64,1", mimeType = "image/jpeg")
+        val state = baseState(isStreaming = false, input = "先写着")
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(
+            state = state,
+            item = QueuedMessageUi(id = "q-1", content = "看图", pendingImages = listOf(image)),
+        )
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+        assertEquals("先写着", next.input)
+        // 不能把附件塞进用户正在写的草稿里
+        assertTrue(next.pendingImages.isEmpty())
+        assertEquals(listOf("q-1"), next.queuedMessages.map { it.id })
+    }
+
+    @Test
+    fun planDispatchNeverDuplicatesAMessageThatIsAlreadyQueued() {
+        val item = QueuedMessageUi(id = "q-1", content = "别丢", immediateInterrupt = true)
+        val state = baseState(isStreaming = true).copy(queuedMessages = listOf(item))
+        val (next, plan) = AgentMessageQueueReducer.planDispatch(state, item)
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+        assertSame(state, next)
+        assertEquals(1, next.queuedMessages.count { it.id == "q-1" })
+    }
+
+    /**
+     * 队列条「立即插话发送」在空闲时走的就是「弹出 → planDispatch」。
+     * 有草稿时消息必须回到队列，用户的草稿原样保留。
+     */
+    @Test
+    fun steerThenDispatchKeepsBothTheMessageAndTheDraft() {
+        val state = baseState(isStreaming = false, input = "草稿").copy(
+            queuedMessages = listOf(
+                QueuedMessageUi(id = "q-1", content = "第一条"),
+                QueuedMessageUi(id = "q-2", content = "第二条"),
+            ),
+        )
+        val (afterPop, promoted) = AgentMessageQueueReducer.promoteToInterrupt(state, "q-2")
+        assertNotNull(promoted)
+        val (afterDispatch, plan) = AgentMessageQueueReducer.planDispatch(afterPop, promoted!!)
+        assertEquals(AgentMessageQueueReducer.DispatchPlan.Deferred, plan)
+        assertEquals("草稿", afterDispatch.input)
+        // 顺序不变：q-2 回到队尾，q-1 仍是队首
+        assertEquals(listOf("q-1", "q-2"), afterDispatch.queuedMessages.map { it.id })
+    }
+
+    /**
+     * 有草稿时，队首的「插话中」必须降级成「排队中」。
+     *
+     * 这段是真机复现的：插话确实打断了一轮，但 run 收尾接力见草稿非空直接跳过，
+     * 标记一直留着 —— 队列条永远显示「插话中」，消息却排在队首不动。
+     */
+    @Test
+    fun demoteBlockedInterruptHeadClearsInterruptFlagWhenDraftBlocks() {
+        val state = baseState(isStreaming = false, input = "我的草稿").copy(
+            queuedMessages = listOf(
+                QueuedMessageUi(id = "q-1", content = "插话", immediateInterrupt = true),
+                QueuedMessageUi(id = "q-2", content = "排队"),
+            ),
+        )
+        val next = AgentMessageQueueReducer.demoteBlockedInterruptHead(state)
+        assertFalse(next.queuedMessages.first().immediateInterrupt)
+        // 只动队首：顺序与后面的条目原样保留
+        assertEquals(listOf("q-1", "q-2"), next.queuedMessages.map { it.id })
+        assertFalse(next.queuedMessages[1].immediateInterrupt)
+        assertEquals("我的草稿", next.input)
+    }
+
+    @Test
+    fun demoteBlockedInterruptHeadKeepsFlagWhenThereIsNoDraft() {
+        val state = baseState(isStreaming = true).copy(
+            queuedMessages = listOf(QueuedMessageUi(id = "q-1", content = "插话", immediateInterrupt = true)),
+        )
+        assertSame(state, AgentMessageQueueReducer.demoteBlockedInterruptHead(state))
+    }
+
+    /** 带附件的消息走草稿位，草稿被占时本来就要等，不能把插话标记抹掉。 */
+    @Test
+    fun demoteBlockedInterruptHeadIgnoresAttachmentMessages() {
+        val image = PendingImageUi(id = "img-1", uri = "file:///1.jpg", dataUrl = "data:image/jpeg;base64,1", mimeType = "image/jpeg")
+        val state = baseState(isStreaming = true, input = "草稿").copy(
+            queuedMessages = listOf(
+                QueuedMessageUi(id = "q-1", content = "看图", immediateInterrupt = true, pendingImages = listOf(image)),
+            ),
+        )
+        assertSame(state, AgentMessageQueueReducer.demoteBlockedInterruptHead(state))
+    }
+
+    @Test
+    fun demoteBlockedInterruptHeadDoesNothingForPlainQueue() {
+        val state = baseState(isStreaming = true, input = "草稿").copy(
+            queuedMessages = listOf(QueuedMessageUi(id = "q-1", content = "排队")),
+        )
+        assertSame(state, AgentMessageQueueReducer.demoteBlockedInterruptHead(state))
     }
 
     private fun baseState(
