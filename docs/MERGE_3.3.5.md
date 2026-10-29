@@ -2334,6 +2334,15 @@ resources.arsc 含 chat_queued_hint
 
 **收尾**
 
-释放虚拟屏 `vdmvth3ne3`；`am force-stop io.github.mangi.eta.canary` 后 `pidof` 为空
-（第一次 force-stop 后曾被释放任务回迁拉起一次，二次停止才干净）；测试用的排队消息已移除、
-草稿已清空；canary 保持安装，主包未动。
+释放虚拟屏 `vdmvth3ne3`；`am force-stop io.github.mangi.eta.canary` 后进程当下退出，但
+**canary 的无障碍服务处于启用状态**（`enabled_accessibility_services` 里主包和 canary 两个都在），
+系统会把进程重新绑起来 —— 二三十秒后 `pidof` 又有新 pid，`ps` 里能看到它的
+`AgentAccessibilityService` 连接记录。这是既有设备配置（本轮没改任何系统设置），
+所以「停止」不持久，也不影响上面任何一条验证结论。测试用的排队消息已移除、草稿已清空；
+canary 保持安装，主包未动。
+
+**一条可复用的经验**
+
+判定「进程被停掉了没有」，不能只看 `am force-stop` 的返回值和紧接着的 `pidof`——
+有启用中的无障碍服务/前台服务时，系统会立刻把进程拉回来。要么多等一会儿再看，
+要么直接看 `dumpsys activity processes` 里的服务连接记录。
