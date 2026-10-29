@@ -2181,3 +2181,83 @@ resources.arsc 含 chat_queued_hint
 - `drainQueueAfterRun` 顶部注释写「用户正在打字时不抢草稿位……下次收尾或切回会话时再发」，
   下面几行又写「没有『切回时自动补发』的钩子」，两句互相矛盾。实际行为是：
   输入框里有草稿时，队列会一直等到下一次 run 收尾。
+
+### 32.7 真机验证（2026-10-29 晚，PKX110 / Android 16，canary 覆盖安装）
+
+安装：`pm install -r -d` → `Success`；包名 `io.github.mangi.eta.canary`，
+32,039,893 字节 / md5 `934ca0803800316cc0b7233286335b8f`（与 32.5 同一份产物），
+`firstInstallTime` 保持 16:35:18（覆盖更新，未卸载），`lastUpdateTime` → 18:57:52。
+
+**已验证（虚拟屏实机操作，DebugHang 提供长 run）**
+
+1. 运行中发送 = 排队：输入第二条点主按钮 → 出现「排队中」胶囊（含「立即插话发送」
+   「移除排队消息」），当前 run 未中断，输入框已清空。
+2. 点停止 → 出现「已停止」；等 12 秒后队列仍在、**没有**自动续发（会话停在已停止）。
+3. 点「立即插话发送」→ 队列胶囊消失，该条以独立用户消息进入对话，新 run 开始。
+4. 编辑态与队列共存：编辑「第三条」时 run 自然结束，队列消息**没有**被写进输入框
+   （编辑正文完好），消息留在队列；`dispatchQueuedMessage` 的 `messageEdit` 守卫
+   在真机上确实生效。
+5. 运行中「消息操作」不可用（`messageActionsEnabled = !isStreaming`），停止后才出现
+   「复制 / 编辑 / 删除」菜单。
+
+**未能真机验证（UI 上不可达，只有代码审查 + 单测）**
+
+- `rejectMessageEditWhileStreaming()` 的 toast：需要「编辑态 + `isStreaming=true`」。
+  三条路都堵死：
+  ① 运行中点消息 → 菜单禁用（`beginMessageEdit` 也有 `isStreaming` 守卫）；
+  ② 编辑态下点队列条「立即插话发送」→ `steerQueuedMessage` 顶部
+     `if (isStreaming || messageEdit != null) return` **静默返回**，点了没反应，
+     也没法借此启动 run；
+  ③ 编辑态下主按钮是「保存」，走 `sendCurrentMessage`，此时 `isStreaming=false`，
+     走的是正常保存分支。
+  → 该守卫只在**状态失配**（事件延迟、跨进程恢复）时命中，属防御性代码。
+- 假运行态插话（`dispatchPendingInterrupt` / `NoActiveRun`）：
+  `AgentConversationStore` 读盘时把 `isStreaming` 强制置 false（638/785/808 行），
+  `healStaleRunsAfterStartup` 又会在 5 秒后清掉不在活跃快照里的 checkpoint，
+  所以「进程重启后留着假运行态」走不通；UI 上也构造不出「isStreaming=true 但
+  本地无 runId、服务端也没有该 run」。同样只有代码审查。
+
+**顺带发现的 UX 缺陷（未修）**
+
+编辑态下点队列条「立即插话发送」**毫无反馈**（`steerQueuedMessage` 静默 return）。
+按钮可点、点了没动静，比置灰更差。建议二选一：编辑态把该按钮置灰，
+或弹一句「先取消编辑再插话」。
+
+### 32.8 第二轮真机验证（同日 19:10，覆盖更新后复验 + 补上三项此前只有单测的行为）
+
+安装：`pm install -r -d` 同一份产物 → `Success`；`firstInstallTime` 仍 16:35:18、
+`lastUpdateTime` 18:57:52 → 19:10:55；启动后历史会话完整（证明覆盖更新保留数据）。
+
+**本轮补上的真机证据（都此前只有单测或从未观察过）**
+
+1. **运行态主按钮语义**：运行中且输入框有文字时，底部变四格 ——
+   「切换模型」「暂停」「打断本轮并立即发送」、
+   主按钮 desc = **「排队发送（本轮结束后发出）」**。
+   即「运行中发送 = 排队」不只是行为，按钮文案也说明了后果。
+2. **run 自然结束（失败）后队列自动续发**：第一条 run 以
+   「Runtime 运行失败（已重试 4 次）」结束后，队列里的第二条**自动成为独立用户消息**
+   并开启新一轮（回合 6/6 → 7/7）。此前这条只有 `pollNextToSendAfterRun` 的单测覆盖，
+   现在有真机观察。注意失败结束 ≠ `errorLooksStopped`，所以不冻结 —— 与
+   `isQueueFrozen = !stoppedForInterrupt && (explicitlyStoppedByUser || errorLooksStopped)` 一致。
+3. **用户点「停止」后队列冻结**：运行中先排队一条（胶囊出现）→ 点「停止」→
+   出现「已停止」，胶囊**原样保留**；等 20 秒，`display_event_age_ms` 29.3 秒
+   （界面完全静止）、回合数仍 7/7、底部已回到「发送」空闲态 —— **没有**自动续发。
+4. **撤回队列消息把文字回灌输入框**（本轮最关键的一条，直指 `inputSyncVersion`）：
+   队列胶囊内点击消息预览文本即撤回（`QueuedMessagePreviewText.onClick = onRecall`，
+   见 `AgentChatQueueStrip.kt`）→ 胶囊消失、`inputSyncVersion + 1`、
+   输入框 EditText 的 `text` 立刻变为「第四条：排队后点停止」。
+   这证明 `inputSyncVersion` → `AgentChatInputBar` 的 `LaunchedEffect(inputSyncVersion)`
+   回灌链路在真机上确实通了（此前只是代码审查）。
+
+**仍然未验证（结论不变）**
+
+- `rejectMessageEditWhileStreaming()` 的 toast：三条 UI 路径仍全部堵死（见 §32.7），
+  属状态失配时的防御性代码。
+- 假运行态插话（`dispatchPendingInterrupt` / `NoActiveRun`）：读盘强制
+  `isStreaming=false` + `healStaleRunsAfterStartup`，构造不出该状态。
+
+**已知 UX 缺陷（仍未修，保持记录）**
+
+编辑态下点队列条「立即插话发送」静默无反馈（§32.7 上一轮的观察；**本轮未复验**这条）。
+建议之后单独处理（置灰或提示）。
+
