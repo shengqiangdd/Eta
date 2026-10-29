@@ -2525,7 +2525,7 @@ md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.g
 
 - `STAGES=test`：**734 例 / 0 失败**（新增 5 例 busy send + 5 例 goal store）。
 - `STAGES=lint,assemble`：lint 无新增问题，baseline 412 条一致；APK **34,493,550 字节**，sha256 `ea9043f5cdb55318…`。
-- **真机未验**：queue（队列条出现并自动发出）与 steer（当前轮被停止后再发新消息）两条路径，以及设置页切换后输入栏文案是否即时变化，都要在 canary 上跑一遍。
+- **真机已验证**：queue / steer / 设置切换即时生效 / 暂停态仍排队，证据见 §32.14。
 
 ### 32.13 目标卡接上 dsh GoalBar 的动作（2026-10-30，真机未验）
 
@@ -2539,3 +2539,28 @@ md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.g
 - `AgentGoalStoreTest` 5 例：作用域隔离、原子替换不留 `.tmp`、只清本作用域、空白作用域不共享、revision 冲突不覆盖。
 
 **验证**：734 例（含这 5 例）全绿，lint/assemble 通过。**真机未验**：卡片动作、行内错误、并发竞态目前只有单测与 lint 证据。
+
+### 32.14 繁忙发送行为真机验证（2026-10-30，canary / PKX110 A16）
+
+**环境**：`io.github.mangi.eta.canary` 以 `pm install -r -d` 覆盖安装（未卸载，`firstInstallTime` 保持 2026-10-29 16:35:18，主包 `io.github.mangi.eta` 的 `lastUpdateTime` 未变）。模型为 `lingzhan / deepseek-v4.1-flash`；该服务商当轮持续返回 HTTP 502/503，所以每轮都是「重试 → 失败」，但不影响本轮要验的发送路径。
+
+**queue（排队）**
+
+1. 运行中且输入框有草稿时，主按钮 `contentDescription` = 「排队发送（本轮结束后发出）」。
+2. 点击后出现队列条：`排队中` + 正文 + `立即插话发送` + `移除排队消息`，输入框清空。
+3. 本轮结束后队列条消失，该消息作为新一轮出现在对话里（回合 27/27 → 28/28），输入框为空。
+   - 这一轮是 502 重试耗尽后结束的；drain 与正常结束走同一路径。
+
+**steer（插话）**
+
+1. 设置页改为「插话发送」后**未重启 App**，同一界面主按钮立刻变成「插话发送（打断本轮）」——设置监听即时生效。
+2. 运行中（29/29，正在重试）点击该按钮，日志时序为：
+   `Agent run stop requested: id=run-6044 state=running primary=true` →
+   `Agent runtime stopped: id=run-6044` →
+   `run_started`；界面旧轮标「已停止」，新消息成为新一轮（30/30）。即真打断，而非等旧轮自然结束。
+
+**暂停态**：暂停后左侧按钮变「继续」，在设置为**插话**时主按钮仍为「排队发送（本轮结束后发出）」——符合「暂停保现场、不打断」。
+
+**未验**：编辑历史消息（`editingMessage`）时是否仍排队，目前只有 `AgentBusySendPolicy` 单测；目标卡行内动作与行内错误仍只有单测与 lint 证据（见 §32.13）。
+
+**现场**：设置已改回「排队发送」；canary 会话里留了两条测试消息与一段测试草稿「暂停态草稿」，均在测试包内。
