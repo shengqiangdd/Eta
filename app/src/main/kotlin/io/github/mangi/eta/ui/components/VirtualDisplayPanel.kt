@@ -115,6 +115,14 @@ internal fun VirtualDisplayPanel(modifier: Modifier = Modifier) {
             )
         }
         if (expanded) {
+            // 面板上直接写清这块屏的分辨率和密度：支持多分辨率之后，用户要靠它确认
+            // 自己看到的是哪块屏、是不是跟主屏一致，不用再翻日志。
+            Text(
+                text = "${current.width} × ${current.height} · ${current.densityDpi} dpi",
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 6.dp),
+            )
             val image = bitmap
             if (image != null) {
                 Image(

@@ -2231,7 +2231,12 @@ internal class AgentLocalTools(
     private fun virtualDisplayTool(name: String, args: JSONObject): AgentModelClient.ToolResult {
         val result = when (name) {
             "virtual_display_create" -> {
-                val request = AgentVirtualDisplayTools.parseCreate(args)
+                val mainMetrics = context.resources.displayMetrics
+                val request = AgentVirtualDisplayTools.parseCreate(
+                    args,
+                    mainWidth = mainMetrics.widthPixels,
+                    mainHeight = mainMetrics.heightPixels,
+                )
                     ?: return textResult(errorResult("INVALID_ARGUMENT", "width/height/density_dpi 范围不合法"))
                 val session = runCatching {
                     virtualDisplays.create(

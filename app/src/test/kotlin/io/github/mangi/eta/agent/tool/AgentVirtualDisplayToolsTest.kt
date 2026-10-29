@@ -44,9 +44,25 @@ class AgentVirtualDisplayToolsTest {
 
     @Test
     fun createUsesDocumentedDefaultsAndRejectsOutOfRange() {
-        val defaults = AgentVirtualDisplayTools.parseCreate(JSONObject())!!
-        assertEquals(1080, defaults.width)
-        assertEquals(1920, defaults.height)
+        val defaults = AgentVirtualDisplayTools.parseCreate(
+            JSONObject(),
+            mainWidth = 1216,
+            mainHeight = 2640,
+        )!!
+        assertEquals(1216, defaults.width)
+        assertEquals(2640, defaults.height)
+        // 不传主屏尺寸时退回旧的 1080x1920，保证调用方漏传也不会崩。
+        val legacy = AgentVirtualDisplayTools.parseCreate(JSONObject())!!
+        assertEquals(1080, legacy.width)
+        assertEquals(1920, legacy.height)
+        // preset：main/landscape/1080p/1440p/tablet，未知值报错
+        assertEquals(1216, AgentVirtualDisplayTools.parseCreate(JSONObject().put("preset", "main"), 1216, 2640)!!.width)
+        val landscape = AgentVirtualDisplayTools.parseCreate(JSONObject().put("preset", "landscape"), 1216, 2640)!!
+        assertEquals(2640, landscape.width)
+        assertEquals(1216, landscape.height)
+        assertEquals(1440, AgentVirtualDisplayTools.parseCreate(JSONObject().put("preset", "1440p"))!!.width)
+        assertEquals(1600, AgentVirtualDisplayTools.parseCreate(JSONObject().put("preset", "tablet"))!!.width)
+        assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("preset", "8k")))
         assertEquals(null, defaults.densityDpi)
 
         assertNull(AgentVirtualDisplayTools.parseCreate(JSONObject().put("width", 10)))

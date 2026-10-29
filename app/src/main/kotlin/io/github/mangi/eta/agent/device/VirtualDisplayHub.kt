@@ -19,6 +19,7 @@ internal object VirtualDisplayHub {
         val displayId: Int,
         val width: Int,
         val height: Int,
+        val densityDpi: Int,
         val purpose: String,
     )
 
@@ -38,6 +39,7 @@ internal object VirtualDisplayHub {
                 displayId = session.displayId,
                 width = session.width,
                 height = session.height,
+                densityDpi = session.densityDpi,
                 purpose = session.purpose,
             ),
         )

@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.tool
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * 虚拟屏工具的 schema 与参数解析（纯逻辑，可单测）。
@@ -35,16 +36,26 @@ internal object AgentVirtualDisplayTools {
                             "properties",
                             JSONObject()
                                 .put(
+                                    "preset",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put(
+                                            "description",
+                                            "分辨率预设：main（跟随主屏，默认）/ landscape（主屏横屏）/ " +
+                                                "1080p / 1440p / tablet(1600x2560)；显式给 width+height 时以显式为准",
+                                        ),
+                                )
+                                .put(
                                     "width",
                                     JSONObject()
                                         .put("type", "integer")
-                                        .put("description", "宽度（像素），240..3840；留空用 1080"),
+                                        .put("description", "宽度（像素），240..3840；留空跟随主屏（或 preset）"),
                                 )
                                 .put(
                                     "height",
                                     JSONObject()
                                         .put("type", "integer")
-                                        .put("description", "高度（像素），240..3840；留空用 1920"),
+                                        .put("description", "高度（像素），240..3840；留空跟随主屏（或 preset）"),
                                 )
                                 .put(
                                     "density_dpi",
@@ -247,10 +258,35 @@ internal object AgentVirtualDisplayTools {
             }
     }
 
-    /** 解析失败时返回 null，由调用方产出 INVALID_ARGUMENT。 */
-    fun parseCreate(args: JSONObject): CreateRequest? {
-        val width = args.optInt("width", 1080)
-        val height = args.optInt("height", 1920)
+    /**
+     * 解析失败时返回 null，由调用方产出 INVALID_ARGUMENT。
+     *
+     * 尺寸来源优先级：显式 width+height > preset > 主屏。
+     * 默认跟随主屏而不是写死 1080×1920：后者是 16:9，而现在手机多是 19.5:9，
+     * 用固定值建出来的虚拟屏，应用布局与控件位置跟真机对不上，点控件会点偏。
+     */
+    fun parseCreate(
+        args: JSONObject,
+        mainWidth: Int = 1080,
+        mainHeight: Int = 1920,
+    ): CreateRequest? {
+        val preset = args.optString("preset").trim().lowercase(Locale.ROOT)
+        val explicitWidth = if (args.has("width")) args.optInt("width", 0) else 0
+        val explicitHeight = if (args.has("height")) args.optInt("height", 0) else 0
+        // 只给一边没有意义：宽高比无从推断，交回去让模型补全或改用 preset。
+        if ((explicitWidth > 0) != (explicitHeight > 0)) return null
+        val (width, height) = if (explicitWidth > 0) {
+            explicitWidth to explicitHeight
+        } else {
+            when (preset) {
+                "", "main" -> mainWidth to mainHeight
+                "landscape" -> mainHeight to mainWidth
+                "1080p" -> 1080 to 1920
+                "1440p" -> 1440 to 2560
+                "tablet" -> 1600 to 2560
+                else -> return null
+            }
+        }
         if (width !in 240..3840 || height !in 240..3840) return null
         val dpi = if (args.has("density_dpi")) {
             val value = args.optInt("density_dpi", -1)
