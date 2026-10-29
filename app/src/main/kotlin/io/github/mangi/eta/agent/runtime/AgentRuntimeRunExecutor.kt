@@ -513,7 +513,7 @@ internal class AgentRuntimeRunExecutor(
                 throwable.message ?: throwable.javaClass.simpleName
             }
             if (cancelled) {
-                AndroidAgentLogger.info("Agent runtime stopped")
+                AndroidAgentLogger.info("Agent runtime stopped: id=${request.runId.take(8)}")
             } else {
                 val requestFailure = modelFailure?.cause as? AgentModelFailure
                 AndroidAgentLogger.error(

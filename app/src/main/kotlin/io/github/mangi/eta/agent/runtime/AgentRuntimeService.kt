@@ -1194,6 +1194,9 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private fun cancelRun(runId: String) {
         if (runId.isBlank()) return
         pendingStartRequests.values.firstOrNull { it.incoming.request.runId == runId }?.let { pending ->
+            // 还没派发的 run 也记一行：它没有 session、不是 primary，不打日志的话
+            // 「点了停止但什么都没发生」在 logcat 上完全看不到痕迹。
+            AndroidAgentLogger.info("Agent run stop requested: id=${runId.take(8)} state=pending")
             pendingStartRequests.remove(pending.generation)
             pending.incoming.close()
             sendRequestIngestedTo(pending.replyTo, runId)
@@ -1208,8 +1211,20 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             )
             return
         }
-        val session = sessions[runId] ?: return
-        if (session.isTerminal) return
+        val session = sessions[runId]
+        if (session == null) {
+            AndroidAgentLogger.info("Agent run stop ignored: id=${runId.take(8)} reason=session_missing")
+            return
+        }
+        if (session.isTerminal) {
+            AndroidAgentLogger.info("Agent run stop ignored: id=${runId.take(8)} reason=terminal")
+            return
+        }
+        // 「requested」必须打在真正动手之前：否则 cancel() 一旦抛错或阻塞，
+        // 这一行就永远不出现，事后分不清「没收到停止请求」和「收到了但停不下来」。
+        AndroidAgentLogger.info(
+            "Agent run stop requested: id=${runId.take(8)} state=running primary=${primaryRunId == runId}",
+        )
         session.controller.cancel()
         if (primaryRunId == runId) {
             state.value = state.value.copy(status = AgentOverlayStatus.Stopping)
@@ -1217,12 +1232,23 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     private fun pauseRun(runId: String) {
-        val session = sessions[runId] ?: return
-        if (session.isTerminal) return
+        val session = sessions[runId]
+        if (session == null) {
+            AndroidAgentLogger.info("Agent run pause ignored: id=${runId.take(8)} reason=session_missing")
+            return
+        }
+        if (session.isTerminal) {
+            AndroidAgentLogger.info("Agent run pause ignored: id=${runId.take(8)} reason=terminal")
+            return
+        }
         // 持有 GUI 锁的 run 交给协调器暂停：它要等当前动作真正结束，再把状态置成 UserPaused
         // 并推进代号 —— 这样恢复之后，暂停前拿到的观察快照自动作废，模型必须重新 observe_screen。
         // 没持有锁的 run（纯文本推理）不需要这套，直接 pause 即可。
-        if (!guiControl.pauseForUser(runId)) session.controller.pause()
+        val guiLocked = guiControl.pauseForUser(runId)
+        if (!guiLocked) session.controller.pause()
+        AndroidAgentLogger.info(
+            "Agent run paused: id=${runId.take(8)} gui_lock=$guiLocked primary=${primaryRunId == runId}",
+        )
         if (primaryRunId == runId) {
             state.value = state.value.copy(
                 phase = AgentOverlayPhase.PAUSED,
@@ -1232,9 +1258,20 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     private fun resumeRun(runId: String) {
-        val session = sessions[runId] ?: return
-        if (session.isTerminal) return
-        if (!guiControl.resumeForUser()) session.controller.resume()
+        val session = sessions[runId]
+        if (session == null) {
+            AndroidAgentLogger.info("Agent run resume ignored: id=${runId.take(8)} reason=session_missing")
+            return
+        }
+        if (session.isTerminal) {
+            AndroidAgentLogger.info("Agent run resume ignored: id=${runId.take(8)} reason=terminal")
+            return
+        }
+        val guiLocked = guiControl.resumeForUser()
+        if (!guiLocked) session.controller.resume()
+        AndroidAgentLogger.info(
+            "Agent run resumed: id=${runId.take(8)} gui_lock=$guiLocked primary=${primaryRunId == runId}",
+        )
         if (primaryRunId == runId) {
             state.value = state.value.copy(
                 phase = AgentOverlayPhase.RUNNING,
