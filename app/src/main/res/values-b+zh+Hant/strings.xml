@@ -1194,6 +1194,9 @@
   <string name="chat_model_hot_swap_failed">無法聯絡 Agent Runtime，模型改動將從你的下一則訊息開始生效</string>
   <string name="chat_steering_queued_paused">已排隊；目前任務已暫停，恢復後會繼續</string>
   <string name="chat_steering_failed">補充指令沒有送出，文字已保留，請重試</string>
+  <string name="chat_steering_no_active_run">目前沒有執行中的任務，文字已保留；再送一次即可重新開始</string>
+  <string name="chat_run_already_finished">任務已經結束</string>
+  <string name="chat_stop_unavailable">連不上執行環境，停止沒有送出，請重試</string>
   <string name="background_run_channel">背景任務</string>
   <string name="background_run_finished">背景任務已完成</string>
   <string name="background_run_failed">背景任務失敗</string>

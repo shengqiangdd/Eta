@@ -577,12 +577,20 @@ internal class AgentAppState(
                 state.roleplayMessages.pendingRewrites.keys.filterNot { it in observed }.map { id to it }
             }
         } else emptyList()
+        // 服务端明确回报的快照里已经没有这些 run，本地却还挂着「运行中」。
+        // 这是死按钮的真正来源：必须在正常恢复流程之外单独兜底，
+        // 否则 plan 全空时这里直接 return，假运行态永远没人清。
+        val staleRunStatePresent = withContext(Dispatchers.Main) {
+            activeRunsQuery is AgentRuntimeClient.ActiveRunsQuery.Known &&
+                hasStaleRunState(activeSessions, checkpoints)
+        }
         if (
             plan.completed.isEmpty() &&
             plan.interrupted.isEmpty() &&
             plan.reattach == null &&
             orphanRewrites.isEmpty() &&
-            activeSessions.none { it.conversationId.isNotBlank() }
+            activeSessions.none { it.conversationId.isNotBlank() } &&
+            !staleRunStatePresent
         ) {
             return
         }
@@ -642,6 +650,10 @@ internal class AgentAppState(
                 snapshots = activeSessions,
                 alreadyAttachedRunId = plan.reattach?.runId,
             ) || stateChanged
+            // 先接上真在跑的，再清掉服务端已经不认的 —— 顺序反了会把刚接上的清掉。
+            if (activeRunsQuery is AgentRuntimeClient.ActiveRunsQuery.Known) {
+                stateChanged = reconcileStaleRunState(activeSessions, checkpoints) || stateChanged
+            }
             orphanRewrites.forEach { (conversationId, runId) ->
                 conversationsById[conversationId]?.let { state ->
                     updateConversation(conversationId, RoleplayConversationReducer.applyRewrite(state, runId,
@@ -856,6 +868,57 @@ internal class AgentAppState(
         }
         return changed
     }
+
+    /**
+     * 用服务端的活跃快照校准本地残留。
+     *
+     * 这是「停止 / 插话点了没反应」的兜底：只要服务端明确回报某个 run 不在了，
+     * 本地指向它的映射、去抖记录、以及会话上的「运行中」标记就都该收掉，
+     * 否则界面会一直显示一条早已结束的任务，所有针对它的操作都静默落空。
+     *
+     * 三道保护：正在跑的 [currentRunId]、还有 checkpoint 待恢复的 run、
+     * 以及快照本身报上来的 run 都不动。只在查询**成功**时调用。
+     */
+    private fun reconcileStaleRunState(
+        snapshots: List<AgentRuntimeWire.ActiveRunSnapshot>,
+        checkpoints: List<AgentRunCheckpointStore.Checkpoint>,
+    ): Boolean {
+        val stale = findStaleRunState(snapshots, checkpoints)
+        if (stale.isEmpty) return false
+        // 先摘映射，再会话：会话的判定依赖「清理后还有没有 run 指向它」。
+        stale.runIds.forEach { runId ->
+            runConversationIds.remove(runId)
+            pendingAttachRuns.remove(runId)
+            stopRequestedAt.remove(runId)
+        }
+        stale.conversationIds.forEach { id ->
+            val state = conversationsById[id] ?: return@forEach
+            updateConversation(
+                id,
+                state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+                updateTimestamp = false,
+            )
+        }
+        return true
+    }
+
+    private fun findStaleRunState(
+        snapshots: List<AgentRuntimeWire.ActiveRunSnapshot>,
+        checkpoints: List<AgentRunCheckpointStore.Checkpoint>,
+    ): AgentStaleRunReconciler.Stale = AgentStaleRunReconciler.find(
+        localRunToConversation = runConversationIds,
+        streamingConversationIds = conversationsById.filterValues { it.isStreaming }.keys,
+        liveRunIds = snapshots.mapNotNullTo(mutableSetOf()) { it.runId.takeIf(String::isNotBlank) },
+        liveConversationIds = snapshots.mapNotNullTo(mutableSetOf()) { it.conversationId.takeIf(String::isNotBlank) },
+        pendingRunIds = checkpoints.mapNotNullTo(mutableSetOf()) { it.runId.takeIf(String::isNotBlank) },
+        currentRunId = currentRunId,
+    )
+
+    /** [reconcileStaleRunState] 的只读预判：没有残留就不必把恢复流程整个跑一遍。 */
+    private fun hasStaleRunState(
+        snapshots: List<AgentRuntimeWire.ActiveRunSnapshot>,
+        checkpoints: List<AgentRunCheckpointStore.Checkpoint>,
+    ): Boolean = !findStaleRunState(snapshots, checkpoints).isEmpty
 
     /** 接上一条仍在运行的事件流；[asPrimary] 决定是否占用 UI 的当前 run。 */
     private fun attachRunningRun(runId: String, asPrimary: Boolean) {
@@ -1151,6 +1214,11 @@ internal class AgentAppState(
         if (state.journalDeferred) loadDeferredJournal(conversationId)
         persistConversations()
         scheduleMessageRelease(conversationId)
+        // 界面说在跑、本地却没有可对应的 run：先对一次账，别让用户盯着一个
+        // 点了没反应的停止按钮。正常在跑的会话都有映射，不会走到这里。
+        if (state.isStreaming && runIdForConversation(conversationId) == null) {
+            scope.launch { recoverRuntimeRuns() }
+        }
         return true
     }
 
@@ -1557,11 +1625,9 @@ internal class AgentAppState(
 
     /** 请求中止当前会话的 run，但**不清空队列**：插话及队列续发都靠它。 */
     private fun requestInterruptCurrentRun() {
-        val runId = runIdForConversation(selectedConversationId) ?: return
-        if (!stopRequestedRunIds.add(runId)) return
-        scope.launch(Dispatchers.IO) {
-            AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
-        }
+        // 与「停止」共用同一条解析路径：本地映射缺失时也会向服务端对账，
+        // 确认没有运行中的 run 就把假运行态收掉，排队消息才有机会被发出。
+        requestStop(selectedConversationId)
     }
 
     fun sendCurrentMessage(submittedText: String? = null) {
@@ -1720,20 +1786,44 @@ internal class AgentAppState(
     fun steerCurrentRun(text: String): Boolean {
         val prompt = text.trim()
         if (prompt.isBlank()) return false
-        val runId = runIdForConversation(selectedConversationId) ?: return false
+        val conversationId = selectedConversationId ?: return false
         /*
          * 这里必须切到 IO：AgentRuntimeClient 是同步客户端，AgentRuntimeConnection.acquire()
          * 开头就 check(不在主线程)。而这个入口是用户点「发送」直接进来的，
          * 之前在主线程调 sendSupplement 会立刻抛 IllegalStateException —— 表现为
          * 「会话运行中再发消息直接闪退」。
+         *
+         * runId 也不能在这里直接查：本地映射缺失时（假运行态、恢复没接上）原来会
+         * 静默 return false，用户点「发送」什么都不发生、也没有任何提示。
          */
-        val conversationId = selectedConversationId
         // 暂停中发的补充指令不会「当前步骤结束后继续」——run 正挂在检查点上，
         // 要等用户点「继续」才会被消费。文案必须说真话。
-        val paused = conversationId?.let { conversationsById[it]?.isPaused == true } == true
+        val paused = conversationsById[conversationId]?.isPaused == true
         clearDraftInput()
         scope.launch(Dispatchers.IO) {
-            val sent = AgentRuntimeClient(appContext, AndroidAgentLogger).sendSupplement(runId, prompt)
+            val resolution = resolveRunIdForConversation(conversationId)
+            if (resolution !is RunResolution.Active) {
+                withContext(Dispatchers.Main) {
+                    // 没有可投递的 run：把刚打的字还给用户，并说清楚为什么没发出去。
+                    if (selectedConversationId == conversationId && homeState.input.isBlank()) {
+                        homeState = homeState.copy(input = prompt)
+                    }
+                    Toast.makeText(
+                        appContext,
+                        appContext.getString(
+                            if (resolution is RunResolution.NoActiveRun) {
+                                R.string.chat_steering_no_active_run
+                            } else {
+                                R.string.chat_steering_failed
+                            },
+                        ),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                return@launch
+            }
+            val sent = AgentRuntimeClient(appContext, AndroidAgentLogger)
+                .sendSupplement(resolution.runId, prompt)
             withContext(Dispatchers.Main) {
                 if (!sent) {
                     // 发不出去就把刚打的字还给用户，不能既没送出去又清空输入框。
@@ -2048,7 +2138,7 @@ internal class AgentAppState(
                     source = "user_attach",
                 )
             }
-            if (withContext(Dispatchers.Main) { runId in stopRequestedRunIds }) {
+            if (withContext(Dispatchers.Main) { runId in stopRequestedAt }) {
                 withContext(Dispatchers.Main) {
                     applyRunResult(runId, AgentRuntimeWire.RunResult(runId, false, "", appContext.getString(R.string.agent_notice_stopped), operation = operation))
                 }
@@ -2657,15 +2747,80 @@ internal class AgentAppState(
             AgentFileReferenceGateway.Error.ValidationTimedOut -> appContext.getString(R.string.state_ui_path_verification_timed_out_please_try_again_703687)
         }
 
-    private val stopRequestedRunIds = mutableSetOf<String>()
+    /**
+     * 「已经请求过停止」的时间表，只用来做几秒的去抖。
+     *
+     * 原来是只增不减的集合：第一次停止没生效（服务端繁忙、消息丢了、run 卡在
+     * 不可中断的步骤）之后，再点停止就永远 return —— 真机上表现为
+     * 「停止按钮完全没反应」。改成按时间节流，用户随时可以重试。
+     */
+    private val stopRequestedAt = mutableMapOf<String, Long>()
 
-    fun stopCurrentRun() {
-        val runId = runIdForConversation(selectedConversationId) ?: return
-        if (!stopRequestedRunIds.add(runId)) return
-        scope.launch(Dispatchers.IO) {
-            AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
+    private fun claimStopRequest(runId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val last = stopRequestedAt[runId]
+        if (last != null && now - last < STOP_RETRY_INTERVAL_MS) return false
+        stopRequestedAt[runId] = now
+        return true
+    }
+
+    /** [resolveRunIdForConversation] 的三种结局：有 run / 确实没有 / 问不到。 */
+    private sealed interface RunResolution {
+        data class Active(val runId: String) : RunResolution
+        data object NoActiveRun : RunResolution
+        data object Unavailable : RunResolution
+    }
+
+    /**
+     * 解析某会话当前可操作的 runId。
+     *
+     * 正常情况直接用本地映射，不发 IPC。但恢复流程可能只把会话标成「运行中」
+     * 而没留下映射（服务端快照与本地对不齐、attach 超时等），此时静默返回
+     * 会让停止 / 插话变成死按钮 —— 真机上复现过。本地查不到就向服务端要一次
+     * 全量快照：找到就补上映射继续；明确没有就清掉假运行态；
+     * **查询失败时什么都不动**，绝不把「问不到」当成「没在跑」。
+     */
+    private suspend fun resolveRunIdForConversation(conversationId: String?): RunResolution {
+        val id = conversationId ?: return RunResolution.NoActiveRun
+        runIdForConversation(id)?.let { return RunResolution.Active(it) }
+        val query = withContext(Dispatchers.IO) {
+            AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns()
+        }
+        return withContext(Dispatchers.Main) {
+            when (query) {
+                is AgentRuntimeClient.ActiveRunsQuery.Known -> {
+                    val match = query.runs.firstOrNull { it.conversationId == id }
+                    if (match == null) {
+                        clearStaleStreaming(id)
+                        RunResolution.NoActiveRun
+                    } else {
+                        runConversationIds[match.runId] = id
+                        RunResolution.Active(match.runId)
+                    }
+                }
+                AgentRuntimeClient.ActiveRunsQuery.Unavailable -> RunResolution.Unavailable
+            }
         }
     }
+
+    /**
+     * 清掉「界面说在跑、却没有任何本地 run 指向它」的假运行标记。
+     *
+     * 只归零运行态，不动消息与历史；真正的 run 结束仍由 applyRunResult 收尾。
+     */
+    private fun clearStaleStreaming(conversationId: String) {
+        if (runConversationIds.containsValue(conversationId)) return
+        val state = conversationsById[conversationId] ?: return
+        if (!state.isStreaming && !state.isPaused && !state.isCompacting) return
+        updateConversation(
+            conversationId,
+            state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+            updateTimestamp = false,
+        )
+        refreshConversationSummaries()
+    }
+
+    fun stopCurrentRun() = requestStop(selectedConversationId)
 
     /**
      * 从会话列表停止某个会话正在跑的 run。
@@ -2673,12 +2828,50 @@ internal class AgentAppState(
      * 后台 run 在 fix108 之后可以继续跑，但原来只能先切进那个会话再点停止；
      * 列表长按给出入口后，用户不必打断自己正在看的会话。
      */
-    fun stopConversationRun(conversationId: String) {
-        val runId = runIdForConversation(conversationId) ?: return
-        if (!stopRequestedRunIds.add(runId)) return
-        scope.launch(Dispatchers.IO) {
-            AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
+    fun stopConversationRun(conversationId: String) = requestStop(conversationId)
+
+    /**
+     * 停止某会话的 run，并且**每一种结局都要有反馈**。
+     *
+     * 关键是第三条：以前 `runIdForConversation(...) ?: return` 让「界面显示运行中、
+     * 但本地没有 runId」这种状态变成一个点了毫无反应的按钮。现在：
+     * 找到并发出停止 / 服务端确认已无任务并清掉假运行态 / 连不上就明说。
+     */
+    private fun requestStop(conversationId: String?) {
+        if (conversationId == null) return
+        scope.launch {
+            when (val resolution = resolveRunIdForConversation(conversationId)) {
+                is RunResolution.Active -> {
+                    if (claimStopRequest(resolution.runId)) {
+                        withContext(Dispatchers.IO) {
+                            AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(resolution.runId)
+                        }
+                    }
+                    // 停止只代表「请求已送达」。再问一次服务端：这条 run 是否还活着。
+                    // 已经不在了就立刻收掉本地运行态，不让用户对着一个死按钮干等。
+                    val stillActive = withContext(Dispatchers.IO) {
+                        val query = AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns()
+                        (query as? AgentRuntimeClient.ActiveRunsQuery.Known)
+                            ?.runs
+                            ?.any { it.runId == resolution.runId }
+                    }
+                    if (stillActive == false) {
+                        withContext(Dispatchers.Main) {
+                            setConversationStreaming(resolution.runId, false)
+                            runConversationIds.remove(resolution.runId)
+                            stopRequestedAt.remove(resolution.runId)
+                            refreshConversationSummaries()
+                        }
+                    }
+                }
+                RunResolution.NoActiveRun -> toastNotice(R.string.chat_run_already_finished)
+                RunResolution.Unavailable -> toastNotice(R.string.chat_stop_unavailable)
+            }
         }
+    }
+
+    private fun toastNotice(resId: Int) {
+        Toast.makeText(appContext, resId, Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -2690,24 +2883,38 @@ internal class AgentAppState(
      * 命令发不出去则回滚本地状态，不假装成功。
      */
     fun toggleCurrentRunPause() {
-        val runId = runIdForConversation(selectedConversationId) ?: return
-        val conversationId = conversationIdForRun(runId) ?: return
-        val target = !(conversationsById[conversationId]?.isPaused == true)
-        applyRunPaused(runId, target)
-        scope.launch(Dispatchers.IO) {
-            val client = AgentRuntimeClient(appContext, AndroidAgentLogger)
-            val sent = if (target) client.pauseRun(runId) else client.resumeRun(runId)
-            if (!sent) {
-                withContext(Dispatchers.Main) { applyRunPaused(runId, !target) }
+        val conversationId = selectedConversationId ?: return
+        scope.launch {
+            // 与停止共用解析：本地映射缺失时先向服务端对账，别把按钮做成死键。
+            val resolution = resolveRunIdForConversation(conversationId)
+            if (resolution !is RunResolution.Active) {
+                toastNotice(
+                    if (resolution is RunResolution.NoActiveRun) {
+                        R.string.chat_run_already_finished
+                    } else {
+                        R.string.chat_stop_unavailable
+                    },
+                )
                 return@launch
             }
-            val query = client.queryActiveRun(runId)
-            val confirmed = (query as? AgentRuntimeClient.ActiveRunQuery.Known)
-                ?.takeIf { it.runId == runId }
-                ?.paused
-            if (confirmed != null) {
-                withContext(Dispatchers.Main) { applyRunPaused(runId, confirmed) }
+            val runId = resolution.runId
+            val target = !(conversationsById[conversationId]?.isPaused == true)
+            applyRunPaused(runId, target)
+            val sent = withContext(Dispatchers.IO) {
+                val client = AgentRuntimeClient(appContext, AndroidAgentLogger)
+                if (target) client.pauseRun(runId) else client.resumeRun(runId)
             }
+            if (!sent) {
+                applyRunPaused(runId, !target)
+                return@launch
+            }
+            val confirmed = withContext(Dispatchers.IO) {
+                val query = AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRun(runId)
+                (query as? AgentRuntimeClient.ActiveRunQuery.Known)
+                    ?.takeIf { it.runId == runId }
+                    ?.paused
+            }
+            if (confirmed != null) applyRunPaused(runId, confirmed)
         }
     }
 
@@ -2921,7 +3128,7 @@ internal class AgentAppState(
         persistSupplement: Boolean = true,
     ) {
         if (isReplyRewrite(runId)) {
-            if (event is AgentEvent.RunStarted && runId in stopRequestedRunIds) scope.launch(Dispatchers.IO) {
+            if (event is AgentEvent.RunStarted && runId in stopRequestedAt) scope.launch(Dispatchers.IO) {
                 AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
             }
             return
@@ -2929,7 +3136,7 @@ internal class AgentAppState(
         when (event) {
             is AgentEvent.UserSupplementReceived ->
                 insertSupplementMessage(runId, event.index, event.text, persist = persistSupplement)
-            is AgentEvent.RunStarted -> if (runId in stopRequestedRunIds) scope.launch(Dispatchers.IO) {
+            is AgentEvent.RunStarted -> if (runId in stopRequestedAt) scope.launch(Dispatchers.IO) {
                 AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
             }
             // 流式增量只刷新消息，不推进会话时间戳，也不重算侧栏摘要；其余可见变化两者都更新。
@@ -2961,7 +3168,7 @@ internal class AgentAppState(
         }
         flushPendingRunDelta(runId)
         val rewriting = result.operation == AgentRuntimeWire.OP_REWRITE_REPLY || isReplyRewrite(runId)
-        stopRequestedRunIds.remove(runId)
+        stopRequestedAt.remove(runId)
         if (runId == currentRunId) {
             currentRunId = null
             currentRunJob = null
@@ -3452,6 +3659,8 @@ internal class AgentAppState(
         const val KEEP_SCREEN_RENEW_INTERVAL_MS = 30L * 60L * 1000L
         /** 用户消息落盘等待上限：超过就按保存失败报错，避免界面永远停在“停止”。 */
         const val PREPARE_TIMEOUT_MS = 8_000L
+        /** 同一个 run 的重复「停止」去抖窗口：只防连点，不做永久抑制。 */
+        const val STOP_RETRY_INTERVAL_MS = 3_000L
         // 内容搜索要扫全库正文（本机 1.9 万条 / 1400 万字符约百毫秒级）：等用户停手再查，不逐字扫。
         const val HISTORY_SEARCH_DEBOUNCE_MS = 300L
 
