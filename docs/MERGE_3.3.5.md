@@ -740,3 +740,72 @@ B 被停的那一刻，A 的 run **没有被打断**，反而继续出轮次，�
 机制上最可能的解释：root 会话挂在**被安装的那个进程**底下，`pm install` 在写入/提交阶段会先杀掉包进程，
 连带把发起会话的 binder 事务一起撕掉 —— 即「自己装自己」这条路本身不稳，走外部 adb / 界面安装才可靠。
 **这条没有做对照实验，属推断**，不要当结论用。
+
+### 20.5 release 包上复验三条语义（2026-10-29 14:06–14:11）—— 通过
+
+§19 验的是 debug 包（`2026102909`）。R8 会改类名、裁剪反射面，**同一份源码换了包也得重验**。
+本轮在 `2026102910`（release）上把三条语义各走一遍，手法沿用 §19.1：本会话的 run 当 A 臂，
+新建一个测试会话当 B 臂。
+
+| 臂 | 会话 | run |
+|---|---|---|
+| A（本会话） | `conv-1a25f9f1…` | `run-748d89e9…`（14:06 起，逐轮推进） |
+| B（测试会话，验完已删） | `conv-256138fe-3cc1-4221-8f28-6e342bcf49cc` | `run-e36002e0…` → `run-5d6482cb…` → `run-ac3ab6e4…` |
+
+**① 跨会话并发：成立。** 两条 run 在同一秒各自出轮次：
+
+```
+14:08:10.681 Agent run dispatch: id=run-e360
+14:08:10.745 agent_round_model run=run-e36002e0…  round=1
+14:08:11.040 agent_round_model run=run-748d89e9…  round=17   ← A 同时在跑
+14:09:03.421 agent_round_model run=run-ac3ab6e4…  round=1
+14:09:03.766 agent_round_model run=run-748d89e9…  round=25
+```
+
+**② 插话：打断旧 run，输入作为新 run 紧随其后 —— 这次打在「正在跑长工具」的时刻。**
+§19.5 记过一个缺口：上次插话打断的是「卡在抢锁」的 run，**长工具执行中被插话**没单独取证。
+这轮 B 的指令是「只跑 `sleep 45; echo B_SLEEP_DONE`」，插话点在终端已跑 18 秒时：
+
+```
+14:08:33.482 Agent runtime stopped
+14:08:33.489 Agent runtime stop skipped: active run still executing
+14:08:33.495 Agent run returned: id=run-e360 ok=false err=已停止
+14:08:33.555 Agent run prepare done: id=run-5d64
+14:08:33.573 Agent run dispatch: id=run-5d64
+14:08:33.745 agent_round_model run=run-748d89e9…  round=21   ← A 照旧
+14:08:37.492 Agent run returned: id=run-5d64 ok=true err=null
+```
+
+库里 B 会话按 `sort_index` 落盘（`conversation_messages`）：
+
+| sort | type | 内容 / 状态 |
+|---|---|---|
+| 0 | user | 任务指令（只跑 `sleep 45`） |
+| 1 | thinking | 模型决定调用终端 |
+| 2 | tool | `sleep 45; echo B_SLEEP_DONE` —— `tool_status=Failed`、`失败 · 退出码 137` |
+| 3 | system_notice | `stopped` |
+| 4 | user | `插话：立刻中断当前执行，只回复一行 INTERRUPT_OK。` |
+| 5 | assistant | `INTERRUPT_OK` |
+
+即：**被中断的工具确实被杀掉（137 = SIGKILL）并以失败落盘**；插话内容不是塞进旧 run，
+而是 `stopped` 之后的新 run。界面同步显示「已停止 / 调用 1 个工具 · 1 个失败 / INTERRUPT_OK」。
+
+**③ 停止只作用于当前会话。** 第二次给 B 发「只跑 `sleep 60`」，然后在 B 的界面点「停止」：
+
+```
+14:09:03.421 agent_round_model run=run-ac3ab6e4…  round=1
+14:09:11.383 agent_round_model run=run-748d89e9…  round=26
+14:09:17.947 Agent run returned: id=run-ac3a ok=false err=已停止
+14:09:18.230 agent_round_model run=run-748d89e9…  round=27   ← A 未被误杀
+```
+
+同一时刻 `runtime_inflight_runs` 只剩 A 一行（`handoff_payload=conv-1a25f9f1…`）：
+「停止」按的是**界面显示的那个会话**的 run，不是一刀切停掉所有 run。
+
+**收尾**：B 会话（`conv-256138fe…`）已按界面「长按 → 删除 → 确认」删除；删后复核
+20 个会话 / B 的消息 0 条 / 孤儿消息 0 / `user_version=25`；界面已切回本会话。
+本轮**无代码改动**，装机包仍是 §20.4 的 `2026102910`。
+
+**边界（别读过头）**：这里验的都是**跨会话**；同一会话内「新 run 顶替旧 run」那条取消路径
+仍只有代码与单测（同 §19.5）。另外 `停止` / `插话` 都以「当前显示会话」为目标 ——
+界面停在哪个会话，按钮就作用于谁。
