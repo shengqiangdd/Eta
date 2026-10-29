@@ -211,6 +211,12 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private val runOpenTargets = java.util.concurrent.ConcurrentHashMap<String, RunOpenTarget>()
     /** 供多会话状态同步判断这是不是 App 内发起的 run。 */
     private val runHandoffSources = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * runId → 所属会话。多会话并发是允许的，但**同一会话**不能同时跑两个 run：
+     * 两个 run 会互相覆盖消息、运行态和配置，界面表现就是「会话一直运行中，只能手动结束」。
+     */
+    private val runConversationIds = java.util.concurrent.ConcurrentHashMap<String, String>()
     private class RunSupplements {
         val lock = Any()
         val items = mutableListOf<AgentUiHandoffPayload.Supplement>()
@@ -387,7 +393,12 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
                 AgentRuntimeWire.MSG_ACK_RESULT -> {
                     val runId = AgentRuntimeWire.runIdFromBundle(msg.data ?: return)
-                    dispatchResultIo { AgentRuntimeResultStore.remove(this@AgentRuntimeService, runId) }
+                    // 客户端已经取走并确认了结果：checkpoint 再留着没有任何用途，
+                    // 只会让 runtime_inflight_runs 越积越多（真机上装一次包就多一条）。
+                    dispatchResultIo {
+                        AgentRuntimeResultStore.remove(this@AgentRuntimeService, runId)
+                        runCatching { AgentRunCheckpointStore.remove(this@AgentRuntimeService, runId) }
+                    }
                 }
 
                 AgentRuntimeWire.MSG_READ_CONTEXT_RESULT -> {
@@ -490,11 +501,52 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         }
     }
 
+    /**
+     * 同一会话只允许一个活跃 run。
+     *
+     * 为什么需要：客户端判断「是否运行中」用的是本地状态，一旦它与服务端脱节（进程被回收、
+     * 恢复没接上、或停止没收到终态），用户的下一条消息就会以「新消息」而不是「插话」发出去，
+     * 于是同一会话里同时跑起两个 run。两个 run 各自写消息、各自抢浮层，用户看到的就是
+     * 「会话永远不结束，得自己点停止」。
+     *
+     * 以新 run 为准：取消同会话里更早的活跃 run；不同会话的并发不受影响。
+     */
+    private fun supersedeSameConversationRuns(request: AgentRuntimeWire.RunRequest) {
+        val conversationId = conversationIdOf(request) ?: return
+        runConversationIds[request.runId] = conversationId
+        val active = sessions.values.associate { it.runId to runConversationIds[it.runId] }
+        val terminal = sessions.values
+            .filter { it.isTerminal }
+            .mapTo(mutableSetOf()) { it.runId }
+        AgentRunExclusivityPolicy.supersededRuns(
+            incomingRunId = request.runId,
+            incomingConversationId = conversationId,
+            active = active,
+            terminal = terminal,
+        ).forEach { staleRunId ->
+            AndroidAgentLogger.warn(
+                "Agent runtime same-conversation run superseded: old=${staleRunId.take(8)} " +
+                    "new=${request.runId.take(8)}"
+            )
+            cancelRun(staleRunId)
+        }
+    }
+
+    /** 这次 run 属于哪个会话（只认 App 内发起的 handoff）。 */
+    private fun conversationIdOf(request: AgentRuntimeWire.RunRequest): String? =
+        request.handoff
+            ?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+            ?.let { handoff ->
+                runCatching { AgentUiHandoffPayload.from(handoff.payload).conversationId }.getOrNull()
+            }
+            ?.takeIf { it.isNotBlank() }
+
     private fun startRun(
         request: AgentRuntimeWire.RunRequest,
         replyTo: Messenger? = null,
     ) {
-        // 多会话并发：不取消已有 run；新 run 只接管浮层（primary），旧 run 继续在后台跑。
+        supersedeSameConversationRuns(request)
+        // 多会话并发：不取消其它会话的已有 run；新 run 只接管浮层（primary）。
         // 新一轮运行会让旧结果卡片失去意义：用户可能没点关闭就继续输入，
         // 旧卡片若留在屏幕上，会在整个新任务期间继续盖住底部并显示过期状态。
         removeResultCard()
@@ -775,6 +827,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         mainHandler.post {
             val openTarget = runOpenTargets.remove(session.runId)
             runHandoffSources.remove(session.runId)
+            runConversationIds.remove(session.runId)
             if (sessions[session.runId] !== session) return@post
             sessions.remove(session.runId)
             // run 已进入终态：checkpoint 只服务于「进程被杀后恢复」，终态之后留着它

@@ -512,6 +512,7 @@ internal class AgentAppState(
 
     /** 用 checkpoint、终态 outbox 与 active session 一次性对账，避免用进程存活推断 run 状态。 */
     private suspend fun recoverRuntimeRuns() {
+        healStaleRunsAfterStartup()
         val client = AgentRuntimeClient(appContext, AndroidAgentLogger)
         val checkpoints = withContext(Dispatchers.IO) {
             AgentRunCheckpointStore.list(appContext)
@@ -2864,8 +2865,63 @@ internal class AgentAppState(
         }
     }
 
+    private var staleHealScheduled = false
+
     private fun toastNotice(resId: Int) {
         Toast.makeText(appContext, resId, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 启动后的兜底自愈：把「服务端已经不认、本地还挂着」的 run 收掉。
+     *
+     * 为什么需要它：进程刚起来时 runtime 服务往往还没绑定好，`queryActiveRuns()` 会
+     * 8 秒超时返回 Unavailable。一次性的对账在这种情况下只能放弃（把 Unavailable 当
+     * 「还在跑」更安全），于是界面就一直显示运行中，用户得自己点一次停止才能解锁。
+     * 真机上装包重启后就是这样。
+     *
+     * 这里每 5 秒重试、最多 30 秒：只要有一次拿到明确快照，就把不在快照里的 checkpoint
+     * 删掉并收掉对应会话的运行态。拿到明确快照前绝不动手——宁可多等，也不误杀真在跑的 run。
+     */
+    private fun healStaleRunsAfterStartup() {
+        if (staleHealScheduled) return
+        staleHealScheduled = true
+        scope.launch {
+            repeat(6) {
+                delay(5_000L)
+                val query = withContext(Dispatchers.IO) {
+                    AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns()
+                }
+                if (query !is AgentRuntimeClient.ActiveRunsQuery.Known) return@repeat
+                val alive = query.runs.mapTo(mutableSetOf()) { it.runId }
+                val checkpoints = withContext(Dispatchers.IO) { AgentRunCheckpointStore.list(appContext) }
+                val stale = checkpoints.filterNot { it.runId in alive }
+                if (stale.isEmpty()) return@launch
+                stale.forEach { checkpoint ->
+                    val conversationId = AgentUiHandoffPayload
+                        .from(checkpoint.handoff.payload)
+                        .conversationId
+                    AndroidAgentLogger.infoPersisted(
+                        "stale heal: 清理不在活跃快照里的 run=${checkpoint.runId} conversation=$conversationId"
+                    )
+                    withContext(Dispatchers.IO) { AgentRunCheckpointStore.remove(appContext, checkpoint.runId) }
+                    if (conversationId.isNotBlank()) {
+                        withContext(Dispatchers.Main) {
+                            runConversationIds.remove(checkpoint.runId)
+                            stopRequestedAt.remove(checkpoint.runId)
+                            val state = conversationsById[conversationId]
+                            if (state?.isStreaming == true) {
+                                updateConversation(
+                                    conversationId,
+                                    state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+                                )
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) { refreshConversationSummaries() }
+                return@launch
+            }
+        }
     }
 
     /**
