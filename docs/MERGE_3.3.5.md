@@ -368,3 +368,26 @@ CompositionLocal 只多一行 provide，其余调用方（如悬浮胶囊）默�
 **未验证**：文案要真的出现，得有两个会话同时抢屏幕。本轮的验证止步于「编译通过 + 单测编译通过」，
 **没有在真机看到「等待手机控制权」** —— 这一条必须靠装包后制造并发才能算数。
 另外悬浮胶囊（`AgentOverlayState`）对 `Waiting` 仍是忽略，只有会话内标题变了。
+
+### 16.1 追加：产物与打包完整性核对
+
+- debug：`Eta-v3.3.5-debug.apk`，32,843,646 B，md5 `0b34bd60dd0ba8a111153bff6ed91efc`，
+  `versionCode=2026102905` / `versionName=3.3.5-debug` →
+  `/sdcard/Download/Eta-v3.3.5-debug-2026102905.apk`
+- release：`Eta-v3.3.5.apk`，7,158,010 B，md5 `fbb1a7f8772125471b98536673c7fd5f`，
+  `versionCode=2026102906` / `versionName=3.3.5`，签名块存在 →
+  `/sdcard/Download/Eta-v3.3.5-release-2026102906.apk`
+
+**打包完整性核对**（因为新 debug 包 32.8MB 比更早的 35.7MB 小了 2.9MB，先怀疑少了东西）：
+
+| 对比项 | 旧 debug（d3fa2792 系列） | 新 debug |
+|---|---|---|
+| zip 条目数 | 364 | 364 |
+| 只在旧 / 只在新 | 0 / 0 | — |
+| 未压缩合计 | 91,651,486 | 91,710,066（+58,580，即本轮 dex 增量） |
+| `res/`、`assets/`、`lib/`、`kotlin/`、`org/` | — | 逐项差 **0** |
+| APK Sig Block 大小 | 4,088 | 4,088 |
+
+结论：**内容没有变少**，差异只在 `classes*.dex`（+58KB）与 `resources.arsc`（+688B）。
+但容器（文件）体积那 ~2.9MB 的差额**没有追到根因** —— 条目、未压缩字节、签名块都对得上，
+剩下的只能是逐条目对齐 / 打包填充差异；如实记录，不当成「已验证没问题」。
