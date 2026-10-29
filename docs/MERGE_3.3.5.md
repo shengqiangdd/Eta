@@ -174,3 +174,8 @@ transcript 写消息、抢浮层、互相覆盖运行态。触发条件是客户
 **未验证（如实记录）**：「两条同会话 run 真正相遇」的取消路径需要用户在运行中再发一条消息才会触发。
 代码已编译进包（dex 里核验到 `AgentRunExclusivityPolicy` 与 `same-conversation run superseded`），
 但**尚无真机日志证明它真的取消过一次旧 run**。
+
+**release 构建（10-29 09:52）**：`assembleRelease` 成功，产物 `Eta-v3.3.5.apk` **7,157,030 字节**
+（md5 `d8798bef755ae82d9a4a532b1c87ba89`，R8 + 资源压缩；debug 版 34,366,921）。dex 里核到
+`same-conversation run superseded` 字面量（类名被 R8 改写属正常）。**尚未在真机上启动过**：
+混淆后能否正常启动、Compose / 协程相关反射有没有被剪掉，都要安装后实测。
