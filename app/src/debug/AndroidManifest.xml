@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 构建（含 canary 变体）合并进来的清单。
+
+  里面只有一个「运行态注入」广播接收器，用来在真机上复现「客户端以为没在跑、服务端还在跑」
+  的失配，验证同会话 supersede 路径（见 docs/MERGE_3.3.5.md §21.3 / §22）。
+  release 构建不会合并这个文件，所以外部分发的包里既没有这个 receiver，也没有对应实现类。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name="io.github.mangi.eta.debug.DebugRunStateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.mangi.eta.DEBUG_FORGET_RUN_STATE" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

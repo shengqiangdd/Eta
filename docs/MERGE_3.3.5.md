@@ -868,3 +868,152 @@ Linux (aarch64)`。即 **412 通过、非环境性失败 0**，与 §4 的口径
 - 要出可对外分发的包，得在带 `ETA_RELEASE_STORE_FILE` / `ETA_RELEASE_STORE_PASSWORD` /
   `ETA_RELEASE_KEY_ALIAS` / `ETA_RELEASE_KEY_PASSWORD` 的环境里打；或授权生成一套本机 keystore
   （那会成为今后所有包的签名身份，丢了就再也覆盖不了 —— **需要你点头**）。
+
+## 22. 2026-10-29 第十五轮：加 debug-only 注入入口，真机验证「同会话 supersede」
+
+§21.3 的结论是这条取消路径**界面走不到**，只能靠「客户端以为没在跑、服务端还在跑」的失配触发。
+本轮把它补上了：加一个**只在 debug 构建存在**的注入入口，在真机上把失配造出来，跑通取消路径。
+
+### 22.1 入口长什么样（release 里不存在）
+
+| 文件 | 源集 | 作用 |
+|---|---|---|
+| `ui/app/AgentDebugInjections.kt` | main | 一个 `@Volatile var forgetLocalRunState: ((String?) -> Unit)?` 的空壳；release 里永远是 null |
+| `ui/app/AgentAppState.kt` | main | `init` 里 `if (BuildConfig.DEBUG)` 注册实现；新增 `debugForgetLocalRunState()`，只清**本地** `runConversationIds` / `currentRunId` / `stopRequestedAt` 并调 `clearStaleStreaming()`，**不停服务端 run** |
+| `debug/.../DebugRunStateReceiver.kt` | debug | 广播接收器，action `io.github.mangi.eta.DEBUG_FORGET_RUN_STATE`，extra `conversation_id` |
+| `debug/AndroidManifest.xml` | debug | 只声明那个 receiver，`exported=true`；release 不合并该清单 |
+
+关键点：`BuildConfig.DEBUG` 在 release 是编译期常量 `false`，注册分支会被 R8 裁掉；
+receiver 类在 `src/debug`，release 源集根本没有这个类。
+
+### 22.2 真机怎么造出「活跃的旧 run」
+
+用测试包 `io.github.mangi.eta.canary`（与主包同签，互不干扰）：
+
+- APK：`app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk`，32,033,081 字节，
+  md5 `112ac71bc2fccb026856f0b4ec954fe8`，`versionCode=2026102909` / `3.3.5-debug`；
+- 假服务商：`model_providers` 插一行 `debug-hang-provider`（`openai_compatible`，
+  `base_url=http://127.0.0.1:18080/v1`，`api_key=sk-debug`），配一个模型 `debug-hang`；
+- 挂起端点：`/workspace/mock-llm-hang.py`（Linux chroot 与 Android 共用 loopback），
+  收到请求就回 `200 + text/event-stream` 响应头，**永远不结束响应体**，只每 10 秒发一行 SSE 注释。
+  → run 长期停在「等首包」，既不烧 token，也不需要真实 key，时长可控；
+- 专用会话 `conv-debug-supersede-0001`，`model_id=debug-hang`，并设为当前会话。
+
+**为什么不用真实服务商**：真实模型的响应时长不可控（可能 2 秒就结束），
+而这条路径需要「旧 run 一定还活着」；挂起端点把窗口从「碰运气」变成「想多大有多大」
+（本轮两次实测窗口分别约 17 秒、29 秒，都来自手工操作的耗时）。
+
+### 22.3 两轮复现（第二轮留了持久日志）
+
+底部输入条的状态是第一个证据：注入前是「停止」，广播后变回「发送」——说明**本地**运行态确实丢了，
+而服务端那条 run 还在（挂起端点日志里连接没断）。
+
+第二轮（C/D）的完整链条，取自持久化的 logcat 抓取（`/data/local/tmp/eta/evidence/supersede-canary.txt`）：
+
+```
+14:41:19.572 I Eta: Agent run dispatch: id=run-254a foreground=true rootFallback=true
+14:41:19.720 I Eta: agent_round_model run=run-254ad226-… round=1 model=debug-hang provider=debug-hang-provider
+14:41:19.759 D Eta: Agent runtime event: provider_response_started round=1, http_code=200
+14:41:25.988 W Eta: Agent debug injection: forgot local run state conv=conv-debug-su dropped=run-254a leftRunning=true
+14:41:54.744 W Eta: Agent runtime same-conversation run superseded: old=run-254a new=run-d947
+14:41:54.746 I Eta: Agent run dispatch: id=run-d947 foreground=true rootFallback=true
+14:41:54.865 I Eta: Agent run returned: id=run-254a ok=false err=已停止
+14:42:09.022 I Eta: Agent run returned: id=run-d947 ok=false err=已停止      ← 这条是我们手动按的停止
+```
+
+第一轮（A/B）同样成立，注入与取消相隔 17 秒：
+
+```
+14:38:40.743 W Eta: Agent debug injection: forgot local run state conv=conv-debug-su dropped=run-ff98 leftRunning=true
+14:38:57.470 W Eta: Agent runtime same-conversation run superseded: old=run-ff98 new=run-5e81
+14:38:57.501 I Eta: Agent run returned: id=run-ff98 ok=false err=已停止
+14:38:57.543 I Eta: agent_round_model run=run-5e81… round=1 model=debug-hang provider=debug-hang-provider
+14:38:57.577 D Eta: Agent runtime event: provider_response_started round=1, http_code=200
+```
+
+两轮一致：**旧 run 被取消并回 `ok=false err=已停止`，新 run 正常下发、正常打到服务商**。
+
+### 22.4 顺带看清的一件事：被顶掉的 run 不会「回来污染界面」
+
+查会话落的账（测试库副本，只读）：
+
+```
+conversations.applied_runtime_run_ids_json = ["run-5e81e1ec-9b47-4234-a7a3-374e70aaf0e6"]
+runtime_results / runtime_archive_runs 里都没有 run-ff98 的终态
+```
+
+也就是：因为本地映射已经被清掉，旧 run 的终态结果**在客户端被丢弃**，
+不会在会话里冒出一条「已停止」气泡，也不会覆盖新一轮的流式内容。
+这解释了 §11 里那种失配发生时「用户看不到旧任务收尾」的观感 —— 它是设计使然，不是丢消息。
+
+### 22.5 环境里踩到的两个坑（下次直接照做）
+
+1. **Android 16 的 `/data/data` 在 root shell 里是 tmpfs**（只有几个系统目录），
+   看不到 `io.github.mangi.eta.canary`；真实目录要走 `/proc/1/root/data/data/<pkg>/…`，
+   或者在目标进程活着时走 `/proc/<pid>/root/…`。用 `/data/data` 判断「目录不存在」会得到假结论。
+2. **canary 的无障碍服务被系统绑定后，`am force-stop` 会立刻拉起来**，
+   而且应用自身会把服务重新写回 `enabled_accessibility_services`（临时改设置会被还原）。
+   所以「停掉它再改数据库」这条路不可靠；能用应用自己的界面改状态就别动数据库文件。
+
+### 22.6 重装后再验一遍，并确认 release 包里真的没有它（2026-10-29 14:46–14:50）
+
+**为什么再验**：§22.3 那次是「装完就验」，中间没经过一次重装；而这条路径的入口是 debug 源集 + `BuildConfig.DEBUG`，
+最怕的正是「本地构建里有、装到机器上的包里没有」。所以按「构建 → 装 → 验」重新走了一遍。
+
+1. 重装：`pm install -r -d …/Eta-v3.3.5-debug.apk` → `Success`，`lastUpdateTime` 由 14:31:24 变为 14:46:13，
+   包名与版本不变（`2026102909` / `3.3.5-debug`）；APK md5 与设备侧副本一致（`112ac71b…`）。
+
+2. 复验（同一条链路，新的 run id；时间取 logcat 的本地时区）：
+
+```
+14:48:23.875  I Eta: Agent run dispatch: id=run-8330 foreground=true rootFallback=true
+14:48:24.025  I Eta: agent_round_model run=run-833066… round=1 model=debug-hang provider=debug-hang-provider
+14:48:24.071  D Eta: Agent runtime event: provider_response_started round=1, http_code=200   ← 挂起
+14:48:47.137  W Eta: Agent debug injection: forgot local run state … dropped=run-8330 leftRunning=true
+14:49:02.827  W Eta: Agent runtime same-conversation run superseded: old=run-8330 new=run-359b
+14:49:02.829  W Eta: Agent runtime stopped
+14:49:02.829  I Eta: Agent run dispatch: id=run-359b foreground=true rootFallback=true
+14:49:02.850  I Eta: Agent run returned: id=run-8330 ok=false err=已停止
+14:49:02.931  D Eta: Agent runtime event: provider_response_started round=1, http_code=200
+```
+
+界面侧同样成立：「暂停」「停止」两个动作在注入前存在、注入后消失（回「发送」），
+再发一条后轮次 5/5 → 6/6。证据落盘 `/data/local/tmp/eta/evidence/supersede-canary-v2.txt`。
+
+3. 落账（`canary-after2` 副本，只读）：
+
+```
+conversations.applied_runtime_run_ids_json =
+  ["run-5e81e1ec-…","run-d947ccd3-…","run-359bd472-…"]     ← 新 run 在；被顶掉的 run-8330 不在
+runtime_results 全表 0 行                                  ← 含被顶掉的 run-8330，也含手动停掉的 run-359b
+runtime_inflight_runs 对这两个 run 0 行
+```
+
+比 §22.4 多看清一点：**手动停止的 run 同样不落 `runtime_results`**。
+会话里那条「已停止」是消息内容，不是 run 终态记录 —— 排查时别把 `runtime_results` 当「所有 run 的账本」。
+
+4. release 包对照取证（`Eta-v3.3.5.apk`，7,161,982 字节；环境无 aapt，用 python3 读 zip + dex 字节串 + 二进制清单解 utf-16）：
+
+| 检查项 | debug 包 | release 包 |
+|---|---|---|
+| dex 文件数 | 21 | 2 |
+| dex 内出现 `DebugRunStateReceiver` | `classes7.dex` 命中 | **无** |
+| dex 内出现 `DEBUG_FORGET_RUN_STATE` | 命中 | **无** |
+| 二进制清单含 receiver 名 / action | 是 | **否** |
+
+结论：注入确实只在 debug 构建里；release 包里连字符串都不存在，
+不是「R8 改了名但仍可达」这种半清理状态。
+
+### 22.7 收尾：本轮真机现场全部复位
+
+- 停掉挂起端点；canary 的假服务商 / 假模型 / 测试会话随包一起消失；
+- `pm uninstall io.github.mangi.eta.canary` → `Success`；`/proc/1/root/data/data/io.github.mangi.eta.canary` 已不存在；
+- 系统自动把 `enabled_accessibility_services` 收回为只剩主包
+  （`io.github.mangi.eta/.agent.accessibility.AgentAccessibilityService`），`accessibility_enabled=1`；
+- 前台回到 `io.github.mangi.eta/.ui.MainActivity`；
+- 删掉历史测试快照 `canary-db*` / `canary-clean` / `canary-after2` / `canarydb` 与 13 个一次性 APK，
+  共约 2.1 GB（`/data/local/tmp` 可用：199.3 GB → 201.4 GB）。
+
+**顺带一个坑**：`am start -W` 在冷启动 canary 时卡到 90 秒超时（无任何输出）；
+换不带 `-W` 的 `am start` 立刻返回。判断是否真在前台，用
+`dumpsys activity activities | grep topResumedActivity` 更实在。

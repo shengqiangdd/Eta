@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
+import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.AgentFileReferenceGateway
@@ -275,6 +276,13 @@ internal class AgentAppState(
         private set
 
     init {
+        if (BuildConfig.DEBUG) {
+            // 真机验证用的注入点：只清本地运行态、不停服务端 run（复现失配，见 docs §21.3）。
+            // release 构建里 BuildConfig.DEBUG 是编译期 false，这段会被裁掉。
+            AgentDebugInjections.forgetLocalRunState = { conversationId ->
+                debugForgetLocalRunState(conversationId)
+            }
+        }
         // 冷启动就先把“开着但当前没有任务”的真实状态发布给设置页：
         // 以前只有“运行状态变化”才会发布，冷启动且没跑过任务时设置页会错报“已关闭”。
         applyKeepScreenLock()
@@ -2824,6 +2832,29 @@ internal class AgentAppState(
             updateTimestamp = false,
         )
         refreshConversationSummaries()
+    }
+
+    /**
+     * 调试专用：只把**本地**运行态弄丢，服务端那条 run 照常跑。
+     *
+     * 复现 §11 那种「客户端以为没在跑、服务端还在跑」的失配 —— 只有失配时才会走到
+     * `AgentRuntimeService.supersedeSameConversationRuns`（同会话新 run 顶掉旧 run）。
+     * 正常路径不可达：release 构建里 [AgentDebugInjections] 永远不会被赋值。
+     *
+     * 只归零运行态，不动消息与历史；服务端 run 的终态回来时会按普通失败收尾。
+     */
+    fun debugForgetLocalRunState(conversationId: String? = null) {
+        if (!BuildConfig.DEBUG) return
+        val target = conversationId ?: selectedConversationId ?: return
+        val dropped = runConversationIds.filterValues { it == target }.keys.toList()
+        dropped.forEach { runConversationIds.remove(it) }
+        if (currentRunId in dropped) currentRunId = null
+        if (dropped.isNotEmpty()) stopRequestedAt.keys.removeAll(dropped.toSet())
+        clearStaleStreaming(target)
+        AndroidAgentLogger.warn(
+            "Agent debug injection: forgot local run state conv=${target.take(13)} " +
+                "dropped=${dropped.firstOrNull()?.take(8) ?: "-"} leftRunning=true"
+        )
     }
 
     fun stopCurrentRun() = requestStop(selectedConversationId)
