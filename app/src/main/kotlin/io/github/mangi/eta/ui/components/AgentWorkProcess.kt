@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,6 +83,14 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 把连续的思考与工具调用收束为一条可展开的工作过程：折叠时只是一行摘要，展开后是
  * 左侧带连线的时间线。工作过程与正文同样不加卡片外壳，让最终回答保持视觉主角。
  */
+/**
+ * 当前会话的 run 是否在排队等手机控制权（另一个会话正占着屏幕）。
+ *
+ * 用 CompositionLocal 而不是层层加参数：这条信息属于「这一刻谁在操作手机」，
+ * 与消息投影无关，穿过 ChatBody → Scaffold → 时间线四层只会污染签名。
+ */
+internal val LocalGuiControlWaiting = staticCompositionLocalOf { false }
+
 @Composable
 internal fun AgentWorkProcess(
     id: String,
@@ -195,10 +204,13 @@ private fun AgentWorkHeader(
         message is ToolActivityMessageUi && message.status == ToolActivityStatusUi.Running
     } as? ToolActivityMessageUi
     val summary = remember(messages) { messages.workSummary() }
+    val waitingForControl = LocalGuiControlWaiting.current
     // 有执行中进度时优先显示它：argumentsSummary 是调用前的静态描述，
     // 而用户盯着折叠标题时最想知道的是"它这一秒在做什么"（ACP 委派尤其如此）。
     val runningDetail = runningTool?.progressLine?.takeIf { it.isNotBlank() }
     val baseText = when {
+        // 排队等屏幕时，「正在分析任务」是假话 —— 它根本没在分析，是在等。
+        waitingForControl -> stringResource(R.string.run_waiting_for_gui)
         runningTool != null -> pluralStringResource(
             R.plurals.work_processing_step,
             summary.toolCount,
@@ -221,6 +233,7 @@ private fun AgentWorkHeader(
         Box(modifier = Modifier.width(WorkGutterWidth), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = when {
+                    waitingForControl -> Icons.Rounded.Lightbulb
                     runningTool != null -> iconForTool(runningTool.toolName)
                     working -> Icons.Rounded.Lightbulb
                     else -> Icons.Rounded.Checklist
@@ -237,7 +250,7 @@ private fun AgentWorkHeader(
         Spacer(modifier = Modifier.width(WorkGutterGap))
         ShimmerText(
             text = text,
-            active = working,
+            active = working || waitingForControl,
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             modifier = Modifier.weight(1f, fill = false),

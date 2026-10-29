@@ -51,6 +51,8 @@ internal data class AgentChatUiState(
     /** run 已被用户暂停（当前步骤跑完后在检查点挂起）；仅运行中时才有意义。 */
     val isPaused: Boolean = false,
     val isCompacting: Boolean = false,
+    /** 该 run 正在排队等手机控制权（另一个会话正操作屏幕）；只在运行中有意义。 */
+    val isGuiWaiting: Boolean = false,
     val thinkingEnabled: Boolean,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.fromLegacy(thinkingEnabled),
     val availableReasoningEfforts: List<ReasoningEffort> = emptyList(),

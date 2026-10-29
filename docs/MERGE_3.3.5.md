@@ -335,3 +335,36 @@ run 误判成中断，也没把 `isStreaming` 清掉。
   未持锁的纯文本 run 仍走原来的 `controller.pause()`，行为未变。
 
 **结论**：互斥的接线正确、单会话无回归；跨会话排队与「等待可见性」两项待做，后者建议下一轮优先。
+
+## 16. 2026-10-29 第九轮：让「排队等手机控制权」看得见
+
+上一节查出的缺口（`Waiting` 在界面上完全没有出口）这一轮补上了。
+
+**改动（5 个文件，+37 / −6）**：
+
+| 文件 | 改动 |
+|---|---|
+| `AgentChatUiState` | 新增 `isGuiWaiting`（默认 false） |
+| `AgentAppState` | `applyRunEvent` 加 `AgentEvent.GuiControlChanged` 分支 → `updateGuiWaiting()`；run 结束的三处复位都带上它；`clearStaleStreaming` 的提前返回条件加上它（自愈，防止 run 结束后残留「等待中」） |
+| `AgentWorkProcess` | 新增 `LocalGuiControlWaiting`（`staticCompositionLocalOf`）；标题在排队时显示 `run_waiting_for_gui`「等待手机控制权」，图标换成灯泡，微光持续 |
+| `AgentHomeScreen` | 在**已有的** `CompositionLocalProvider` 里多 provide 一行 |
+| `app/build.gradle.kts` | `etaVersionCode` 2026102904 → 2026102905 |
+
+**为什么用 CompositionLocal 而不是加参数**：`AgentChatBody → AgentChatScaffold → 时间线 → AgentWorkProcess`
+是四层调用链，为一个只影响标题文案的布尔值改动四个签名，收益不足以抵消回归面。
+CompositionLocal 只多一行 provide，其余调用方（如悬浮胶囊）默认 false，行为不变。
+
+**为什么复位必须显式做**：`isGuiWaiting` 与 `isStreaming` 生命周期不同 —— 它可能在 run 已结束时
+还是 true（Waiting 事件到达后、终态事件到达前）。只清 `isStreaming` 会让标题永远写着
+「等待手机控制权」。所以三处终态复位都带上它，并让 `clearStaleStreaming` 把它也纳入判定条件。
+
+**编译**：`:app:assembleDebug` **BUILD SUCCESSFUL**；`:app:compileDebugUnitTestKotlin` 一并通过。
+注意 `AgentAppState` 编译时会报 2 条 **既有** 警告（`Condition is always 'false'`，行 1343 / 2271，
+属于 `shouldRelease*` 的智能转换提示），与本轮改动无关（本轮未触碰这两处）。
+
+**产物**：`Eta-v3.3.5-debug.apk`，32,843,646 B，md5 `0b34bd60dd0ba8a111153bff6ed91efc`，
+`versionCode=2026102905` / `versionName=3.3.5-debug`。
+
+**未验证**：文案要真的出现，得有两个会话同时抢屏幕。本轮的验证止步于「编译通过 + 单测编译通过」，
+**没有在真机看到「等待手机控制权」** —— 这一条必须靠装包后制造并发才能算数。
+另外悬浮胶囊（`AgentOverlayState`）对 `Waiting` 仍是忽略，只有会话内标题变了。

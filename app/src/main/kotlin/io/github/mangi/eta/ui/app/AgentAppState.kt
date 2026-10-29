@@ -42,6 +42,7 @@ import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.runtime.AppExitCause
 import io.github.mangi.eta.agent.runtime.AppExitReporter
 import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
+import io.github.mangi.eta.agent.runtime.GuiControlStatus
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
@@ -896,7 +897,7 @@ internal class AgentAppState(
             val state = conversationsById[id] ?: return@forEach
             updateConversation(
                 id,
-                state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+                state.copy(isStreaming = false, isPaused = false, isCompacting = false, isGuiWaiting = false),
                 updateTimestamp = false,
             )
         }
@@ -2816,10 +2817,10 @@ internal class AgentAppState(
     private fun clearStaleStreaming(conversationId: String) {
         if (runConversationIds.containsValue(conversationId)) return
         val state = conversationsById[conversationId] ?: return
-        if (!state.isStreaming && !state.isPaused && !state.isCompacting) return
+        if (!state.isStreaming && !state.isPaused && !state.isCompacting && !state.isGuiWaiting) return
         updateConversation(
             conversationId,
-            state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+            state.copy(isStreaming = false, isPaused = false, isCompacting = false, isGuiWaiting = false),
             updateTimestamp = false,
         )
         refreshConversationSummaries()
@@ -2912,7 +2913,7 @@ internal class AgentAppState(
                             if (state?.isStreaming == true) {
                                 updateConversation(
                                     conversationId,
-                                    state.copy(isStreaming = false, isPaused = false, isCompacting = false),
+                                    state.copy(isStreaming = false, isPaused = false, isCompacting = false, isGuiWaiting = false),
                                 )
                             }
                         }
@@ -3225,6 +3226,7 @@ internal class AgentAppState(
         when (event) {
             is AgentEvent.UserSupplementReceived ->
                 insertSupplementMessage(runId, event.index, event.text, persist = persistSupplement)
+            is AgentEvent.GuiControlChanged -> updateGuiWaiting(runId, event.status)
             is AgentEvent.RunStarted -> if (runId in stopRequestedAt) scope.launch(Dispatchers.IO) {
                 AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
             }
@@ -3236,6 +3238,18 @@ internal class AgentAppState(
                 }
             else -> updateRunTrace(runId) { messages -> runMessageProjector.applyEvent(runId, event, messages) }
         }
+    }
+
+    /**
+     * 手机控制权在别的 run 手里时，本会话是「排队」不是「卡住」。
+     * 只改内存态且不推进时间戳：否则排队会把会话顶到侧栏第一条。
+     */
+    private fun updateGuiWaiting(runId: String, status: GuiControlStatus) {
+        val conversationId = conversationIdForRun(runId) ?: return
+        val state = conversationsById[conversationId] ?: return
+        val waiting = status == GuiControlStatus.Waiting
+        if (state.isGuiWaiting == waiting) return
+        updateConversation(conversationId, state.copy(isGuiWaiting = waiting), updateTimestamp = false)
     }
 
     private fun applyRunResult(

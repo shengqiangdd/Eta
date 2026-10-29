@@ -9,6 +9,7 @@ import io.github.mangi.eta.data.model.ChatViewMode
 import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.AgentConversationLoadState
 import io.github.mangi.eta.ui.components.LocalAgentBrowserSession
+import io.github.mangi.eta.ui.components.LocalGuiControlWaiting
 import io.github.mangi.eta.ui.components.LocalRoleplayChat
 import io.github.mangi.eta.ui.components.rememberAgentGoal
 import io.github.mangi.eta.ui.components.rememberTodoPlan
@@ -70,6 +71,7 @@ internal fun AgentHomeScreen(
         CompositionLocalProvider(
             LocalRoleplayChat provides state.roleplayChatUi(),
             LocalAgentBrowserSession provides browser,
+            LocalGuiControlWaiting provides state.isGuiWaiting,
             LocalAgentDraftSink provides { text -> onAction(AgentHomeAction.DraftChanged(text)) },
         ) {
         AgentChatBody(
