@@ -678,3 +678,43 @@ B 被停的那一刻，A 的 run **没有被打断**，反而继续出轮次，�
 - **风险记一笔**：`停止`/`插话发送` 都是「按当前显示会话」生效。界面停在哪个会话，按钮就作用于谁 ——
   排查现场时若不小心，会把正在干活的会话（包括 agent 自己的 run）停掉。
 - 本轮无代码改动，故无新产物、无新单测；装机版本仍是 §18.6 的 `2026102909`（debug）/`2026102910`（release）。
+
+## 20. 2026-10-29 收尾：main 合入、正式包、以及清理
+
+### 20.1 main 已合入
+
+`git checkout main && git merge --ff-only trial-merge` —— **快进合并**，无冲突、无额外合并提交，
+`main` 直接指到 `7260db5`。备份分支 `backup/pre-merge-3.3.5`（合并前 3.2.x 基线）保留。
+合并前 `origin/main...HEAD` 是 `0 / 76`，即上游一条都没落下。
+
+### 20.2 正式包（R8）
+
+- `:app:assembleRelease` **BUILD SUCCESSFUL**（51 个 task，3 个执行、其余 up-to-date —— 源码没变，
+  产物可复现）。
+- `aapt2 dump badging` 读出：`package=io.github.mangi.eta`、`versionCode=2026102910`、
+  `versionName=3.3.5`、`minSdk=33`、`targetSdk=37`。
+- 文件 `\/sdcard\/Download\/Eta-v3.3.5-release-2026102910.apk`，
+  **7,161,966 字节**，md5 `ae684f4c9a59f89f057cee30b444d0dc`。
+- **与上一份同名包的差别只有内嵌 VCS 元信息**：229 个非 `META-INF` 条目的 CRC 全部一致
+  （逐条比对），说明代码相同，只是 `META-INF\/version-control-info.textproto` 里的提交号变了 ——
+  这就是 md5 从 `2948ddf6…` 变成 `ae684f4c…` 的全部原因。
+- **签名必须说清**：本机没有 `ETA_RELEASE_STORE_FILE` 等环境变量，`hasReleaseSigning=false`，
+  于是 release 构建按上游代码里的回退**用 debug 密钥签名**（`app\/build.gradle.kts` 的注释写明这是为
+  本地真机验 R8 包）。所以这个包能覆盖当前的 debug 安装，但**不是发行密钥签的**；
+  要出对外分发的包，得在带 `ETA_RELEASE_*` 的环境里重打。
+- **未装机验证（如实）**：R8 包的启动验证是在 `2026102902` 上做的（§13）。`2026102910` 只是同源重打包
+  （仅 VCS 元信息不同），但「装上去能不能起」没有实测 —— 装包会重启 Eta、打断正在进行的会话，
+  留给用户自己点。在装机确认前，不要把这一版当成「已验证可发布」。
+
+### 20.3 清理
+
+- `\/sdcard\/Download` 删掉 6 个已作废的 Eta 3.3.5 包，约 169MB：
+  `Eta-v3.3.5-d3fa2792.apk`、`Eta-v3.3.5-debug-ea39eb5c.apk`、`Eta-v3.3.5-debug-f1af1145.apk`、
+  `Eta-v3.3.5-debug-2026102905.apk`、`Eta-v3.3.5-release-2026102906.apk`、
+  `eta-fallback-debug-2026102903.apk`（版号最低，已无法覆盖任何现存包，作为回退保险已失效）。
+- 保留：`Eta-v3.3.5-debug-2026102909.apk`（当前装机版本）、`Eta-v3.3.5-release-2026102910.apk`（新正式包）、
+  `eta-3.3.5-release.apk`（上游原件）、3.3.1 的两个包；`fix139.apk`、`opifexa-release.apk` 属别的项目，未动。
+- 临时 DB 快照 33 个、共 8.1G 已在 §19 删除（`\/data\/local\/tmp\/eta` 33.3G → 25.1G，`.tooling` 与
+  `dsh-work` 未动）。
+- **未完成**：两个测试会话（`conv-2a3380a2…`、`conv-9a0ab8fb…`）还没删。删会话目前只有界面长按一条路
+  （直接改库有并发写风险），当时前台被别的应用占用，没有去抢屏。
