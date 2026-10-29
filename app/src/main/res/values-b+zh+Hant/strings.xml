@@ -233,6 +233,7 @@
   <string name="time_yesterday">昨日</string>
   <string name="time_recent">最近</string>
   <string name="overlay_reasoning">思考中</string>
+  <string name="overlay_waiting_gui">等待控制權</string>
   <string name="overlay_supplement_received">收到補充，繼續執行</string>
   <string name="overlay_hosted_tool_running">%1$s中</string>
   <string name="overlay_result_ready">結果已就緒</string>

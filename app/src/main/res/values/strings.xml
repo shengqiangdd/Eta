@@ -258,6 +258,7 @@
   <string name="conversation_preview_tool_call">Tool call: %1$s</string>
   <string name="conversation_preview_empty">Ask anything. Eta can operate your device when needed</string>
   <string name="overlay_reasoning">Reasoning</string>
+  <string name="overlay_waiting_gui">Waiting</string>
   <string name="overlay_supplement_received">Additional input received. Continuing</string>
   <string name="overlay_hosted_tool_running">Running %1$s</string>
   <string name="overlay_result_ready">Result ready</string>

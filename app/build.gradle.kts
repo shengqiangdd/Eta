@@ -30,7 +30,7 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
 // versionCode 基数：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
-val etaVersionCode = 2026102905
+val etaVersionCode = 2026102909
 
 android {
     namespace = "io.github.mangi.eta"

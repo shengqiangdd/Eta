@@ -215,6 +215,8 @@ internal class AgentExecutionService : Service() {
         AgentOverlayStatus.Paused -> getString(R.string.overlay_paused)
         AgentOverlayStatus.Stopping -> getString(R.string.overlay_stopping)
         AgentOverlayStatus.GeneratingAnswer -> getString(R.string.execution_chip_answering)
+        // 排队等屏幕时状态栏还写「思考中」就是在说假话。用短文案，7 字符以内才不被截断。
+        AgentOverlayStatus.WaitingForGui -> getString(R.string.overlay_waiting_gui)
         else -> getString(R.string.overlay_reasoning)
     }
 

@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.overlay
 
 import io.github.mangi.eta.agent.runtime.AgentEvent
+import io.github.mangi.eta.agent.runtime.GuiControlStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -29,6 +30,26 @@ class AgentOverlayStateTest {
         assertEquals(AgentOverlayStatus.RunningTool("tap"), state.status)
 
         state = state.applyEvent(AgentEvent.ToolFinished(1, "call-1", "tap", "ok", 0, 0))
+        assertEquals(AgentOverlayStatus.Reasoning, state.status)
+    }
+
+    @Test
+    fun waitingForGuiShowsInCapsuleAndClearsWhenAcquired() {
+        var state = AgentOverlayState.Initial.applyEvent(AgentEvent.RunStarted(0, 0, 10, false))
+        state = state.applyEvent(AgentEvent.GuiControlChanged(GuiControlStatus.Waiting))
+        assertEquals(AgentOverlayStatus.WaitingForGui, state.status)
+        assertEquals(AgentOverlayPhase.RUNNING, state.phase)
+        state = state.applyEvent(AgentEvent.GuiControlChanged(GuiControlStatus.Acquired))
+        assertEquals(AgentOverlayStatus.Continuing, state.status)
+    }
+
+    /** 等待屏幕期间引擎又推进一轮，说明它并不在等锁 —— 等待文案必须让位，不能僵在那儿。 */
+    @Test
+    fun waitingForGuiClearsWhenEngineMovesOn() {
+        var state = AgentOverlayState.Initial.applyEvent(AgentEvent.RunStarted(0, 0, 10, false))
+        state = state.applyEvent(AgentEvent.GuiControlChanged(GuiControlStatus.Waiting))
+        assertEquals(AgentOverlayStatus.WaitingForGui, state.status)
+        state = state.applyEvent(AgentEvent.RoundStarted(2, 2))
         assertEquals(AgentOverlayStatus.Reasoning, state.status)
     }
 

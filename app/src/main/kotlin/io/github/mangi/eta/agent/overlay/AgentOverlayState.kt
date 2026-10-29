@@ -48,7 +48,10 @@ private fun AgentOverlayState.projectEvent(event: AgentEvent): AgentOverlayState
     is AgentEvent.GuiControlChanged -> when (event.status) {
         GuiControlStatus.UserPaused -> copy(phase = AgentOverlayPhase.PAUSED, status = AgentOverlayStatus.Paused)
         GuiControlStatus.Acquired -> copy(phase = AgentOverlayPhase.RUNNING, status = AgentOverlayStatus.Continuing)
-        GuiControlStatus.Waiting, GuiControlStatus.Released -> this
+        // 排队等屏幕时必须说清楚是「在等」，否则胶囊一直写「思考中」就是在说假话。
+        // phase 保持 RUNNING：run 没暂停，只是没拿到屏幕。
+        GuiControlStatus.Waiting -> copy(status = AgentOverlayStatus.WaitingForGui)
+        GuiControlStatus.Released -> this
     }
     is AgentEvent.RunStarted -> copy(phase = AgentOverlayPhase.RUNNING, status = AgentOverlayStatus.Reasoning, detailText = "")
     is AgentEvent.RoundStarted -> copy(round = event.round).thinkingUnlessWorking()

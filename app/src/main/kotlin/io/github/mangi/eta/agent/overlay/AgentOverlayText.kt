@@ -18,6 +18,8 @@ internal sealed interface AgentOverlayStatus {
     data object Stopping : AgentOverlayStatus
     data object Paused : AgentOverlayStatus
     data object Continuing : AgentOverlayStatus
+    /** 手机控制权在别的 run 手里，本 run 正在排队。 */
+    data object WaitingForGui : AgentOverlayStatus
     data object Finishing : AgentOverlayStatus
     data object ContinuationUnavailable : AgentOverlayStatus
     data object Stopped : AgentOverlayStatus
@@ -39,6 +41,7 @@ internal fun AgentOverlayStatus.localizedText(resources: Resources): String = wh
     AgentOverlayStatus.Stopping -> resources.getString(R.string.overlay_stopping)
     AgentOverlayStatus.Paused -> resources.getString(R.string.overlay_paused)
     AgentOverlayStatus.Continuing -> resources.getString(R.string.overlay_continuing)
+    AgentOverlayStatus.WaitingForGui -> resources.getString(R.string.run_waiting_for_gui)
     AgentOverlayStatus.Finishing -> resources.getString(R.string.overlay_finishing)
     AgentOverlayStatus.ContinuationUnavailable -> resources.getString(R.string.overlay_continuation_unavailable)
     AgentOverlayStatus.Stopped -> resources.getString(R.string.overlay_stopped)
