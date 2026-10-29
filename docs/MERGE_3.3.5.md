@@ -809,3 +809,62 @@ B 被停的那一刻，A 的 run **没有被打断**，反而继续出轮次，�
 **边界（别读过头）**：这里验的都是**跨会话**；同一会话内「新 run 顶替旧 run」那条取消路径
 仍只有代码与单测（同 §19.5）。另外 `停止` / `插话` 都以「当前显示会话」为目标 ——
 界面停在哪个会话，按钮就作用于谁。
+
+## 21. 2026-10-29 第十四轮：补验「经验教训」注入，以及一条查清后发现「界面根本走不到」的路径
+
+### 21.1 §9 第 3 项（经验教训注入）—— 通过（release 包）
+
+证据是**这次运行自己的系统提示**（跑在 `2026102910` 上）：
+
+- `MEMORY.md`（`/data/data/io.github.mangi.eta/files/memory/MEMORY.md`，452,729 字节）里
+  `# 经验教训` 在第 **4436** 行，共 **49 条**；
+- 本轮提示里确实有 `<memory_learnings>` 块，含 `terminal · EXIT_1 · ×26`、
+  `tap_element · STALE_CONTENT · ×9` 这类条目，末尾还带
+  `[还有 5 条未展示，需要时调用 memory_get(section="经验教训")]` —— 与
+  `AgentPromptBuilder.kt:283` 的写法逐字一致。
+
+两条一起看才能排除「只是把文件读进来」：条目是**按预算裁剪过**的（49 条只展示 44 条 + 隐藏计数），
+说明走的是注入逻辑，不是原样拼接。
+
+### 21.2 定向单测（`agent.runtime` + `ui.app`）
+
+```
+./gradlew :app:testDebugUnitTest --tests "io.github.mangi.eta.agent.runtime.*" \
+  --tests "io.github.mangi.eta.ui.app.*" --offline
+538 tests completed, 126 failed        （BUILD FAILED）
+```
+
+把 126 条失败按 message 聚合，只有一条：`The Robolectric native runtime is not supported on
+Linux (aarch64)`。即 **412 通过、非环境性失败 0**，与 §4 的口径一致。
+
+### 21.3 「同一会话新 run 顶替旧 run」：界面走不到，故无法真机取证
+
+`AgentRunExclusivityPolicy.supersededRuns` 只在「新 run 与另一条**活跃且同会话**的 run」并存时取消旧的，
+执行点在 `AgentRuntimeService.startRun`。查了三条界面路径，都被客户端挡住了：
+
+| 想造并发的动作 | 挡在哪 |
+|---|---|
+| 运行中「编辑消息并重发」 | `beginMessageEdit` 开头 `if (homeState.isStreaming \|\| messageEdit != null) return` —— 运行中根本不进编辑 |
+| 运行中「发送」 | 走队列 / steering（`AgentMessageQueueReducer`），不会立即下发第二条 run |
+| 运行中「插话」 | 先停旧 run（`err=已停止`）再发新 run，旧 run 已是终态 → 被 `terminal` 集合排除 |
+
+也就是说：**只有「客户端以为没在跑、服务端还在跑」的运行态失配**才走得到取消路径（§11 里真实发生过），
+而失配的成因是进程被回收 / 停止没收到终态。本轮没有找到**可控、又不连带杀掉 runtime** 的注入点：
+`am force-stop`、`pm clear`、覆盖安装都会把 runtime 一起带走，反而验不到。
+
+**结论**：这条路径仍只有代码 + `AgentRunExclusivityPolicyTest` 的 6 个用例
+（不同会话不动 / 终态不动 / 空会话不误杀 / 不含自己），**没有真机证据**，按惯例记未验证。
+要真验，最省事的做法是加一个 **debug-only 注入入口**（喂一条「客户端已空闲」的假状态），
+那需要改代码 + 重装；本轮没做（装包会打断当前会话）。
+
+### 21.4 仍未验证（承接 §9）
+
+- 重启后「不重复补发 / 旧轨迹回原位 / 存量 `interrupted-` 清理」—— 需要一次真机重启，会打断当前会话；
+- 多会话并发时的**圆点 / 暂停态**同步 —— §20.5 只验了 run 层（两条 run 各自推进），没盯界面状态点。
+
+### 21.5 产物与签名（口径不变）
+
+- 装机包仍是 `2026102910`（release / R8，**debug 密钥签名**）；本轮**无代码改动**，未重打包、未重装。
+- 要出可对外分发的包，得在带 `ETA_RELEASE_STORE_FILE` / `ETA_RELEASE_STORE_PASSWORD` /
+  `ETA_RELEASE_KEY_ALIAS` / `ETA_RELEASE_KEY_PASSWORD` 的环境里打；或授权生成一套本机 keystore
+  （那会成为今后所有包的签名身份，丢了就再也覆盖不了 —— **需要你点头**）。
