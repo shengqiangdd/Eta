@@ -275,11 +275,17 @@ internal class AgentRuntimeClient(
             msg.replyTo = clientMessenger
             serviceMessenger.send(msg)
             if (resultLatch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                val resolved = resultRef.get().map { completed ->
-                    if (completed.result.contextSnapshotRef.isBlank()) completed else {
-                        val full = readCompletedResult(serviceMessenger, completed)
-                            ?: return@withRuntimeMessenger CompletedRunsQuery.Unavailable
-                        completed.copy(result = full)
+                // 服务端把每条结果的 contextSnapshotRef 都填成 runId，所以每条都要再来取一次正文。
+                // 只要有一条读取慢/失败就整批 Unavailable，会把所有结果一起卡住：
+                // 真机上 4 条 outbox 结果里有一条约 4.7MB，8 秒读不完，另外 3 条小的永远等不到 ack，
+                // 对应的「任务已中断」提示也就永远清不掉。
+                // 单条失败只是这一次跳过（不 ack，仍留在 outbox 里下次重试），不影响其余结果。
+                val resolved = resultRef.get().mapNotNull { completed ->
+                    if (completed.result.contextSnapshotRef.isBlank()) {
+                        completed
+                    } else {
+                        readCompletedResult(serviceMessenger, completed)
+                            ?.let { full -> completed.copy(result = full) }
                     }
                 }
                 CompletedRunsQuery.Known(resolved)
@@ -304,7 +310,7 @@ internal class AgentRuntimeClient(
                 putString("context_owner", completed.handoff.payload)
             }
         })
-        if (!received.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) return@use null
+        if (!received.await(READ_RESULT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) return@use null
         val bundle = mailbox.get() ?: return@use null
         AgentRuntimeWire.runResultFromBundle(bundle).takeIf {
             it.runId == completed.result.runId && it.contextSnapshotRef.isBlank()
@@ -515,6 +521,8 @@ internal class AgentRuntimeClient(
 
     private companion object {
         const val RESPONSE_TIMEOUT_SECONDS = 8L
+        /** 读取单条完整结果（可能带 MB 级 transcript）的等待上限，不能按轻量查询的 8 秒算。 */
+        const val READ_RESULT_TIMEOUT_SECONDS = 30L
         /** 服务确认收到请求的上限；图片准备也算在内，不能压得太短。 */
         const val START_ACK_TIMEOUT_SECONDS = 30L
     }

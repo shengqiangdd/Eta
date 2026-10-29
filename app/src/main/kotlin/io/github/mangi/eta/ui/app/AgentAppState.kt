@@ -1605,7 +1605,11 @@ internal class AgentAppState(
     private fun dispatchQueuedMessage(item: QueuedMessageUi) {
         if (homeState.isStreaming || homeState.isCompacting) return
         if (item.pendingImages.isEmpty() && item.pendingFileReferences.isEmpty()) {
-            if (homeState.input.isNotBlank()) return
+            if (homeState.input.isNotBlank()) {
+                // 调用方已经把这条从队列里弹出来了：直接 return 会把消息吞掉，放回队尾等下次。
+                updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, item))
+                return
+            }
             updateCurrentConversation(homeState.copy(input = item.content))
             sendCurrentMessage(item.content)
             return
@@ -3168,6 +3172,8 @@ internal class AgentAppState(
         }
         flushPendingRunDelta(runId)
         val rewriting = result.operation == AgentRuntimeWire.OP_REWRITE_REPLY || isReplyRewrite(runId)
+        // 用户点过停止 / 插话才会在这张表里；必须在下面的 remove 之前取，否则永远读到 false。
+        val explicitlyStoppedByUser = stopRequestedAt.containsKey(runId)
         stopRequestedAt.remove(runId)
         if (runId == currentRunId) {
             currentRunId = null
@@ -3241,7 +3247,7 @@ internal class AgentAppState(
             // 后台会话跑完后立即安排释放，避免并发 run 的历史一直留在内存里。
             scheduleMessageRelease(selectedConversationId)
         }
-        persistConversations(
+        val saved = persistConversations(
             onSaved = if (acknowledgeRuntimeResult && result.contextSnapshotRef.isBlank()) {
                 {
                     AgentRuntimeClient(appContext, AndroidAgentLogger).ackResult(runId)
@@ -3250,6 +3256,51 @@ internal class AgentAppState(
                 null
             }
         )
+        // 排队 / 插话消息要等结果落盘之后再衔接发出：否则「取消」与「新请求」之间会写历史打架。
+        if (completedConversationId != null) {
+            scope.launch {
+                saved.await()
+                withContext(Dispatchers.Main) {
+                    drainQueueAfterRun(completedConversationId, result, explicitlyStoppedByUser)
+                }
+            }
+        }
+    }
+
+    /**
+     * run 收尾后衔接队列：队首是「插话」时立即发出，用户主动停止时保留队列。
+     *
+     * 上游 3.3.5 的这段接线在合并时整段丢了（[AgentMessageQueueReducer.pollNextToSendAfterRun]
+     * 变成只有单测在调用的死代码），真机表现就是：插话确实打断了 run，但消息永远停在
+     * 「插话中」，用户怎么点都没反应。
+     *
+     * 只处理当前选中的会话：[dispatchQueuedMessage] 依赖 homeState 与草稿位，后台会话的队列
+     * 留到用户切回时再处理，避免把消息写进错误的会话。
+     */
+    private fun drainQueueAfterRun(
+        conversationId: String,
+        result: AgentRuntimeWire.RunResult,
+        explicitlyStoppedByUser: Boolean,
+    ) {
+        if (conversationId != selectedConversationId) return
+        val state = conversationsById[conversationId] ?: return
+        if (state.queuedMessages.isEmpty()) return
+        if (state.isStreaming || state.isCompacting) return
+        // 用户正在打字时不抢草稿位；队列原样保留，下次收尾或切回会话时再发，绝不静默丢消息。
+        val head = state.queuedMessages.first()
+        if (state.input.isNotBlank() && head.pendingImages.isEmpty() && head.pendingFileReferences.isEmpty()) {
+            return
+        }
+        val stoppedByUser = explicitlyStoppedByUser ||
+            (!result.ok && (result.error == LEGACY_STOPPED_ERROR ||
+                result.error == SYNTHETIC_STATUS_STOPPED ||
+                result.error == appContext.getString(R.string.agent_notice_stopped)))
+        val (afterPopState, nextQueued) = AgentMessageQueueReducer.pollNextToSendAfterRun(
+            state = state,
+            stoppedByUser = stoppedByUser,
+        )
+        if (afterPopState !== state) updateConversation(conversationId, afterPopState, updateTimestamp = false)
+        if (nextQueued != null) dispatchQueuedMessage(nextQueued)
     }
 
     private fun updateRunTrace(
