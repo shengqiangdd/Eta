@@ -777,6 +777,18 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             runHandoffSources.remove(session.runId)
             if (sessions[session.runId] !== session) return@post
             sessions.remove(session.runId)
+            // run 已进入终态：checkpoint 只服务于「进程被杀后恢复」，终态之后留着它
+            // 只会让 runtime_inflight_runs 只增不减（真机上积了 3 条：09:11/09:14/09:16），
+            // 下次启动的恢复逻辑还要对着一堆旧日志做无用功。结果本身已经落在
+            // runtime_results 里，客户端取的是那份，不依赖这里的重放日志。
+            dispatchResultIo {
+                runCatching { AgentRunCheckpointStore.remove(this@AgentRuntimeService, session.runId) }
+                    .onFailure { failure ->
+                        AndroidAgentLogger.warnThrottled("runtime_checkpoint_cleanup_failed") {
+                            "Agent runtime checkpoint cleanup failed: type=${failure.safeLogType()}"
+                        }
+                    }
+            }
             releaseRuntimeWakeLockIfIdle()
             supplementsByRun.remove(session.runId)
             val showOverlay = primaryRunId == session.runId || primaryRunId == null

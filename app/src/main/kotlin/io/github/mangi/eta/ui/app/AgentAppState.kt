@@ -2889,6 +2889,7 @@ internal class AgentAppState(
                     }
                 }
                 if (absent == true) {
+                    AndroidAgentLogger.infoPersisted("stop watch: run 已退出活跃列表，收尾 runId=$runId 第${index + 1}次查询")
                     withContext(Dispatchers.Main) {
                         setConversationStreaming(runId, false)
                         runConversationIds.remove(runId)
@@ -2899,6 +2900,7 @@ internal class AgentAppState(
                     return@launch
                 }
             }
+            AndroidAgentLogger.infoPersisted("stop watch: $attempts 次查询后仍在活跃列表，放弃收尾 runId=$runId")
             withContext(Dispatchers.Main) {
                 toastNotice(R.string.chat_stop_still_running)
             }
