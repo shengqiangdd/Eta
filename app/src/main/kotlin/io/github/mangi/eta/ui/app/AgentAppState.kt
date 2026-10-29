@@ -3559,6 +3559,15 @@ internal class AgentAppState(
     private fun setConversationStreaming(runId: String, isStreaming: Boolean) {
         val conversationId = conversationIdForRun(runId) ?: return
         val state = conversationsById[conversationId] ?: return
+        // 同一会话可能已经有新的 run（互斥取消旧 run 后立刻续跑、插话后新开）：
+        // 旧 run 的终态不能把新 run 的运行态抹掉。否则界面显示「未运行」，
+        // 用户下一条消息就会以「新消息」而不是「插话」发出去。
+        if (!isStreaming && runConversationIds.any { (other, owner) ->
+                other != runId && owner == conversationId
+            }
+        ) {
+            return
+        }
         updateConversation(conversationId, state.copy(
             isStreaming = isStreaming,
             // 暂停状态只属于「还在跑的 run」；结束/恢复事件一到就必须清掉，
