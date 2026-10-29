@@ -562,3 +562,115 @@ walk_end == 签名块起点，没有孤儿。
   （自由窗口形态），**没有浮层胶囊窗口** —— 与 §18.5 一致，Waiting 不主动唤出胶囊。
 - 状态栏 chip 能确定的是**取值**（`shortCriticalText`）；SystemUI 把它画成什么样、
   当时有没有画出来，本轮没有单独取证（截图里状态栏区域没有可辨识的 chip）。
+
+## 19. 2026-10-29 第十二轮：三条「只是读代码推断」的语义，真机都验了
+
+§11（同会话并发修复）、§14（GUI 阶段互斥）、§16~§18（排队可见）之后，还有三件事一直停留在
+「读代码推断」，没有真机证据：**跨会话能不能真并发**、**运行中插话到底是什么行为**、
+**停止按钮的作用域有多大**。本轮把三条都验完，结论都是通过，但**验证手法本身值得写下来**。
+
+### 19.1 造场景的方法：让「本会话自己的 run」当另一个会话
+
+不需要专门造负载：**当前会话正在跑的这个 run 本身就是一条真实长跑 run**。另开一个测试会话发一条
+「会去抢手机控制权」的指令，它与本会话的 run 天然构成「两条 run 并存」，而且因为
+`RunControl.withAction` 的锁按 run 粘住（§17.1），抢不到锁的那条会**一直停在「等待手机控制权」**——
+这既复用了 §18.8 的场景，又给出一个**稳定开着、不靠抢时间**的窗口，供后面点「停止」和「插话」。
+
+本轮两个会话：
+
+| | 会话 | run | 状态 |
+|---|---|---|---|
+| A（本会话） | `conv-1a25f9f1-0e16-483a-9618-82da1552e90b`（10560 条消息） | `run-fe3a24ed-ef40-4cef-9a61-a7edeb7cbef9`（12:50:34 起） | 一直活跃，逐轮推进 |
+| B（测试会话） | `conv-2a3380a2-38fd-4be6-acd2-f215f3871afb` | `run-1f30e9b0-15f6-4659-b1de-9232d8f47a80`（12:56:35 起） | 排队等锁，`等待手机控制权` |
+
+一手证据不是日志，而是库表 `runtime_inflight_runs`（此前没注意过它）：
+
+```
+CREATE TABLE runtime_inflight_runs (transcript_json, run_id, owner_instance_id,
+  context_snapshot_json, operation, rewrite_target_message_id, handoff_id,
+  handoff_source, handoff_payload, dismiss_entry_surface, created_at, updated_at,
+  PRIMARY KEY(run_id));
+```
+
+`handoff_payload` 存的就是**该 run 属于哪个会话**（`conv-…`）。这一列是排查「现在到底谁在跑、
+跑在哪个会话」最快的一手证据 —— `logcat` 的 `agent_round_model` 行里**不带会话**，只看日志分不清。
+
+### 19.2 ①跨会话并发：成立（真机）
+
+两条 run 同时出现在 `runtime_inflight_runs` 里（同一份快照，12:59）：
+
+| run_id | 会话 | created_at |
+|---|---|---|
+| `run-fe3a24ed…` | `conv-1a25f9f1…`（A） | 12:50:34 |
+| `run-1f30e9b0…` | `conv-2a3380a2…`（B） | 12:56:35 |
+
+并且 B 被停止、其排队消息以 `run-407a…` 重新派发的同一秒，A 仍在出自己的轮次：
+
+```
+13:00:44.317 agent_round_model run=run-407a8368… round=1
+13:00:44.511 agent_round_model run=run-fe3a24ed… round=52
+```
+
+两个 run 在同一秒内各自推进 —— 不是「一个跑完再到另一个」的串行假象。
+与 `AgentRunExclusivityPolicy.supersededRuns` 的语义一致：**只清同一会话里更早的 run，跨会话不互相顶替**。
+
+### 19.3 ②运行中插话：打断目标 run，再把输入作为**新 run** 紧随其后发出（真机）
+
+B 排队到 **223 秒**（此时它连 `timeout_ms=60000` 都还没开始计时，因为卡在抢锁阶段），
+在输入框写「插话：别等它超时了，立刻中断，只回复一行 INTERRUPT_OK。」，
+点的是按钮 `desc="插话发送（打断当前运行）"`（不是普通「发送」）。
+
+`logcat`（13:00:43–44，同一秒内走完）：
+
+```
+13:00:43.962  Agent runtime stopped
+13:00:44.004  Agent runtime stop skipped: active run still executing
+13:00:44.009  Agent run returned: id=run-1f30 ok=false err=已停止
+13:00:44.144  Agent run prepare done: id=run-407a
+13:00:44.187  Agent run dispatch: id=run-407a foreground=true rootFallback=true
+13:00:44.214  stop watch: run 已退出活跃列表，收尾 runId=run-1f30e9b0… 第1次查询
+13:00:49.079  Agent run returned: id=run-407a ok=true err=null
+```
+
+库内 B 会话落盘（`conversation_messages`，按 `sort_index` 倒序）：
+
+| sort | type | 内容 |
+|---|---|---|
+| 12 | assistant | `INTERRUPT_OK` |
+| 11 | thinking | `The wait_for_text was already interrupted (TOOL_INTERRUPTED)` |
+| 10 | user | `插话：别等它超时了，立刻中断，只回复一行 INTERRUPT_OK。` |
+| 9 | system_notice | `stopped` |
+| 8 | tool | （空 —— 被中断的 `wait_for_text` 行） |
+
+**三点必须说准**：
+
+1. **不是自然超时**。它当时已排队 223 秒、`timeout_ms` 的计时还没起跑，返回的是 `err=已停止`，
+   不是 `TIMEOUT`；模型侧也自述 `TOOL_INTERRUPTED`。
+2. **插话内容没有被塞进旧 run**，也不是 supplement/steering —— 它作为 `system_notice=stopped`
+   之后的**新 run**（`run-407a`）单独执行。这跟「普通发送按钮」走 `sendSupplement` 的路径是两条路。
+3. **排队消息没丢**：旧 run 收尾后立刻 prepare + dispatch，5 秒内返回 `ok=true`。
+
+### 19.4 ③停止只作用于目标会话（真机）
+
+B 被停的那一刻，A 的 run **没有被打断**，反而继续出轮次，并完成了本轮后续的全部工具调用：
+
+```
+13:00:44.511  run=run-fe3a24ed… round=52
+13:00:51.973  run=run-fe3a24ed… round=53
+```
+
+同一份 `runtime_inflight_runs` 快照里，B 那行消失、A 那行仍在（`updated_at` 继续推进）。
+另有 `Agent runtime stop skipped: active run still executing` 一行 —— 应用层「停服务」在有别的 run
+跑着时被**主动跳过**，不是一刀切。
+
+**所以「停止」按的是「当前显示的那个会话」的 run**：这次能安全验，正是因为界面显示的是 B；
+如果当时显示的是 A，同一个按钮点的就是本会话自己的 run（见 §19.5 风险）。
+
+### 19.5 边界与风险（别读过头）
+
+- 本轮验的是**跨会话**并存与作用域；**同一会话内「新 run 顶替旧 run」那条取消路径仍然只有代码与单测**（§11/§14），
+  没有捕到对应 logcat。想验它，必须在一个会话里连续发两次「抢锁类」指令，风险是会误伤自己这一侧的 run。
+- 「插话」这次打断的是一条**卡在抢锁阶段**的 run；**正在跑长工具（如 20 秒 terminal）中途被插话**未单独取证。
+- **风险记一笔**：`停止`/`插话发送` 都是「按当前显示会话」生效。界面停在哪个会话，按钮就作用于谁 ——
+  排查现场时若不小心，会把正在干活的会话（包括 agent 自己的 run）停掉。
+- 本轮无代码改动，故无新产物、无新单测；装机版本仍是 §18.6 的 `2026102909`（debug）/`2026102910`（release）。
