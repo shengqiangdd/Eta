@@ -137,3 +137,40 @@
 - `steerCurrentRun` 不再提前 return：解析不到时把文字还给用户并说明原因（原来「点了没反应」）。
 
 **验证**：`compileDebugKotlin` 通过；`ui.app` 包 298 例中 53 失败全部为 aarch64 Robolectric `DefaultNativeRuntimeLoader` 环境限制，非环境失败 0；新增 8 例全绿。**真机行为待装包后验证**。
+
+## 11. 2026-10-29 第四轮：同一会话真的并发两个 run（真机证据 + 修复）
+
+**用户反馈**：「当前会话又没结束，要我手动结束」。
+
+**真机证据（09:39 取自设备 DB + logcat）**：同一会话里同时挂着两条活跃 run：
+
+| run | 创建 | 当时状态 |
+|---|---|---|
+| `run-63a56d6e…` | 09:29:44 | 带 `promptSupplement`（「继续，当前会话又没结束，只能插话」），跑到 round 31 |
+| `run-1ea96fa2…` | 09:30:01 | 无 supplement，round 22 |
+
+两条都在调模型、跑工具，都没有终态事件 → 界面一直有「运行中」，只能手动点停止。
+09:38 `run-63a56d6e` 正常结束（`runtime_results` ok=1），`runtime_inflight_runs` 从 2 条降到 1 条：
+**「终态即删 checkpoint」在真机生效**（ee701d9 的验收点）。
+
+**根因**：服务端 `startRun` 的既定策略是「多会话并发，不取消已有 run」。同一会话并发时，两边往同一份
+transcript 写消息、抢浮层、互相覆盖运行态。触发条件是客户端运行态与服务端脱节——客户端用本地状态判断
+「是否运行中」，一旦判成没在跑，用户的下一条消息就以「新消息」而不是「插话」发出去，服务端顺势起了
+第二个 run。
+
+**修复（`08bbfd5`）**：
+
+- `AgentRunExclusivityPolicy`（纯函数）：新 run 收掉同会话更早的活跃 run；不同会话的并发保持原样；
+  归属未知（压缩 / 后台归档）不参与互斥。挂在 `startRun` 入口，是服务端兜底，不依赖客户端状态。
+- `MSG_ACK_RESULT` 一并删 checkpoint；启动后 30 秒内重试对账（只在拿到明确活跃快照时才清理）。
+- 单测 `AgentRunExclusivityPolicyTest` 6/6。
+
+**装包后真机复核（09:46，包 md5 `62cffe0f567cf4602e5938b47f1c3953`）**：
+
+- `runtime_inflight_runs` **1 条**（= 当前 run），无堆积；会话里也没有多出「任务已中断」提示。
+- 虚拟屏 `virtual_display_create` 不传尺寸 → **1216×2640 @560dpi**，与主屏完全一致
+  （`preset=tablet` 早前已验证 1600×2560）。
+
+**未验证（如实记录）**：「两条同会话 run 真正相遇」的取消路径需要用户在运行中再发一条消息才会触发。
+代码已编译进包（dex 里核验到 `AgentRunExclusivityPolicy` 与 `same-conversation run superseded`），
+但**尚无真机日志证明它真的取消过一次旧 run**。
