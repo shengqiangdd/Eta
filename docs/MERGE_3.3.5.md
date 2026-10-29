@@ -213,3 +213,35 @@ md5 `99f10ab16953066eefd0c875ab979556`，7,157,042 字节；已放到
 会话仍显示「正在分析任务」，后续工具事件（等待·5 秒、打开应用·Eta）继续正常渲染，历史消息没有被释放；
 同时刻 `runtime_inflight_runs` 仍只有 1 条（当前 run）。说明 `ON_RESUME` 的恢复流程没有把真在跑的
 run 误判成中断，也没把 `isStreaming` 清掉。
+
+**装 release 前的回退保险**：另构了一个 `versionCode=2026102903` 的 debug 包作回退，
+已放到 `/sdcard/Download/eta-fallback-debug-2026102903.apk`（32,028,385 字节，md5 `77eea9cb1c34347e671ecaded72498bf`）。
+万一 2026102902 的 release 启不来，直接装这个即可覆盖（它的 versionCode 更高，不需要卸载丢数据）。
+
+## 13. 2026-10-29 第六轮：release（R8）真机启动验证 —— 通过
+
+**安装**：10:59:48 装入 `versionCode=2026102902` / `versionName=3.3.5`（md5 `99f10ab16953066eefd0c875ab979556`，
+7,157,042 字节）。`pm install` 覆盖成功，包名仍 `io.github.mangi.eta`，canary 包不受影响。
+
+**启动（R8 之后）**：
+
+- 进程 pid 19001 于 11:00 起来，11:18 复查仍存活（约 18 分钟），
+  `topResumedActivity=io.github.mangi.eta/.ui.MainActivity`；
+- `logcat -d -t 800` 过滤 `FATAL|AndroidRuntime|ClassNotFound|NoSuchMethod|NoClassDefFound` **零命中**；
+- 无障碍树完整：工具卡（「终端 · 执行命令 · Linux」）、思考卡（「思考已完成 · 用时 3 秒」）、
+  长期目标卡、任务计划卡（5/9）、输入框、附件 / 思考强度 / 语音按钮全部就位 ——
+  Compose 界面在 R8 构建下正常渲染，没有空白页或崩在启动。
+
+**历史**：`PRAGMA user_version=25`；21 个会话 / 79,266 条消息；当前会话 9,887 条，末尾正是
+`user`「继续」→ `assistant` 上一轮回复。没有丢历史，也没有迁移报错。
+
+**inflight**：`runtime_inflight_runs` **1 条** —— `run-404bc403…`，`handoff_source=agent_ui`，
+`handoff_payload=conv-1a25f9f1…`（正是当前会话），`operation=chat`。无幽灵 run、无堆积。
+
+**互斥代码确实进了 release 包**（R8 会改类名，故改用字符串取证）：两个 dex 中
+`same-conversation run superseded` 出现 1 次；类名 `AgentRunExclusivityPolicy`、方法名 `supersededRuns`
+均为 0（已被混淆）。说明这条路径的打点没有被裁剪，运行时可达。
+
+**仍未验证（如实记录）**：logcat 里没有出现这条 supersede 日志（缓冲区已滚动，且这一轮没有两个 run 相遇），
+所以「新 run 收掉旧 run」的**真实取消路径依然只有单测覆盖**。插话、双会话并发、
+停止只作用于目标会话同理 —— 它们都需要在界面里制造「正在跑」的场景，不能靠读代码代替。
