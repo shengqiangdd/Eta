@@ -1212,6 +1212,8 @@
   <string name="chat_steering_no_active_run">当前没有运行中的任务，文字已保留；再发一次即可重新开始</string>
   <string name="chat_run_already_finished">任务已经结束</string>
   <string name="chat_stop_unavailable">连不上运行时，停止没发出去，请重试</string>
+    <string name="chat_stop_done">已停止</string>
+    <string name="chat_stop_still_running">停止请求已发送，但任务仍在运行</string>
   <string name="background_run_channel">后台任务</string>
   <string name="background_run_finished">后台任务已完成</string>
   <string name="background_run_failed">后台任务失败</string>

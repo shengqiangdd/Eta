@@ -1233,6 +1233,8 @@
   <string name="chat_steering_no_active_run">No task is running now; your text was kept — send it again to start a new one</string>
   <string name="chat_run_already_finished">The task has already finished</string>
   <string name="chat_stop_unavailable">Could not reach the runtime; please try again</string>
+    <string name="chat_stop_done">Stopped</string>
+    <string name="chat_stop_still_running">Stop requested, but the task is still running</string>
   <string name="background_run_channel">Background tasks</string>
   <string name="background_run_finished">Background task finished</string>
   <string name="background_run_failed">Background task failed</string>

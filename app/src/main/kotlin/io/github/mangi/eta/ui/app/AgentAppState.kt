@@ -2851,22 +2851,12 @@ internal class AgentAppState(
                             AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(resolution.runId)
                         }
                     }
-                    // 停止只代表「请求已送达」。再问一次服务端：这条 run 是否还活着。
-                    // 已经不在了就立刻收掉本地运行态，不让用户对着一个死按钮干等。
-                    val stillActive = withContext(Dispatchers.IO) {
-                        val query = AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns()
-                        (query as? AgentRuntimeClient.ActiveRunsQuery.Known)
-                            ?.runs
-                            ?.any { it.runId == resolution.runId }
-                    }
-                    if (stillActive == false) {
-                        withContext(Dispatchers.Main) {
-                            setConversationStreaming(resolution.runId, false)
-                            runConversationIds.remove(resolution.runId)
-                            stopRequestedAt.remove(resolution.runId)
-                            refreshConversationSummaries()
-                        }
-                    }
+                    // 停止只代表「请求已送达」。cancel 是异步的：run 要等当前这一步（多半是一次
+                    // 在飞的模型请求或工具调用）返回后，才会在步骤边界退出。所以「发完立刻查一次」
+                    // 几乎必然还查到它活着——真机上就是这样：运行确实停了，界面却一直挂着
+                    // “正在执行”，用户只能靠再发一条消息把它顶掉。
+                    // 因此这里改成后台轮询到它真的消失为止，并在收尾时给一次明确反馈。
+                    watchStoppedRunUntilGone(resolution.runId)
                 }
                 RunResolution.NoActiveRun -> toastNotice(R.string.chat_run_already_finished)
                 RunResolution.Unavailable -> toastNotice(R.string.chat_stop_unavailable)
@@ -2876,6 +2866,43 @@ internal class AgentAppState(
 
     private fun toastNotice(resId: Int) {
         Toast.makeText(appContext, resId, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 盯着一条「已请求停止」的 run，直到它从服务端的活跃列表里消失。
+     *
+     * 为什么不 await 在 requestStop 里：单次查询最长要等 8 秒（RESPONSE_TIMEOUT_SECONDS），
+     * 而 run 退出可能要在当前步骤跑完之后，同步等会把停止按钮的点击处理整个拖住。
+     *
+     * 只有「明确查到它不在了」才收掉本地运行态。查询失败（Unavailable）不算不在：
+     * 把连不上当成已停止，会让仍在跑的 run 在界面上显示成已停，比多等一会儿更糟。
+     */
+    private fun watchStoppedRunUntilGone(runId: String, attempts: Int = 12) {
+        scope.launch {
+            repeat(attempts) { index ->
+                delay(if (index == 0) 200L else 1_000L)
+                val absent = withContext(Dispatchers.IO) {
+                    when (val query = AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns()) {
+                        is AgentRuntimeClient.ActiveRunsQuery.Known ->
+                            query.runs.none { it.runId == runId }
+                        AgentRuntimeClient.ActiveRunsQuery.Unavailable -> null
+                    }
+                }
+                if (absent == true) {
+                    withContext(Dispatchers.Main) {
+                        setConversationStreaming(runId, false)
+                        runConversationIds.remove(runId)
+                        stopRequestedAt.remove(runId)
+                        refreshConversationSummaries()
+                        toastNotice(R.string.chat_stop_done)
+                    }
+                    return@launch
+                }
+            }
+            withContext(Dispatchers.Main) {
+                toastNotice(R.string.chat_stop_still_running)
+            }
+        }
     }
 
     /**
