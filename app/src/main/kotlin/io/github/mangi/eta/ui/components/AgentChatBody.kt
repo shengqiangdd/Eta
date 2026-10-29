@@ -170,6 +170,8 @@ internal fun AgentChatBody(
     messages: List<AgentChatMessageUi>,
     todoPlan: AgentTodoPlan? = null,
     goal: AgentGoal? = null,
+    /** 目标的会话作用域；卡片上的暂停/继续/编辑/清除直接写回它，null 表示当前没有可落盘的会话。 */
+    goalScopeId: String? = null,
     pendingAsk: AgentAskUi? = null,
     onAnswerAsk: (String) -> Unit = {},
     modelPickerState: AgentModelPickerUiState,
@@ -402,6 +404,7 @@ internal fun AgentChatBody(
             visibleMessages = displayedMessages,
             todoPlan = todoPlan,
             goal = goal,
+            goalScopeId = goalScopeId,
             pendingAsk = pendingAsk,
             onAnswerAsk = onAnswerAsk,
             hasMessages = visibleMessages.isNotEmpty(),
@@ -646,6 +649,7 @@ private fun AgentChatScaffold(
     visibleMessages: List<AgentChatMessageUi>,
     todoPlan: AgentTodoPlan?,
     goal: AgentGoal?,
+    goalScopeId: String?,
     pendingAsk: AgentAskUi?,
     onAnswerAsk: (String) -> Unit,
     hasMessages: Boolean,
@@ -844,6 +848,7 @@ private fun AgentChatScaffold(
                 AgentChatBottomBar(
                 todoPlan = todoPlan,
                 goal = goal,
+                goalScopeId = goalScopeId,
                 pendingAsk = pendingAsk,
                 onAnswerAsk = onAnswerAsk,
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
@@ -1630,6 +1635,7 @@ internal fun resolveFinalResultMessageIds(
 private fun AgentChatBottomBar(
     todoPlan: AgentTodoPlan?,
     goal: AgentGoal?,
+    goalScopeId: String?,
     pendingAsk: AgentAskUi?,
     onAnswerAsk: (String) -> Unit,
     messageBackdrop: LayerBackdrop?,
@@ -1725,7 +1731,11 @@ private fun AgentChatBottomBar(
                 .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         ) {
             goal?.let { item ->
-                AgentGoalCard(goal = item, modifier = Modifier.padding(bottom = 8.dp))
+                AgentGoalCard(
+                    goal = item,
+                    scopeId = goalScopeId,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
             }
             todoPlan?.let { plan ->
                 AgentTodoPlanCard(plan = plan, modifier = Modifier.padding(bottom = 8.dp))

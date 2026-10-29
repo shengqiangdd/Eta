@@ -87,6 +87,7 @@ import io.github.mangi.eta.systemizer.SystemizerInstallResult
 import io.github.mangi.eta.ui.app.AgentKeepScreenStatus
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
+import io.github.mangi.eta.ui.components.AgentBusySendModePreference
 import io.github.mangi.eta.ui.components.AgentModePreference
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaDropdownPreference
@@ -376,6 +377,14 @@ private fun SettingsPageContent(
                         title = stringResource(R.string.settings_agent_mode_title),
                         icon = Icons.Rounded.Checklist,
                         iconTint = EtaPreferenceColors.Orange,
+                    )
+
+                    EtaPreferenceDivider()
+                    AgentBusySendModePreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_busy_send_title),
+                        icon = Icons.Rounded.TouchApp,
+                        iconTint = EtaPreferenceColors.Blue,
                     )
 
                     EtaPreferenceDivider()

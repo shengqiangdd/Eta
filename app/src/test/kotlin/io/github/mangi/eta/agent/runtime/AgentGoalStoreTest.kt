@@ -88,4 +88,84 @@ class AgentGoalStoreTest {
         store.clear("c")
         assertTrue(AgentGoalStore.changes.value > afterSave)
     }
+
+    @Test
+    fun mutateBumpsRevisionAndPersistsInOneReadModifyWrite() {
+        val store = store()
+        val goal = AgentGoal.create("甲", now = 1L)
+        store.save("c", goal)
+        assertEquals(
+            GoalMutation.SAVED,
+            store.mutate("c", goal.revision) { it.copy(phase = AgentGoalPhase.PAUSED) },
+        )
+        val reloaded = store.load("c")!!
+        assertEquals(AgentGoalPhase.PAUSED, reloaded.phase)
+        assertEquals(goal.revision + 1, reloaded.revision)
+        assertEquals("甲", reloaded.objective)
+    }
+
+    @Test
+    fun mutateRejectsStaleRevisionInsteadOfOverwriting() {
+        val store = store()
+        val goal = AgentGoal.create("甲", now = 1L)
+        store.save("c", goal)
+        // 模型刚用 goal update 改过：revision 已加一，目标也换了。
+        store.save("c", goal.copy(revision = goal.revision + 1, objective = "乙"))
+        assertEquals(
+            GoalMutation.STALE,
+            store.mutate("c", goal.revision) { it.copy(phase = AgentGoalPhase.PAUSED) },
+        )
+        // 被拒的界面写不得改动模型写的那一版。
+        assertEquals("乙", store.load("c")?.objective)
+        assertEquals(AgentGoalPhase.ACTIVE, store.load("c")?.phase)
+    }
+
+    @Test
+    fun mutateReportsMissingAndInvalidAndTrimsObjective() {
+        val store = store()
+        assertEquals(GoalMutation.MISSING, store.mutate("c", 1) { it })
+        val goal = AgentGoal.create("甲", now = 1L)
+        store.save("c", goal)
+        assertEquals(
+            GoalMutation.INVALID,
+            store.mutate("c", goal.revision) { it.copy(objective = "   ") },
+        )
+        assertEquals(
+            GoalMutation.INVALID,
+            store.mutate("c", goal.revision) {
+                it.copy(objective = "字".repeat(AgentGoal.MAX_OBJECTIVE_CHARS + 1))
+            },
+        )
+        assertEquals("甲", store.load("c")?.objective)
+        assertEquals(
+            GoalMutation.SAVED,
+            store.mutate("c", goal.revision) { it.copy(objective = "  乙  ") },
+        )
+        assertEquals("乙", store.load("c")?.objective)
+    }
+
+    @Test
+    fun concurrentMutatesFromSameRevisionOnlyOneWins() {
+        val store = store()
+        val goal = AgentGoal.create("甲", now = 1L)
+        store.save("c", goal)
+        val results = java.util.Collections.synchronizedList(mutableListOf<GoalMutation>())
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val threads = (1..2).map {
+            Thread {
+                gate.await()
+                results += store.mutate("c", goal.revision) {
+                    it.copy(phase = AgentGoalPhase.PAUSED)
+                }
+            }
+        }
+        threads.forEach { it.start() }
+        gate.countDown()
+        threads.forEach { it.join(5_000) }
+        assertTrue("线程没在 5 秒内结束（卡在锁里？）", threads.none { it.isAlive })
+        // 读-改-写在同一把锁里：两个线程从同一 revision 出发，只能有一个写成功。
+        assertEquals(1, results.count { it == GoalMutation.SAVED })
+        assertEquals(1, results.count { it == GoalMutation.STALE })
+        assertEquals(goal.revision + 1, store.load("c")?.revision)
+    }
 }

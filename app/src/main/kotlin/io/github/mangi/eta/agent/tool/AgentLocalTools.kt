@@ -662,6 +662,14 @@ internal class AgentLocalTools(
         } catch (error: IllegalArgumentException) {
             return errorResult("INVALID_ARGUMENT", error.message ?: "goal 参数不正确")
         }
+        return goalStore.withLock { goalLocked(command) }
+    }
+
+    /**
+     * 持锁的读-校验-写：界面上的暂停/继续/编辑/清除走 [AgentGoalStore.mutate]，
+     * 两边共用同一把锁，免得都从 revision N 出发、后写的那次悄悄盖掉先写的。
+     */
+    private fun goalLocked(command: AgentGoalToolCatalog.Command): String {
         val current = goalStore.load(goalScopeId)
         return when (command) {
             AgentGoalToolCatalog.Command.Get -> goalResult(current)

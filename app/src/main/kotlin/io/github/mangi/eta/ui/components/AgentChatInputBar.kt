@@ -1,5 +1,9 @@
 package io.github.mangi.eta.ui.components
 
+import android.content.SharedPreferences
+import io.github.mangi.eta.agent.model.AgentBusySendMode
+import io.github.mangi.eta.agent.model.AgentBusySendPolicy
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.ui.voice.SpeechDictationButton
 import io.github.mangi.eta.ui.voice.SpeechInputFeedback
 import io.github.mangi.eta.ui.voice.rememberSpeechInput
@@ -69,6 +73,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -153,6 +158,24 @@ internal fun AgentChatInputBar(
     /** 草稿同步：只写内存里的会话状态，不逐字触发聊天区重组。 */
     onDraftChange: (String) -> Unit = {},
 ) {
+    // 繁忙时发送行为（对齐 dsh 的 BusyEnterBehavior）：运行中点击发送是排队还是插话。
+    // 设置页写同一个键，这里监听变化即时生效，不需要重进页面。
+    val context = LocalContext.current
+    val agentPrefs = remember(context) { Prefs.localAgentPreferences(context) }
+    var busySendMode by remember(agentPrefs) {
+        mutableStateOf(AgentBusySendMode.fromId(Prefs.getLocalAgentString(Prefs.Keys.AGENT_BUSY_SEND_MODE)))
+    }
+    DisposableEffect(agentPrefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == Prefs.Keys.AGENT_BUSY_SEND_MODE) {
+                busySendMode = AgentBusySendMode.fromId(
+                    agentPrefs.getString(Prefs.Keys.AGENT_BUSY_SEND_MODE, null),
+                )
+            }
+        }
+        agentPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { agentPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -470,15 +493,25 @@ internal fun AgentChatInputBar(
                             Spacer(modifier = Modifier.width(2.dp))
                         }
 
-                        // 主按钮：空闲=发送；运行中+有草稿=排队发送；运行中+空输入=停止（暂停中也一样）。
+                        // 主按钮：空闲=发送；运行中+有草稿=按「繁忙时发送行为」排队或插话；
+                        // 运行中+空输入=停止（暂停中也一样）。
                         val primaryGlyph = when {
                             isStreaming && !canSend -> ChatPrimaryGlyph.Stop
                             else -> ChatPrimaryGlyph.Send
                         }
+                        // 暂停态与编辑态一律排队：插话会先打断 run，而这两种状态下
+                        // 打断都不是用户想要的结果（暂停要保现场，编辑内容本身发不出去）。
+                        val steersNow = AgentBusySendPolicy.steers(
+                            streaming = isStreaming,
+                            paused = isPaused,
+                            editingMessage = isEditingMessage,
+                            mode = busySendMode,
+                        )
                         val primaryDescription = stringResource(
                             when {
                                 primaryGlyph == ChatPrimaryGlyph.Stop -> R.string.chat_stop
                                 isEditingMessage && preserveFollowingMessages -> R.string.chat_save_message
+                                steersNow -> R.string.chat_send_steer
                                 isStreaming -> R.string.chat_send_queue
                                 else -> R.string.chat_send
                             }
@@ -491,7 +524,11 @@ internal fun AgentChatInputBar(
                                         dictation.cancel()
                                         val submittedText = textFieldState.text.toString()
                                         textFieldState.clearText()
-                                        onSubmit(submittedText)
+                                        if (steersNow) {
+                                            onInterruptAndSubmit(submittedText)
+                                        } else {
+                                            onSubmit(submittedText)
+                                        }
                                     }
                                     isStreaming -> onStop()
                                 }

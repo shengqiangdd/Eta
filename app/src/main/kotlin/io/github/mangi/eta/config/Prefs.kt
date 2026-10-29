@@ -63,6 +63,14 @@ internal object Prefs {
         /** 工作模式 id（standard / plan / creator）；见 AgentMode。 */
         const val AGENT_MODE = "agent_mode"
 
+        /**
+         * 繁忙时发送行为（对齐 dsh 的 `BusyEnterBehavior`）：`queue` 排队（默认）/ `steer` 插话。
+         *
+         * 字符串键，不走 [BOOLEAN_DEFAULTS]，读取用 [getLocalAgentString] 再交给
+         * `AgentBusySendMode.fromId`（未知值回退 queue）。
+         */
+        const val AGENT_BUSY_SEND_MODE = "agent_busy_send_mode"
+
         /** 允许主 Agent 派发 Subagent 并发执行（上游 3.3.5）。 */
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"

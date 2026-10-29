@@ -2493,3 +2493,49 @@ md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.g
 **收尾**
 
 虚拟屏 `vdmvtoyd7g` 已释放（连带移除屏上任务）；测试草稿已清空、测试 run 已停止；canary 保持安装，主包未动。
+
+### 32.12 繁忙时发送行为可配置：排队 / 插话（2026-10-30）
+
+**dsh 依据**（`/workspace/dsh-work/dsh/packages/client/ui-conversation/src/client`）
+
+- `settings/EnterBehaviorRow.tsx` + `src/submission-settings.ts`：`BusyEnterBehavior` 二选一，默认 `queue`；`locales.ts` 的标题就是「繁忙时的发送行为」。
+- `input/submission-policy.ts` 的 `resolveSubmitMode(preferred, running, gesture, steeringAvailable)`：发送按钮与 Enter 共用 `enter` 手势，Ctrl/Cmd+Enter 取反。
+- Eta 没有键盘回车提交，所以只作用于「运行中 + 有草稿」时点击发送按钮。
+
+**实现**
+
+- `agent/model/AgentBusySendMode.kt`：`QUEUE` / `STEER`，外加 `AgentBusySendPolicy.steers(streaming, paused, editingMessage, mode)` 这个纯函数。
+- `Prefs.Keys.AGENT_BUSY_SEND_MODE`：字符串键，默认 `queue`；未知值回退，与 `AgentMode.fromId` 同一规则（手改配置不能让发送按钮变哑）。
+- 设置页「聊天」组新增一行单选 `AgentBusySendModePreference`（默认排队），写入走 `commit()` 并在失败时提示（与 AgentMode 一致）。
+- 输入栏主按钮：`steersNow` 为真时调 `onInterruptAndSubmit`（既有链路：入队 `immediateInterrupt=true` + `requestInterruptCurrentRun`），否则照旧 `onSubmit`（运行中 → 排队）。这个参数此前是死参数，现在接上了。
+- **暂停态与编辑态一律排队**：暂停是 Eta 独有状态，插话会打断用户想保住的现场；编辑态插话会先打断 run、而编辑内容本身发不出去（§32.9 已记录同类缺陷）。
+- 三语 strings 7 条（`settings_busy_send_*`、`agent_busy_send_*`、`chat_send_steer`）。
+
+**单测 5 例**：默认值、id 往返、未知回退 queue、steer 的三个例外（暂停 / 编辑 / 空闲）、queue 永不 steer。
+
+**顺带修掉的 lint 债**（本轮 lint 从「0 新增」变成 6 个错误，全部由工作区未提交改动引入）
+
+| 位置 | 问题 | 修法 |
+|---|---|---|
+| `AgentGoalCard.kt:119/132` | `LocalContextGetResourceValueCall` | 改用 `LocalResources.current`（Configuration 变化后不会拿到旧值） |
+| 三语 `goal_card_error_invalid` | `TypographyDashes` | `1-500` → `1–500`（en dash） |
+| `AgentBusySendModePreference` | `UseKtx` | 抽成私有 `writeBusySendMode` + 局部 `@SuppressLint("UseKtx")`：必须拿到 `commit()` 的布尔结果才能提示写失败，KTX 的 `edit {}` 不返回 |
+
+**验证**
+
+- `STAGES=test`：**734 例 / 0 失败**（新增 5 例 busy send + 5 例 goal store）。
+- `STAGES=lint,assemble`：lint 无新增问题，baseline 412 条一致；APK **34,493,550 字节**，sha256 `ea9043f5cdb55318…`。
+- **真机未验**：queue（队列条出现并自动发出）与 steer（当前轮被停止后再发新消息）两条路径，以及设置页切换后输入栏文案是否即时变化，都要在 canary 上跑一遍。
+
+### 32.13 目标卡接上 dsh GoalBar 的动作（2026-10-30，真机未验）
+
+**背景**：dsh 的 GoalBar 让目标在卡片上就能暂停 / 继续 / 编辑 / 清除，不必再让模型调一次 `goal` 工具。
+
+**实现**
+
+- `AgentGoalStore.mutate(scopeId, expectedRevision, transform)`：同一把 `writeLock` 里重读 → 校验 revision → 写回；revision 不一致返回 `STALE`，不覆盖模型刚做的修改。`withLock` 让 `goal` 工具的读-校验-写与界面动作共用同一把锁。
+- `AgentGoalCard`：行内「暂停 / 继续 / 编辑 / 清除」，行内错误 + 单飞（`AtomicBoolean`，同 dsh 的 `pendingRef`）；`LaunchedEffect(goal.id)` 作废残留编辑态，避免草稿写到新目标上。
+- 三语 `goal_card_*` 文案。
+- `AgentGoalStoreTest` 5 例：作用域隔离、原子替换不留 `.tmp`、只清本作用域、空白作用域不共享、revision 冲突不覆盖。
+
+**验证**：734 例（含这 5 例）全绿，lint/assemble 通过。**真机未验**：卡片动作、行内错误、并发竞态目前只有单测与 lint 证据。

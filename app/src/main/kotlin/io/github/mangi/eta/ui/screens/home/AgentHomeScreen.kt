@@ -78,6 +78,7 @@ internal fun AgentHomeScreen(
             messages = state.messages,
             todoPlan = todoPlan,
             goal = goal,
+            goalScopeId = conversationKey,
             pendingAsk = pendingAsk,
             onAnswerAsk = { text -> onAction(AgentHomeAction.SubmitMessage(text)) },
             modelPickerState = modelPickerState,
