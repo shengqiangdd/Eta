@@ -2191,6 +2191,7 @@
   <string name="chat_queue_interrupting">插話中</string>
   <string name="chat_queue_steer_now">立即插話傳送</string>
   <string name="chat_queue_remove">移除排隊訊息</string>
+  <string name="chat_queue_steer_blocked_by_edit">正在編輯訊息，先取消編輯再插話</string>
   <string name="chat_queue_images_only">[%1$d 張圖片]</string>
   <string name="chat_queue_files_only">[%1$d 個檔案]</string>
   <string name="browser_opening">正在開啟網頁</string>

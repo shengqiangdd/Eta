@@ -67,6 +67,14 @@ private val WHITESPACE_REGEX = Regex("\\s+")
 internal fun AgentChatQueueStrip(
     queuedMessages: List<QueuedMessageUi>,
     isStreaming: Boolean,
+    /**
+     * 编辑某条既有消息期间禁用「立即插话发送」。
+     *
+     * 插话会先打断当前 run，但消息本身发不出去 —— dispatchQueuedMessage 见
+     * `messageEdit != null` 会把它原样放回队首。结果是「白停一轮、消息还在队列里」，
+     * 用户完全看不出发生了什么。这里直接置灰，比点完没反应诚实。
+     */
+    isEditingMessage: Boolean = false,
     onSteer: (String) -> Unit,
     onRecall: (String) -> Unit,
     onRemove: (String) -> Unit,
@@ -158,6 +166,7 @@ internal fun AgentChatQueueStrip(
                 QueuedMessageItemActions(
                     item = first,
                     isStreaming = isStreaming,
+                    steerEnabled = !isEditingMessage,
                     onSteer = { onSteer(first.id) },
                     onRemove = { onRemove(first.id) },
                 )
@@ -207,6 +216,7 @@ internal fun AgentChatQueueStrip(
                         QueuedMessageItemActions(
                             item = item,
                             isStreaming = isStreaming,
+                            steerEnabled = !isEditingMessage,
                             onSteer = { onSteer(item.id) },
                             onRemove = { onRemove(item.id) },
                         )
@@ -262,6 +272,7 @@ private fun QueuedMessagePreviewText(
 private fun QueuedMessageItemActions(
     item: QueuedMessageUi,
     isStreaming: Boolean,
+    steerEnabled: Boolean,
     onSteer: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -269,6 +280,7 @@ private fun QueuedMessageItemActions(
         if (!item.immediateInterrupt) {
             IconButton(
                 onClick = onSteer,
+                enabled = steerEnabled,
                 minWidth = QueueActionSize,
                 minHeight = QueueActionSize,
             ) {
@@ -276,7 +288,11 @@ private fun QueuedMessageItemActions(
                     imageVector = if (isStreaming) Icons.Rounded.Bolt else Icons.Rounded.ArrowUpward,
                     contentDescription = stringResource(R.string.chat_queue_steer_now),
                     modifier = Modifier.size(15.dp),
-                    tint = MiuixTheme.colorScheme.primary,
+                    tint = if (steerEnabled) {
+                        MiuixTheme.colorScheme.primary
+                    } else {
+                        MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = 0.4f)
+                    },
                 )
             }
         }

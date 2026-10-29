@@ -1583,8 +1583,22 @@ internal class AgentAppState(
         requestInterruptCurrentRun()
     }
 
-    /** 把队列里的某条提升为「立即插话」：运行中打断当前 run，空闲时直接发出。 */
+    /**
+     * 把队列里的某条提升为「立即插话」：运行中打断当前 run，空闲时直接发出。
+     *
+     * 编辑态一律拒绝：插话会先打断 run，而消息本身因为 [dispatchQueuedMessage] 的
+     * `messageEdit != null` 守卫发不出去（被原样放回队首）—— 用户白停一轮还看不出原因。
+     * 界面上按钮已经置灰，这里兜住键盘/无障碍/恢复态等其他入口。
+     */
     fun steerQueuedMessage(id: String) {
+        if (homeState.messageEdit != null) {
+            Toast.makeText(
+                appContext,
+                appContext.getString(R.string.chat_queue_steer_blocked_by_edit),
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
         val (nextState, promoted) = AgentMessageQueueReducer.promoteToInterrupt(homeState, id)
         if (promoted == null) return
         updateCurrentConversation(nextState)
@@ -3548,7 +3562,9 @@ internal class AgentAppState(
         val state = conversationsById[conversationId] ?: return
         if (state.queuedMessages.isEmpty()) return
         if (state.isStreaming || state.isCompacting) return
-        // 用户正在打字时不抢草稿位；队列原样保留，下次收尾或切回会话时再发，绝不静默丢消息。
+        // 用户正在打字时不抢草稿位；队列原样保留到下一次 run 收尾再试，绝不静默丢消息。
+        // 注意这里**没有**「切回会话时补发」的钩子（见上面的函数说明）：切回不会触发
+        // drainQueueAfterRun，只能等该会话自己再跑一轮，或用户点队列条的「立即插话发送」。
         val head = state.queuedMessages.first()
         if (state.input.isNotBlank() && head.pendingImages.isEmpty() && head.pendingFileReferences.isEmpty()) {
             return

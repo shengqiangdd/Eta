@@ -2181,6 +2181,7 @@ resources.arsc 含 chat_queued_hint
 - `drainQueueAfterRun` 顶部注释写「用户正在打字时不抢草稿位……下次收尾或切回会话时再发」，
   下面几行又写「没有『切回时自动补发』的钩子」，两句互相矛盾。实际行为是：
   输入框里有草稿时，队列会一直等到下一次 run 收尾。
+  → **已在 §32.9 修掉**（注释按实际行为改写，并把「切回不会触发 drain」写明）。
 
 ### 32.7 真机验证（2026-10-29 晚，PKX110 / Android 16，canary 覆盖安装）
 
@@ -2261,3 +2262,78 @@ resources.arsc 含 chat_queued_hint
 编辑态下点队列条「立即插话发送」静默无反馈（§32.7 上一轮的观察；**本轮未复验**这条）。
 建议之后单独处理（置灰或提示）。
 
+
+### 32.9 第三轮：修掉「编辑态插话」这条 UX 缺陷（2026-10-29 晚，canary 覆盖安装 + 虚拟屏 A/B）
+
+**先更正上一轮的一处记录不准**
+§32.7 / §32.8 把这条缺陷写成「`steerQueuedMessage` 顶部 `if (isStreaming || messageEdit != null) return`
+静默返回，点了没反应」。读现有代码，**那行守卫并不存在**。真实链路是：
+
+1. `steerQueuedMessage` → `AgentMessageQueueReducer.promoteToInterrupt` 成功，该条被标成「立即插话」；
+2. `requestInterruptCurrentRun()` **真的打断当前 run**（界面会出现「已停止」）；
+3. run 收尾时 `dispatchQueuedMessage` 看到 `messageEdit != null`，把消息**原样放回队首**。
+
+所以用户看到的不是「没反应」，而是「点一下，run 白停了一轮，消息还在队列里」——
+执行了一半，比静默返回更糟。
+
+**改法（6 个文件）**
+
+- `ui/components/AgentChatQueueStrip.kt`：`AgentChatQueueStrip` 新增 `isEditingMessage: Boolean = false`；
+  `QueuedMessageItemActions` 新增 `steerEnabled`，插话按钮 `IconButton(enabled = steerEnabled)`；
+  图标 tint 从写死的 `primary` 改为禁用时 `onSurfaceVariantActions.copy(alpha = 0.4f)`。
+  注释写的不是「禁用」，而是「为什么必须禁用」（插话会先打断 run，消息却发不出去）。
+- `ui/components/AgentChatInputBar.kt`：把 `isEditingMessage` 透传给队列条。
+- `ui/app/AgentAppState.kt`：`steerQueuedMessage` 顶部加 `messageEdit != null` 兜底 ——
+  弹 `chat_queue_steer_blocked_by_edit` 后 return（键盘、无障碍、恢复态等其他入口走不到置灰按钮）；
+  同时把 `drainQueueAfterRun` 头注释里互相矛盾的两句改成与实现一致，并写明「切回会话不会触发
+  drain」（即 §32.6 那条，本节一并修掉）。
+- 三语言 `strings.xml` 各加一条：
+  `正在编辑消息，先取消编辑再插话` ／ `正在編輯訊息，先取消編輯再插話` ／
+  `You are editing a message; cancel the edit before interrupting`。
+
+**构建**
+
+`:app:processDebugResources :app:compileDebugKotlin` BUILD SUCCESSFUL（仅两处既有的
+`Condition is always 'false'` 警告）；`AgentMessageQueueReducer` 相关单测 **6 通过 / 0 失败**。
+产物 `Eta-v3.3.5-debug.apk` **34,458,534 字节 / md5 `19020f6f999a863f87effa975b5e5dc2`**；
+`output-metadata.json` 的 `applicationId` = `io.github.mangi.eta.canary`（versionCode 2026102909），
+`resources.arsc` 里能查到新字符串名。归档 `build-artifacts/Eta-v3.3.5-debug-canary-fix32b.apk`。
+
+**覆盖安装（未卸载）**
+
+`pm install -r -d` → `Success`，本轮两次：`lastUpdateTime` 19:41:32 → 19:45:18；
+`firstInstallTime` 始终 16:35:18，`files/`（agent、datastore、memory、skills）全部保留，
+证明是覆盖更新而非重装。主包 `io.github.mangi.eta` 的 `lastUpdateTime` 仍是 18:22:55 —— **没碰主包**。
+
+**真机 A/B（虚拟屏 display 35，PKX110 / Android 16）**
+
+先要弄清「编辑态 + 队列」这个共存态怎么进得去：运行中（含暂停）「消息操作」不出现
+（`messageActionsEnabled = !isStreaming`），所以**「编辑态 + 正在运行」在 UI 上不可达**。
+能进得去的路径是「运行中点停止 → 队列冻结、胶囊保留 → 此时可以编辑」。
+
+| 状态 | `立即插话发送` 节点形态 | 截图上的图标 |
+|---|---|---|
+| 未编辑 + 队列（基线） | 被 `clickable=true` 的 View 包裹 | 强调蓝 |
+| 编辑态（消息操作 → 编辑） | 裸 `ImageView`，无 clickable 祖先 | `primary` × 0.4 alpha → 灰 |
+| 取消编辑（同一会话内回切） | 又变回 clickable View | 又变回蓝 |
+
+补充证据：
+
+- 编辑态下点那块置灰区域 → **没有任何反应**：没有开新 run、队列条目仍在、输入框仍是
+  「发送后将替换此消息」的编辑态（对比前后树，`screen_changed` 只是列表重排噪声）。
+- 同一胶囊里的「移除排队消息」在编辑态仍可点 —— 只禁了插话，不是整条控件禁用。
+- 暂停/继续不影响队列条与插话按钮的可用性：冻结只看 `messageEdit`，不看暂停。
+- 本轮重新观察到「点停止后胶囊保留」（§32.8 第 3 条的冻结行为在这份构建上依旧成立）；
+  本轮没再等满 20 秒专门测「不自动续发」，那条结论沿用 §32.8。
+
+**仍未验证（不要当成已验证）**
+
+- `chat_queue_steer_blocked_by_edit` 的 Toast：按钮置灰后 UI 路径不可达，键盘/无障碍/恢复态
+  在这台机器上也没构造成 —— 仍是防御性代码。
+- §32.7 列的两项（`rejectMessageEditWhileStreaming` toast、假运行态插话）维持「不可达」。
+
+**收尾**
+
+释放虚拟屏 `vdmvth3ne3`；`am force-stop io.github.mangi.eta.canary` 后 `pidof` 为空
+（第一次 force-stop 后曾被释放任务回迁拉起一次，二次停止才干净）；测试用的排队消息已移除、
+草稿已清空；canary 保持安装，主包未动。

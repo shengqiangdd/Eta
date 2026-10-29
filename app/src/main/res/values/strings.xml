@@ -2294,6 +2294,7 @@
   <string name="chat_queue_interrupting">Interrupting</string>
   <string name="chat_queue_steer_now">Send as interruption now</string>
   <string name="chat_queue_remove">Remove queued message</string>
+  <string name="chat_queue_steer_blocked_by_edit">You are editing a message; cancel the edit before interrupting</string>
   <string name="chat_queue_images_only">[%1$d images]</string>
   <string name="chat_queue_files_only">[%1$d files]</string>
   <string name="browser_opening">Opening webpage</string>
