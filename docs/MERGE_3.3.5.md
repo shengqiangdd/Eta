@@ -1938,3 +1938,100 @@ cat /proc/uptime                          # 63947 s → 进程启动于 1661 s �
   `build-artifacts/Eta-v3.3.5-debug-main.apk`（md5 `a7fd01f7…`，与设备上安装的一致）
 - **未验证（如实标注）**：主应用自身跑新代码后的 FOREIGN —— 它仍在跑 16:45 启动的旧 dex（见 29.3）。
   本轮用 canary 验证的是**同一份代码**；主应用要等下一次进程重启才生效。
+
+## 30. 2026-10-29 第二十三轮：`DISPLAY_FOREIGN` 判据被实测推翻后改对，主应用侧补验
+
+上一轮（§29）用「`dumpsys window displays` 里目标 Display 段的 `Window{` 行数 > 0」来判定跨进程。
+本轮把它拿到两个真实场景里跑，**判据直接失效**；换成「`dumpsys display` 的 Display 段 + owner 包名」后，
+同一份代码上两个分支都验过了。
+
+### 30.1 旧判据为什么不可靠（实测）
+
+| 场景 | 该 Display 段的 `Window{` 行数 | 旧判据结论 |
+| --- | --- | --- |
+| 主应用建的 display 22/26（上面跑着 calculator） | **0** | 误判成 `DISPLAY_RELEASED` |
+| 上一轮验证用的 display 19（上面跑着 canary 的 MainActivity） | 2 | 误判成 `DISPLAY_FOREIGN`（碰巧对） |
+
+差异在于**这一段里有没有焦点/遮挡窗口的引用行**（`mCurrentFocus=` / `mObscuringWindow=`），
+display 22 段实测是 `mCurrentFocus=null`、`mFocusedApp=null`，于是 `grep -c 'Window{'` 为 0 ——
+窗口列表并不在这个段里。也就是说旧判据量的其实是「这块屏有没有焦点窗口」，与「屏属于谁」无关。
+
+### 30.2 新判据（代码里已写明实测数据）
+
+```kotlin
+// 段在 + owner 不是本包 → 跨进程；段不在 → 已释放
+private fun probeDisplay(displayId: Int): Pair<Boolean, String?> =
+    // dumpsys display | sed -n '/^  Display N:/,/^  Display [0-9]*:/p'
+    // 正则 owner (\S+) \(
+```
+
+- 段不存在 → `exists=false` → 仍抛 `DISPLAY_RELEASED`
+- 段在且 `owner ≠ context.packageName` → 抛 `DISPLAY_FOREIGN`，文案带创建者包名
+- 段在但 owner 解析不出来（格式变了）→ 退回 `DISPLAY_RELEASED`：宁可少报，
+  也不要让用户按「跨进程」的指引去重建一块其实属于自己的屏
+
+时序数据（Android 16 / SM8750，实测）：
+
+| 时刻 | `dumpsys display` |
+| --- | --- |
+| 别人建的屏（display 26，跑 calculator） | `Display 26:` 在，`owner io.github.mangi.eta (uid 10629)` |
+| 本进程 release 后 2 秒（display 24） | `Display 24:` 整段消失 |
+
+所以 release 之后不存在「段还在、窗口已没」的空窗期，不需要用窗口数来兜底。
+
+### 30.3 主应用侧补验（补上 §29.6 那条「未验证」）
+
+§29 的 FOREIGN 是在 **canary** 进程里验的。本轮主应用被覆盖安装后进程重启，跑的就是新代码，
+于是用「canary 建屏、主应用观察」再验一遍：
+
+1. `am start -n io.github.mangi.eta.canary/io.github.mangi.eta.ui.MainActivity --es eta.debug.virtual_display create`
+   → 建出 display 30（1080×1920，owner `io.github.mangi.eta.canary`，uid 10617）
+2. 主应用 `observe_screen(display_id=30)` →
+   `{"ok":false,"code":"DISPLAY_FOREIGN","message":"虚拟屏 30 存在，但它不属于当前应用（创建者 io.github.mangi.eta.canary）；…","tool":"observe_screen"}`
+3. canary 释放该屏（`--es eta.debug.virtual_display release`，`Display 30:` 消失）
+4. 主应用再 `observe_screen(display_id=30)` → `{"ok":false,"code":"DISPLAY_RELEASED",…,"tool":"observe_screen"}`
+
+两个分支落在**同一份新代码**上，且都不需要安装第二个包。
+
+### 30.4 新坑：不带 suffix 构建出来的就是主包
+
+本轮为了把改动送进 canary，连续用 `./gradlew :app:assembleDebug --offline` 构建。
+`app/build.gradle.kts` 里是
+
+```kotlin
+applicationId = "io.github.mangi.eta" + (providers.gradleProperty("eta.applicationIdSuffix").orNull ?: "")
+```
+
+不带 `-Peta.applicationIdSuffix=.canary` 时产物就是**主包**（`io.github.mangi.eta`），装上去会覆盖
+正在用的主应用：进程重启、会话中断，而 canary 仍然是旧包 —— 现场表现就是「装了但代码没生效」，
+再加上「我明明装好了」的两边认知错位。
+
+正确命令与核对方法：
+
+```
+./gradlew :app:assembleDebug -Peta.applicationIdSuffix=.canary --offline
+pm path io.github.mangi.eta.canary
+dumpsys package io.github.mangi.eta.canary | grep -E "lastUpdateTime|versionName"
+```
+
+**教训**：构建产物先确认 `applicationId` 再安装；「安装成功」不等于「装到了目标包」。
+
+### 30.5 `tagToolResult` 的复现（三类错误都带 `tool`）
+
+mock 剧本 `/workspace/mock-ux29.py`（日志留档 `/workspace/evidence/section29-ux29-mock.log`）：
+
+```
+step=launch           got='virtual_display_launch' ok=False code='APP_ALREADY_RUNNING' | tool=virtual_display_launch ✓
+step=observe-released got='observe_screen'         ok=False code='DISPLAY_RELEASED'     | tool=observe_screen ✓
+step=observe-foreign  got='observe_screen'         ok=False code='DISPLAY_FOREIGN'      | tool=observe_screen ✓
+```
+
+这三条都是**失败**结果，`tool` 都在 —— 也就是说调用方不必再回溯上一条 assistant 消息去猜工具名。
+
+### 30.6 收尾与现状
+
+- 现场：只剩 `Display 0`（虚拟屏全部释放）、18080 无监听、无 mock 进程、临时 DB 副本已删
+- 主包被覆盖为 17:34 的构建（同签名覆盖安装，`appId`/数据未变）；需要回滚时用
+  `build-artifacts/Eta-v3.3.5-debug-main.apk`（32290084 字节）
+- **仍未验证**：`MAIN_INPUT_ACTIVE` 的新文案只做了代码核对 —— 触发它需要主屏正处于输入状态，
+  本轮没有为了验证文案去抢用户的输入法
