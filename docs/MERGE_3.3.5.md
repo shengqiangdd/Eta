@@ -52,6 +52,10 @@
 | `GuiControlCoordinator` | 未接 | **多会话并行时 GUI 动作没有互斥**，用户「暂停 / 恢复 GUI」也不可用；overlay 已能处理 `GuiControlChanged`，缺的是 service / executor / tools 三端接线 |
 | `StreamingMarkdownStateCache` | 未接 | 本地 `ChatMarkdown` 自带缓存实现 |
 
+> **后续更新（2026-10-29，见 §14\/§15）**：`GuiControlCoordinator` 已经接到
+> service \/ executor \/ tools 三端并真机核对过（多会话抢屏幕会排队）；上表那一行是合并当时的状态。
+> 仍未做的是上游「用户手动暂停 \/ 恢复 GUI」的**界面入口**（代码里没有任何对应入口）。
+
 ## 4. 验证结果（提交前实测）
 
 - `:app:compileDebugKotlin`：通过，零告警（`AgentLocalTools` 的冗余 Elvis 已清）。
