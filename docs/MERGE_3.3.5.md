@@ -295,3 +295,43 @@ run 误判成中断，也没把 `isStreaming` 清掉。
   （run 生命周期 + 同会话互斥），接它是纯重构，收益低风险高。
 - 子代理（`SubagentExecutor`）不共享这把锁 —— 上游同样如此，属已知边界。
 - 真机多会话并发 + 暂停/恢复**尚未验证**（需要装新包）。
+
+## 15. 2026-10-29 第八轮：GUI 互斥的真机核对，以及一个「等待中看不见」的缺口
+
+**装了什么**：`Eta-v3.3.5-debug.apk`（md5 `7a16911040fd8dbff8329597a172ef11`，32,029,689 B，
+`versionCode=2026102904` / `versionName=3.3.5-debug`），设备确认 `lastUpdateTime=2026-10-29 11:36:10`，
+主进程存活、无 FATAL。
+
+**单会话真机核对（通过）**：我自己就是这套运行时的用户——本轮的所有 GUI 工具调用（`observe_screen` 多次）
+都走新的 `withAction` 路径。结果：调用正常返回、随后的再次观察也正常、没有 `NO_OBSERVATION` 误报、
+没有挂死。说明「取锁 → 执行 → 放锁」的循环在真机上成立（若 `close()`/`release()` 漏放，第二次调用就会永久阻塞）。
+
+**锁是同一个实例（静态核对）**：`AgentRuntimeRunExecutor(` 全仓只有 **1 处构造**（`AgentRuntimeService.kt:655`），
+且固定传 `guiControl = guiControl`（service 字段）。所以所有 run 天然共享一把锁，不存在「每个 run 各一把」的假互斥。
+
+**新发现的真缺口：`Waiting` 完全不可见。** 证据链：
+
+| 位置 | 事实 |
+|---|---|
+| `RuntimeRunRegistry` | 全仓**从未实例化**（grep 只命中自己的定义行） |
+| `RunPhase.WaitingForGui` | 只由上面那个死类产生 → 永远不会出现 |
+| `AgentRunStore.updateGuiStatus` | **0 个调用点**（`guiStatus` 字段写了但没人填） |
+| `GuiControlCoordinator.state` | **0 个收集者** |
+| `res:run_waiting_for_gui` | 三个语言都有「等待手机控制权」，Kotlin 里 **0 处引用** |
+
+后果：第二个会话被第一个挡住时，界面上没有任何提示 —— 用户看到的仍然是「正在思考…」，
+和本次会话最开始抱怨的「看起来卡住了」是同一类体验问题。锁本身是对的，是**可见性**缺一块。
+
+**为什么没用数据库取证**：`runtime_inflight_events` 有 350 条事件，`gui_control_changed` **0 条** ——
+不是没发，而是 `AgentEventRecoveryProjection` 把它列入了「恢复时忽略」的事件（设计如此）。
+所以真机上要证明跨会话排队，只能靠**第二个并发 run** 或**专门打点**，读库不行。
+
+**未验证（如实记录）**：
+
+- 跨会话并发排队（run B 等 run A）**未在真机制造**：需要在同一个进程里再起一个会调用 GUI 工具的 run，
+  而唯一入口是在正在跑本轮会话的界面里新建会话并发送消息 —— 万一误触到「停止」会直接杀掉当前轮次，
+  代价高于收益，本轮不做。
+- 用户暂停 / 恢复**在持锁状态下**的分支（`pauseForUser` 返回 true 那条）只有单测覆盖；
+  未持锁的纯文本 run 仍走原来的 `controller.pause()`，行为未变。
+
+**结论**：互斥的接线正确、单会话无回归；跨会话排队与「等待可见性」两项待做，后者建议下一轮优先。
