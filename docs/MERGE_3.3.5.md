@@ -1017,3 +1017,191 @@ runtime_inflight_runs 对这两个 run 0 行
 **顺带一个坑**：`am start -W` 在冷启动 canary 时卡到 90 秒超时（无任何输出）；
 换不带 `-W` 的 `am start` 立刻返回。判断是否真在前台，用
 `dumpsys activity activities | grep topResumedActivity` 更实在。
+
+## 23. 2026-10-29 第十六轮：两个会话同时跑，真机验证「运行标记」与「停止只打自己那个」
+
+先说清楚**这轮不是从头验**：§20.5 已经在正式包上验过「跨会话并发成立」和「停止只作用于当前会话」
+（手边是 A 臂本会话 + B 臂测试会话）。本轮补的是三件界面侧、以前没人看的事：
+
+1. **列表上的运行标记**（有没有、跟不跟状态走）；
+2. **切会话后底部按钮是不是各是各的**（不是一个全局 `isRunning`）；
+3. **双向停止**（先停 B 再停 A）+ 把「为什么两次日志不一样」（`stop skipped` 只出现一次）查清。
+
+另外顺带把 `runtime_results` 长期 0 行的原因从「不是账本」补到代码级（§23.6）。
+
+### 23.1 装置：两个会话、一条挂起端点
+
+沿用 §22 的挂起端点（`/workspace/mock-llm-hang.py`，回 `200` 后永不结束响应体），
+新建两个会话 `conv-conc-a`（并发-A）/ `conv-conc-b`（并发-B），都指向假模型 `debug-hang`，
+先发 A（15:00:22），46 秒后再发 B（15:01:16）—— 两条 run 同时活着。
+
+`runtime_inflight_runs` 同时出现两行（与 §20.5 的结论一致，这里只是复核一遍现场）：
+
+```
+run-e0b8c4aa-76d8-4899-9ede-cd805e73701c | chat | 2026-10-29 15:00:22
+run-585b578e-fc71-4534-9756-f094a98e72be | chat | 2026-10-29 15:01:16
+```
+
+服务端日志同样两条 `provider_response_started … http_code=200`（都在等首包，谁也没被谁挤掉）：
+
+```
+15:00:22.406 I Eta: Agent run dispatch: id=run-e0b8 foreground=true rootFallback=true
+15:00:22.610 D Eta: Agent runtime event: provider_response_started round=1, http_code=200
+15:01:16.709 I Eta: Agent run dispatch: id=run-585b foreground=true rootFallback=true
+15:01:16.802 D Eta: Agent runtime event: provider_response_started round=1, http_code=200
+```
+
+挂起端点那边也确实收到了两次 `POST /v1/chat/completions → 200`（各自连接都还开着），
+说明这不是「排队等前一个跑完」，而是真的并行。
+
+### 23.2 会话列表的运行标记：有，而且跟着状态走
+
+**注意：这个圆点不在无障碍树里**（列表项只有「标题 / 时间 / 预览」三个文本节点），
+只能靠截图判断。`§22` 之后我一度以为没有标记，就是因为只读了节点树。
+
+实测三段（同一块虚拟屏、同一份 DB）：
+
+| 时点 | 并发-A | 并发-B |
+|---|---|---|
+| 两条 run 都在跑 | 时间「现在」+ 预览 `run-A 挂起` + **蓝点** | 「现在」+ `run-B 挂起` + **蓝点** |
+| 停掉 B 之后 | 「现在」+ `run-A 挂起` + **蓝点** | 「15:04」+ `已停止`，**无圆点** |
+| 再停掉 A 之后 | 「15:05」+ `已停止`，**无圆点** | 「现在」+ `run-B2 挂起` + **蓝点** |
+
+两个方向都对照过，不是「选中项才有点」这种巧合（选中的那条在停下后也照样没点）。
+
+### 23.3 切会话后的底部状态：各是各的
+
+- 打开 A：预览是 `run-A 挂起`，底部是「暂停 / 停止」；
+- 切到 B：预览是 `run-B 挂起`，底部仍是「暂停 / 停止」（B 自己也在跑）；
+- 在 B 点「停止」：B 气泡出现 `已停止`、底部立刻回「发送」；此时再切回 A，A **仍然是**「暂停 / 停止」。
+
+也就是底部按钮跟着**当前会话的交卷状态**走，不是全局一个 `isRunning`。
+
+### 23.4 停止作用域：只停当前会话那条（双向都验了）
+
+**B 先停**（A 还在跑）—— DB 前后对照：`runtime_inflight_runs` 由两行变一行，剩下的是 A 的 `run-e0b8`；
+B 的会话里多出一条 `system_notice`，内容就是 `stopped`（界面上显示成 `已停止` 徽标）。
+
+**A 再停**（B 换了一条新 run `run-2b9c` 在跑）—— 结果对称：`inflight` 只剩 `run-2b9cebe7-…`，
+A 里多一条 `system_notice/stopped`，B 的 run 完好。
+
+两次的日志（`--pid` 只抓 canary，见 §23.6）：
+
+```
+15:04:02.442 I Eta: Agent runtime stopped
+15:04:02.448 W Eta: Agent runtime stop skipped: active run still executing
+15:04:02.454 I Eta: Agent run returned: id=run-585b ok=false err=已停止
+15:04:02.684 I Eta: stop watch: run 已退出活跃列表，收尾 runId=run-585b578e-… 第1次查询
+
+15:05:47.872 I Eta: Agent runtime stopped
+15:05:47.882 I Eta: Agent run returned: id=run-e0b8 ok=false err=已停止
+15:05:48.108 I Eta: stop watch: run 已退出活跃列表，收尾 runId=run-e0b8c4aa-… 第1次查询
+```
+
+**两段日志不一样，一开始我以为是缺陷**：第一次有 `stop skipped` 警告，第二次没有。
+查代码才明白，两处日志根本不是一件事：
+
+1. `Agent runtime stopped` 来自 `AgentRuntimeRunExecutor.kt:516`，是**每条 run 被取消时**自己在 catch 里打的
+   （`cancelled = true` → 消息文案「已停止」），所以两次各有一条，与作用域无关。
+2. `stop skipped` 来自 `dismissAndStop()`（`AgentRuntimeService.kt:1853-1862`）：
+   「收摊停服务」前检查 `sessions.isNotEmpty()`，还有别的 run 在跑就只收浮层、不 `stopSelf()`。
+   它只在**结束的那条 run 就是 primary**时才会走到 —— `postTerminalOverlay` 里
+   `showOverlay = primaryRunId == session.runId || primaryRunId == null`（`:855`），
+   非 primary 的 run 走 `notifyBackgroundRunFinished` 直接返回。
+   第一次结束时 `primaryRunId` 是 `run-585b`（后启动的那条），所以守卫触发；第二次结束时 primary 已换成
+   `run-2b9c`，`run-e0b8` 不是 primary，根本没进 `dismissAndStop()`。
+   → **两条日志都能用现有代码逐行解释，不是作用域漏了。**
+   （§20.5 那次「A 在跑时插话打断 B」也出现过同一行 `14:08:33.489 W … stop skipped`，同一机制。）
+
+### 23.5 停止到底怎么走到「只停一条」：代码位置
+
+| 入口 | 消息/函数 | 停谁 |
+|---|---|---|
+| 聊天页底部「停止」、列表里「停止运行」 | `MSG_CANCEL` 带 `runId` → `cancelRun(runId)`（`AgentRuntimeService.kt:365-367`） | **指定的那一条** |
+| 悬浮胶囊上的停止 | `requestStop()`（`:1171-1193`）：只 `cancelRun(primary)`；只有「没有 primary（浮层已收起）」时才回退成全部停掉 | primary |
+
+会话列表里「停止运行」只对正在跑的会话出现（`ConversationPanePanel.kt:595`），
+与「停止作用域按会话」是同一套语义，不是巧合。
+
+另外确认了一点：**非 primary 的 run 收尾时，前台不弹任何东西**。
+`notifyBackgroundRunFinished()`（`:750`）第一行就是 `if (AppVisibility.foreground.value) return`，
+所以第二个会话跑完只落在自己的会话里，不会在你看 A 的时候弹一张 B 的结果卡。
+
+### 23.6 落账：`runtime_results` 为什么一直是 0 行
+
+本轮两次「停止」之后，`runtime_results` 仍然是 **0 行**（DB 采样四个时点都是 0，
+§22 里两次「被顶替」之后也是 0 —— 两次是不同实例的库，结论一致）。
+不是没落账，而是这张表**不是账本**：`AgentRuntimeResultStore` 的注释写得很清楚
+「终态先落盘，入口成功提交后 ACK」，入口 ACK 后服务端 `AgentRuntimeResultStore.remove(...)`
+（`AgentRuntimeService.kt:408`）把行删掉。所以长期为 0 是**正常**的，排查时别拿它当「所有 run 的账」。
+
+真正看得见的是会话里的 `conversation_messages`：
+
+```
+conv-conc-a | 0 | user          | run-A 挂起
+conv-conc-a | 1 | system_notice | stopped
+conv-conc-b | 0 | user          | run-B 挂起
+conv-conc-b | 1 | system_notice | stopped
+conv-conc-b | 2 | user          | run-B2 挂起
+```
+
+「已停止」是**消息**（`system_notice`），不是 run 终态记录；`runtime_inflight_runs` 则是精确的：
+停谁就少谁，另一条一动不动。
+
+### 23.7 环境坑（本轮新增，都是花时间换来的）
+
+1. **主包自己的 run 会把 `tag=Eta` 的日志淹掉。** 我用的是主包跑这个会话，它在不停地打
+   `agent_round_model / chunktext / Agent terminal`，几分钟就把 canary 的日志顶出缓冲区
+   （我去查时 `logcat -d --pid <canary>` 只剩 39 行，之前那些 `dispatch` 全被轮转掉了）。
+   → 要留证据，**开局就 `logcat --pid <canary> -s Eta` 挂一个 `terminal_job` 收着**，别事后补。
+2. **`ps -A -o args` 会把运行器自己的命令行打出来**，那串里带着注入的环境变量（含 token）。
+   我这一下把凭据第三次打到了屏幕上。→ 看进程只查 `pidof` / `ps -A -o pid,args | grep <包名>`
+   这类**限定输出**的写法，或者干脆别碰 `args`。
+3. **canary 的无障碍服务会自愈，而且系统每 30 秒重绑一次。** 光 `settings put secure
+   enabled_accessibility_services <只留主包>` 会被还原（进程还在 → 应用把自己写回去）。
+   可靠顺序是 `pm disable-user`（或 `am force-stop`）→ 改设置 → 再 `pm enable`；
+   最干净的还是**卸载测试包**，系统会把设置自动收回成只剩主包（本轮收尾就是这么做的）。
+4. **没有干净备份就不要「整库还原」。** 上一轮记的 `canary-clean` 备份这次根本不存在
+   （`/data/local/tmp/eta/canary-clean` 报 No such file），四个 `canary-conc*` 快照只有 `eta.db`
+   没带 `-wal`，直接盖回去等于丢掉最近的全部写入。
+   → 改成**精确 DELETE**：按 run / 会话 / provider 的 id 删，删完复核计数（见 §23.8）。
+5. 设备上没有 `sqlite3`、`/data/data` 在 root shell 里是 tmpfs（§22.5 的老坑）：
+   真实库在 `/proc/1/root/data/data/<pkg>/databases/`，把 `eta.db` + `-wal` + `-shm` 一起拷到
+   `/data/local/tmp/eta/`，用 Linux 侧的 sqlite 打开（会自动合并 WAL），改完再拷回去、
+   删掉旧的 `-wal/-shm`、`chown u0_a400:u0_a400` 且 `chmod 660`。
+
+### 23.8 收尾：测试数据与测试包都清掉了
+
+改库前先 `pm disable-user --user 0 io.github.mangi.eta.canary`（这一下进程真没了，
+`am force-stop` 会被无障碍绑定立刻拉回来，不可靠）。删除范围只限本轮造的：
+
+```sql
+DELETE FROM runtime_inflight_events WHERE run_id IN (SELECT run_id FROM runtime_inflight_runs);
+DELETE FROM runtime_inflight_runs;
+DELETE FROM conversation_context_checkpoints WHERE conversation_id IN ('conv-conc-a','conv-conc-b');
+DELETE FROM conversation_messages          WHERE conversation_id IN ('conv-conc-a','conv-conc-b');
+DELETE FROM conversations                  WHERE id IN ('conv-conc-a','conv-conc-b');
+DELETE FROM provider_models  WHERE id='debug-hang-model';
+DELETE FROM model_providers  WHERE id='debug-hang-provider';
+UPDATE conversation_state SET selected_conversation_id='' WHERE id='main';
+```
+
+复核（清完、写回设备后）：`conversations` 0 行、`conversation_messages` 0 行、
+`runtime_inflight_runs` 0 行，内置 `model_providers` 12 行 / `provider_models` 31 行原样保留。
+启动一次应用确认库没被改坏：进程起来、`eta.db-wal` 重新生成（0 字节）、
+`grep -iE "FATAL|SQLiteException|room|corrupt"` 无命中，界面回到「有什么可以帮你？」的空态。
+
+最后：`pm uninstall io.github.mangi.eta.canary` → `Success`；系统把
+`enabled_accessibility_services` 自动收回成只剩
+`io.github.mangi.eta/.agent.accessibility.AgentAccessibilityService`；
+释放虚拟屏、停掉挂起端点（18080 无监听、无 mock 进程）；前台回到主包 `MainActivity`。
+临时库副本、四个 `canary-conc*` 快照、`main-peek` 快照已删；
+证据文件留在 `/data/local/tmp/eta/evidence/conc-*.txt`（§22.6 同样留档）。
+
+### 23.9 本轮没验到的（别当成已验证）
+
+- **「暂停」的作用域没做双跑交叉验证**：代码是 `MSG_PAUSE_RUN` 带 `runId → pauseRun(runId)`，
+  但两次都是「停一个、另一个在跑」的停止场景，暂停只单条跑过，没验「暂停 A 时 B 是否照跑」。
+- **列表长按菜单里的「停止运行」没实测**（只核到它只在运行中的会话上出现）。
+- **非 primary 的 run 完成后的静默行为**只读了代码（前台直接 return），没等到「A 在跑时 B 自然跑完」的现场。
+
