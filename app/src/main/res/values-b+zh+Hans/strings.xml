@@ -1222,7 +1222,6 @@
   <string name="chat_send">发送</string>
   <string name="chat_send_queue">排队发送（本轮结束后发出）</string>
   <string name="chat_queued_hint">已排队，本轮结束后自动发送</string>
-  <string name="chat_interrupt_send">打断本轮并立即发送</string>
   <string name="chat_edit_while_streaming">正在运行，先停止或等本轮结束再保存这条编辑</string>
   <string name="chat_interrupt_sent_after_finish">本轮已结束，插话已直接发出</string>
   <string name="chat_reasoning_effort">思考强度，当前为 %1$s</string>

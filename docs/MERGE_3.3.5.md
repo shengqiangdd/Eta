@@ -2431,3 +2431,65 @@ md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.g
 
 虚拟屏 `vdmvto8o8x` 已释放（释放时连带移除屏上任务，避免被迁回主屏）；测试产生的排队消息均已发出、
 输入框已清空；canary 保持安装，主包未动。
+
+### 32.11 更正 §32.10：长按不是 dsh 的做法，改成显式按钮（2026-10-29 晚）
+
+**用户质疑**：「长按？你没有参考 dsh 么？」——质疑成立。
+
+**核查 dsh 真源码（`/workspace/dsh-work/dsh/packages/client`）**
+
+- 全仓 `onLongPress` / `onLongClick` / `longPress` / `pressAndHold` **零匹配**；输入栏没有任何长按。
+- 也没有「暂停运行」：`pause` 只出现在 goal 的暂停/恢复，不是 run。
+- `ui-conversation/src/client/skeleton/InputBar.tsx`：
+  - `primaryStops = running && subagent === null && (empty || blocked !== undefined)` —— 运行中且输入为空，主按钮就是**停止**；
+  - 有草稿时主按钮是**发送**，排队还是插话由 `resolveSubmitMode(busyEnter, running, 'enter', steeringAvailable)` 决定，
+    即 `ComposerSubmissionPolicy`（BusyEnterBehavior，用户设置），**不是手势**；
+  - 独立 Stop 只在 `interruptible`（continuable 子代理）时出现；桌面另有 `useStopShortcut` 的 Esc 快捷键。
+- 结论：§32.10 的「暂停/打断即发折叠进长按」是自创交互，不是 dsh。
+
+**改法（用户选：保留暂停为显式按钮）**
+
+- `AgentChatInputBar.kt`：`ChatHoldActionButton`（`combinedClickable`）→ `ChatActionButton`（普通 `clickable`），
+  长按参数与 `combinedClickable` import 一并删除。
+- 运行中固定两个显式按钮，按状态切换：
+
+| 状态 | 左键 | 右键（主按钮） |
+|---|---|---|
+| 运行中 + 空输入 | 暂停 | 停止 |
+| 运行中 + 有草稿 | 停止 | 排队发送（本轮结束后发出） |
+| 暂停中 + 空输入 | 继续 | 停止 |
+| 暂停中 + 有草稿 | 继续 | 排队发送（本轮结束后发出） |
+
+  最后一行是**设计例外**：用户要求「有草稿时只有停止 + 发送」，但暂停中若收起「继续」，
+  用户打了字就再也无法恢复（只能删草稿）。暂停中把左键留给「继续」，停止需要先继续或清空草稿。
+- 删除三语 `chat_interrupt_send`（长按专用文案，已无引用）；`onInterruptAndSubmit` 参数保留但输入栏不再调用
+  —— 「打断即发」现在走两步：先排队，再点队列条的「立即插话发送」。
+
+**门禁与产物**
+
+`ETA_APP_ID_SUFFIX=.canary STAGES=test,assemble sh tools/gate.sh` → 单测 **719 用例 / 0 失败**，
+`Eta-v3.3.5-debug.apk` **34,461,638 字节**（md5 `37df2dd53625e58f…`）。
+
+**覆盖安装（未卸载）**
+
+`pm install -r -d` → `Success`；`lastUpdateTime` 23:12:41 → **23:21:30**，`firstInstallTime` 始终 **16:35:18**；
+主包 `io.github.mangi.eta` 的 `lastUpdateTime` 仍是 18:22:55。
+
+**真机实测（虚拟屏 display 6 / PKX110 / Android 16，全部本构建）**
+
+| 状态 | 观测到的节点事实 |
+|---|---|
+| 运行中 + 空输入 | `desc="暂停"`（Button）+ `desc="停止"`；两者都没有 `long_clickable` |
+| 运行中 + 有草稿 | `desc="停止"` + `desc="排队发送（本轮结束后发出）"` |
+| 点「暂停」 | 左键变 `desc="继续"`，右键仍是 `desc="停止"` |
+| 暂停中 + 有草稿 | `desc="继续"` + `desc="排队发送（本轮结束后发出）"` |
+| 点「停止」 | 消息流出现「已停止」，输入栏回到空闲态只剩 `desc="发送"`（空输入时 disabled） |
+
+**仍未验证**
+
+- 暂停中「继续」恢复后的重试序列推进，本轮只看到按钮切换（上一轮 §32.10 验过继续能推进）。
+- 队列条「立即插话发送」在草稿非空时仍按 §32.10 置灰（`hasDraft`），本轮没有重跑那条路径。
+
+**收尾**
+
+虚拟屏 `vdmvtoyd7g` 已释放（连带移除屏上任务）；测试草稿已清空、测试 run 已停止；canary 保持安装，主包未动。

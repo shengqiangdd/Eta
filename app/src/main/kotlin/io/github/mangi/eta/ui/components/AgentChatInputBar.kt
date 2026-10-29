@@ -17,7 +17,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +43,7 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.runtime.Composable
@@ -420,21 +420,46 @@ internal fun AgentChatInputBar(
                             onModelSelected = onModelSelected,
                         )
 
-                        // 运行中只保留两个入口（参考 dsh）：主按钮负责「排队发送」，停止/继续单独一个。
-                        // 暂停、插话这类低频或破坏性操作折叠进长按 —— 旧布局四个并排图标把右侧挤满，
-                        // 而且有草稿时根本没有「停止」（只能先删字才能停）。
-                        if (isStreaming && canSend) {
-                            ChatHoldActionButton(
-                                description = stringResource(if (isPaused) R.string.chat_resume_run else R.string.chat_stop),
-                                onClick = { if (isPaused) onTogglePause() else onStop() },
-                                onLongClickLabel = stringResource(if (isPaused) R.string.chat_stop else R.string.chat_pause_run),
-                                onLongClick = { if (isPaused) onStop() else onTogglePause() },
+                        // 参考 dsh：运行中只留两个显式按钮，不再有常驻小图标，也没有长按。
+                        // 左键随状态在「暂停 / 继续 / 停止」之间切换，右键是主操作（停止或排队发送）。
+                        // dsh 的输入栏没有任何长按（packages/client 全仓无 onLongPress），
+                        // 隐藏手势既不可发现，也会和输入框的文本选择手势打架。
+                        if (isStreaming) {
+                            val runningActionGlyph = when {
+                                isPaused -> ChatRunningActionGlyph.Resume
+                                canSend -> ChatRunningActionGlyph.Stop
+                                else -> ChatRunningActionGlyph.Pause
+                            }
+                            ChatActionButton(
+                                description = stringResource(
+                                    when (runningActionGlyph) {
+                                        ChatRunningActionGlyph.Pause -> R.string.chat_pause_run
+                                        ChatRunningActionGlyph.Resume -> R.string.chat_resume_run
+                                        ChatRunningActionGlyph.Stop -> R.string.chat_stop
+                                    }
+                                ),
+                                onClick = {
+                                    when (runningActionGlyph) {
+                                        // 暂停与继续是同一个开关：停顿中再点一下就继续。
+                                        ChatRunningActionGlyph.Pause,
+                                        ChatRunningActionGlyph.Resume,
+                                        -> onTogglePause()
+
+                                        ChatRunningActionGlyph.Stop -> onStop()
+                                    }
+                                },
                             ) {
                                 Icon(
-                                    imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Stop,
+                                    imageVector = when (runningActionGlyph) {
+                                        ChatRunningActionGlyph.Pause -> Icons.Rounded.Pause
+                                        ChatRunningActionGlyph.Resume -> Icons.Rounded.PlayArrow
+                                        ChatRunningActionGlyph.Stop -> Icons.Rounded.Stop
+                                    },
                                     contentDescription = null,
-                                    modifier = Modifier.size(if (isPaused) SendIconSize else StopIconSize),
-                                    tint = if (isPaused) {
+                                    modifier = Modifier.size(
+                                        if (runningActionGlyph == ChatRunningActionGlyph.Stop) StopIconSize else SendIconSize
+                                    ),
+                                    tint = if (runningActionGlyph == ChatRunningActionGlyph.Resume) {
                                         MiuixTheme.colorScheme.primary
                                     } else {
                                         MiuixTheme.colorScheme.onSurfaceVariantActions
@@ -445,23 +470,20 @@ internal fun AgentChatInputBar(
                             Spacer(modifier = Modifier.width(2.dp))
                         }
 
-                        // 主按钮：空闲=发送，运行中+有草稿=排队（长按立即插话），
-                        // 运行中+空输入=停止（长按暂停），暂停中=继续（长按停止）。
+                        // 主按钮：空闲=发送；运行中+有草稿=排队发送；运行中+空输入=停止（暂停中也一样）。
                         val primaryGlyph = when {
-                            isStreaming && !canSend && isPaused -> ChatPrimaryGlyph.Resume
                             isStreaming && !canSend -> ChatPrimaryGlyph.Stop
                             else -> ChatPrimaryGlyph.Send
                         }
                         val primaryDescription = stringResource(
                             when {
-                                primaryGlyph == ChatPrimaryGlyph.Resume -> R.string.chat_resume_run
                                 primaryGlyph == ChatPrimaryGlyph.Stop -> R.string.chat_stop
                                 isEditingMessage && preserveFollowingMessages -> R.string.chat_save_message
                                 isStreaming -> R.string.chat_send_queue
                                 else -> R.string.chat_send
                             }
                         )
-                        ChatHoldActionButton(
+                        ChatActionButton(
                             description = primaryDescription,
                             onClick = {
                                 when {
@@ -471,28 +493,8 @@ internal fun AgentChatInputBar(
                                         textFieldState.clearText()
                                         onSubmit(submittedText)
                                     }
-                                    isStreaming && isPaused -> onTogglePause()
                                     isStreaming -> onStop()
                                 }
-                            },
-                            onLongClickLabel = when {
-                                isStreaming && canSend -> stringResource(R.string.chat_interrupt_send)
-                                isStreaming && isPaused -> stringResource(R.string.chat_stop)
-                                isStreaming -> stringResource(R.string.chat_pause_run)
-                                else -> null
-                            },
-                            onLongClick = when {
-                                isStreaming && canSend -> {
-                                    {
-                                        dictation.cancel()
-                                        val submittedText = textFieldState.text.toString()
-                                        textFieldState.clearText()
-                                        onInterruptAndSubmit(submittedText)
-                                    }
-                                }
-                                isStreaming && isPaused -> ({ onStop() })
-                                isStreaming -> ({ onTogglePause() })
-                                else -> null
                             },
                             enabled = isStreaming || canSend,
                         ) {
@@ -527,7 +529,6 @@ internal fun AgentChatInputBar(
                                     Icon(
                                         imageVector = when (glyph) {
                                             ChatPrimaryGlyph.Stop -> Icons.Rounded.Stop
-                                            ChatPrimaryGlyph.Resume -> Icons.Rounded.PlayArrow
                                             ChatPrimaryGlyph.Send -> Icons.Rounded.ArrowUpward
                                         },
                                         contentDescription = null,
@@ -679,22 +680,23 @@ private fun PendingImageStrip(
     }
 }
 
-/** 主按钮当前显示的图形；排队与发送共用向上箭头（区别在文案与长按）。 */
-private enum class ChatPrimaryGlyph { Send, Stop, Resume }
+/** 运行中左侧按钮的图形：暂停、继续、停止。 */
+private enum class ChatRunningActionGlyph { Pause, Resume, Stop }
+
+/** 主按钮：发送（含排队）或停止。 */
+private enum class ChatPrimaryGlyph { Send, Stop }
 
 /**
- * 带长按的动作按钮：短按是安全的主操作，长按是低频或破坏性操作。
+ * 输入栏的显式动作按钮。
  *
- * 为什么需要它（参考 dsh 的输入栏）：运行中原来并排摆着「暂停 / 插话 / 排队 / 停止」四个图标，
- * 既挤占输入框右侧，又让人分不清哪个会打断当前回合。收敛成「主按钮 + 停止」之后，
- * 插话挪到长按与队列条、暂停挪到停止键长按，破坏性操作不再是一个容易误触的独立图标。
+ * dsh 的输入栏（ui-conversation/src/client/skeleton/InputBar.tsx）没有任何长按：
+ * 运行中空输入时主按钮就是停止，有草稿时主按钮是发送，其余动作都是独立按钮。
+ * 所以这里只做单击，不再用 combinedClickable 把「暂停 / 打断即发」藏进长按。
  */
 @Composable
-private fun ChatHoldActionButton(
+private fun ChatActionButton(
     description: String,
     onClick: () -> Unit,
-    onLongClickLabel: String? = null,
-    onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
@@ -702,11 +704,9 @@ private fun ChatHoldActionButton(
         modifier = Modifier
             .size(ChatInputActionSize)
             .clip(CircleShape)
-            .combinedClickable(
+            .clickable(
                 enabled = enabled,
                 role = Role.Button,
-                onLongClickLabel = onLongClickLabel,
-                onLongClick = onLongClick,
                 onClick = onClick,
             )
             .semantics { contentDescription = description },
