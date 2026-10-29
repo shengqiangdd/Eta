@@ -900,6 +900,7 @@ internal class AgentAppState(
             runConversationIds.remove(runId)
             pendingAttachRuns.remove(runId)
             stopRequestedAt.remove(runId)
+            stopIntentByInterrupt.remove(runId)
         }
         stale.conversationIds.forEach { id ->
             val state = conversationsById[id] ?: return@forEach
@@ -1552,9 +1553,9 @@ internal class AgentAppState(
     /**
      * 运行中「插话发送」：先把这条消息入队并请求中止当前 run，run 收尾后优先发出。
      *
-     * 与 [sendCurrentMessage] 的运行中行为（steering，见 [steerCurrentRun]）刻意区分：
-     * steering 不中断当前 run，只把补充指令送进去；插话则明确要「别按现在的方案继续」。
-     * 空闲时没有可插的话，直接退回普通发送。
+     * 与 [sendCurrentMessage] 的运行中行为（排队，见 [queueCurrentMessage]）刻意分开：
+     * 点发送的直觉是「这条先记下」，而不是「现在就把正在做的事停下」；只有明确点这个插话按钮，
+     * 才代表「别按现在的方案继续」。空闲时没有可插的话，直接退回普通发送。
      */
     fun interruptAndSendCurrentMessage(submittedText: String? = null) {
         if (rejectWhileMessagesLoading()) return
@@ -1641,7 +1642,38 @@ internal class AgentAppState(
     private fun requestInterruptCurrentRun() {
         // 与「停止」共用同一条解析路径：本地映射缺失时也会向服务端对账，
         // 确认没有运行中的 run 就把假运行态收掉，排队消息才有机会被发出。
-        requestStop(selectedConversationId)
+        // byInterrupt=true：这里的停止只是「换一条继续说」的手段，收尾后允许队列头立刻发出；
+        // 用户点停止按钮走默认 false，队列一律保留，绝不再自己跑起来。
+        requestStop(selectedConversationId, byInterrupt = true)
+    }
+
+    /**
+     * 运行中「排队发送」：不打断当前回合，按 FIFO 等它自然结束后自动发出。
+     *
+     * 与 [interruptAndSendCurrentMessage] 是两条完全不同的路：这里不调 requestStop，
+     * 所以界面不会先闪出「未运行」再突然跑起来。用户点发送时的意思通就是
+     * 「把这句话记下，等你这轮做完再说」。
+     */
+    private fun queueCurrentMessage(prompt: String) {
+        if (prompt.isBlank() && homeState.pendingImages.isEmpty() &&
+            homeState.pendingFileReferences.isEmpty()
+        ) {
+            return
+        }
+        if (selectedConversationId?.isReadOnlyExternalArchiveConversation() == true) return
+        val queued = QueuedMessageUi(
+            id = "queue-${UUID.randomUUID()}",
+            content = prompt,
+            pendingImages = homeState.pendingImages,
+            pendingFileReferences = homeState.pendingFileReferences,
+            immediateInterrupt = false,
+        )
+        updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, queued))
+        Toast.makeText(
+            appContext,
+            appContext.getString(R.string.chat_queued_hint),
+            Toast.LENGTH_SHORT,
+        ).show()
     }
 
     fun sendCurrentMessage(submittedText: String? = null) {
@@ -1651,9 +1683,10 @@ internal class AgentAppState(
         val pendingImages = homeState.pendingImages
         val pendingFileReferences = homeState.pendingFileReferences
         if (homeState.isStreaming) {
-            // 运行中不再只有“停止”：把这条输入当作 steering 送进当前 run，
-            // 当前步骤结束后模型就能看到，不必中断重来。
-            steerCurrentRun(prompt)
+            // 运行中发送 = 排队，不打断当前回合（「打断并立即发送」是输入栏上那个插话按钮）。
+            // 之前这里走 steering：消息直接塞进正在跑的那个 run，用户看到的是「又被插话了」，
+            // 想发的新一轮永远不会出现 —— 这是真机反馈里最刺眼的一条。
+            queueCurrentMessage(prompt)
             return
         }
         if (prompt.isBlank() && pendingImages.isEmpty() && pendingFileReferences.isEmpty()) {
@@ -2770,6 +2803,16 @@ internal class AgentAppState(
      */
     private val stopRequestedAt = mutableMapOf<String, Long>()
 
+    /**
+     * 这条 run 最后一次「停止请求」是谁发的：true = 插话按钮，false = 用户真的想停下。
+     *
+     * 为什么不能只靠 [stopRequestedAt]：那张表只用于去抖，而且会在「停止监视器」确认
+     * run 从活跃列表消失时被清掉。队列要不要在收尾后自动续发，取决于用户**最后一次**
+     * 意图；监视器抢先清标记会把「用户点了停止」退化成「自然结束」，真机表现就是
+     * 「会话明明已经停了，过几秒又自己跑起来」。
+     */
+    private val stopIntentByInterrupt = mutableMapOf<String, Boolean>()
+
     private fun claimStopRequest(runId: String): Boolean {
         val now = System.currentTimeMillis()
         val last = stopRequestedAt[runId]
@@ -2849,7 +2892,10 @@ internal class AgentAppState(
         val dropped = runConversationIds.filterValues { it == target }.keys.toList()
         dropped.forEach { runConversationIds.remove(it) }
         if (currentRunId in dropped) currentRunId = null
-        if (dropped.isNotEmpty()) stopRequestedAt.keys.removeAll(dropped.toSet())
+        if (dropped.isNotEmpty()) {
+            stopRequestedAt.keys.removeAll(dropped.toSet())
+            stopIntentByInterrupt.keys.removeAll(dropped.toSet())
+        }
         clearStaleStreaming(target)
         AndroidAgentLogger.warn(
             "Agent debug injection: forgot local run state conv=${target.take(13)} " +
@@ -2874,11 +2920,13 @@ internal class AgentAppState(
      * 但本地没有 runId」这种状态变成一个点了毫无反应的按钮。现在：
      * 找到并发出停止 / 服务端确认已无任务并清掉假运行态 / 连不上就明说。
      */
-    private fun requestStop(conversationId: String?) {
+    private fun requestStop(conversationId: String?, byInterrupt: Boolean = false) {
         if (conversationId == null) return
         scope.launch {
             when (val resolution = resolveRunIdForConversation(conversationId)) {
                 is RunResolution.Active -> {
+                    // 意图先落表再去抖：用户先后点「停止」和「插话」时，生效的必须是最后一次点击。
+                    stopIntentByInterrupt[resolution.runId] = byInterrupt
                     if (claimStopRequest(resolution.runId)) {
                         withContext(Dispatchers.IO) {
                             AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(resolution.runId)
@@ -2940,6 +2988,7 @@ internal class AgentAppState(
                         withContext(Dispatchers.Main) {
                             runConversationIds.remove(checkpoint.runId)
                             stopRequestedAt.remove(checkpoint.runId)
+                            stopIntentByInterrupt.remove(checkpoint.runId)
                             val state = conversationsById[conversationId]
                             if (state?.isStreaming == true) {
                                 updateConversation(
@@ -2981,7 +3030,10 @@ internal class AgentAppState(
                     withContext(Dispatchers.Main) {
                         setConversationStreaming(runId, false)
                         runConversationIds.remove(runId)
-                        stopRequestedAt.remove(runId)
+                        // 这里**不能**清 stopRequestedAt：run 的最终结果随后才到，清掉会让
+                        // 「用户主动停止」被当成自然结束，队列于是自动续发 —— 真机表现是
+                        // 「点了停止、界面已显示未运行，几秒后又自己跑起来」。标记留到
+                        // applyRunResult 收尾时统一清理；卡死的记录由 reconcileStaleRunState 兜底。
                         refreshConversationSummaries()
                         toastNotice(R.string.chat_stop_done)
                     }
@@ -3304,6 +3356,7 @@ internal class AgentAppState(
         val rewriting = result.operation == AgentRuntimeWire.OP_REWRITE_REPLY || isReplyRewrite(runId)
         // 用户点过停止 / 插话才会在这张表里；必须在下面的 remove 之前取，否则永远读到 false。
         val explicitlyStoppedByUser = stopRequestedAt.containsKey(runId)
+        val stoppedForInterrupt = stopIntentByInterrupt.remove(runId) == true
         stopRequestedAt.remove(runId)
         if (runId == currentRunId) {
             currentRunId = null
@@ -3391,7 +3444,12 @@ internal class AgentAppState(
             scope.launch {
                 saved.await()
                 withContext(Dispatchers.Main) {
-                    drainQueueAfterRun(completedConversationId, result, explicitlyStoppedByUser)
+                    drainQueueAfterRun(
+                        conversationId = completedConversationId,
+                        result = result,
+                        explicitlyStoppedByUser = explicitlyStoppedByUser,
+                        stoppedForInterrupt = stoppedForInterrupt,
+                    )
                 }
             }
         }
@@ -3411,6 +3469,7 @@ internal class AgentAppState(
         conversationId: String,
         result: AgentRuntimeWire.RunResult,
         explicitlyStoppedByUser: Boolean,
+        stoppedForInterrupt: Boolean,
     ) {
         if (conversationId != selectedConversationId) return
         val state = conversationsById[conversationId] ?: return
@@ -3421,10 +3480,12 @@ internal class AgentAppState(
         if (state.input.isNotBlank() && head.pendingImages.isEmpty() && head.pendingFileReferences.isEmpty()) {
             return
         }
-        val stoppedByUser = explicitlyStoppedByUser ||
+        // 插话按钮也会 requestStop（run 的 error 同样是「已停止」），但它要的是「换一条继续说」，
+        // 不能算「用户想停下」。只有最后一次点击是停止按钮时，才冻结整个队列。
+        val stoppedByUser = !stoppedForInterrupt && (explicitlyStoppedByUser ||
             (!result.ok && (result.error == LEGACY_STOPPED_ERROR ||
                 result.error == SYNTHETIC_STATUS_STOPPED ||
-                result.error == appContext.getString(R.string.agent_notice_stopped)))
+                result.error == appContext.getString(R.string.agent_notice_stopped))))
         val (afterPopState, nextQueued) = AgentMessageQueueReducer.pollNextToSendAfterRun(
             state = state,
             stoppedByUser = stoppedByUser,

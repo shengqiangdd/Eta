@@ -2035,3 +2035,89 @@ step=observe-foreign  got='observe_screen'         ok=False code='DISPLAY_FOREIG
   `build-artifacts/Eta-v3.3.5-debug-main.apk`（32290084 字节）
 - **仍未验证**：`MAIN_INPUT_ACTIVE` 的新文案只做了代码核对 —— 触发它需要主屏正处于输入状态，
   本轮没有为了验证文案去抢用户的输入法
+
+## 31. 2026-10-29 第二十四轮：运行中发送改成「排队」，并修掉「停止后又自己跑起来」
+
+### 31.1 用户看到的两个现象
+
+1. 会话运行中发消息，消息仍然被当成「插话／补充」塞进当前回合，想发的新一轮永远不出现；
+2. 点停止后界面已经显示「未运行」，过几秒会话又自己动起来（最后那轮总结就是这么跑出来的）。
+
+### 31.2 根因
+
+**现象 1**：`sendCurrentMessage()` 在 `isStreaming` 时直接调 `steerCurrentRun(prompt)` —— 走
+`sendSupplement` 把文本送进当前 run，不产生新的用户消息。按钮写着「发送」，行为却是补充指令。
+
+**现象 2**：停止路径把「用户意图」弄丢了：
+
+- `watchStoppedRunUntilGone()` 一旦查到 run 从活跃列表消失，就 `stopRequestedAt.remove(runId)`；
+  而 run 的最终 `RunResult` 是随后才到 `applyRunResult()` 的，那时
+  `explicitlyStoppedByUser = stopRequestedAt.containsKey(runId)` 已经是 false。
+- 仅剩的兜底是 `result.error == "已停止"`；但 `drainQueueAfterRun()` 对队首
+  `immediateInterrupt=true` 的消息**无条件发出**（插话语义），所以「停止」之后队列照样会把
+  下一条拉起来。
+
+也就是说：`stopRequestedAt` 同时承担了「去抖计时」和「用户停止证据」两个职责，前者在收尾前被
+清掉，后者就跟着丢了。
+
+### 31.3 改法
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| 运行中发送 = 排队 | `AgentAppState.sendCurrentMessage` → 新增 `queueCurrentMessage` | 入队 `immediateInterrupt=false`，不调 `requestStop`，弹「已排队，本轮结束后自动发送」 |
+| 停止意图与去抖分离 | 新增 `stopIntentByInterrupt: MutableMap<String, Boolean>` | `requestStop(..., byInterrupt)` 先写意图再去抖；插话传 true，停止按钮默认 false |
+| 停止监视器不再清标记 | `watchStoppedRunUntilGone` | 只收本地运行态，`stopRequestedAt` / `stopIntentByInterrupt` 留到 `applyRunResult` |
+| 收尾按最后意图决定 | `drainQueueAfterRun(..., stoppedForInterrupt)` | 插话触发的停止不算「用户想停」；用户点停止 → `stoppedByUser=true`，整个队列冻结 |
+| 文案 | 三处 `strings.xml` | 「插话发送（打断当前运行）」→「打断本轮并立即发送」 |
+
+顺带清理：`reconcileStaleRunState` / `healStaleRunsAfterStartup` / `forgetRunState` 三处同时清两张表，
+避免记录泄漏。
+
+### 31.4 真机验证（canary，虚拟屏）
+
+构建：`./gradlew :app:assembleDebug -Peta.applicationIdSuffix=.canary --offline` →
+`app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk`（32036597 字节，md5 `08e69a3a…`），
+`output-metadata.json` 的 `applicationId=io.github.mangi.eta.canary`。
+
+覆盖安装（未卸载）：
+
+```
+appId=10617                    （未变）
+firstInstallTime=16:35:18      （未变）
+lastUpdateTime=18:14:28
+classes8.dex 含 queueCurrentMessage
+resources.arsc 含 chat_queued_hint
+```
+
+> 装之前先查了设备上的旧包：主包／分身都是 32034489 字节（= 09:34 的构建），dex 里没有
+> `queueCurrentMessage` —— 上一轮改完根本没上机，用户看到的仍是旧逻辑。这一步
+> （比对 APK 字节数 + dex 方法名）应作为「装没装上」的固定判据。
+
+验证过程（canary 数据目录为空，复制了主包的 `eta_settings.preferences_pb`，SELinux 用
+`restorecon` + `chcon` 修正到 `app_data_file:s0:c105,c258,c512,c768`）：
+
+1. 发一条消息触发 run（模型是内置 `DebugHang`，请求重试 4 次后失败，给了约 20 秒窗口）；
+2. 运行中在输入框写「第三条：排队C」，点主按钮（此刻 `contentDescription` 已是
+   「排队发送（本轮结束后发出）」）：
+   - 输入框清空；
+   - 出现队列胶囊「排队中 · 第三条：排队C」+「立即插话发送」／「移除排队消息」；
+   - **run 没有中断**：界面上重试消息（1/4…3/4）继续推进，最后一条用户消息仍是「第二条」。
+3. 点停止 → 出现「已停止」，队列胶囊仍在；
+4. 静置 8 秒后再观察：队列仍是「排队中 · 第三条：排队C」，主按钮回到「发送」，
+   **没有新 run** —— 用户停止后队列不自动续发。
+
+### 31.5 未验证／已知限制
+
+- **没有验证「自然结束 → 队列自动发出」**：本轮 run 全部因 DebugHang 请求失败结束，没走到
+  自然收尾；这一条只有 `AgentMessageQueueReducer` 的单测覆盖（`pollNextToSendAfterRun`）。
+- canary 复制的配置来自主包 08:47 的快照，没有可用 provider key，所以只验证了 UI／状态机，
+  没有验证真实模型对话。
+- 主包仍是 09:34 的旧包（32034489 字节），要让它也生效必须重新覆盖安装主包（会重启进程）。
+
+### 31.6 教训
+
+1. **「我改好了」≠「用户用上了」**：代码改完没构建、没安装，用户看到的现象不会变。
+   判断装没装上，看 APK 字节数、`applicationId`、dex 里的新符号，而不是看安装时间。
+2. **一张表不要同时承担两个职责**：`stopRequestedAt` 既是去抖计时器又是「用户停止」证据，
+   监视器一清，证据就没了。把「意图」拆出来单独存。
+3. 停止监视器只该收「本地显示态」，不该替 run 收尾逻辑做决定。

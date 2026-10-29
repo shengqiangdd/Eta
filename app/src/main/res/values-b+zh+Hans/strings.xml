@@ -1220,7 +1220,9 @@
   <string name="background_run_failed">后台任务失败</string>
   <string name="background_run_stopped">后台任务已停止</string>
   <string name="chat_send">发送</string>
-  <string name="chat_interrupt_send">插话发送（打断当前运行）</string>
+  <string name="chat_send_queue">排队发送（本轮结束后发出）</string>
+  <string name="chat_queued_hint">已排队，本轮结束后自动发送</string>
+  <string name="chat_interrupt_send">打断本轮并立即发送</string>
   <string name="chat_reasoning_effort">思考强度，当前为 %1$s</string>
   <string name="status_unsupported">不支持</string>
   <string name="attachment_image">图片</string>

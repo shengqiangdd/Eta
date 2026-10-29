@@ -510,6 +510,9 @@ internal fun AgentChatInputBar(
                                         contentDescription = when {
                                             stopIcon -> stringResource(R.string.chat_stop)
                                             isEditingMessage && preserveFollowingMessages -> stringResource(R.string.chat_save_message)
+                                            // 运行中发送已改成「排队」，文案得跟上：否则读屏与长按提示
+                                            // 还会把它说成「发送」，用户无从得知这条会等到本轮结束。
+                                            isStreaming -> stringResource(R.string.chat_send_queue)
                                             else -> stringResource(R.string.chat_send)
                                         },
                                         modifier = Modifier.size(

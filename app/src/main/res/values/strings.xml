@@ -1241,7 +1241,9 @@
   <string name="background_run_failed">Background task failed</string>
   <string name="background_run_stopped">Background task stopped</string>
   <string name="chat_send">Send</string>
-  <string name="chat_interrupt_send">Interrupt and send</string>
+  <string name="chat_send_queue">Queue and send after this turn</string>
+  <string name="chat_queued_hint">Queued; it will be sent after this turn</string>
+  <string name="chat_interrupt_send">Interrupt this turn and send now</string>
   <string name="chat_reasoning_effort">Reasoning effort: %1$s</string>
   <string name="status_unsupported">Unsupported</string>
   <string name="attachment_image">Image</string>
