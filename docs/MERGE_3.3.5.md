@@ -1495,3 +1495,122 @@ if (sessions.isNotEmpty() || pendingStartRequests.isNotEmpty()) {
 - `/data/local/tmp/eta/evidence/section25-logcat-build1.log`（`logcat -v time --pid 2366` 整段）
 - `/data/local/tmp/eta/evidence/section25-pause-resume-stop-build2.log`
   （第二版构建：`state=running` + `run-d70b` 全轨迹）
+
+## 26. 2026-10-29 第十九轮：补验 §25.5 第 4 条 —— 持锁路径的暂停/恢复
+
+§25 把「暂停/恢复/停止」的引擎侧日志做完了，但留了四种没造出来的现场。本轮补的正是其中最要紧的一条：
+**`gui_lock=true`**（run 真的持有 GUI 独占锁时被暂停/恢复）。顺带把「恢复后旧观察快照作废」也验了。
+本轮**没有改代码**，产出是验证与文档。
+
+### 26.1 怎么造出「真的持有 GUI 锁」的现场
+
+- `wait` 在 `AgentToolRequirements` 里登记为 `gui=true`（`AgentToolRequirements.kt:90`），
+  而 GUI 类工具的执行整段被包在 `control.withAction { generation -> executeLocal(toolCall, generation) }`
+  （`AgentLocalTools.kt:342`）里 —— 所以 `wait` 睡的那一整段时间，这个 run 就是独占锁的 owner。
+- 但**它并不能无限拖长**：`waitMs` 对时长做了 `coerceIn(100, 30_000)`
+  （`RootShellDeviceController.kt:1457`）。界面上写「等待 · 90 秒」，实际 30 秒就 `tool_finished` ——
+  本轮第一把就是照 90 秒的预期去点暂停，差点错过窗口。**要留操作窗口，只能靠 mock 反复回 `wait`，不能靠加大参数。**
+
+### 26.2 两次独立 run 都拿到了 `gui_lock=true`
+
+| 时间 | 事件（`logcat -v time -s Eta`） |
+| --- | --- |
+| 16:09:21.821 | `tool_started round=1, name=wait` |
+| 16:09:21.822 | `gui_control_changed status=acquired` |
+| **16:09:35.574** | **`Agent run paused: id=run-f2f5 gui_lock=true primary=true`** |
+| 16:09:51.826 | `gui_control_changed status=user_paused`（`wait` 结束，动作结束时才落 userPaused） |
+| 16:09:51.833 | `tool_finished round=1, name=wait` |
+| **16:09:54.805** | **`Agent run resumed: id=run-f2f5 gui_lock=true primary=true`** |
+| 16:09:54.962 | `run_finished round=2, content_chars=10` |
+
+这一次也顺带证了「暂停是真的停住了」，而不只是打了一行日志：
+`tool_finished`（16:09:51.833）之后到恢复（16:09:54.805）之间**没有任何 `provider_request_started`**，
+即循环确实挂在检查点上等了约 3 秒，恢复后 157ms 就发出下一轮请求。
+
+第二次独立复现（`run-f1d4`）：
+
+```
+16:12:03.233  tool_started round=1, name=observe_screen
+16:12:03.234  gui_control_changed status=acquired
+16:12:08.704  Agent run paused: id=run-f1d4 gui_lock=true primary=true
+16:12:25.061  Agent run resumed: id=run-f1d4 gui_lock=true primary=true
+16:12:33.529  tool_finished round=2, name=wait
+```
+
+注意这两次的性质不同，不能混为一谈：**A（run-f2f5）是「动作结束后仍处暂停」，能证明阻塞；
+B（run-f1d4）的恢复发生在 `wait` 还没结束之前（25.061 < 33.529），只证明日志口径，不证明阻塞。**
+
+### 26.3 恢复之后，暂停前的观察快照确实作废了（A/B 对照）
+
+只验日志还不够：日志说「推进了代号」，不代表真的用得上。做法是让 mock 走一条固定剧本
+（`观察 → wait → 用旧 observation_id 点`），**同一份剧本、同一个会话、都发旧快照**，
+唯一差别是中途有没有点暂停+继续：
+
+| | 中途是否暂停 | 工具结果（mock 收到的原文） |
+| --- | --- | --- |
+| C1 | 有（暂停 + 继续） | `{"ok":false,"code":"NO_OBSERVATION","message":"手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面"}` |
+| C2 | 无（对照组） | `{"ok":false,"tool":"tap_element","executor":"accessibility","code":"STALE_WINDOW","message":"活动窗口已经变化，请重新观察屏幕","auto_retried":true,"observation_id":"o4","index":0}` |
+
+设备侧同一次拒绝也能看到：
+
+```
+16:12:33.698  tool_started round=3, name=tap_element
+16:12:33.711  tool_finished round=3, name=tap_element, code=NO_OBSERVATION     ← C1（有暂停）
+16:16:41.587  tool_started round=3, name=tap_element
+16:16:41.778  tool_finished round=3, name=tap_element, code=STALE_WINDOW       ← C2（无暂停）
+```
+
+机制（读代码）：`executeLocal()` 开头会比对代号 ——
+
+```kotlin
+if (guiGeneration != null && publishedObservation.get().generation != guiGeneration) {
+    publishedObservation.set(PublishedObservation())          // 旧快照直接丢掉
+    if (AgentToolRequirements.requiresFreshObservation(toolCall.name)) {
+        return textResult(errorResult("NO_OBSERVATION", "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面"))
+    }
+}
+```
+
+代号自增点在 `GuiControlCoordinator`：首次取得所有权、`pauseForUser`、`resumeForUser`、`release`/`close`。
+所以「暂停一次 + 继续一次」会推进两次，暂停前那份快照必然失效；
+而且**这段判据排在「比对 observation_id」之前**，所以文案是「手机操作权已变化」，不是「快照已过期」——
+C2 走的是完全不同的分支（id 对不上 / 窗口变了），才得到 `STALE_WINDOW`。两条分支的**文案差异本身就是证据**。
+
+如实标注两处不够干净的地方：
+1. C1 里 mock 发的是假 id `o1`（正则没从观察结果里取到，取到的是兜底值），C2 里发的是真 id `o3`。
+   因为代号检查在 id 比较之前，这个差异不影响结论；但**本轮没做到「同一份 id 分别在有/无暂停下各跑一次」**。
+2. C2 的 `auto_retried:true` 说明它触发了「过期就自动重观察再重试一次」的兜底，所以最终结果里带的是重试用的
+   `o4`；C1 在代号分支就直接返回，没有走到重试。
+
+### 26.4 §25.5 的四种未实测分支，现状
+
+| 分支 | 状态 |
+| --- | --- |
+| `ignored: reason=session_missing` | 仍未实测（界面走不到，debug 注入入口也不支持任意 runId） |
+| `ignored: reason=terminal` | 仍未实测（`post` 之间的窄窗口） |
+| `state=pending` | 仍未实测（prepare→dispatch 约 95ms） |
+| **`gui_lock=true`** | **已实测**（本节，两次独立 run + 一次 A/B 对照） |
+
+### 26.5 本轮踩的坑（都是可复用的）
+
+1. **点「发送」后应用会从虚拟屏迁到主屏**：`observe_screen(12)` 变成「这块屏上没有任务」，
+   而主屏上躺着的就是被测应用。要么 `virtual_display_launch(force=true)` 把它拉回来，
+   要么先用长 `wait` 剧本留出足够的操作窗口再动手。
+2. **`logcat` job 会自己超时死掉**：本轮那个 job 的 `timeout_ms=600000`，16:12:46 静默结束，
+   16:13 之后的所有事件全无记录。差点把「日志里没有新行」读成「没有触发」。
+   判事件一定要先确认 job 还活着。
+3. **改数据库必须在应用停止之后做**：第一把是在应用运行时覆盖 `eta.db`，结果库被重建成空库
+   （`conversations=0`，界面显示「还没有对话」）。改成 `pm disable-user` → 写库 → `pm enable` 之后一次就对了。
+   （上一轮 §25 也是同一套流程，这次图快省掉停应用，直接买了个教训。）
+4. **mock 的判据要用「最后一条消息」**：旧会话本身带历史工具结果，用「有没有 tool 消息」判断第一轮必然判错；
+   改成「最后一条是不是 `role=tool`」才稳定。
+5. **Python 函数内给全局变量赋值必须 `global`**：漏了 `_tap_attempts` 直接把 mock 打挂
+   （`UnboundLocalError`）。副作用倒是看到了真实的重试文案：
+   `模型请求暂时中断，4/8/14 秒后重试（2/4 3/4 4/4）` → `已重试 4 次仍未恢复，已保留此前完成的工具结果`。
+
+### 26.6 证据
+
+- `/data/local/tmp/eta/evidence/section26-guilock-and-stale-snapshot.log`
+  （A/B 两次 run 的事件链 + C1/C2 对照的工具结果原文 + 结论）
+- mock 剧本：`mock-llm-stale.py`（双轮 `wait` + 旧快照点击），`mock-llm-toolcall.py` 的判据本轮改成
+  「最后一条消息是不是工具结果」。
