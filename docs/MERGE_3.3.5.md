@@ -524,7 +524,41 @@ walk_end == 签名块起点，没有孤儿。
 
 ### 18.7 未验证
 
-- **没有装机验证**：本轮代码改完后没有安装 APK（装包会重启 Eta 并打断当前轮次，需用户同意）。
-  胶囊的 Waiting 文案**在真机上尚未证实**，只在单测层面证实状态机正确。
-- 「Waiting 时主动弹出胶囊」按 §18.5 未实现。
+- 「Waiting 时主动弹出胶囊」按 §18.5 未实现（本轮真机验到的是**会话内工作过程行**与状态栏 chip 的取值，见 §18.8）。
 - 两个测试会话与 `/sdcard/Download` 的历史包仍按 §17.3 留着，等用户定。
+
+### 18.8 真机验证：会话内与状态栏都不再说「思考中」（2026-10-29 12:37–12:40，本机 PKX110/A16）
+
+装机 `2026102909`（`base.apk` md5 `c6374dcf849885c6cf80067abb9057a3`，与
+`/sdcard/Download/Eta-v3.3.5-debug-2026102909.apk` 一致）后实测。**上一版 §18.7 那条
+「没装机验证」到此关闭。**
+
+**造场景**：新建会话发一条「只调用一次 `wait_for_text`、timeout_ms=60000」的指令；
+它派发工具时要抢手机控制权，而当前会话的 run 正持有同一把锁 → 新 run 排队。
+不需要抢时间：`RunControl.withAction` 拿到锁后并不主动释放（锁按 run 粘住，§17.1），
+「等待」窗口会一直开着，直到持有方 `release_gui` 或该 run 结束。
+
+**同一时刻三处一致**：
+
+| 出处 | 取到的值 |
+|---|---|
+| 通知 1107 `android.text` | `等待手机控制权` |
+| 通知 1107 `android.shortCriticalText`（状态栏 chip 的取值来源） | `等待控制权` |
+| `uiautomator dump` 会话内工作过程行（bounds `[305,1182][630,1238]`） | `等待手机控制权`，同屏工具行 `等待文本出现 30 秒` |
+
+同一份 dumpsys 里还有 `android.requestPromotedOngoing=true`、
+`android.template=ProgressStyle` —— 确实走了 Live Update 提升路径，不是普通通知。
+
+**反向验证（确认不是卡死）**：`release_gui` 让出锁后，`android.text` 由「等待手机控制权」变为
+`继续执行`、`shortCriticalText` 由「等待控制权」变为 `思考中`；被挡的 run 随即执行
+`wait_for_text`（60 秒 TIMEOUT，本就要求它超时）并回复「OK …」。库内 `conversation_messages`
+落盘：`tool | wait_for_text | Failed`、`assistant | OK …`。
+
+**留档**（宿主 `/data/local/tmp/eta`，Linux 侧即 `/workspace`）：
+`evidence-waiting-ui.xml`、`evidence-waiting-notif.txt`、`evidence-waiting-chip.png`。
+
+**边界，别读过头**：
+- 界面侧证据来自**会话内工作过程行**；`dumpsys window` 显示 Eta 当时只有 `MainActivity` 一个窗口
+  （自由窗口形态），**没有浮层胶囊窗口** —— 与 §18.5 一致，Waiting 不主动唤出胶囊。
+- 状态栏 chip 能确定的是**取值**（`shortCriticalText`）；SystemUI 把它画成什么样、
+  当时有没有画出来，本轮没有单独取证（截图里状态栏区域没有可辨识的 chip）。
