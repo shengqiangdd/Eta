@@ -1835,3 +1835,106 @@ Run B（有暂停）：
 - mock 剧本：`/workspace/mock-llm-ab2.py`（设备侧副本 `/data/local/tmp/eta/mock-llm-ab2.py`）
 - 收尾：mock 已停；canary **未卸载**（`am force-stop` 后仍被系统/自身服务拉起，pid 换了但仍存活，属它的常驻行为）；
   虚拟屏全部释放（`virtual_display_list` → 0 块）；临时库 `strict26.db` 已删；仓库工作区 clean
+
+## 29. 2026-10-29 第二十二轮：三处「把话说对」的改进，以及三个真机新坑
+
+§28.5 第 1 条（失败结果缺 `tool`）和 §28.2 的根因（跨进程的屏被判 `DISPLAY_RELEASED`）本轮都改掉了；
+另外把 `MAIN_INPUT_ACTIVE` 的文案从「故障口气」改成「说明口气」。三处的共同点是：
+**工具做的事是对的，但把话说错了**，模型与用户都会因此走错路。
+
+### 29.1 改了什么
+
+| 位置 | 改动 |
+| --- | --- |
+| `agent/device/DisplayScopeErrors.kt` | 新增 `FOREIGN = "DISPLAY_FOREIGN"` |
+| `agent/tool/AgentLocalTools.kt` `resolveDisplayId` | 注册表查不到目标屏时，先看「屏上还有没有可见窗口」：有 → 抛 `DISPLAY_FOREIGN`（跨进程屏）；无 → 仍是 `DISPLAY_RELEASED`（真释放） |
+| `AgentLocalTools.execute()` | 所有工具结果统一过 `tagToolResult`：JSON 对象缺 `tool` 时补上，已有不覆盖，非 JSON 原样返回 |
+| `agent/device/RootShellDeviceController.kt` | `MAIN_INPUT_ACTIVE` 文案改为「主屏正在输入，已暂缓虚拟屏点击（此时切输入法会抢走用户的键盘）；这不是故障，等用户停止输入后重试即可」 |
+
+判定用「有窗口」而不是「display 还在」，原因写在代码注释里：`virtual_display_release` 之后系统回收是异步的，
+那段时间 display 段还在、窗口已经没了；按存在性判会把「刚释放」误报成「别人的屏」。
+`displayHasVisibleWindows()` 只在**注册表查不到**的错误路径上跑一次 dumpsys（`dumpsys window displays`
+里从目标 display 段到下一段之间数 `Window{`），正常路径零开销。
+
+### 29.2 怎么验的（角色互换）
+
+主应用自己建的屏不能用来自证 FOREIGN（注册表里有它）。上一轮试过让 canary 建屏、主应用观察，
+但 canary 的屏会在**回合结束时被回收**（见 29.4），等主应用去观察时屏已经没了。
+
+本轮换成反向：**主应用建屏（display 19，上面跑着 canary），给 canary 装上含新代码的包，
+让 canary 去 observe 19** —— 在 canary 的注册表里 19 就是「别人的屏」，而屏上有 canary 自己的窗口。
+
+| 场景 | 目标 | 结果 |
+| --- | --- | --- |
+| 跨进程 + 有窗口 | display 19（主应用建，canary 的 MainActivity 在上面） | `code=DISPLAY_FOREIGN`、`tool=observe_screen`、`retryable=false` |
+| 已释放 | display 21（canary 上一轮自建、已回收） | `code=DISPLAY_RELEASED`、`tool=observe_screen`、`retryable=false` |
+| 本进程建的屏 | 主应用 observe display 19 | 正常返回节点（`o12` / `o16` / `o32`） |
+
+两条失败结果的原文（mock 日志 `/workspace/mock-foreign-observe.log`）：
+
+```
+09:18:36 ★ RESULT ok=False code=DISPLAY_FOREIGN tool=observe_screen retryable=False
+{"ok":false,"code":"DISPLAY_FOREIGN","message":"虚拟屏 19 存在，但不是本进程创建的；跨进程的屏在这里无法操作
+（观察与注入都会落到别处）。请在本进程内 virtual_display_create 再 virtual_display_launch 目标应用；
+不要原样重试这次调用","retryable":false,"tool":"observe_screen"}
+
+09:20:44 ★ RESULT ok=False code=DISPLAY_RELEASED tool=observe_screen retryable=False
+{"ok":false,"code":"DISPLAY_RELEASED","message":"虚拟屏 21 已释放或不存在；本次动作未执行。…","retryable":false,"tool":"observe_screen"}
+```
+
+`DISPLAY_RELEASED` 这条同样关键：它证明新判断没有把「刚释放、窗口已不在」的屏误判成 FOREIGN。
+
+### 29.3 新坑一：APK 换了，进程没换（最容易误判成「代码没生效」）
+
+第一次验证失败得很像「代码写错了」：APK 里明明有 `DISPLAY_FOREIGN`（`unzip -p base.apk "classes*.dex"
+| grep -c` = 2），但主应用 `observe_screen(21)` 仍报 `DISPLAY_RELEASED`。同一时刻 shell 侧的证据是：
+
+```
+dumpsys display          → eta-virtual-vdmvtbupq0（display 21，owner io.github.mangi.eta.canary）
+dumpsys window displays  → Display: mDisplayId=21 段内 2 个 Window{，其中
+                           mObscuringWindow=Window{… com.coloros.calculator/…}
+```
+
+真因：`lastUpdateTime=17:05:34`（APK 落盘），而进程 `/proc/<pid>` 启动时间是 **16:45:02** ——
+安装没有换掉进程，跑的还是旧 dex。判断方法：
+
+```
+stat -c %y /data/app/…/base.apk          # 17:05:33
+awk '{print $22}' /proc/<app pid>/stat   # 6228597 ticks ÷ 100 = 62286 s
+cat /proc/uptime                          # 63947 s → 进程启动于 1661 s 前（16:45）
+```
+
+**教训**：`grep APK` 只能证明「包里有新代码」，不能证明「正在跑新代码」。要么重启进程，
+要么换一个进程验证（本轮就是换成 canary，见 29.2）。
+
+### 29.4 新坑二：canary 自建的屏，回合结束就被回收
+
+上一轮 canary 建屏（display 20/21）后脚本用纯文本收尾，等主应用去观察时 `dumpsys display` 里
+已经没有这块屏（`eta-virtual-` 只剩主应用的 19）。不是造屏失败，是**回合结束就被清掉**。
+
+修法：mock 在 `launch` 成功后改回 `wait 60000`，屏在等待期间保持存活，对面才有窗口去观察。
+验证时 display 21 段内确实有 2 个 `Window{`，其中就是 calculator。
+
+### 29.5 新坑三：虚拟屏点输入框会唤醒主屏输入法
+
+给 canary 发消息时，重启后的输入框没有焦点，`type_text` 返回 `input_verification=unknown`
+（工具自己提示「没有聚焦的输入框，`input text` 会静默丢弃」）。点了一下输入框，
+`dumpsys input_method` 立刻变成 `mInputShown=true`，而 IME 窗口（`Window{9232edd u0 InputMethod}`）
+出现在 **display 0 段** —— 输入法显示在主屏，不在虚拟屏。
+
+本轮因为主屏 `mCurrentFocus=null`（没人用），没有实际打扰；但这说明「虚拟屏上点输入框」这件事
+在用户正在用手机时确实会抢键盘。收尾输入改用 `input -d 19 tap 1055 2500` 直接点发送按钮，
+没有再点输入框。
+
+### 29.6 证据与收尾
+
+- mock 剧本：`/workspace/mock-foreign-observe.py`（`python3 mock-foreign-observe.py 18080 [display_id]`，
+  默认 19；失败结果缺 `tool` 时回溯最近一条 assistant 的 `tool_calls` 还原工具名；`stream=true` 必须回 SSE，
+  否则 App 判「模型接口未返回 SSE data chunk」并整轮重试 —— 这是本轮第一版 mock 只回 JSON 时踩的坑）
+- canary 覆盖安装证据：`firstInstallTime=16:35:18` 未变、`appId=10617` 未变、`lastUpdateTime=17:17:01`
+  ——没有卸载重装，KernelSU 授权不用重点
+- 构建：`./gradlew :app:assembleDebug -Peta.applicationIdSuffix=.canary --offline`，产物
+  `build-artifacts/Eta-v3.3.5-debug-canary.apk`（md5 `f236d322…`）；主包备份
+  `build-artifacts/Eta-v3.3.5-debug-main.apk`（md5 `a7fd01f7…`，与设备上安装的一致）
+- **未验证（如实标注）**：主应用自身跑新代码后的 FOREIGN —— 它仍在跑 16:45 启动的旧 dex（见 29.3）。
+  本轮用 canary 验证的是**同一份代码**；主应用要等下一次进程重启才生效。

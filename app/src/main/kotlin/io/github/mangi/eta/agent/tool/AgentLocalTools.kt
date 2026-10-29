@@ -338,11 +338,30 @@ internal class AgentLocalTools(
 
     override fun execute(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
         val control = guiControl
-        return if (control != null && AgentToolRequirements.requiresGuiControl(toolCall.name)) {
+        val result = if (control != null && AgentToolRequirements.requiresGuiControl(toolCall.name)) {
             control.withAction { generation -> executeLocal(toolCall, generation) }
         } else {
             executeLocal(toolCall, null)
         }
+        return tagToolResult(toolCall.name, result)
+    }
+
+    /**
+     * 让失败结果也带上 `tool`。
+     *
+     * 现状：成功结果一般有 `"tool"`，而 `NO_OBSERVATION` / `DISPLAY_RELEASED` / `MAIN_INPUT_ACTIVE`
+     * 这类失败结果只有 `ok/code/message`。调用方（模型、自测脚本、审计）拿到一条裸错误时，
+     * 只能靠上下文猜是哪个工具失败 —— 真机上就把 mock 的分支判错，整条剧本被静默收尾。
+     * 已有 `tool` 的结果不覆盖；不是 JSON 对象的结果（数组/纯文本）原样返回。
+     */
+    private fun tagToolResult(
+        name: String,
+        result: AgentModelClient.ToolResult,
+    ): AgentModelClient.ToolResult {
+        val json = runCatching { JSONObject(result.content) }.getOrNull() ?: return result
+        if (json.has("tool")) return result
+        json.put("tool", name)
+        return result.copy(content = json.toString())
     }
 
     /**
@@ -957,6 +976,17 @@ internal class AgentLocalTools(
         // 虚拟屏可能已经被释放或空闲回收。此时仍把动作注入那个 display，
         // `input -d` 会回退到默认屏 —— 用户会看到自己的主屏被点。宁可报错，也不能动主屏。
         if (resolved != null && virtualDisplays.findByDisplayId(resolved) == null) {
+            // 注册表里查不到，不等于屏没了：虚拟屏是「进程内」的，别的进程建的屏本进程同样查不到。
+            // 屏上还有窗口，说明它在被别的进程用着 —— 那才是「跨进程」，给的出路完全不同。
+            if (displayHasVisibleWindows(resolved)) {
+                throw InvalidToolArgumentException(
+                    message = "虚拟屏 $resolved 存在，但不是本进程创建的；跨进程的屏在这里无法操作" +
+                        "（观察与注入都会落到别处）。请在本进程内 virtual_display_create 再 " +
+                        "virtual_display_launch 目标应用；不要原样重试这次调用",
+                    code = DisplayScopeErrors.FOREIGN,
+                    retryable = false,
+                )
+            }
             throw InvalidToolArgumentException(
                 message = "虚拟屏 $resolved 已释放或不存在；本次动作未执行。" +
                     "请先 virtual_display_list 或 observe_screen 确认目标屏（需要时重新建屏 / 把应用拉回这块屏）；" +
@@ -970,6 +1000,23 @@ internal class AgentLocalTools(
         if (resolved != null && requireTask) ensureDisplayHasTask(resolved)
         return resolved
     }
+
+    /**
+     * 这块 display 现在是否还有可见窗口（不代表它是本进程建的）。
+     *
+     * 只在「注册表查不到」的错误路径上跑一次 dumpsys，正常路径零开销。
+     * 为什么用「有窗口」而不是「display 还在」：`virtual_display_release` 之后系统回收 display
+     * 是异步的，那段时间里 Display 段还在、窗口已经没了 —— 按存在性判断会把「刚释放」
+     * 误报成「别人的屏」（自测 STEP6 就是这个场景）。而跨进程的真实现场，那块屏上是有应用窗口的。
+     */
+    private fun displayHasVisibleWindows(displayId: Int): Boolean = runCatching {
+        val process = ProcessBuilder(
+            "su", "-c",
+            "dumpsys window displays | sed -n '/Display: mDisplayId=$displayId/,/Display: mDisplayId=/p' | grep -c 'Window{'",
+        ).redirectErrorStream(true).start()
+        val count = process.inputStream.bufferedReader().use { it.readText() }.trim().toIntOrNull()
+        count != null && count > 0
+    }.getOrDefault(false)
 
     private fun ensureDisplayHasTask(displayId: Int) {
         // 注意不能用 `dumpsys activity activities | grep displayId=N`：那个字符串也会出现在

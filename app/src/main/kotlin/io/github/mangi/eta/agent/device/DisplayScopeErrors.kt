@@ -18,6 +18,16 @@ internal object DisplayScopeErrors {
     /** 虚拟屏已被释放或从来不存在。 */
     const val RELEASED: String = "DISPLAY_RELEASED"
 
+    /**
+     * 屏在系统里确实存在，但**不是本进程创建的**（典型：主应用建了一块屏，另一个进程里的 Agent
+     * 用它传来的 display_id 去观察/点击）。
+     *
+     * 为什么值得单独一个码：原来这种情况一律报 RELEASED，模型会当成「屏没了」去重新建一块 ——
+     * 重建之后目标应用不在新屏上，剧本就反复断在同一步（2026-10-29 真机实测）。
+     * 文案必须直接给可执行路径：在本进程内 create + launch。
+     */
+    const val FOREIGN: String = "DISPLAY_FOREIGN"
+
     /** 屏还在，但上面没有可见窗口（应用可能已迁回主屏或退到后台）。 */
     const val NO_VISIBLE_WINDOW: String = "DISPLAY_NO_VISIBLE_WINDOW"
 }

@@ -2482,7 +2482,11 @@ internal class RootShellDeviceController(
     private fun mainInputActiveError(): String = JSONObject()
         .put("ok", false)
         .put("code", "MAIN_INPUT_ACTIVE")
-        .put("message", "主屏正在使用输入法，已暂缓虚拟屏点击；请等输入结束后重试")
+        .put(
+            "message",
+            "主屏正在输入，已暂缓虚拟屏点击（此时切输入法会抢走用户的键盘）；" +
+                "这不是故障，等用户停止输入后重试即可",
+        )
         .put("retry_after_ms", VirtualDisplayImePolicy.MAIN_INPUT_WAIT_MS)
         .toString()
 
