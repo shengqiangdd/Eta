@@ -2112,7 +2112,9 @@ resources.arsc 含 chat_queued_hint
   自然收尾；这一条只有 `AgentMessageQueueReducer` 的单测覆盖（`pollNextToSendAfterRun`）。
 - canary 复制的配置来自主包 08:47 的快照，没有可用 provider key，所以只验证了 UI／状态机，
   没有验证真实模型对话。
-- 主包仍是 09:34 的旧包（32034489 字节），要让它也生效必须重新覆盖安装主包（会重启进程）。
+- 主包已于 18:22:55 覆盖安装同一构建（32036553 字节；`appId=10629`、`firstInstallTime=10-03 10:38:00`
+  均未变，`classes8.dex` 含 `queueCurrentMessage`），旧包备份在
+  `/data/local/tmp/eta/backup/eta-main-32034489.apk`（md5 `b89c5d53…`）。
 
 ### 31.6 教训
 
