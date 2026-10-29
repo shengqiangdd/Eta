@@ -1208,6 +1208,8 @@
   <string name="chat_send_queue">排隊傳送（本輪結束後送出）</string>
   <string name="chat_queued_hint">已排隊，本輪結束後自動送出</string>
   <string name="chat_interrupt_send">打斷本輪並立即傳送</string>
+  <string name="chat_edit_while_streaming">正在執行，先停止或等本輪結束再儲存這則編輯</string>
+  <string name="chat_interrupt_sent_after_finish">本輪已結束，插話已直接送出</string>
   <string name="chat_reasoning_effort">思考強度，目前為 %1$s</string>
   <string name="status_unsupported">不支援</string>
   <string name="attachment_image">圖片</string>

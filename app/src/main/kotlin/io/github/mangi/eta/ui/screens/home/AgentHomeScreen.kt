@@ -83,6 +83,7 @@ internal fun AgentHomeScreen(
             modelPickerState = modelPickerState,
             isCompacting = state.isCompacting,
             input = state.input,
+            inputSyncVersion = state.inputSyncVersion,
             isStreaming = state.isStreaming,
             isPaused = state.isPaused,
             reasoningEffort = state.reasoningEffort,

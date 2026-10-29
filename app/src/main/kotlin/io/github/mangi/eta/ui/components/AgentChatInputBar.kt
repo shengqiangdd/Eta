@@ -111,6 +111,8 @@ private val InputContainerShape = RoundedCornerShape(20.dp)
 @Composable
 internal fun AgentChatInputBar(
     input: String,
+    /** 外部写入 [input] 的序号：变化时强制同步一次，避免草稿/撤回在界面上不生效。 */
+    inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
@@ -157,6 +159,14 @@ internal fun AgentChatInputBar(
         focusManager.clearFocus(force = true)
     }
     val textFieldState = rememberTextFieldState(initialText = input)
+    // 输入框是本地状态：普通打字刻意不回灌（否则每个字符都要重排整段聊天）。
+    // 但「外部要把一段文字放进输入框」的场景（撤回排队消息、运行中拒绝保存编辑）
+    // 只改 AppState.input 是看不见的 —— 用一个显式版本号触发一次同步。
+    LaunchedEffect(inputSyncVersion) {
+        if (textFieldState.text.toString() != input) {
+            textFieldState.setTextAndPlaceCursorAtEnd(input)
+        }
+    }
     // 草稿必须跟着会话走：切换会话、收到恢复提示时，输入框不能凭本地状态被清空。
     // 这里不让草稿进入 Compose 状态（否则每个字符都会重排整段聊天），只交给 AppState 的普通 map。
     val draftSink = LocalAgentDraftSink.current

@@ -2123,3 +2123,61 @@ resources.arsc 含 chat_queued_hint
 2. **一张表不要同时承担两个职责**：`stopRequestedAt` 既是去抖计时器又是「用户停止」证据，
    监视器一清，证据就没了。把「意图」拆出来单独存。
 3. 停止监视器只该收「本地显示态」，不该替 run 收尾逻辑做决定。
+
+## 32. 2026-10-29 第二十五轮：自查出「编译不过」和 4 处真缺陷，并把输入框回灌接通
+
+### 32.1 起因与结论
+
+用户问「没有编码短板吗」。逐处读代码后确认：上一轮的编辑守卫**根本编译不过**，
+而且同一个 bug 还有第二个入口没堵。
+
+### 32.2 已确认并修掉（5 条）
+
+1. **编译失败**：`R.string.chat_edit_while_streaming` 在三处 `strings.xml` 里都没有定义。
+   实测 `:app:compileDebugKotlin` → `Unresolved reference 'chat_edit_while_streaming'`、
+   `BUILD FAILED in 7s`。已补 zh-Hans / zh-Hant / en，并新增
+   `chat_interrupt_sent_after_finish`（假运行态插话真的发出去时用）。
+2. **插话入口没有守卫**：`interruptAndSendCurrentMessage()` 完全不检查 `messageEdit`。
+   运行中点「打断并立即发送」会把编辑内容当插话入队，`enqueue` 顺手清掉 `messageEdit`，
+   用户刚改的那条一点没变。已与主发送共用 `rejectMessageEditWhileStreaming()`。
+3. **队列续发会写坏编辑**：`dispatchQueuedMessage()` 把消息正文写进 `input` 再发送，而编辑态下
+   `input` 存的就是编辑正文。轻则顶掉用户输入；若编辑是「保留后续消息」模式，
+   `sendCurrentMessage` 还会把这条排队消息当成编辑正文写进历史。已改为编辑态放回队首。
+4. **提示语说假话**：假运行态下插话实际已经发出，代码仍无条件弹「任务已经结束」。
+   `dispatchPendingInterrupt()` 改为返回是否真的发出，分别提示。
+5. **纯函数没单测**：`isQueueFrozen` 补 5 组用例（6 用例 0 失败），覆盖
+   点停止 / 插话停止 / 服务端自停 / 自然结束 / 先停后插话。
+
+### 32.3 产品口径（用户授权「你来决定」）
+
+- 运行中**一律**禁止保存编辑（原来只挡 `preserveFollowingMessages` 模式）。
+  依据：`beginMessageEdit()` 本来就在运行中拒绝，所以「运行中 + 编辑态」几乎只在竞态下出现；
+  为不可达路径加隐藏状态不划算，规则简单一致更重要。
+- 拒绝时**不吞文字**：把正文放回草稿位并抬 `inputSyncVersion`。
+
+### 32.4 `inputSyncVersion` 原本是个死字段
+
+`recallToDraft()` 每次都 `+1`，但 UI 层全仓库无人消费；输入框是
+`rememberTextFieldState(initialText = input)`，只在「进入/退出编辑」时同步。
+静态推断：「撤回排队消息到输入框」在界面上不会显示出来。
+
+本轮把版本号从 `AgentHomeScreen` → `AgentChatBody` → `AgentChatScaffold` →
+`AgentChatBottomBar` → `AgentChatInputBar` 一路传下去（各层默认 0），并加
+`LaunchedEffect(inputSyncVersion)`：**只在版本变化时**把文本灌回输入框，
+普通打字仍走本地状态，不会逐字重排聊天。
+
+### 32.5 验证到哪一步
+
+- `:app:compileDebugKotlin` 通过（改动前同一条命令失败）。
+- `AgentMessageQueueReducerTest` 6 用例、0 失败（含新增用例）。
+- canary 包：`build-artifacts/Eta-v3.3.5-debug-canary-fix32.apk`，
+  32,039,893 字节，md5 `934ca0803800316cc0b7233286335b8f`；
+  manifest 含 `io.github.mangi.eta.canary`（UTF-16 字节比对），
+  dex 含 `queueCurrentMessage` / `chat_edit_while_streaming` / `inputSyncVersion`。
+- **未安装**（装机需先征得同意），所以「撤回/拒绝后文字真的回到输入框」**未经真机验证**。
+
+### 32.6 仍存在的已知问题（本轮没动）
+
+- `drainQueueAfterRun` 顶部注释写「用户正在打字时不抢草稿位……下次收尾或切回会话时再发」，
+  下面几行又写「没有『切回时自动补发』的钩子」，两句互相矛盾。实际行为是：
+  输入框里有草稿时，队列会一直等到下一次 run 收尾。

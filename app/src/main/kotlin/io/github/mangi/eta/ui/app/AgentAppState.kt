@@ -1568,6 +1568,9 @@ internal class AgentAppState(
             sendCurrentMessage(submittedText)
             return
         }
+        // 与主发送按钮同一条规则：编辑态的内容不能被当成「插话」发出去 —— enqueue 会清掉
+        // messageEdit，用户刚改的那条消息白改，语义也从「改这条」变成「补一句」。
+        if (rejectMessageEditWhileStreaming(prompt)) return
         if (selectedConversationId?.isReadOnlyExternalArchiveConversation() == true) return
         val queued = QueuedMessageUi(
             id = "queue-${UUID.randomUUID()}",
@@ -1613,17 +1616,27 @@ internal class AgentAppState(
      * 只有输入框为空时才自动占用草稿位：用户正在打字时把消息插进去会吞掉他没发的内容。
      * 附件无法直接走发送路径，恢复成草稿让用户确认后再发。
      */
-    private fun dispatchQueuedMessage(item: QueuedMessageUi) {
-        if (homeState.isStreaming || homeState.isCompacting) return
+    private fun dispatchQueuedMessage(item: QueuedMessageUi): Boolean {
+        if (homeState.isStreaming || homeState.isCompacting) return false
+        // 用户正在编辑某条消息时不要抢输入框：下面会把 item 正文写进 input，而编辑态下
+        // input 存的就是「正在改的那条」——写进去就把用户刚改的内容顶掉；若这条编辑是
+        // 「保留后续消息」模式，还会被 sendCurrentMessage 当成编辑正文写进历史。
+        // 放回队首等编辑结束，顺序不变，消息也不会丢。
+        if (homeState.messageEdit != null) {
+            updateCurrentConversation(
+                homeState.copy(queuedMessages = listOf(item) + homeState.queuedMessages),
+            )
+            return false
+        }
         if (item.pendingImages.isEmpty() && item.pendingFileReferences.isEmpty()) {
             if (homeState.input.isNotBlank()) {
                 // 调用方已经把这条从队列里弹出来了：直接 return 会把消息吞掉，放回队尾等下次。
                 updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, item))
-                return
+                return false
             }
             updateCurrentConversation(homeState.copy(input = item.content))
             sendCurrentMessage(item.content)
-            return
+            return true
         }
         if (homeState.input.isBlank() && homeState.pendingImages.isEmpty() &&
             homeState.pendingFileReferences.isEmpty()
@@ -1636,6 +1649,54 @@ internal class AgentAppState(
                 ),
             )
         }
+        return false
+    }
+
+    /**
+     * 运行中要「保存编辑」时的统一拒绝。
+     *
+     * 编辑内容属于既有的那条消息，而两条发送路径都只会把它当**新消息**入队/插话，
+     * 并且 [AgentMessageQueueReducer.enqueue] 会顺手清掉 messageEdit —— 用户刚改的那条
+     * 既没保存、又多出一条不该出现的排队消息。所以运行中一律拒绝，保留现场。
+     */
+    private fun rejectMessageEditWhileStreaming(restoreText: String? = null): Boolean {
+        if (homeState.messageEdit == null) return false
+        // 点击路径会先把本地输入框清空再调进来：只弹提示等于把用户刚改的内容吃掉。
+        // 把文字放回草稿位并抬一次 inputSyncVersion，输入框就会重新显示它。
+        val text = restoreText ?: homeState.input
+        updateCurrentConversation(
+            homeState.copy(
+                input = text,
+                inputSyncVersion = homeState.inputSyncVersion + 1,
+            ),
+        )
+        Toast.makeText(
+            appContext,
+            appContext.getString(R.string.chat_edit_while_streaming),
+            Toast.LENGTH_SHORT,
+        ).show()
+        return true
+    }
+
+    /**
+     * 假运行态下把队首「插话」放出去。
+     *
+     * 插话本来靠 run 收尾后的 [drainQueueAfterRun] 接力；但如果服务端已经没有这个 run
+     * （界面还挂着运行中），就永远等不到收尾。这里直接弹出并发送，避免消息卡死在队列里。
+     *
+     * 返回是否真的发出去了：以前无论发没发都弹「任务已经结束」，用户看到消息已经出现在
+     * 对话里、同时被告知「已结束」，像是操作失败。
+     */
+    private fun dispatchPendingInterrupt(conversationId: String): Boolean {
+        if (conversationId != selectedConversationId) return false
+        val state = conversationsById[conversationId] ?: return false
+        if (state.isStreaming || state.isCompacting) return false
+        if (state.messageEdit != null) return false
+        val head = state.queuedMessages.firstOrNull { it.immediateInterrupt } ?: return false
+        val (next, promoted) = AgentMessageQueueReducer.promoteToInterrupt(state, head.id)
+        updateConversation(conversationId, next, updateTimestamp = false)
+        if (promoted == null) return false
+        return dispatchQueuedMessage(promoted)
     }
 
     /** 请求中止当前会话的 run，但**不清空队列**：插话及队列续发都靠它。 */
@@ -1683,6 +1744,9 @@ internal class AgentAppState(
         val pendingImages = homeState.pendingImages
         val pendingFileReferences = homeState.pendingFileReferences
         if (homeState.isStreaming) {
+            // 运行中停在编辑态：这条输入属于编辑框，不是新消息。入队会把它当新消息、
+            // 并顺手清掉 messageEdit（编辑白做），所以明确拒绝并保留现场。
+            if (rejectMessageEditWhileStreaming(prompt)) return
             // 运行中发送 = 排队，不打断当前回合（「打断并立即发送」是输入栏上那个插话按钮）。
             // 之前这里走 steering：消息直接塞进正在跑的那个 run，用户看到的是「又被插话了」，
             // 想发的新一轮永远不会出现 —— 这是真机反馈里最刺眼的一条。
@@ -2939,7 +3003,15 @@ internal class AgentAppState(
                     // 因此这里改成后台轮询到它真的消失为止，并在收尾时给一次明确反馈。
                     watchStoppedRunUntilGone(resolution.runId)
                 }
-                RunResolution.NoActiveRun -> toastNotice(R.string.chat_run_already_finished)
+                RunResolution.NoActiveRun -> {
+                    // 界面挂着假运行态、服务端其实没有 run：插话入队的消息不会再有 run 收尾
+                    // 来衔接，必须在这里放出去，否则用户点插话只看到「已完成」，消息永远躺在队列里。
+                    val dispatched = byInterrupt && dispatchPendingInterrupt(conversationId)
+                    toastNotice(
+                        if (dispatched) R.string.chat_interrupt_sent_after_finish
+                        else R.string.chat_run_already_finished,
+                    )
+                }
                 RunResolution.Unavailable -> toastNotice(R.string.chat_stop_unavailable)
             }
         }
@@ -3463,7 +3535,8 @@ internal class AgentAppState(
      * 「插话中」，用户怎么点都没反应。
      *
      * 只处理当前选中的会话：[dispatchQueuedMessage] 依赖 homeState 与草稿位，后台会话的队列
-     * 留到用户切回时再处理，避免把消息写进错误的会话。
+     * 这里不处理，也**没有**「切回时自动补发」的钩子 —— 它要等那个会话自己再跑一轮，
+     * 或用户点队列条的「立即插话发送」。改注释前先确认这条链路仍然成立。
      */
     private fun drainQueueAfterRun(
         conversationId: String,
@@ -3482,10 +3555,13 @@ internal class AgentAppState(
         }
         // 插话按钮也会 requestStop（run 的 error 同样是「已停止」），但它要的是「换一条继续说」，
         // 不能算「用户想停下」。只有最后一次点击是停止按钮时，才冻结整个队列。
-        val stoppedByUser = !stoppedForInterrupt && (explicitlyStoppedByUser ||
-            (!result.ok && (result.error == LEGACY_STOPPED_ERROR ||
+        val stoppedByUser = AgentMessageQueueReducer.isQueueFrozen(
+            explicitlyStoppedByUser = explicitlyStoppedByUser,
+            stoppedForInterrupt = stoppedForInterrupt,
+            errorLooksStopped = !result.ok && (result.error == LEGACY_STOPPED_ERROR ||
                 result.error == SYNTHETIC_STATUS_STOPPED ||
-                result.error == appContext.getString(R.string.agent_notice_stopped))))
+                result.error == appContext.getString(R.string.agent_notice_stopped)),
+        )
         val (afterPopState, nextQueued) = AgentMessageQueueReducer.pollNextToSendAfterRun(
             state = state,
             stoppedByUser = stoppedByUser,

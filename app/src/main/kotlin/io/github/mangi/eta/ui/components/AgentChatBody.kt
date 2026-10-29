@@ -175,6 +175,8 @@ internal fun AgentChatBody(
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     input: String,
+    /** 外部写入 [input] 的序号：变化时输入框强制同步一次（普通打字不走这条）。 */
+    inputSyncVersion: Int = 0,
     isStreaming: Boolean,
     isPaused: Boolean = false,
     reasoningEffort: ReasoningEffort,
@@ -405,6 +407,7 @@ internal fun AgentChatBody(
             hasMessages = visibleMessages.isNotEmpty(),
             scrollState = scrollState,
             input = input,
+            inputSyncVersion = inputSyncVersion,
             modelPickerState = modelPickerState,
             isCompacting = isCompacting,
             contextUsage = contextUsage,
@@ -648,6 +651,7 @@ private fun AgentChatScaffold(
     hasMessages: Boolean,
     scrollState: LazyListState,
     input: String,
+    inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
@@ -841,6 +845,7 @@ private fun AgentChatScaffold(
                 onAnswerAsk = onAnswerAsk,
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
                 input = input,
+                inputSyncVersion = inputSyncVersion,
                 modelPickerState = modelPickerState,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
@@ -1626,6 +1631,7 @@ private fun AgentChatBottomBar(
     onAnswerAsk: (String) -> Unit,
     messageBackdrop: LayerBackdrop?,
     input: String,
+    inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
@@ -1726,6 +1732,7 @@ private fun AgentChatBottomBar(
             }
             AgentChatInputBar(
                 input = input,
+                inputSyncVersion = inputSyncVersion,
                 modelPickerState = modelPickerState,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,

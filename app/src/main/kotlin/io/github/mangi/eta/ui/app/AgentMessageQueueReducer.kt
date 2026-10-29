@@ -113,4 +113,16 @@ internal object AgentMessageQueueReducer {
         val remaining = state.queuedMessages.drop(1)
         return state.copy(queuedMessages = remaining) to first.copy(immediateInterrupt = false)
     }
+
+    /**
+     * run 收尾时要不要冻结队列。
+     *
+     * 拆成纯函数是为了能单测：之前这段「意图合并」写在 AppState 里，三个条件
+     * （用户点过停止 / 插话触发的停止 / error 恰好是「已停止」）只能靠真机试。
+     */
+    fun isQueueFrozen(
+        explicitlyStoppedByUser: Boolean,
+        stoppedForInterrupt: Boolean,
+        errorLooksStopped: Boolean,
+    ): Boolean = !stoppedForInterrupt && (explicitlyStoppedByUser || errorLooksStopped)
 }

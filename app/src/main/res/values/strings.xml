@@ -1244,6 +1244,8 @@
   <string name="chat_send_queue">Queue and send after this turn</string>
   <string name="chat_queued_hint">Queued; it will be sent after this turn</string>
   <string name="chat_interrupt_send">Interrupt this turn and send now</string>
+  <string name="chat_edit_while_streaming">This turn is running; stop it or wait before saving this edit</string>
+  <string name="chat_interrupt_sent_after_finish">This turn had already finished, so your interrupt message was sent right away</string>
   <string name="chat_reasoning_effort">Reasoning effort: %1$s</string>
   <string name="status_unsupported">Unsupported</string>
   <string name="attachment_image">Image</string>

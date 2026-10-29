@@ -156,6 +156,54 @@ class AgentMessageQueueReducerTest {
         assertEquals(listOf("q-1"), afterInterruptState.queuedMessages.map { it.id })
     }
 
+    /**
+     * 「要不要冻结队列」是用户意图的合并点：停止按钮 = 冻结，插话 = 不冻结，
+     * 哪怕 run 的 error 同样是「已停止」。这几种组合以前只能靠真机试，现在钉住。
+     */
+    @Test
+    fun isQueueFrozenHonorsUserStopButNotInterruptStop() {
+        // 点停止：冻结
+        assertTrue(
+            AgentMessageQueueReducer.isQueueFrozen(
+                explicitlyStoppedByUser = true,
+                stoppedForInterrupt = false,
+                errorLooksStopped = false,
+            )
+        )
+        // 点插话、run 以「已停止」报错：不冻结，换一条继续说
+        assertFalse(
+            AgentMessageQueueReducer.isQueueFrozen(
+                explicitlyStoppedByUser = false,
+                stoppedForInterrupt = true,
+                errorLooksStopped = true,
+            )
+        )
+        // 没点停止，但 error 恰好是「已停止」：冻结，别自己跑起来
+        assertTrue(
+            AgentMessageQueueReducer.isQueueFrozen(
+                explicitlyStoppedByUser = false,
+                stoppedForInterrupt = false,
+                errorLooksStopped = true,
+            )
+        )
+        // 自然结束：不冻结
+        assertFalse(
+            AgentMessageQueueReducer.isQueueFrozen(
+                explicitlyStoppedByUser = false,
+                stoppedForInterrupt = false,
+                errorLooksStopped = false,
+            )
+        )
+        // 两个标志都在（先停、后又点插话）：以最后一次意图为准，不冻结
+        assertFalse(
+            AgentMessageQueueReducer.isQueueFrozen(
+                explicitlyStoppedByUser = true,
+                stoppedForInterrupt = true,
+                errorLooksStopped = true,
+            )
+        )
+    }
+
     private fun baseState(
         isStreaming: Boolean,
         input: String = "",
