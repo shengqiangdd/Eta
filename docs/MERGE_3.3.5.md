@@ -1205,3 +1205,159 @@ UPDATE conversation_state SET selected_conversation_id='' WHERE id='main';
 - **列表长按菜单里的「停止运行」没实测**（只核到它只在运行中的会话上出现）。
 - **非 primary 的 run 完成后的静默行为**只读了代码（前台直接 return），没等到「A 在跑时 B 自然跑完」的现场。
 
+
+## 24. 2026-10-29 第十七轮：§23.9 那三条「没验到」逐条补验
+
+§23.9 当时留了三条明确未验证：暂停的作用域、列表长按的「停止运行」、非 primary 的 run 自然收尾。
+本轮在同一台机器（PKX110 / Android 16）上把三条现场都造出来跑完了。**全部实测**，
+下面每个结论都带时间戳或数据库快照；读代码得来的部分单独标注。
+
+### 24.1 现场怎么搭的
+
+沿用 §23 的骨架，但换了两个 mock 端点：
+
+| 端点 | 行为 | 对应会话 |
+|---|---|---|
+| `127.0.0.1:18080` | `mock-llm-hang.py 3600`：收到请求后永不返回 | `conv-pause-a`（DebugHang） |
+| `127.0.0.1:18081` | 先 `hang 3600`，验第三项时换成 `short 45`（45 秒后回 `SHORT_OK` + `[DONE]`） | `conv-pause-b`（DebugShort） |
+
+`conversations.model_id` 填的是 `provider_models.id`（`debug-hang-model`／`debug-short-model`），
+不是模型名——这个坑 §22 已经踩过，本轮没再踩。
+
+canary 进程 `pid 7946`，虚拟屏 `display=10`（`vdmvt7oe2x`），全部操作都在虚拟屏上完成，
+主屏只用来收掉被 LSPosed 拉起的 `BugreportWarningActivity`（§23 的老面孔）。
+
+### 24.2 补验一：暂停的作用域（A 暂停，B 照跑）
+
+两条 run 同时在跑：
+
+```
+15:26:00.730  Agent run prepare done: id=run-9c20      ← conv-pause-b「pause-B 长跑验证」
+15:26:01.012  provider_response_started http_code=200
+15:26:31.802  Agent run prepare done: id=run-6127      ← conv-pause-a「pause-A 长跑验证」
+15:26:31.948  provider_response_started http_code=200
+```
+
+`runtime_inflight_runs` 同时两行，与日志一致（第一步只是复现 §23 的结论，确保并发成立）。
+
+然后在 **conv-pause-a** 点输入栏的「暂停」：
+
+- 无障碍树里那一颗按钮的 `desc` 由 `暂停` 变成 `继续`，其余节点不变（`o152`）；
+- 立刻切到 **conv-pause-b**：它的输入栏仍是 `[暂停][停止]`（`o156`）——**B 没有被连带暂停**；
+- 再切回 **conv-pause-a**：仍是「继续」（`o160`）。这一下是关键：暂停状态**跨会话切换后还在**，
+  说明它来自服务端 `activeRunBundle.paused`（`AgentRuntimeService.kt:1037` 用
+  `sessions[runId]?.controller?.isPaused` 生成），不是某个界面的临时本地标志。
+- 数据库侧：两条 run 都还在 `runtime_inflight_runs` 里（暂停不删 run），与语义相符。
+- 最后点「继续」：按钮回到「暂停」（`o178`），恢复也各自独立。
+
+代码对照（只读）：`toggleCurrentRunPause()`（`AgentAppState.kt:3006`）先
+`resolveRunIdForConversation(selectedConversationId)` 解析出**当前会话自己的 runId**，
+发命令后再 `queryActiveRun(runId)` 校准一次，客户端不把「命令已发出」当成「已暂停」。
+实测行为与这段设计一致。
+
+### 24.3 补验二：列表长按「停止运行」只停那一条
+
+在 `conv-pause-b` 那一行长按，弹出菜单：置顶 / 重命名 / 导出 / 导出完整历史 / **停止运行** / 删除（`o163`）。
+点「停止运行」后：
+
+```
+15:28:33.467  Agent runtime stopped
+15:28:33.482  Agent run returned: id=run-9c20 ok=false err=已停止
+```
+
+被停的是 **run-9c20 = conv-pause-b 自己那条**，`conv-pause-a` 的 `run-6127` 一动不动
+（`runtime_inflight_runs` 快照里只剩 `run-6127f43f-…`）。`conversation_messages` 里
+`conv-pause-b` 追加一条 `(3, system_notice, 'stopped')`。
+
+同时会话列表立刻把状态写在了行内（`o164`）：
+
+```
+conv-pause-b  15:28  「已停止」
+conv-pause-a  现在   「pause-A 长跑验证」 + 「已暂停」
+```
+
+顺带一个对测试有用的发现：**「已暂停」「已停止」这两个状态文字是在无障碍树里的**，
+可以用 `observe_screen` 直接读到，不必截图猜。§23 里说的「运行标记是蓝点、抓不到」只对
+**正在运行**的那一行成立——运行中确实没有文字（列表项节点不带任何状态），停止/暂停之后才出现文字。
+所以判「某会话此刻是否在跑」仍然要靠 `runtime_inflight_runs` 或截图看蓝点。
+
+### 24.4 补验三：非 primary 的 run 自然收尾，前台保持静默
+
+这一项要造「primary 正在等、另一个会话自己跑完」的现场：
+
+1. `conv-pause-b` 换成 45 秒短回复端点，发「side-B 自然收尾静默测试」；
+2. **发完立刻切回 `conv-pause-a`**（它此刻是 primary，run 处于暂停态）；
+3. 等 `conv-pause-b` 自然收尾。
+
+结果（日志 + 界面 + 数据库三方对齐）：
+
+```
+15:29:35.649  Agent run prepare done: id=run-432a      ← conv-pause-b「side-B …」
+15:30:20.769  assistant_received round=1, content_chars=8
+15:30:20.778  run_finished round=1, content_chars=8
+15:30:20.804  Agent runtime stop skipped: active run still executing
+15:30:20.808  Agent run returned: id=run-432a ok=true err=null
+```
+
+- `conv-pause-b` 正常落库：`(4, user, 'side-B 自然收尾静默测试')`、`(5, assistant, 'SHORT_OK')`；
+- `conv-pause-a` 的界面**一个节点都没变**：收尾前 `o175` 与收尾后 `o177` 的节点集合完全一致
+  （间隔约 57 秒，`display_event_age_ms` 已经 56.9 秒没有新事件，说明界面是真的静止）；
+- 没有跳会话、没有弹结果卡片、没有把输入框里的东西动掉。前台就是安静地待着。
+
+结论：**非 primary 的 run 自然收尾时，前台确实保持静默**，而那条 run 的结果照常写进自己的会话。
+
+### 24.5 顺带修正：`stop skipped` 的条件不是「结束的 run 正好是 primary」
+
+§23 里我把这条记成了「仅当结束的 run 恰为 primary 时触发」，本轮被现场推翻：
+收尾的是 `run-432a`（`conv-pause-b`，非 primary），它照样打了
+`Agent runtime stop skipped: active run still executing`。
+
+代码写得比我的旧结论准确（`AgentRuntimeService.kt:1853`）：
+
+```kotlin
+if (sessions.isNotEmpty() || pendingStartRequests.isNotEmpty()) {
+    AndroidAgentLogger.warn("Agent runtime stop skipped: active run still executing")
+    return
+}
+```
+
+条件是**「还有任意 run 在执行（或有待处理的启动请求）」**，与谁是 primary 无关。
+语义也对：只要还有别的 run 活着，就不能 `stopSelf`、不能拆胶囊/光效，否则会把别人的 run 掐掉。
+
+### 24.6 本轮发现的两个可观测性缺口（只记录，未改代码）
+
+1. **暂停 / 恢复在引擎侧完全没有日志。** `pauseRun(runId)`（`:1219`）和 `resumeRun(runId)`（`:1236`）
+   只改状态与 `state`，不打日志。于是「用户说点了暂停没反应」这类反馈，从 logcat 上**什么都看不到**，
+   只能靠界面按钮的 `desc` 或 `queryActiveRun` 反推。真机上本轮就是靠按钮 `desc` 变化的（`o152`）
+   才拿到证据。建议后续在这两处各加一行 `I/Eta` 日志（带 runId 与来源），改动很小，但能让
+   「暂停到底有没有到引擎」变成可查事实。
+2. **`Agent runtime stopped`（`:737`）不带 runId/scene。** 它出现在「长按停止」那条路径上，
+   而紧接着的 `Agent run returned: id=…` 才有 id，两条日志的先后关系是唯一的定位依据。
+   一旦中间隔了别的输出，就不好判断是谁触发的停止。
+
+### 24.7 环境坑（本轮新增）
+
+1. **`terminal_job` 的 `environment` 只认 `android` / `linux`**，传 `debian` 会直接
+   `TOOL_ERROR: environment 仅支持 android/linux`。任务列表里回显的 `environment: debian`
+   是**返回字段**，不是可传入的取值。这一处踩了两次（第二次换了参数才过）。
+2. **虚拟屏上 `type_text` 不能同时带 `index` 与 `display_id`**：先 `tap_element` 把输入框点成焦点，
+   再不带宽 `index` 写。带上 index 会被忽略（工具自己会提示），表现是「写进了别处」。
+3. **抽屉开合有过渡帧**：点「会话历史」之后立刻 `tap_element` 会拿到只有一个节点的快照
+   （`ui_nodes_shown: 1`），此时必须重新 `observe_screen` 再点，否则点空。
+4. **换 mock 端点要在没有 run 的时候做**：`terminal_job stop` 会杀掉持连接的服务端进程，
+   正在挂起的那条 run 会立刻以「网络错误」收尾。本轮都是在两条 run 都结束之后才切换的。
+5. **两条 run 的 id 容易记混**：`run-9c20` 是**先发的 B**，`run-6127` 是**后发的 A**。
+   我一度按「A 先发」的顺序去对日志，得出了「两个会话模型反了」的错误推断，回头对时间戳才纠正。
+   → 认 run 一律用时间戳对齐，不靠发起顺序的记忆。
+
+### 24.8 证据与收尾
+
+- 原始记录：`/data/local/tmp/eta/evidence/section24-concurrency.txt`（时间线 + DB 快照 + 节点摘录）、
+  `section24-logcat.txt`（整段 `logcat -v time --pid 7946`）、`section24-eta.db`（收尾前的库快照）。
+- 收尾：停两个 mock 端点（18080/18081 均无监听）、卸载 `io.github.mangi.eta.canary`、
+  系统把 `enabled_accessibility_services` 自动收回成只留主包、释放虚拟屏 `vdmvt7oe2x`、
+  删掉 `/data/local/tmp/eta/snap` 与 Linux 侧 `/workspace/snap` 临时库、前台回主包。
+- 仍未验证（如实留着）：暂停状态下**长按停止**是否也走同一条路径、暂停中收到用户追问（supersede）
+  的行为、以及多会话时胶囊/浮层在**主屏**上的实际呈现（本轮全程虚拟屏，浮层属于系统层，
+  虚拟屏上不显示）。
+
