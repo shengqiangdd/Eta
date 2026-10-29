@@ -1697,7 +1697,7 @@ if (arguments.has("display_id") && arguments.optLong("display_id", 0L) > 0L) ret
 
 | 项 | 状态 |
 | --- | --- |
-| 严格 A/B（同一份 id 在有/无暂停下各用一次，同一块屏） | **未达成**（root 授权缺失 + 主屏前台被占） |
+| 严格 A/B（同一份 id 在有/无暂停下各用一次，同一块屏） | **未达成**（root 授权缺失 + 主屏前台被占）→ 已在 §28 补上 |
 | 无暂停组在同一剧本下的分支 | 已实测：`STALE_WINDOW`（主屏快照，非 `NO_OBSERVATION`） |
 | 有暂停组 | 本轮未重跑（§26 的 `run-f2f5` / `run-f1d4` 已实测 `gui_lock=true` + `NO_OBSERVATION`） |
 
@@ -1719,3 +1719,119 @@ if (arguments.has("display_id") && arguments.optLong("display_id", 0L) > 0L) ret
 - mock 剧本 `/data/local/tmp/eta/mock-llm-ab.py`、准备脚本 `/data/local/tmp/eta/prep-strict26.py`
 - 收尾：canary 已卸载（`/proc/1/root/data/data/io.github.mangi.eta.canary` 不存在、`pidof` 空）、
   mock 无残留进程、虚拟屏已释放、临时库 `strict26.db` 已删
+
+## 28. 2026-10-29 第二十一轮：严格 A/B 补上了（同一份剧本、同一节点，只差一次暂停）
+
+§26.3 的「没做到同一份 id 在有/无暂停下各跑一次」、§27.5 的「未达成」，本轮都补上了。
+**没有改代码**，产出是验证与几条新坑。前提有两条：用户已授权 canary 的 root；
+并且明确要求**不要再卸载 canary**（卸载会换 uid，KernelSU 按 uid 授权，等于每次都要用户重新点一遍）。
+
+### 28.1 结论
+
+| | Run A（无暂停） | Run B（有暂停） |
+| --- | --- | --- |
+| 屏 | display 18（canary 自建 `vdmvtaxenl`） | display 17（canary 自建 `vdmvtaug0g`） |
+| 观察 | `o7`，26 节点 | `o5`，26 节点 |
+| 点的节点 | index 0「以浮窗显示计算器」 | index 0（同一节点） |
+| 中间 30 秒 | 不碰界面 | 16:47:13 暂停 → 16:47:19 继续 |
+| tap 结果 | `ok=true`、无 code（08:49:50） | `ok=false`、`code=NO_OBSERVATION`（08:47:31） |
+| 提示文案 | — | 「手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面」 |
+
+两次 run 的工具序列完全一致（7 个）：`virtual_display_create` → `virtual_display_launch`
+→ `wait 20000` → `observe_screen` → `wait 30000` → `tap_element` → `virtual_display_release`。
+Run A 0 个失败，Run B 1 个失败（就是这一次 tap）。
+
+这就是 §26.3 缺的那一块：同一份剧本、同一类屏、同一个节点、同样的「observe 之后第一次使用」，
+唯一差别是中途有没有「暂停 + 继续」——结果一个成功，一个被判「手机操作权已变化」。
+
+### 28.2 之前跑不起来的真原因：虚拟屏是「进程内」的
+
+§27 把失败归到 root 授权；授权补上之后，剧本**仍然**断在同一步，而且现象很迷惑：
+
+```
+08:41:09 观察结果：{"ok":false,"code":"DISPLAY_RELEASED","message":"虚拟屏 14 已释放或不存在；本次动作未执行…"}
+（同一时刻）virtual_display_list → {"display_id":14,"task_count":1,"foreground_package":"io.github.mangi.eta.canary"}
+```
+
+屏显然还活着，前台就是被测应用。换成**主应用**（Eta 本体）立刻 `observe_screen(display_id=14)` 就成功（`o310`）。
+差别只在「谁在调用」：display 14 是主应用所在进程创建的，canary 进程里的 Runtime 注册表没有这块屏，
+于是把「不是我的」判成 `DISPLAY_RELEASED`。
+
+**结论：虚拟屏必须由发起工具调用的那个进程自己创建。** 剧本因此改成让 canary 自己
+`virtual_display_create` + `virtual_display_launch`，观察对象换成无害的 `com.coloros.calculator`
+（点它的「以浮窗显示计算器」不会产生持久影响）。
+
+顺带一条可复用点：`virtual_display_release` 返回 `closed_tasks=1`，会把屏上的任务关掉而不是迁回主屏
+——在虚拟屏里启动应用不会污染用户的桌面。
+
+### 28.3 mock 剧本 v2（`mock-llm-ab2.py`）
+
+```
+非 tool          → virtual_display_create(preset=main)
+create 结果      → virtual_display_launch(id, com.coloros.calculator)
+launch 结果      → wait 20000              （等界面稳定）
+wait#1 结果      → observe_screen(display_id)
+observe 结果     → 记 observation_id + 首个可点 index，回 wait 30000
+wait#2 结果      → tap_element(同一 id, 同一 index, 同一 display)
+tap 结果         → virtual_display_release(id)
+release 结果     → 文本收尾
+```
+
+两处安全阀：观察结果的 `display.id` 必须等于本次创建的屏（不等就 ABORT，**绝不跨屏点击**）；
+失败时不做任何重试，避免把一次失败伪装成成功。
+
+### 28.4 时间线（mock 日志与设备 logcat 对齐）
+
+Run A（干净对照组）：
+
+```
+08:48:56 create 成功 display=18 id=vdmvtaxenl
+08:48:58 launch 成功 display=18
+08:49:18 wait#1 结束 → observe → o7，节点数 26，选中 index 0
+08:49:49 wait#2 结束 → tap_element(o7, 0, display=18)
+08:49:50 ★ ok=True code=None
+16:49:50.315 Eta: tool_finished round=6, name=tap_element        ← 设备侧，无 code
+08:49:51 release（closed_tasks=1）
+```
+
+Run B（有暂停）：
+
+```
+08:46:38 create 成功 display=17 id=vdmvtaug0g
+08:46:40 launch 成功 display=17
+08:47:00 wait#1 结束 → observe → o5，节点数 26，选中 index 0
+16:47:13.544 Eta: Agent run paused:  id=run-bd9e gui_lock=true primary=true
+16:47:19.789 Eta: Agent run resumed: id=run-bd9e gui_lock=true primary=true
+08:47:30 wait#2 结束 → tap_element(o5, 0, display=17)
+08:47:31 ★ ok=False code=NO_OBSERVATION（「手机操作权已变化…」）
+16:47:30.984 Eta: tool_finished round=6, name=tap_element, code=NO_OBSERVATION
+08:47:32 release（closed_tasks=1）
+```
+
+如实标注一处：Run A 还多跑过一版——屏 16、`o2`、tap 同样 `ok=true`，但那一次 `launch` 先吃了
+`APP_ALREADY_RUNNING` 再 `force` 重试，工具数是 8 个（1 个失败是 launch）。
+为了让两组序列完全对齐（7 对 7），才又跑了上面这个干净版；两次无暂停组的结论一致。
+
+### 28.5 新踩的坑（都能复用）
+
+1. **失败的工具结果常常没有 `tool` 字段**。`APP_ALREADY_RUNNING` / `DISPLAY_RELEASED` 的返回是
+   `{"ok":false,"code":…,"message":…}`，mock 按 `tool` 判分支会掉进「else → 收尾文本」，
+   把整条剧本**静默**结束（第一次就是这么失败、且看起来像「正常结束」）。
+   修法：失败时回溯最近一条 `assistant` 的 `tool_calls` 还原工具名。
+2. **`APP_ALREADY_RUNNING` 与 `pidof` 不是一回事**：`pidof com.coloros.calculator` 为空，
+   但任务栈里有实例，`virtual_display_launch` 仍会拒绝；`force=true` 之后才搬到虚拟屏。
+3. **主屏在用输入法时，虚拟屏的坐标点击会被暂缓**：
+   `MAIN_INPUT_ACTIVE`（`retry_after_ms=1200`，本次动作未执行）。本轮真实遇到一次，
+   等 15 秒后重试成功。要稳定推进，优先用 `tap_element`（节点动作），或挑用户不用手机的时候。
+4. **不要靠卸载来「清场」**：卸载重装会换 uid，KernelSU 的授权按 uid 存，等于每次都要用户重新授权。
+   清理只做：停进程、释放虚拟屏、删临时库；安装包留着。
+
+### 28.6 证据
+
+- `/data/local/tmp/eta/evidence/section27-strict-ab-a-b-mock.log`（16.7 KB，Run A/B 全剧本原文）
+- `/data/local/tmp/eta/evidence/section27-strict-ab-canary.log`（Run A 的 `tool_finished`，无 code）
+- `/data/local/tmp/eta/evidence/section27-strict-ab-canary-pause.log`
+  （Run B 的 `paused` / `resumed` / `NO_OBSERVATION` 五行摘录；缓冲区随后已滚掉，故以摘录留档）
+- mock 剧本：`/workspace/mock-llm-ab2.py`（设备侧副本 `/data/local/tmp/eta/mock-llm-ab2.py`）
+- 收尾：mock 已停；canary **未卸载**（`am force-stop` 后仍被系统/自身服务拉起，pid 换了但仍存活，属它的常驻行为）；
+  虚拟屏全部释放（`virtual_display_list` → 0 块）；临时库 `strict26.db` 已删；仓库工作区 clean
