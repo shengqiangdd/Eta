@@ -1614,3 +1614,108 @@ C2 走的是完全不同的分支（id 对不上 / 窗口变了），才得到 `
   （A/B 两次 run 的事件链 + C1/C2 对照的工具结果原文 + 结论）
 - mock 剧本：`mock-llm-stale.py`（双轮 `wait` + 旧快照点击），`mock-llm-toolcall.py` 的判据本轮改成
   「最后一条消息是不是工具结果」。
+
+## 27. 2026-10-29 第二十轮：想把「严格 A/B」补上，两次都被拦下（如实记录未达成）
+
+§26.3 留了两处不干净：C1 发的是假 id `o1`（正则没取到，走了兜底），C2 发的是真 id `o3`；
+而且两次都不是「同一个 id 的第一次使用」。本轮想把它做干净，**结果没做成**。
+把过程、拦路原因和顺手挖到的两条坑记下来，免得下次再走一遍。
+
+### 27.1 设计：一份剧本、两次 run、差别只有暂停
+
+新剧本 `mock-llm-ab.py`（落盘在 `/data/local/tmp/eta/`）：
+
+```
+非 tool      → wait 5000                 （留给测试者把应用拉回虚拟屏）
+wait#1 结果   → observe_screen(display_id)
+observe 结果  → 记下 observation_id + 首个可点节点 index，回 wait 30000
+wait#2 结果   → tap_element(同一 id, 同一 index)
+tap 结果      → 文本，收尾
+```
+
+Run A 在 `wait#2` 的 30 秒里不碰界面；Run B 在这 30 秒里点「暂停」再点「继续」。
+两次都是「observe 之后第一次使用这个 id」，且 id 由 `json.loads` 从观察结果里取（不再用正则兜底）。
+
+同时从 §24 的证据副本派生了一份干净库（`prep-strict26.py`）：只留 `debug-hang-provider` /
+`debug-hang-model` / 一条空会话 `conv-pause-a`，清掉 inflight 与历史消息。
+
+### 27.2 拦路一：重装 canary 换掉 uid，KernelSU 授权随之失效
+
+`pm install -r -d` 之后的第一次运行：
+
+```
+16:27:09.316 Agent run dispatch: id=run-75a5 foreground=true rootFallback=false
+16:27:14.641 tool_finished round=2, name=observe_screen, code=ROOT_REQUIRED
+```
+
+`rootFallback=false` 是关键：canary 自己拿不到 root。而**虚拟屏动作是硬要求 root 的**：
+
+```kotlin
+// AgentToolRequirements.rootDenied
+if (arguments.has("display_id") && arguments.optLong("display_id", 0L) > 0L) return true
+```
+
+所以 `observe_screen(display_id=13)` 直接被拦，剧本第一条就断了。KernelSU 的授权按 uid 存
+（`/data/adb/ksu/.allowlist`，二进制 `USK` 格式，`strings` 里只有 `io.github.mangi.eta`，没有 canary），
+`pm uninstall` + 重装后 uid 从 10615 变成 10616，旧授权不再适用。
+
+**结论：验证虚拟屏路径前，先确认 canary 的 root 授权；没有就得重新授权，否则整条剧本跑不起来。**
+
+### 27.3 拦路二（部分成功）：退回主屏能跑通剧本，但不算严格对照
+
+为了不等授权，改让 mock 不带 `display_id`（主屏不需要 root）。这一次剧本完整跑完了：
+
+```
+16:24:42.318 Agent run dispatch: id=run-974c foreground=true rootFallback=false
+16:24:42.514 tool_started round=1, name=observe_screen
+16:24:43.186 tool_finished round=1, name=observe_screen
+16:24:43.317 tool_started round=2, name=wait
+16:25:13.327 tool_finished round=2, name=wait            ← 30 秒整，中途没碰界面
+16:25:13.494 tool_started round=3, name=tap_element
+16:25:13.715 tool_finished round=3, name=tap_element, code=STALE_WINDOW
+```
+
+即：**无暂停组在「同一份剧本、同一份快照的第一次使用」下拿到的是 `STALE_WINDOW`，不是 `NO_OBSERVATION`。**
+和 §26 的 C2 一致，说明这条分支与「代号变化」是两条不同的路。
+
+但这一组观察的是**主屏**（`"display":{"scope":"default","id":0}`）：点「发送」之后 canary 会被系统迁到主屏，
+而 mock 的 `observe_screen` 不带 `display_id` 就落主屏，抓到的 `ui_nodes` 是状态栏与桌面。
+两份快照不在同一块屏上，所以**还不能算严格对照**。
+
+### 27.4 一次真实误触：主屏前台不是被测应用
+
+退回主屏方案时踩到的：`observe_screen` 显示 `package=io.github.mangi.eta.canary`，
+但主屏真正的前台是 QQ —— 一次按坐标（输入框位置）的点击落进了用户的 QQ 聊天页。
+已立刻按 `BACK` 退出聊天页（**没有点发送按钮**，没有发出消息），随后释放操作权、停掉 mock、卸载 canary。
+
+教训（下次直接照做）：
+1. 任何主屏点击之前，先读 `observe_screen` 的 `focus.package` 与 `ui_nodes` 里节点的 `package` ——
+   两者都得是被测应用；只看「上一次观察是谁」不够，主屏前台可能已经换人。
+2. **主屏不该作为这类验证的场地**：虚拟屏不打扰用户，而主屏上任何误点都可能落到用户正在用的应用里。
+
+### 27.5 结论
+
+| 项 | 状态 |
+| --- | --- |
+| 严格 A/B（同一份 id 在有/无暂停下各用一次，同一块屏） | **未达成**（root 授权缺失 + 主屏前台被占） |
+| 无暂停组在同一剧本下的分支 | 已实测：`STALE_WINDOW`（主屏快照，非 `NO_OBSERVATION`） |
+| 有暂停组 | 本轮未重跑（§26 的 `run-f2f5` / `run-f1d4` 已实测 `gui_lock=true` + `NO_OBSERVATION`） |
+
+§26.3 里「没做到同一份 id 分别在有/无暂停下各跑一次」的说明**保持有效**，不因本轮而改变。
+
+### 27.6 下次复现清单
+
+1. `pm install -r -d app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk`（applicationId `io.github.mangi.eta.canary`）；
+2. **检查 canary 的 root 授权**（`dispatch` 行出现 `rootFallback=true` 才算有；否则先在管理器里授权）；
+3. `python3 prep-strict26.py` 派生干净库 → `pm disable-user` → 写回 `databases/eta.db`
+   （`chown 10616`、删 `-wal/-shm`）→ `pm enable`；
+4. `python3 mock-llm-ab.py 18080 13`（13 = 虚拟屏 displayId）；
+5. 虚拟屏启动 canary → 发消息 → 剧本自动推进；Run A 不动、Run B 在 `wait#2` 里暂停+继续。
+
+### 27.7 证据
+
+- `/data/local/tmp/eta/evidence/section27-canary-no-root.log`
+  （289 行：`rootFallback=false`、`ROOT_REQUIRED`、`STALE_WINDOW` 三处关键行）
+- mock 剧本 `/data/local/tmp/eta/mock-llm-ab.py`、准备脚本 `/data/local/tmp/eta/prep-strict26.py`
+- 收尾：canary 已卸载（`/proc/1/root/data/data/io.github.mangi.eta.canary` 不存在、`pidof` 空）、
+  mock 无残留进程、虚拟屏已释放、临时库 `strict26.db` 已删
