@@ -95,6 +95,15 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
     /** 多会话并发：每个 runId 一个 session；浮层只跟随 [primaryRunId]。 */
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, AgentRuntimeSession>()
+
+    /**
+     * 手机界面只有一个操作所有者。
+     *
+     * 多会话并行时，两个 run 的 GUI 动作若不做互斥，会各自按自己看到的节点去点同一块屏幕 ——
+     * 表现为「点了没反应」或「点到别的界面」。这里持有全局锁，各 run 通过
+     * [GuiControlCoordinator.openRun] 领取自己的 [GuiControlCoordinator.RunControl]。
+     */
+    private val guiControl = GuiControlCoordinator()
     @Volatile
     private var primaryRunId: String? = null
     private val activeSession: AgentRuntimeSession?
@@ -651,6 +660,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 handleAcceptedRunEvent(session, event, entrySurfaceGuard)
             },
             persistArtifacts = ::persistRunArtifacts,
+            guiControl = guiControl,
         ).execute(session, request)
         if (!outcome.shouldUpdateHost) return
         postTerminalOverlay(
@@ -1209,7 +1219,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private fun pauseRun(runId: String) {
         val session = sessions[runId] ?: return
         if (session.isTerminal) return
-        session.controller.pause()
+        // 持有 GUI 锁的 run 交给协调器暂停：它要等当前动作真正结束，再把状态置成 UserPaused
+        // 并推进代号 —— 这样恢复之后，暂停前拿到的观察快照自动作废，模型必须重新 observe_screen。
+        // 没持有锁的 run（纯文本推理）不需要这套，直接 pause 即可。
+        if (!guiControl.pauseForUser(runId)) session.controller.pause()
         if (primaryRunId == runId) {
             state.value = state.value.copy(
                 phase = AgentOverlayPhase.PAUSED,
@@ -1221,7 +1234,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private fun resumeRun(runId: String) {
         val session = sessions[runId] ?: return
         if (session.isTerminal) return
-        session.controller.resume()
+        if (!guiControl.resumeForUser()) session.controller.resume()
         if (primaryRunId == runId) {
             state.value = state.value.copy(
                 phase = AgentOverlayPhase.RUNNING,

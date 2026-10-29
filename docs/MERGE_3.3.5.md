@@ -260,3 +260,38 @@ run 误判成中断，也没把 `isStreaming` 清掉。
 补它的成本不低：`AgentLocalTools` 的 execute 主入口要换成上游那种带 generation 的 `executeLocal`
 （防止过期动作落到新界面），executor 要 openRun/close，service 要持有实例并广播 `GuiControlChanged`，
 再加用户暂停/恢复入口与测试。属于一轮独立工程，本轮只记录、未动代码。
+
+## 14. 2026-10-29 第七轮：把 GUI 阶段互斥真正接进运行时
+
+上一节点出的缺口（`GuiControlCoordinator` 只在协议/overlay 层，运行时三处 `guiControl` 出现 0 次）这一轮接上了。
+
+**改了三个文件（+88 / −6）**：
+
+| 文件 | 改动 |
+|---|---|
+| `AgentLocalTools` | 新增 `guiControl: GuiControlCoordinator.RunControl?` 参数；`execute` 拆成「拿锁 → `executeLocal(toolCall, generation)`」；GUI 动作进入时校验观察代号，不一致就丢掉旧快照并对需要最新观察的工具返回 `NO_OBSERVATION`；`observe_screen` 把代号写进快照；`afterAction` 的刷新保留代号；`close()` 交还锁 |
+| `AgentRuntimeRunExecutor` | 构造参数加 `guiControl`；在工具创建前 `openRun(runId, runController)`，状态变化以 `AgentEvent.GuiControlChanged` 进事件流；`finally` 里先关工具再 `guiRun.close()` |
+| `AgentRuntimeService` | 持有 `GuiControlCoordinator()`，创建 executor 时传入；`pauseRun` / `resumeRun` 优先走 `pauseForUser` / `resumeForUser`（未持有锁的纯文本 run 仍直接 pause/resume） |
+
+**顺手修掉一个真缺陷**：`release_gui` 在工具目录和 prompt 里都有，但 `AgentLocalTools` 的 `when` 里**没有分支** ——
+模型调用它会落到 `else -> UNKNOWN_TOOL`，也就是「告知模型有这么个动作，但它其实不存在」。现在补上了：
+清空快照 + `guiControl.release()` + 返回 ok。
+
+**为什么 generation 必须一起接**：`withAction` 只保证串行；用户暂停/恢复会推进代号，若快照不带代号，
+恢复后模型仍拿暂停前看到的节点去点现在的界面（点在完全不同的地方）。带代号后，旧快照自动作废，
+需要最新观察的工具会收到 `NO_OBSERVATION`，被迫重新 `observe_screen`。
+
+**编译与单测**：
+
+- `./gradlew :app:compileDebugKotlin` **BUILD SUCCESSFUL**，零告警。
+- 定向单测（`GuiControlCoordinatorTest` / `AgentRunExclusivityPolicyTest` / `AgentRunControllerTest` /
+  `AgentRuntimeParallelWireTest`）共 **28 个用例，3 个失败**；3 个失败全部是 `DefaultNativeRuntimeLoader.java:212`
+  的 Robolectric native runtime（Linux aarch64 不支持），与 §4 记录的 446 个环境性失败同源 ——
+  **非环境性失败为 0**，`GuiControlCoordinatorTest` 全过。
+
+**仍未做**：
+
+- `RuntimeRunRegistry` 依旧是死代码：本地的 `sessions` + `runConversationIds` 已覆盖它的职责
+  （run 生命周期 + 同会话互斥），接它是纯重构，收益低风险高。
+- 子代理（`SubagentExecutor`）不共享这把锁 —— 上游同样如此，属已知边界。
+- 真机多会话并发 + 暂停/恢复**尚未验证**（需要装新包）。

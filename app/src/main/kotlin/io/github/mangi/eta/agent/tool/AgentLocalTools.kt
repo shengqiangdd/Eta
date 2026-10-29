@@ -54,6 +54,7 @@ import io.github.mangi.eta.agent.model.AgentGoalPhase
 import io.github.mangi.eta.agent.model.AgentGoalToolCatalog
 import io.github.mangi.eta.agent.runtime.AgentGoalStore
 import io.github.mangi.eta.agent.runtime.AgentFileBackups
+import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.agent.runtime.AgentRunFileChanges
 import io.github.mangi.eta.agent.runtime.AgentTodoStore
 import io.github.mangi.eta.agent.skill.SkillCompatibilityChecker
@@ -134,6 +135,11 @@ internal class AgentLocalTools(
     runAvailableSkillIds: Set<String> = emptySet(),
     pendingSkillConflict: PendingSkillConflictCapability? = null,
     private val rootAvailable: () -> Boolean = { RootAccess.isGranted },
+    /**
+     * GUI 独占锁。非空时，所有「会动屏幕」的工具都要先拿到它：多会话并行时只能有一个 run
+     * 在操作手机；[GuiControlCoordinator.RunControl.withAction] 同时承担排队与用户暂停。
+     */
+    private val guiControl: GuiControlCoordinator.RunControl? = null,
     /** 会话级任务清单作用域；空串表示当前运行没有可持久化的会话（工具会明确报错而不是静默丢弃）。 */
     private val todoScopeId: String = "",
     /** 会话级长期目标作用域；与 todo 共用同一个会话 id，但分开存储。 */
@@ -316,6 +322,8 @@ internal class AgentLocalTools(
         rootCommandExecutor.close()
         githubSkillSource?.close()
         inspectedGitHubSnapshots.clear()
+        // 运行结束就交还操作权：否则别的会话会一直等在这把锁上。
+        guiControl?.close()
     }
 
     /**
@@ -328,9 +336,40 @@ internal class AgentLocalTools(
         acpClient.replaceExternalAgents(pluginRuntime.externalAcpAgents())
     }
 
-    override fun execute(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult =
+    override fun execute(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
+        val control = guiControl
+        return if (control != null && AgentToolRequirements.requiresGuiControl(toolCall.name)) {
+            control.withAction { generation -> executeLocal(toolCall, generation) }
+        } else {
+            executeLocal(toolCall, null)
+        }
+    }
+
+    /**
+     * 真正的工具分发。
+     *
+     * [guiGeneration] 非空表示这次动作在 GUI 独占锁内执行：观察快照会记下当时的代号。
+     * 用户暂停/恢复（或所有权换手）会推进代号，旧快照随即作废 —— 否则恢复之后模型会拿
+     * 暂停前看到的节点去点现在的界面，点在完全不同的地方。
+     */
+    private fun executeLocal(
+        toolCall: AgentModelClient.ToolCall,
+        guiGeneration: Long?,
+    ): AgentModelClient.ToolResult =
         runCatching {
+            if (closed.get()) throw AgentRunCancelledException()
             val args = JSONObject(toolCall.argumentsJson.ifBlank { "{}" })
+            if (guiGeneration != null && publishedObservation.get().generation != guiGeneration) {
+                publishedObservation.set(PublishedObservation())
+                if (AgentToolRequirements.requiresFreshObservation(toolCall.name)) {
+                    return@runCatching textResult(
+                        errorResult(
+                            code = "NO_OBSERVATION",
+                            message = "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面",
+                        ),
+                    )
+                }
+            }
             if (AgentToolRequirements.find(toolCall.name) != null &&
                 AgentToolRequirements.rootDenied(toolCall.name, args, rootAvailable())
             ) {
@@ -360,7 +399,13 @@ internal class AgentLocalTools(
                     if (!browserToolsEnabled()) textResult(errorResult("BROWSER_TOOLS_DISABLED", "请先启用网页搜索、读取与浏览器工具"))
                     else textResult(webTools.execute(toolCall.name, args))
                 }
-                "observe_screen" -> observeScreen(args)
+                "observe_screen" -> observeScreen(args, guiGeneration)
+                "release_gui" -> {
+                    // 主动交还操作权：别的会话的 GUI 动作不必再等这一轮。
+                    publishedObservation.set(PublishedObservation())
+                    guiControl?.release()
+                    textResult(JSONObject().put("ok", true).put("tool", "release_gui").toString())
+                }
                 in AgentVirtualDisplayTools.names -> virtualDisplayTool(toolCall.name, args)
                 in AgentAcpTools.names -> acpTool(toolCall.name, args, toolCall.id)
                 in AgentPluginTools.names -> pluginTool(toolCall.name, args)
@@ -828,7 +873,7 @@ internal class AgentLocalTools(
         )
     }
 
-    private fun observeScreen(args: JSONObject): AgentModelClient.ToolResult {
+    private fun observeScreen(args: JSONObject, generation: Long? = null): AgentModelClient.ToolResult {
         publishedObservation.set(PublishedObservation())
         val startedAt = SystemClock.elapsedRealtime()
         val options = AgentScreenObservationContract.resolve(args)
@@ -860,6 +905,8 @@ internal class AgentLocalTools(
                 elements = observation.elementObservation,
                 coordinateSpace = observation.coordinateSpace,
                 displayId = displayId,
+                // 只有真拿到节点才算「这一次观察」；失败的观察不能顶替旧代号。
+                generation = generation.takeIf { observation.elementObservation != null },
             ),
         )
         logger.debug {
@@ -1115,6 +1162,8 @@ internal class AgentLocalTools(
                 elements = elements,
                 coordinateSpace = if (plan.keepScreenshotSpace) snapshot.coordinateSpace else null,
                 displayId = plan.snapshotDisplayId,
+                // 动作后的刷新仍在同一个 GUI 代号里，否则下一步动作会误判「操作权已变化」。
+                generation = snapshot.generation,
             ),
         )
         result.put(
@@ -2989,7 +3038,7 @@ internal class AgentLocalTools(
             .put("include_ui_tree", true)
             .put("include_screenshot", false)
             .put("max_nodes", maxNodes.coerceIn(1, 120))
-        runCatching { observeScreen(args) }
+        runCatching { observeScreen(args, publishedObservation.get().generation) }
         val refreshed = publishedObservation.get().elements
         if (refreshed == null) publishedObservation.set(previous)
         return refreshed
@@ -3512,6 +3561,8 @@ internal class AgentLocalTools(
         val elements: RootShellDeviceController.ElementObservation? = null,
         val coordinateSpace: RootShellDeviceController.CoordinateSpace? = null,
         val displayId: Int? = null,
+        /** 观察时的 GUI 代号；用户暂停/恢复会推进它，旧快照随之作废。 */
+        val generation: Long? = null,
     )
 
     private data class GitHubInspectionSnapshot(

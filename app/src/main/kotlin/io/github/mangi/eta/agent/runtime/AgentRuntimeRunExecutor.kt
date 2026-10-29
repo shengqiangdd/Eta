@@ -64,6 +64,8 @@ internal class AgentRuntimeRunExecutor(
         AgentRuntimeWire.RunResult,
         List<AgentEvent>,
     ) -> Unit,
+    /** 手机界面只有一个操作所有者：多会话并行时由它排队，用户暂停/恢复也由它推进代号。 */
+    private val guiControl: GuiControlCoordinator,
 ) {
     data class Outcome(
         val result: AgentRuntimeWire.RunResult,
@@ -85,6 +87,7 @@ internal class AgentRuntimeRunExecutor(
         var toolExecutor: AutoCloseable? = null
         var toolsBinding: AgentRunController.ResourceBinding? = null
         var browserBinding: AutoCloseable? = null
+        var guiRun: GuiControlCoordinator.RunControl? = null
         var response: AgentModelClient.ModelResponse.Text? = null
         var cancelled = false
         var checkpointRecorder: AgentRunCheckpointRecorder? = null
@@ -229,11 +232,24 @@ internal class AgentRuntimeRunExecutor(
             // 必须看到同一组 WebView，否则 Agent 打开的页面在界面上凭空消失。
             val browserKey = AgentConversationIdentity.fromHandoff(request.handoff, request.runId)
             browserBinding = BrowserSessionRegistry.acquireRun(browserKey, request.runId)
+            // 抢占/排队都要在工具执行前完成：否则第一个 GUI 动作会绕开互斥直接点到屏幕上。
+            guiRun = guiControl.openRun(request.runId, runController) { status ->
+                acceptEvent(
+                    session,
+                    AgentEvent.GuiControlChanged(status),
+                    archivedEvents,
+                    entrySurfaceGuard,
+                    checkpointRecorder,
+                    usageConfig = request.config,
+                    usageOperation = request.operation,
+                )
+            }
             val executor = AgentLocalTools(
                 context = appContext,
                 logger = AndroidAgentLogger,
                 browserRunId = request.runId,
                 browserSession = BrowserSessionRegistry.get(browserKey),
+                guiControl = guiRun,
                 browserToolsEnabled = {
                     request.config.browserTools && currentPermissions().browserTools
                 },
@@ -538,6 +554,8 @@ internal class AgentRuntimeRunExecutor(
         } finally {
             runCatching { toolsBinding?.close() }
             runCatching { toolExecutor?.close() }
+            // 先关工具（此时仍持有操作权），再交还锁：反过来会让别的 run 在清理工具时抢进屏幕。
+            runCatching { guiRun?.close() }
             runCatching { browserBinding?.close() }
         }
 
