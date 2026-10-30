@@ -101,6 +101,22 @@ internal fun AgentWorkProcess(
     retainedStreamingStates: Map<String, StreamingMarkdownState>,
     modifier: Modifier = Modifier,
     active: Boolean = false,
+    /**
+     * 自动模式下要不要展开。默认跟 [active] 一致（结束即收，即 dsh 的 `completion`）；
+     * `collapseTiming=next-input` 时调用方会把「已结束但还没等到下一条用户消息」也判成展开。
+     */
+    autoExpanded: Boolean = active,
+    /**
+     * 要不要画折叠行（`transcriptView=verbose` 时为 false）：步骤直接平铺，没有可点的头。
+     * 与 [autoExpanded] 分开是因为「收不收」和「有没有头」是两件事 —— 平铺档既没有折叠态，
+     * 也不存在「展开」这个动作。
+     */
+    groupHeaderVisible: Boolean = true,
+    /**
+     * 折叠行在运行中要不要显示「正在跑的那一步」的细节（工具名 / 命令 / 路径）。
+     * 对齐 dsh 的 `liveProcessDetail`：compact 档只给计数，standard 及以上给细节。
+     */
+    liveProcessDetail: Boolean = true,
     /** 本次会话内搜索有多少条命中落在这一块里（0 表示没有搜索或没命中）。 */
     searchHitCount: Int = 0,
     /** 当前命中是本块内第几条（1 基，0 表示当前命中不在本块）。 */
@@ -129,7 +145,12 @@ internal fun AgentWorkProcess(
     LaunchedEffect(highlightMessageId) {
         if (containsHighlight) manualExpanded = null
     }
-    val bodyVisible = manualExpanded ?: (containsHighlight || (active && !assistantOverlay))
+    val bodyVisible = if (!groupHeaderVisible) {
+        // 平铺档没有头可点，正文必须一直在；语音浮层仍然省空间（与带头时的收起等价）。
+        !assistantOverlay
+    } else {
+        manualExpanded ?: (containsHighlight || (autoExpanded && !assistantOverlay))
+    }
     // 命中可能落在块内几百行之下：只滚到块首等于「找到了但看不到」。
     // 这里只负责把命中行的位置报上去，块内定位由列表层按视口边界做（见 AgentChatBody）。
 
@@ -138,15 +159,18 @@ internal fun AgentWorkProcess(
             .fillMaxWidth()
             .padding(horizontal = if (assistantOverlay) 12.dp else 16.dp, vertical = 2.dp),
     ) {
-        AgentWorkHeader(
-            messages = messages,
-            working = active || running,
-            expanded = bodyVisible,
-            searchHitCount = searchHitCount,
-            searchHitPosition = searchHitPosition,
-            onClick = { manualExpanded = !bodyVisible },
-            onOpenRunDetail = onOpenRunDetail,
-        )
+        if (groupHeaderVisible) {
+            AgentWorkHeader(
+                messages = messages,
+                working = active || running,
+                expanded = bodyVisible,
+                searchHitCount = searchHitCount,
+                searchHitPosition = searchHitPosition,
+                onClick = { manualExpanded = !bodyVisible },
+                onOpenRunDetail = onOpenRunDetail,
+                liveProcessDetail = liveProcessDetail,
+            )
+        }
         AnimatedVisibility(
             visible = bodyVisible,
             // 搜索命中在块内时不做展开动画：命中行要立刻可见，而且动画期间行高在变，
@@ -196,6 +220,8 @@ private fun AgentWorkHeader(
     searchHitPosition: Int,
     onClick: () -> Unit,
     onOpenRunDetail: ((String) -> Unit)? = null,
+    /** 运行中的细节是否拼进标题；false 时只剩「处理中 N 步」，对齐 `liveProcessDetail`。 */
+    liveProcessDetail: Boolean = true,
 ) {
     // 消息 id 里带着运行 id（`assistant-<runId>-...` / `<runId>-tool-...`），
     // 直接反解比再传一路参数更省，也不依赖消息模型新增字段。
@@ -215,8 +241,12 @@ private fun AgentWorkHeader(
             R.plurals.work_processing_step,
             summary.toolCount,
             summary.toolCount,
-        ) + " · " + (runningDetail
-            ?: runningTool.argumentsSummary.ifBlank { toolDisplayName(runningTool.toolName) })
+        ) + (if (liveProcessDetail) {
+            " · " + (runningDetail
+                ?: runningTool.argumentsSummary.ifBlank { toolDisplayName(runningTool.toolName) })
+        } else {
+            ""
+        })
         working -> stringResource(R.string.work_analyzing)
         else -> workSummaryText(summary)
     }

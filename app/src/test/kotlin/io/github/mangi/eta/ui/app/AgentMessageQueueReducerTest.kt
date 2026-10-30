@@ -40,6 +40,25 @@ class AgentMessageQueueReducerTest {
         assertEquals(listOf("q-1", "q-2"), secondState.queuedMessages.map { it.id })
     }
 
+    /**
+     * 输入栏不再自己 clearText（它无法知道这次提交会不会被拒），所以「草稿被消费」必须自带
+     * 同步信号：`input` 清空 + `inputSyncVersion + 1`。少了后者，输入框会一直停在刚排队的那段文字上，
+     * 用户在界面上看到「排了队、字还在」，再点一次就排两条。
+     */
+    @Test
+    fun enqueueConsumesDraftAndSignalsComposerToSync() {
+        val initial = baseState(isStreaming = true, input = "排队这条").copy(inputSyncVersion = 7)
+
+        val next = AgentMessageQueueReducer.enqueue(
+            state = initial,
+            item = QueuedMessageUi(id = "q-1", content = "排队这条"),
+        )
+
+        assertEquals("", next.input)
+        assertEquals(8, next.inputSyncVersion)
+        assertEquals(listOf("q-1"), next.queuedMessages.map { it.id })
+    }
+
     @Test
     fun immediateInterruptPreemptsQueueHeadAndDemotesPreviousInterrupt() {
         val state = baseState(isStreaming = true).let {

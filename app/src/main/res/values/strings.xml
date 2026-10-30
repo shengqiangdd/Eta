@@ -298,6 +298,22 @@
   <string name="agent_busy_send_queue_summary">Keep this message and send it after the current turn finishes</string>
   <string name="agent_busy_send_steer_title">Steer now</string>
   <string name="agent_busy_send_steer_summary">Interrupt the current turn and send this message immediately; still queued while paused or editing a message</string>
+  <string name="settings_work_collapse_title">Work details after a turn</string>
+  <string name="settings_work_collapse_summary">Whether the finished work details collapse right away or stay open until your next message</string>
+  <string name="agent_work_collapse_completion_title">Collapse when the turn ends</string>
+  <string name="agent_work_collapse_completion_summary">Fold the finished steps into one summary line as soon as the turn completes</string>
+  <string name="agent_work_collapse_next_input_title">Collapse on my next message</string>
+  <string name="agent_work_collapse_next_input_summary">Keep the finished steps open so you can read them, and fold them when you send the next message</string>
+  <string name="settings_transcript_view_title">Work details</string>
+  <string name="settings_transcript_view_dialog_summary">How much of a turn to show: how soon the steps fold, and whether the running step shows its detail</string>
+  <string name="agent_transcript_view_compact_title">Compact</string>
+  <string name="agent_transcript_view_compact_summary">Fold every turn into one summary line; while running, show only the step count</string>
+  <string name="agent_transcript_view_standard_title">Standard</string>
+  <string name="agent_transcript_view_standard_summary">Fold every turn into one summary line; while running, show what the current step is doing</string>
+  <string name="agent_transcript_view_detailed_title">Detailed</string>
+  <string name="agent_transcript_view_detailed_summary">Show the running turn’s steps as individual rows; finished turns fold behind an expandable header</string>
+  <string name="agent_transcript_view_verbose_title">Verbose</string>
+  <string name="agent_transcript_view_verbose_summary">Never fold: every step keeps its own row, finished turns included</string>
   <string name="agent_mode_standard_title">Standard</string>
   <string name="agent_mode_standard_summary">All tools, act as needed.</string>
   <string name="agent_mode_plan_title">Plan</string>
@@ -1231,13 +1247,9 @@
   <string name="chat_stop">Stop</string>
   <string name="chat_pause_run">Pause</string>
   <string name="chat_resume_run">Resume</string>
-  <string name="chat_steering_sent">Sent as additional instructions; it takes effect after the current step</string>
   <!-- 运行中热切换：文案必须说「下一步生效」，否则用户以为当前这句就换了。 -->
   <string name="chat_model_hot_swap_applied">Switched to %1$s; it applies from the next model step</string>
   <string name="chat_model_hot_swap_failed">Could not reach Agent Runtime; the model change applies from your next message</string>
-  <string name="chat_steering_queued_paused">Queued; the run is paused, so it will continue after you resume</string>
-  <string name="chat_steering_failed">Could not send the extra instruction; your text was kept, please try again</string>
-  <string name="chat_steering_no_active_run">No task is running now; your text was kept — send it again to start a new one</string>
   <string name="chat_run_already_finished">The task has already finished</string>
   <string name="chat_stop_unavailable">Could not reach the runtime; please try again</string>
     <string name="chat_stop_done">Stopped</string>

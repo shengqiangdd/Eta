@@ -89,6 +89,9 @@ internal object AgentMessageQueueReducer {
             pendingFileReferences = emptyList(),
             messageEdit = null,
             queuedMessages = nextQueue,
+            // 草稿被这条排队消息消费掉了：不给输入框一个信号，它会继续显示旧文字
+            // （输入栏刻意不再自己 clearText，见 AgentChatInputBar 主按钮）。
+            inputSyncVersion = state.inputSyncVersion + 1,
         )
     }
 

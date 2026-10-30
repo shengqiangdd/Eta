@@ -1,8 +1,10 @@
 package io.github.mangi.eta.ui.components
 
 import android.content.SharedPreferences
+import android.os.SystemClock
 import io.github.mangi.eta.agent.model.AgentBusySendMode
 import io.github.mangi.eta.agent.model.AgentBusySendPolicy
+import io.github.mangi.eta.agent.model.AgentSubmitDedupPolicy
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.ui.voice.SpeechDictationButton
 import io.github.mangi.eta.ui.voice.SpeechInputFeedback
@@ -41,7 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
-import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
@@ -224,6 +225,9 @@ internal fun AgentChatInputBar(
     val density = LocalDensity.current
     val statusBarTopPx = WindowInsets.statusBars.getTop(density)
     var inputContainerTopPx by remember { mutableIntStateOf(0) }
+    // 上一次真的交给发送路径的文本与时刻：只用来认「连点两下」的第二次，
+    // 不参与任何显示（否则每个字符都要重组整段聊天）。
+    var lastSubmit by remember { mutableStateOf<Pair<String, Long>?>(null) }
     val thinkingPopupMaxHeight = with(density) {
         (inputContainerTopPx - statusBarTopPx).coerceAtLeast(0).toDp()
     }.minus(ChatInputPopupMargin * 2)
@@ -245,7 +249,8 @@ internal fun AgentChatInputBar(
     LaunchedEffect(isStreaming, isCompacting) {
         // 只取消听写。过去这里在 isStreaming 变 true 时清空本地草稿：
         // 恢复一条「任务已中断」的 run 也会把 isStreaming 推成 true，
-        // 用户正在打的字就被一条系统提示清掉了。发送路径自己会 clearText()，不依赖这里。
+        // 用户正在打的字就被一条系统提示清掉了。清空只由真正消费掉草稿的地方做
+        // （见 AgentChatInputBar 主按钮），这里不碰文字。
         dictation.cancel()
     }
 
@@ -521,13 +526,30 @@ internal fun AgentChatInputBar(
                             onClick = {
                                 when {
                                     canSend -> {
-                                        dictation.cancel()
                                         val submittedText = textFieldState.text.toString()
-                                        textFieldState.clearText()
-                                        if (steersNow) {
-                                            onInterruptAndSubmit(submittedText)
-                                        } else {
-                                            onSubmit(submittedText)
+                                        // 刻意**不**在这里 clearText()：这一下只代表「点了发送」，
+                                        // 不代表提交一定成立 —— 压缩中、消息未载入、只读归档会话、
+                                        // 编辑态运行中这几条路径都会直接 return，先清再发就是当场吞字
+                                        // （真机复现过：文字没了，也没有任何提示）。
+                                        // 清空改由真正消费掉草稿的一侧做，并且抬 inputSyncVersion
+                                        // 让输入框跟着同步（enqueue、发送成功、撤回排队消息）。
+                                        // 代价是「点到发送」与「输入框真清空」之间有一帧，
+                                        // 这一帧里连点两下会把同一段文字发两遍，所以按相同文本去重。
+                                        val now = SystemClock.uptimeMillis()
+                                        val duplicate = AgentSubmitDedupPolicy.isDuplicate(
+                                            previousText = lastSubmit?.first,
+                                            previousAtMs = lastSubmit?.second ?: 0L,
+                                            text = submittedText,
+                                            nowMs = now,
+                                        )
+                                        if (!duplicate) {
+                                            lastSubmit = submittedText to now
+                                            dictation.cancel()
+                                            if (steersNow) {
+                                                onInterruptAndSubmit(submittedText)
+                                            } else {
+                                                onSubmit(submittedText)
+                                            }
                                         }
                                     }
                                     isStreaming -> onStop()

@@ -332,6 +332,22 @@
   <string name="agent_busy_send_queue_summary">記下這條訊息，等目前回合結束後自動送出</string>
   <string name="agent_busy_send_steer_title">插話傳送</string>
   <string name="agent_busy_send_steer_summary">打斷目前回合，立即送出這條訊息；暫停或編輯訊息時仍按排隊處理</string>
+  <string name="settings_work_collapse_title">回合結束後工作過程</string>
+  <string name="settings_work_collapse_summary">這一輪結束後，工作過程是立刻收起，還是保持展開到你送下一條訊息</string>
+  <string name="agent_work_collapse_completion_title">回合結束就收起</string>
+  <string name="agent_work_collapse_completion_summary">回合完成後立刻收成一行摘要</string>
+  <string name="agent_work_collapse_next_input_title">下一條訊息時收起</string>
+  <string name="agent_work_collapse_next_input_summary">結束後保持展開，方便回看這一步做了什麼；你送出下一條訊息時再收</string>
+  <string name="settings_transcript_view_title">工作細節</string>
+  <string name="settings_transcript_view_dialog_summary">這一輪的工作步驟顯示多少：多快收起，以及執行時要不要顯示正在做什麼</string>
+  <string name="agent_transcript_view_compact_title">緊湊</string>
+  <string name="agent_transcript_view_compact_summary">每一輪都收成一行摘要；執行時只顯示步數，不顯示細節</string>
+  <string name="agent_transcript_view_standard_title">標準</string>
+  <string name="agent_transcript_view_standard_summary">每一輪都收成一行摘要；執行時顯示正在做什麼</string>
+  <string name="agent_transcript_view_detailed_title">詳細</string>
+  <string name="agent_transcript_view_detailed_summary">執行中的這一輪步驟直接平鋪；已經結束的輪次收進可展開的分組</string>
+  <string name="agent_transcript_view_verbose_title">完整</string>
+  <string name="agent_transcript_view_verbose_summary">完全不收起：每一步單獨一行，結束的輪次也一樣</string>
   <string name="agent_mode_standard_title">標準</string>
   <string name="agent_mode_standard_summary">全部工具，按需執行。</string>
   <string name="agent_mode_plan_title">計畫</string>
@@ -1195,13 +1211,9 @@
   <string name="chat_stop">停止</string>
   <string name="chat_pause_run">暫停</string>
   <string name="chat_resume_run">繼續</string>
-  <string name="chat_steering_sent">已作為補充指令送出，目前步驟結束後繼續</string>
   <!-- 執行中熱切換：文案必須說「下一步生效」，否則使用者以為目前這句就換了。 -->
   <string name="chat_model_hot_swap_applied">已切換為 %1$s，從下一步生效</string>
   <string name="chat_model_hot_swap_failed">無法聯絡 Agent Runtime，模型改動將從你的下一則訊息開始生效</string>
-  <string name="chat_steering_queued_paused">已排隊；目前任務已暫停，恢復後會繼續</string>
-  <string name="chat_steering_failed">補充指令沒有送出，文字已保留，請重試</string>
-  <string name="chat_steering_no_active_run">目前沒有執行中的任務，文字已保留；再送一次即可重新開始</string>
   <string name="chat_run_already_finished">任務已經結束</string>
   <string name="chat_stop_unavailable">連不上執行環境，停止沒有送出，請重試</string>
     <string name="chat_stop_done">已停止</string>

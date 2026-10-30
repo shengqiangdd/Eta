@@ -25,7 +25,15 @@ fi
 
 export ANDROID_HOME=${ANDROID_HOME:-/workspace/.tooling/android/sdk}
 export ANDROID_SDK_ROOT=$ANDROID_HOME
-export JAVA_HOME=${JAVA_HOME:-/workspace/.tooling/jdk17}
+# JDK 固定：外部环境把 JAVA_HOME 指到 25 时，AGP 的 lint 会异常慢
+# （2026-10-30 实测：JDK 25 下 :app:lintAnalyzeDebug 满载跑满 21 分 21 秒才结束；
+# JDK 17 是 AGP 8.x 的受支持版本，因此默认用它）。显式用 ETA_GATE_JAVA_HOME 可覆盖；
+# 没有自带 JDK 的机器仍沿用外部 JAVA_HOME。JDK 17 下的耗时尚无对比数据。
+if [ -n "${ETA_GATE_JAVA_HOME:-}" ]; then
+  export JAVA_HOME=$ETA_GATE_JAVA_HOME
+elif [ -d /workspace/.tooling/jdk17 ]; then
+  export JAVA_HOME=/workspace/.tooling/jdk17
+fi
 LOGDIR=${LOGDIR:-/tmp/eta-gate}
 mkdir -p "$LOGDIR"
 STAGES=${STAGES:-test,lint,assemble}
@@ -36,13 +44,17 @@ gw() {
   # （日志：`Gradle build daemon has been stopped: stop command received`），
   # 表现成「测试 / lint 失败」，其实是 JVM 元空间耗尽。内存充足的机器可覆盖：
   #   ETA_GATE_JVMARGS="-Xmx3g -XX:MaxMetaspaceSize=1g" STAGES=test sh tools/gate.sh
+  # 2026-10-30 再踩一次：512m 下 lintAnalyzeDebug 跑了 9 分钟后直接
+  # `OutOfMemoryError: Metaspace`（栈里是 lint 的 symbol 解析），退出码 1，
+  # 而同一台机器上 gradle.properties 写的是 1g —— 脚本默认值覆盖了项目设置，
+  # 等于「lint 阶段在本机永远过不去」。堆仍留给受限环境，元空间与项目设置对齐。
   # canary 包名透传：默认打 io.github.mangi.eta，而手机侧并行安装的是
   # io.github.mangi.eta.canary。包名不同时 `pm install -r` 会报 Success 却根本不生效
   # （2026-10-25 实测踩到，误判成「装了旧版」）。要装 canary：
   #   ETA_APP_ID_SUFFIX=.canary STAGES=assemble sh tools/gate.sh
   ./gradlew --offline \
     ${ETA_APP_ID_SUFFIX:+-Peta.applicationIdSuffix="$ETA_APP_ID_SUFFIX"} \
-    -Dorg.gradle.jvmargs="${ETA_GATE_JVMARGS:--Xmx2000m -XX:MaxMetaspaceSize=512m}" \
+    -Dorg.gradle.jvmargs="${ETA_GATE_JVMARGS:--Xmx2000m -XX:MaxMetaspaceSize=1g}" \
     -Pkotlin.compiler.execution.strategy=in-process \
     --console=plain "$@"
 }
@@ -109,6 +121,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentContextCompactionNoticeTest
   --tests io.github.mangi.eta.agent.model.AgentProviderSummaryEffortTest
   --tests io.github.mangi.eta.agent.model.AgentBusySendModeTest
+  --tests io.github.mangi.eta.agent.model.AgentWorkCollapseTimingTest
+  --tests io.github.mangi.eta.agent.model.AgentTranscriptViewTest
+  --tests io.github.mangi.eta.agent.model.AgentSubmitDedupPolicyTest
   --tests io.github.mangi.eta.agent.runtime.AgentGoalStoreTest
   --tests io.github.mangi.eta.agent.model.AgentContextSummarizerParallelTest
   --tests io.github.mangi.eta.agent.tool.AgentAfterActionSummaryVolumeTest

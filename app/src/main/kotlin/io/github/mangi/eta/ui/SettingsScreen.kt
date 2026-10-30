@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Extension
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.rounded.Timeline
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.runtime.Composable
@@ -88,6 +90,8 @@ import io.github.mangi.eta.ui.app.AgentKeepScreenStatus
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.AgentBusySendModePreference
+import io.github.mangi.eta.ui.components.AgentTranscriptViewPreference
+import io.github.mangi.eta.ui.components.AgentWorkCollapseTimingPreference
 import io.github.mangi.eta.ui.components.AgentModePreference
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaDropdownPreference
@@ -385,6 +389,22 @@ private fun SettingsPageContent(
                         title = stringResource(R.string.settings_busy_send_title),
                         icon = Icons.Rounded.TouchApp,
                         iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    AgentWorkCollapseTimingPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_work_collapse_title),
+                        icon = Icons.Rounded.Compress,
+                        iconTint = EtaPreferenceColors.Green,
+                    )
+
+                    EtaPreferenceDivider()
+                    AgentTranscriptViewPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_transcript_view_title),
+                        icon = Icons.Rounded.ViewAgenda,
+                        iconTint = EtaPreferenceColors.Yellow,
                     )
 
                     EtaPreferenceDivider()

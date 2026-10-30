@@ -71,6 +71,24 @@ internal object Prefs {
          */
         const val AGENT_BUSY_SEND_MODE = "agent_busy_send_mode"
 
+        /**
+         * 回合结束后工作过程什么时候收起（对齐 dsh 的 `collapseTiming`）：
+         * `completion` 结束即收（默认）／ `next-input` 保持展开到下一条消息。
+         *
+         * 字符串键，不走 [BOOLEAN_DEFAULTS]，读取用 [getLocalAgentString] 再交给
+         * `AgentWorkCollapseTiming.fromId`（未知值回退 completion）。
+         */
+        const val AGENT_WORK_COLLAPSE_TIMING = "agent_work_collapse_timing"
+
+        /**
+         * 工作细节档位（对齐 dsh 的 `transcriptView`）：
+         * `compact` / `standard` / `detailed`（默认）/ `verbose`。
+         *
+         * 字符串键，不走 [BOOLEAN_DEFAULTS]，读取用 [getLocalAgentString] 再交给
+         * `AgentTranscriptViewMode.fromId`（`normal`/`expanded` 等旧值读作 detailed）。
+         */
+        const val AGENT_TRANSCRIPT_VIEW = "agent_transcript_view"
+
         /** 允许主 Agent 派发 Subagent 并发执行（上游 3.3.5）。 */
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"

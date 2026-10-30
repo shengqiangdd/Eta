@@ -2564,3 +2564,275 @@ md5 `7be4048e957f2cac42784f33b0cfbdb7`）。`merged_manifest` 里 `package="io.g
 **未验**：编辑历史消息（`editingMessage`）时是否仍排队，目前只有 `AgentBusySendPolicy` 单测；目标卡行内动作与行内错误仍只有单测与 lint 证据（见 §32.13）。
 
 **现场**：设置已改回「排队发送」；canary 会话里留了两条测试消息与一段测试草稿「暂停态草稿」，均在测试包内。
+
+### 32.15 「提交被拒」不再吞字：清空交给真正消费草稿的一侧（2026-10-30）
+
+**现象**：`AgentChatInputBar` 主按钮在 dispatch 之前就 `textFieldState.clearText()`。而
+`sendCurrentMessage` 在 `isCompacting`、`rejectWhileMessagesLoading()`、只读归档会话、
+运行中编辑态这几条路径上**直接 return**：输入框已经空了，随后 `snapshotFlow` 把空串写回
+`draftsByConversation`，权威草稿也变成空 —— 文字两处都没了，还没有任何提示。
+
+**为什么不做"拒绝时回填"**：回填要写 `input + inputSyncVersion + 1`，但"点击时清空"会
+随后发一次空串；`updateDraft("")` 一定晚于回填（同一调用栈之后的协程调度），于是把刚回填的
+草稿又清掉一次。能不能保住字取决于调度顺序 —— 这种修法只是把偶发变成另一种偶发。
+
+**修法（职责归位）**：输入栏只报告"用户点了发送"，不再负责清空；清空只由真正消费掉草稿的
+一侧发出信号（`input` 归零 + `inputSyncVersion + 1`，输入框据此同步一次）：
+
+| 消费路径 | 位置 | 本次改动 |
+|---|---|---|
+| 排队 / 插话入队 | `AgentMessageQueueReducer.enqueue` | 补 `inputSyncVersion + 1` |
+| 同上（清权威草稿表） | `queueCurrentMessage` / `interruptAndSendCurrentMessage` | 补 `draftsByConversation.remove`，否则 `updateConversation` 的草稿校正会把文字刷回输入框 |
+| 发送成功 | `launchConversationRun` 的 `state.copy(input = "")` | 补 `inputSyncVersion + 1` |
+| 「保留下文」的编辑保存 | `sendCurrentMessage` 的 preserve 分支 | 补 `inputSyncVersion + 1`，并把 `previousInput` 立回权威草稿表 |
+
+**代价与对策**：点到发送与输入框真正清空之间多了一帧，这一帧里主按钮看起来仍可点，连点两下
+会把同一段文字发两遍（排队时排两条）。新增 `AgentSubmitDedupPolicy`：相同文本 + 400ms 窗口
+判为误触；不同文本、超过窗口、时钟回拨一律放行（拦多了会表现为"点发送没反应"，比多一条更糟）。
+
+**顺带清掉的真死代码**：`AgentAppState.steerCurrentRun` 与 `clearDraftInput` 无人调用
+（全仓 grep 仅自身引用），是旧 steering 路径的遗留；连同只被它使用的 4 个 `chat_steering_*`
+字符串一起删除（三语同步删，键集仍一致）。
+
+**测试**：746 例 0 失败。新增 `AgentSubmitDedupPolicyTest`（5 例：首次/窗口内/超窗口/不同文本/
+时钟回拨）；`AgentMessageQueueReducerTest` 新增 1 例钉住"enqueue 消费草稿必须抬同步序号"。
+两个类均已进 `tools/gate.sh` 的 `FAST_TEST_FILTERS`。
+
+**真机**：发送后输入框清空已在 §32.19.5 复验（33/33 → 34/34 → 35/35）；连点去重的两次实测见 §32.14 那一轮的记录。
+
+### 32.16 collapseTiming：回合结束后工作过程什么时候收（2026-10-30）
+
+**dsh 的模型**：`collapseTiming`（`completion` / `next-input`）与"工作细节档位"
+（`transcriptView`）是两个独立设置 —— "看多少细节"和"什么时候收"是两件事
+（`packages/client/ui-chat/src/chat-settings.ts`、`client/presentation-policy.ts`）。
+`next-input` 的含义是：已完成的回合先保持实时形态，等用户真的发出下一条消息时再退回历史形态。
+
+**Eta 的落地**：
+
+- 设置键 `agent_work_collapse_timing`（字符串，取值与 dsh 同名：`completion` / `next-input`），
+  默认 `completion`，未知值回退默认；**不放进** `BOOLEAN_DEFAULTS`。
+- 设置页「聊天」组新增一行 `AgentWorkCollapseTimingPreference`（在"繁忙时的发送行为"之后），
+  写着即生效（`rememberAgentWorkCollapseTiming` 监听同一个键）。
+- 判定不引入任何新状态：`AgentConversationMessages` 反向扫一遍条目，算出"哪些工作过程块
+  后面已经出现用户消息"（`workKeysWithLaterUserMessage`），交给纯函数
+  `AgentWorkCollapsePolicy.autoExpand(timing, active, hasUserMessageAfter)`。
+  切会话、重启、编辑/删除历史都自动一致，不需要记"刚才哪一块刚结束"。
+- `AgentWorkProcess` 新增 `autoExpanded`（默认 `= active`，即原行为）；用户手点过的
+  `manualExpanded` 与搜索命中展开仍然优先，语音浮层（`assistantOverlay`）依旧不自动展开。
+
+**测试**：`AgentWorkCollapseTimingTest` 6 例（默认值、同名同值、未知值回退、两种时机下的
+展开判定、正在跑的那一块永远展开）。
+
+### 32.17 transcriptView：工作细节四档（2026-10-30）
+
+**dsh 的模型**：`transcriptView` 不是「折叠开/关」一个开关，而是四档常用组合，每档由四个
+独立维度展开（`packages/client/ui-chat/src/client/presentation-policy.ts`）：
+
+| 档位 | foldCompletedTurns | stepGrouping | liveProcessDetail | settledReasoningPreview |
+|---|---|---|---|---|
+| compact | 是 | collapsed | 否 | 否 |
+| standard | 是 | collapsed | 是 | 是 |
+| detailed（默认） | 是 | history | 是 | 是 |
+| verbose | 否 | none | 否 | 是 |
+
+dsh 的 `normal` / `expanded` 是上一代两档取值：**接受但不再提供、也不再写回**，一律读作 `detailed`。
+
+**Eta 的落地**（`agent/model/AgentTranscriptView.kt`）：
+
+- 设置键 `agent_transcript_view`（字符串，与 dsh 同名同值），默认 `detailed`；`normal` / `expanded`
+  读作 `detailed`，其余未知值回退默认。**不放进** `BOOLEAN_DEFAULTS`（同 `AGENT_BUSY_SEND_MODE`、
+  `AGENT_WORK_COLLAPSE_TIMING` 的先例）。
+- 设置页「聊天」组「回合结束后工作过程」之后新增一行 `AgentTranscriptViewPreference`（四选一单选）。
+- 判定仍是纯函数 `AgentTranscriptPresentation`：
+
+```kotlin
+autoExpand = active -> true
+          | (!policy.foldCompletedTurns && !active) -> true
+          | else -> AgentWorkCollapsePolicy.autoExpand(timing, active, hasUserMessageAfter)
+
+grouped = COLLAPSED -> true
+        | NONE -> false
+        | HISTORY -> !active && !(timing == NEXT_INPUT && !hasUserMessageAfter)
+```
+
+`autoExpand` 对「折叠时机」是**委托**而不是重写：两处各写一份判断，早晚漂移成「档位说展开、
+时机说收起」。
+
+- `AgentWorkProcess` 新增两个参数：`groupHeaderVisible`（false 时不画折叠行、正文恒显示，
+  对齐 verbose 的 `stepGrouping=none`）与 `liveProcessDetail`（false 时运行中的折叠行只给
+  「处理中 N 步」，不给工具名/命令/路径细节，对齐 compact）。
+
+**没有落地的维度（诚实记录）**：`settledReasoningPreview`（已结束的推理行在标题旁预览首行）
+在 Eta 没有对应结构 —— 折叠态只有一条整轮汇总行，没有独立的推理行标题。不为对齐硬造一个，
+需要时再单独设计。
+
+**四档在 Eta 侧的可观察差异**：
+
+| 档位 | 观察点 |
+|---|---|
+| 紧凑 | 每轮收成一行；运行时只有「处理中 N 步」 |
+| 标准 | 每轮收成一行；运行时带当前工具细节（改动前的观感） |
+| 详细（默认） | 当前轮平铺（无折叠行），历史轮收束；`next-input` 下刚结束的轮保持平铺 |
+| 完整 | 永不折叠、不画折叠行，每一步单独一行 |
+
+**测试**：`AgentTranscriptViewTest` 11 例（默认值、同名同值、旧值读作 detailed、四档组合表、
+运行中永远展开、completion 下三档收束而 verbose 不收、next-input 两种时机、collapsed 恒有折叠行、
+verbose 恒无折叠行、detailed 只收历史轮）。已进 `tools/gate.sh` 的 `FAST_TEST_FILTERS` ——
+这类「没进过滤列表就等于没跑」的坑本项目踩过四次，见该文件的注释。
+
+### 32.18 只读归档会话「搬草稿」后清掉旧会话那一份（2026-10-30）
+
+**缺陷**：在只读外部归档会话里发送时，`sendCurrentMessage` 先调 `moveCurrentDraftToNewConversation()`
+把输入搬到新会话（`homeState = emptyChatState().copy(input = draft.input)`），但**旧会话的
+`draftsByConversation` 与 `conversationsById[旧].input` 都没清**。
+
+**后果**：新消息发出后，`launchConversationRun` 清的是新会话的草稿；用户点回那个只读归档会话时，
+`updateConversation` 拿草稿表校正 —— 表里有值就把文字刷回输入框；本次修完「清空交给消费方」
+之后表是空的，于是保留快照里的 `input`（仍是刚发出去的那段）→ **刚发出去的文字又出现在输入框里**。
+
+**修法**：`moveCurrentDraftToNewConversation()` 里先记下 `from = selectedConversationId`，清掉
+`draftsByConversation[from]`，并把 `conversationsById[from]` 的 `input` 置空。两处都要清：
+表决定覆盖，快照决定直接显示。
+
+**验证**：只有代码审查，**真机未验证**（§32.19.6 第 4 条：本轮没造出只读归档会话那条路径）。`AgentAppState` 依赖 Android `Context`，
+本仓库单测跑的是纯 JVM（Robolectric 在本机 Linux/aarch64 跑不了），所以这条没有单测 ——
+不写成「已单测」。
+
+### 32.19 真机验证：四档 / 折叠时机 / 免重启（2026-10-30，canary · PKX110 A16）
+
+**环境**：PKX110 / Android 16；canary `io.github.mangi.eta.canary` 覆盖安装于 11:24
+（`firstInstallTime` 仍是 2026-10-29 16:35:18，主包 `lastUpdateTime` 未变）。设备上跑的是
+**文案修正前**的那一版 APK —— 三条摘要字符串是之后才改的（见 §32.19.1），本轮没有再次覆盖安装。
+
+#### 32.19.1 先修掉一处「文案说假话」
+
+「详细」档的摘要原文是「刚结束的这一轮保持展开，直到你发下一条消息；更早的轮次仍然收起」。
+这句话描述的是 **`collapseTiming=next-input`** 的行为，而档位与折叠时机是两个正交设置：
+默认 `completion` 下 detailed 的回合结束后**立刻收起**，摘要与行为互相矛盾（真机上就是这样：
+设置页写「保持展开」，聊天页一结束就收起）。
+
+改成「运行中的这一轮步骤直接平铺；已经结束的轮次收进可展开的分组」（三语同步：英 / 简 / 繁），
+与 `AgentTranscriptViewPolicy(DETAILED)` 的 `stepGrouping=history` + `foldCompletedTurns=true`
+对齐 —— 它只描述档位本身，把「什么时候收」留给旁边那一项。
+
+#### 32.19.2 验证 1：切档免重启（详细 → 完整 → 紧凑 → 标准）
+
+| 操作 | 观察到的现象 |
+|---|---|
+| 起始「详细」 | 两条已完成回合各是一条折叠行：「思考 1 次 ／ 详情 ／ 展开工作过程」 |
+| 改「完整」返回聊天页 | 折叠行**消失**，改为平铺：「思考已完成 · 用时 1 秒」+ 回答正文 |
+| 改「紧凑」 | 折叠行回来（「思考 1 次」） |
+| 运行中改「标准」 | 下一次观察折叠行标题已带工具细节（见验证 2） |
+
+**未重启、未重进会话**，四次切换都是在设置页点完即返回聊天页看到的。这证实
+`rememberAgentTranscriptViewMode` 的 `OnSharedPreferenceChangeListener` 在跨路由时生效 ——
+设置页与聊天页是两个路由，靠重组时机是读不到新值的。
+
+#### 32.19.3 验证 2：紧凑 vs 标准的差别（运行中）
+
+同一回合（第 34 回合）在跑：
+
+- **紧凑**：折叠行标题只有「正在分析任务」—— 没有工具名、没有命令。
+- 运行中切到**标准**：标题变成「正在处理 · 第 1 步 · 终端 · 执行命令 · Android」。
+- 第 35 回合（`sleep 15; uptime`）在标准下复现：「正在处理 · 第 1 步 · 终端 · 执行命令 · Android」。
+
+即 `liveProcessDetail` 这一维在真机上确实只影响折叠行标题，不影响正文与步数。
+
+#### 32.19.4 验证 3：`collapseTiming=next-input`
+
+- 第 34 回合结束后：折叠行按钮仍是「收起工作过程」，步骤表（1/2/3 命令与输出）**可见** ——
+  与 `completion` 的「结束即收」相反。
+- 发送下一条消息、第 35 回合开始后：第 34 回合的按钮变成「展开工作过程」，步骤收起 ——
+  正是 next-input「等下一句才收」。
+- 全程未重启，也没有出现「切档后折叠时机失效」。
+
+#### 32.19.5 其它现场事实
+
+- 发送后回合计数 `33/33 → 34/34 → 35/35`，输入框清空 —— §32.15 的「清空归消费方」仍然成立。
+- 设置页的摘要行随选择即时更新（「紧凑：…」「标准：…」「完整：…」）。
+- 第 34 回合的正文里，模型把三步写成了一张「步骤 / 命令 / 结果」表（横向可滚），说明工具
+  多条结果的呈现没有因为档位改动而退化。
+
+#### 32.19.6 未验证（不写成已验证）
+
+1. **改文案后的新文案渲染**：新文案已进源码并重新打包
+   （`Eta-v3.3.5-debug.apk` 34,516,850 字节，sha256 `4b1d7ccf193f238104c335684d5f40ed47fc8d066b5ffe367c05f727a59b4baf`），
+   但**没有再覆盖安装**，设备上看到的仍是旧文案（截图上「详细」档摘要仍是旧句）。
+2. **无障碍可读性**：设置对话框里四个选项行在无障碍树里只暴露 `checked=false`，**当前选中项
+   的行节点整个缺失**（只剩标题和摘要两段文本）。屏幕阅读器能否读出「现在是哪一档」未验证；
+   `EtaRadioButtonPreference` 用的是 `Modifier.selectable(role=RadioButton)`，理论上会写
+   `selected`，但抓到的树与理论不一致，需要专门查。本轮补验又复现两次（工作细节、折叠时机
+   两个对话框都一样）。
+3. **只读归档会话搬家清草稿（§32.18）**：本轮试过用 `am start -a android.intent.action.SEND`
+   造路径，结果走的是「分享文案填进新会话输入框」，**没有进只读归档会话**；
+   `openArchivedConversation` 要的是 `AgentRunArchiveStore` 里带 `source + conversationKey`
+   的归档（语音助手交接），本机没造出来。仍只有代码审查。
+4. **编辑历史消息排队**：只有单测（`AgentMessageQueueReducerTest` 的编辑入队用例）。
+
+`steerQueuedMessage` 的 `hasDraft` 已补验，见 §32.19.9。
+
+#### 32.19.7 测试过程本身的两个坑
+
+- **坐标点击会落到别的应用**：两次 `tap`（同一个位置附近）之后前台变成
+  `com.tencent.mm/…WxaLiteAppLiteUI`（微信的一个小程序页）。canary 进程一直活着（`pidof`
+  有值）、crash 缓冲区没有新记录 —— 所以**不是 canary 崩了**。改用 `tap_element`（节点点击）
+  之后没再出现。判断「现在谁在前台」不要看 `dumpsys activity`（里面同时有多条
+  历史 `topResumedActivity`），要看 `dumpsys window | grep mCurrentFocus`。
+- **`am start --es eta.route settings` 之后界面滚动会失效一次**：拿到的是旧的
+  `observation_id`；重新 `observe_screen` 再滚即可，不是应用问题。
+
+#### 32.19.8 本轮门禁与产物
+
+- `STAGES=test,assemble`：**757 例 0 失败**；APK `Eta-v3.3.5-debug.apk` 34,516,850 字节，
+  sha256 `4b1d7ccf193f238104c335684d5f40ed47fc8d066b5ffe367c05f727a59b4baf`（包名 `io.github.mangi.eta.canary`）。
+- **lint**（2026-10-30 补跑）：`STAGES=lint` **通过** —— `BUILD SUCCESSFUL in 21m 21s`，
+  `Lint found no new issues (405 errors + 7 hints filtered by baseline lint-baseline.xml)`；
+  门禁自检输出「✓ baseline 账目一致：412 条命中」，`app/lint-baseline.xml` 仍是 413 条、未改动。
+- 三语键集：本轮新增的 10 条 `agent_transcript_view_*` 与 6 条 `agent_work_collapse_*`
+  三份文件齐备；文件里那三处历史差异（简繁缺 `speech_api_key` / `route_skills`，
+  多三个 `browser_*`）在 `HEAD` 上就有，本轮没动。
+
+#### 32.19.9 补验：详细档运行中平铺 / completion 免重启 / 插话按钮随草稿禁用
+
+设置走的是 UI（不是手改文件），事后从 canary 自己的 prefs 里读到硬证据：
+
+```
+<string name="agent_transcript_view">detailed</string>
+<string name="agent_work_collapse_timing">completion</string>
+<string name="agent_busy_send_mode">queue</string>
+```
+
+| 验证项 | 操作 | 观察到的现象 |
+|---|---|---|
+| **详细档运行中平铺** | detailed + completion，发一条「两步」任务（第 36 回合） | 运行中没有折叠行：`思考已完成` / `终端 · 2 次` / `终端 · 执行命令 · Android` 直接铺开 |
+| **结束即收（completion）** | 同一回合跑完（约 28 秒） | 收起为一条折叠行：`思考 1 次 · 调用 2 个工具` + `展开工作过程`（不再有步骤行） |
+| **completion 免重启** | 第 35 回合在 `next-input` 下按钮是「收起工作过程」（展开）；进设置改 `completion` 后返回聊天页 | 同一回合立即变「展开工作过程」（收起）—— **未重启、未重进会话** |
+| **更长回合仍然运行中平铺** | 第 37 回合 `sleep 45; uptime` | 运行中同样平铺，计时从 `3 秒` 走到 `35 秒`；结束后收成 `思考 1 次 · 调用 1 个工具` |
+| **排队 → 自动发出** | 第 37 回合运行中点「排队发送（本轮结束后发出）」 | 队列条出现「排队中」+ 消息预览；第 37 结束后自动发出，`38/38` 完成，回答原样是 `OK` |
+| **插话按钮随草稿禁用** | 队列条存在时：无草稿 → 输入「草稿A」→ 清空 | 无草稿：按钮容器 `clickable=true`；有草稿：**容器节点整个消失**，只剩 `desc=立即插话发送` 的 ImageView（Compose 对 `enabled=false` 的 IconButton 就是这个表现）；清空后 `clickable=true` 恢复 |
+
+`hasDraft` 这条以前只有单测（`steerEnabled = !isEditingMessage && !hasDraft`），这次在真机上
+用无障碍节点的「有没有 clickable 容器」判定，两个方向都抓到了。
+
+#### 32.19.10 门禁脚本自己的两个缺陷（本轮顺手修掉）
+
+1. **`MaxMetaspaceSize=512m` 覆盖了项目设置**：`tools/gate.sh` 的 `gw()` 用
+   `-Dorg.gradle.jvmargs="-Xmx2000m -XX:MaxMetaspaceSize=512m"`，而 `gradle.properties`
+   写的是 1g。第一次跑 `STAGES=lint` 在 9 分 5 秒后失败：`Unexpected failure during lint
+   analysis of EtaApp.kt` → `OutOfMemoryError: Metaspace`（栈里是 lint 的 symbol 解析）。
+   改成 1g 后重跑，daemon 实测 `-XX:MaxMetaspaceSize=1073741824`，21 分 21 秒通过。
+2. **外部 `JAVA_HOME` 把 lint 带去 JDK 25**：脚本原写 `JAVA_HOME=${JAVA_HOME:-…jdk17}`，
+   本会话环境带着 `java-25-openjdk`，于是 lint daemon 跑在 JDK 25 上（实测
+   `/usr/lib/jvm/java-25-openjdk-arm64/bin/java`，21 分 21 秒）。AGP 8.x 支持的是 17/21，
+   已改为**优先使用项目自带 jdk17**（`ETA_GATE_JAVA_HOME` 可显式覆盖）。JDK 17 下的耗时
+   **没有对比数据**，下一轮可以做一次 A/B 再定论谁更快。
+
+> 这两处改动只做了 `sh -n tools/gate.sh` 语法检查，**没有重跑整条门禁**：`STAGES=assemble`
+> 会用 JDK 17 重新打包，可能改变 §32.19.8 记录的 APK 字节与 sha256（当前 34,516,850 /
+> `4b1d7ccf…`），而那份产物就是本轮验证过的。下一轮跑 lint A/B 时再一并确认脚本改动可用。
+
+**顺带查清 canary 的数据目录**：`/data/user/0/io.github.mangi.eta.canary` **不存在**，
+`dumpsys package` 报的 `dataDir` 也不对路；真实目录是 `/data/data/io.github.mangi.eta.canary`
+（`databases/eta.db`、`shared_prefs/eta_agent_preferences.xml`）。当前 shell 里
+`ls /data/data | grep eta` 只看得到主包，但通过 `/proc/<canary_pid>/root/data/data/…` 能直接读。
+后续要在真机上核对设置值，走 `/proc/<pid>/fd` 找打开的文件最省事，别在 `/data/user/0` 里找。

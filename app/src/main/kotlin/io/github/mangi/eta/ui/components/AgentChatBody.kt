@@ -114,6 +114,9 @@ import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
 import io.github.mangi.eta.agent.model.AgentGoal
 import io.github.mangi.eta.agent.model.AgentTodoPlan
+import io.github.mangi.eta.agent.model.AgentTranscriptPresentation
+import io.github.mangi.eta.agent.model.AgentTranscriptViewPolicy
+import io.github.mangi.eta.agent.model.AgentWorkCollapsePolicy
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
@@ -1022,6 +1025,30 @@ internal fun AgentConversationMessages(
     } else {
         null
     }
+    // 工作过程在回合结束后什么时候收（对齐 dsh 的 collapseTiming）：
+    // - completion：结束即收（默认，既有行为）；
+    // - next-input：先保持展开，等用户真的发出下一条消息再收。
+    // 用「这一块后面还有没有用户消息」直接推导，不引入额外状态：重启、切会话、
+    // 编辑历史都不会错位，也不需要记「刚才哪一块是刚结束的」。
+    val workCollapseTiming = rememberAgentWorkCollapseTiming()
+    // 工作细节档位（对齐 dsh 的 transcriptView）：决定「收不收」「有没有折叠行」「运行中给不给细节」。
+    // 与上面的折叠时机是两个独立维度 —— 档位管看多少，时机管什么时候收。
+    val transcriptViewMode = rememberAgentTranscriptViewMode()
+    val transcriptPolicy = remember(transcriptViewMode) {
+        AgentTranscriptViewPolicy.forMode(transcriptViewMode)
+    }
+    val workKeysWithLaterUserMessage = remember(timelineEntries) {
+        val result = HashSet<String>()
+        var laterUserMessage = false
+        for (index in timelineEntries.indices.reversed()) {
+            when (val entry = timelineEntries[index]) {
+                is AgentTimelineEntry.WorkProcess -> if (laterUserMessage) result += entry.key
+                is AgentTimelineEntry.Message ->
+                    if (entry.message is UserMessageUi) laterUserMessage = true
+            }
+        }
+        result
+    }
     // 复制按钮只出现在每轮对话的最终结果上，中间步骤的过渡文本不提供复制入口。
     // 流式进行中当前这一轮尚未收尾，此时的“最后一条正文”只是中间步骤，不标记。
     val finalResultMessageIds = remember(visibleMessages, isStreaming) {
@@ -1407,6 +1434,19 @@ internal fun AgentConversationMessages(
                         AgentWorkProcess(
                             id = entry.key,
                             active = entry.key == activeWorkProcessKey,
+                            autoExpanded = AgentTranscriptPresentation.autoExpand(
+                                policy = transcriptPolicy,
+                                timing = workCollapseTiming,
+                                active = entry.key == activeWorkProcessKey,
+                                hasUserMessageAfter = entry.key in workKeysWithLaterUserMessage,
+                            ),
+                            groupHeaderVisible = AgentTranscriptPresentation.grouped(
+                                policy = transcriptPolicy,
+                                timing = workCollapseTiming,
+                                active = entry.key == activeWorkProcessKey,
+                                hasUserMessageAfter = entry.key in workKeysWithLaterUserMessage,
+                            ),
+                            liveProcessDetail = transcriptPolicy.liveProcessDetail,
                             messages = entry.messages,
                             assistantOverlay = assistantOverlay,
                             onOpenBrowser = onOpenBrowser,

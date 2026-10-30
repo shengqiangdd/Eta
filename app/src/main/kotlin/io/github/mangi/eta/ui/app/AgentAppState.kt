@@ -1579,6 +1579,8 @@ internal class AgentAppState(
             pendingFileReferences = pendingFileReferences,
             immediateInterrupt = true,
         )
+        // 同上：插话入队也是一次「草稿被消费」，先清权威草稿表再落状态。
+        setDraftText(selectedConversationId, "")
         updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, queued))
         requestInterruptCurrentRun()
     }
@@ -1750,6 +1752,10 @@ internal class AgentAppState(
             pendingFileReferences = homeState.pendingFileReferences,
             immediateInterrupt = false,
         )
+        // 草稿马上要变成排队消息：**先**清权威草稿表，再落状态。
+        // 反过来的话，updateConversation 里的草稿校正看到表里还有这段文字，
+        // 会把 enqueue 刚清空的 input 又填回去（界面表现为「排了队，字还在框里」）。
+        setDraftText(selectedConversationId, "")
         updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, queued))
         Toast.makeText(
             appContext,
@@ -1779,11 +1785,17 @@ internal class AgentAppState(
         }
         homeState.messageEdit?.takeIf { it.preserveFollowingMessages }?.let { edit ->
             val updated = RoleplayConversationReducer.edit(homeState, edit.targetMessageId, prompt) ?: return
+            // 编辑正文被写进历史后，这一轮剩下的草稿是「编辑前那串」：先对齐权威草稿表，
+            // 再落状态（同排队路径：updateConversation 会按表校正 input）。
+            setDraftText(selectedConversationId, edit.previousInput)
             updateCurrentConversation(updated.copy(
                 input = edit.previousInput,
                 pendingImages = edit.previousImages,
                 pendingFileReferences = edit.previousFileReferences,
                 messageEdit = null,
+                // 「保存编辑」把编辑正文写进了历史，输入框里的那串字从此不再属于草稿：
+                // 抬一次同步序号，让输入框按上一版草稿（edit.previousInput）重设。
+                inputSyncVersion = updated.inputSyncVersion + 1,
             ))
             refreshConversationSummaries()
             persistConversations()
@@ -1875,6 +1887,9 @@ internal class AgentAppState(
                 pendingImages = emptyList(),
                 pendingFileReferences = emptyList(),
                 messageEdit = null,
+                // 发送成功是「草稿被消费」的其中一条路径。输入栏不再自己 clearText，
+                // 没有这个序号输入框会一直停在刚发出去的那段文字上。
+                inputSyncVersion = homeState.inputSyncVersion + 1,
             ),
             reasoningEffort = homeState.reasoningEffort,
         )
@@ -1892,6 +1907,17 @@ internal class AgentAppState(
      * 正在打的字就没了；切换会话时新组件也只拿得到旧状态里的空串。这里只写 map、不写
      * `homeState.input`，避免每个字符都让整段聊天重组。
      */
+    /**
+     * 把权威草稿表对齐到指定文本（空串等于清掉）。
+     *
+     * 单独抽出来是因为顺序真的重要：`updateConversation` 会用这张表校正 `input`，
+     * 所以「这次要清掉 / 要换成别的文字」必须**先**写表，再落状态。
+     */
+    private fun setDraftText(conversationId: String?, text: String) {
+        val id = conversationId ?: return
+        if (text.isEmpty()) draftsByConversation.remove(id) else draftsByConversation[id] = text
+    }
+
     fun updateDraft(text: String) {
         val conversationId = selectedConversationId
         if (conversationId == null) {
@@ -1902,78 +1928,6 @@ internal class AgentAppState(
         val current = conversationsById[conversationId] ?: return
         if (current.messageEdit != null || current.input == text) return
         conversationsById = conversationsById + (conversationId to current.copy(input = text))
-    }
-
-    private fun clearDraftInput() {
-        val conversationId = selectedConversationId ?: run {
-            if (homeState.input.isNotEmpty()) homeState = homeState.copy(input = "")
-            return
-        }
-        draftsByConversation.remove(conversationId)
-        val current = conversationsById[conversationId] ?: return
-        if (current.input.isEmpty()) return
-        updateConversation(conversationId, current.copy(input = ""))
-    }
-
-    fun steerCurrentRun(text: String): Boolean {
-        val prompt = text.trim()
-        if (prompt.isBlank()) return false
-        val conversationId = selectedConversationId ?: return false
-        /*
-         * 这里必须切到 IO：AgentRuntimeClient 是同步客户端，AgentRuntimeConnection.acquire()
-         * 开头就 check(不在主线程)。而这个入口是用户点「发送」直接进来的，
-         * 之前在主线程调 sendSupplement 会立刻抛 IllegalStateException —— 表现为
-         * 「会话运行中再发消息直接闪退」。
-         *
-         * runId 也不能在这里直接查：本地映射缺失时（假运行态、恢复没接上）原来会
-         * 静默 return false，用户点「发送」什么都不发生、也没有任何提示。
-         */
-        // 暂停中发的补充指令不会「当前步骤结束后继续」——run 正挂在检查点上，
-        // 要等用户点「继续」才会被消费。文案必须说真话。
-        val paused = conversationsById[conversationId]?.isPaused == true
-        clearDraftInput()
-        scope.launch(Dispatchers.IO) {
-            val resolution = resolveRunIdForConversation(conversationId)
-            if (resolution !is RunResolution.Active) {
-                withContext(Dispatchers.Main) {
-                    // 没有可投递的 run：把刚打的字还给用户，并说清楚为什么没发出去。
-                    if (selectedConversationId == conversationId && homeState.input.isBlank()) {
-                        homeState = homeState.copy(input = prompt)
-                    }
-                    Toast.makeText(
-                        appContext,
-                        appContext.getString(
-                            if (resolution is RunResolution.NoActiveRun) {
-                                R.string.chat_steering_no_active_run
-                            } else {
-                                R.string.chat_steering_failed
-                            },
-                        ),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                return@launch
-            }
-            val sent = AgentRuntimeClient(appContext, AndroidAgentLogger)
-                .sendSupplement(resolution.runId, prompt)
-            withContext(Dispatchers.Main) {
-                if (!sent) {
-                    // 发不出去就把刚打的字还给用户，不能既没送出去又清空输入框。
-                    if (selectedConversationId == conversationId && homeState.input.isBlank()) {
-                        homeState = homeState.copy(input = prompt)
-                    }
-                    Toast.makeText(
-                        appContext,
-                        appContext.getString(R.string.chat_steering_failed),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    return@withContext
-                }
-                val messageRes = if (paused) R.string.chat_steering_queued_paused else R.string.chat_steering_sent
-                Toast.makeText(appContext, appContext.getString(messageRes), Toast.LENGTH_SHORT).show()
-            }
-        }
-        return true
     }
 
     fun beginMessageEdit(messageId: String) {
@@ -3672,7 +3626,17 @@ internal class AgentAppState(
     }
 
     private fun moveCurrentDraftToNewConversation() {
+        val from = selectedConversationId
         val draft = homeState
+        // 草稿搬走之后紧接着就会作为新会话的消息发出：旧会话那一份必须同步清掉。
+        // 只清表不够 —— updateConversation 拿表校正，表空时会保留快照里的 input，
+        // 用户点回这个只读归档会话仍会看到刚发出去的文字。
+        if (from != null) {
+            draftsByConversation.remove(from)
+            conversationsById[from]?.takeIf { it.input.isNotEmpty() }?.let { stored ->
+                conversationsById = conversationsById + (from to stored.copy(input = ""))
+            }
+        }
         selectedConversationId = null
         homeState = emptyChatState(defaultThinkingEnabled).copy(
             input = draft.input,
