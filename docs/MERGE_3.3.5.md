@@ -4362,16 +4362,21 @@ setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
 
 - **图标**：`ToolIcons.iconForTool` 给 `eta_self_audit` 加了专属图标
   （`Icons.AutoMirrored.Rounded.ManageSearch`），否则会落到兜底的 `Icons.Rounded.Build`。
-  守这条的是 `ToolCatalogUiTest` —— 它是 **Robolectric 测试，在本机（Linux aarch64）跑不了**
-  （同一限制在 gate.sh 的注释里已记过多次）。因此这一处只有「读断言 + 改映射」，
-  **既没跑过测试，也没在真机界面上核对过**。
+  守全目录的是 `ToolCatalogUiTest` —— 它是 **Robolectric 测试，在本机（Linux aarch64）跑不了**
+  （同一限制在 gate.sh 的注释里已记过多次），所以那一条对本机是**盲区**。
+  补了 `ToolIconMappingTest`（纯 JVM，已进 `FAST_TEST_FILTERS`）钉住这条映射与显示名，
+  并用**故意写错映射**（图标改成 `Build`、显示名改成 `tool_tap`）验过它真的会红：
+  两条用例各自 `AssertionError`；改回后 864 用例 / 0 失败。仍未在真机界面上看过渲染。
 - **显示名**：`AgentOverlayText.toolDisplayNameResource` 加 `tool_eta_self_audit`，三语
   （`values` / `values-b+zh+Hans` / `values-b+zh+Hant`）同步。三语键集由 `LocaleResourceParityTest`
   （纯 JVM、在门禁里）守着，已随本轮跑过。
 
 ## §32.39.11 仍未验证 / 未完成
 
-- **Android Lint 没跑完**：`lintAnalyzeDebug` 在本机 11 分钟无任何输出（既不报错也不前进），已停掉。
-  本轮**不宣称 lint 通过**。
+- **Android Lint：上一轮的「没跑完」是误判，实际是过的**。初稿写的是「`lintAnalyzeDebug` 11 分钟
+  无输出（既不报错也不前进），已停掉」——那次我盯的是 job 的输出，而 `STAGES=lint` 的输出被
+  `tail` 汇总，任务结束前**一直是空的**；真正的进度只写在 `/tmp/eta-gate/lint.log`。
+  本轮按日志监控重跑：**4 分 41 秒跑完、门禁通过**（报告时间 13:44:10，baseline 账目一致，
+  412 条命中，无新增问题）。教训与 §32.39.4 同源：**把「看不到」当成「没发生」**。
 - 自审工具只在本机（PKX110 / Android 16）跑过；测试机（A13 / MIUI）上没跑，
   那边的 dropbox 路径与 `dumpsys meminfo` 格式未复核。
