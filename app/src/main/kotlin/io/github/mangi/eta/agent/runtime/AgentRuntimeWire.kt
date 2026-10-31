@@ -160,6 +160,10 @@ internal object AgentRuntimeWire {
     private const val KEY_CUSTOM_BODY_JSON = "custom_body_json"
     private const val KEY_IMAGES = "images"
     private const val KEY_HISTORY = "history"
+    /** 同进程直传历史的句柄（§32.33）：与 [HISTORY_TRANSPORT_PROCESS] 成对出现。 */
+    private const val KEY_HISTORY_HANDOFF = "history_handoff"
+    private const val KEY_HISTORY_TRANSPORT = "history_transport"
+    private const val HISTORY_TRANSPORT_PROCESS = "process"
     private const val KEY_CONTENT_JSON = "content_json"
     private const val KEY_TOOL_CALL_ID = "tool_call_id"
     private const val KEY_TOOL_CALLS_JSON = "tool_calls_json"
@@ -270,6 +274,8 @@ internal object AgentRuntimeWire {
         override fun close() {
             if (!closed.compareAndSet(false, true)) return
             textBundle?.let(AgentWireText::close)
+            // 请求被拒绝/关闭时，未消费的直传条目要立刻丢掉，不等 TTL（§32.33）。
+            textBundle?.let { AgentWireHistoryHandoff.discard(it.getString(KEY_HISTORY_HANDOFF)) }
             images.forEach { image -> runCatching { image.fileDescriptor?.close() } }
         }
     }
@@ -339,6 +345,7 @@ internal object AgentRuntimeWire {
     /** 兼容旧客户端与协议测试；新请求不得通过 Binder 内联图片正文。 */
     fun toLegacyBundle(request: RunRequest): Bundle = requestBundle(
         request = request,
+        processLocalHistory = false,
         imageBundles = request.images.map { image ->
             Bundle().apply {
                 putString(KEY_DATA_URL, image.reference)
@@ -359,21 +366,42 @@ internal object AgentRuntimeWire {
         payloadDirectory: File? = null,
         /** 是否额外内联一份 [#KEY_HISTORY] 投影；仅旧客户端与协议测试需要。 */
         includeLegacyHistory: Boolean = false,
+        /**
+         * 历史是否走进程内直传（§32.33）。默认 true：Runtime 与界面同进程，
+         * 编码成 JSON、写临时文件、再读回解析那一整圈没有任何收益。
+         * 只有 [toLegacyBundle]（旧客户端与协议测试）需要 false。
+         */
+        processLocalHistory: Boolean = true,
     ): Bundle = Bundle().apply {
         require(request.assistantScreenContext.length <= AssistantScreenContextProjection.MAX_CHARS) {
             "助理屏幕上下文超过容量预算"
         }
-        val encodeStartedAt = android.os.SystemClock.elapsedRealtime()
-        val historyJson = AgentConversationCodec.encodeTranscriptForStorage(request.history)
-        val encodeMs = android.os.SystemClock.elapsedRealtime() - encodeStartedAt
-        val writeStartedAt = android.os.SystemClock.elapsedRealtime()
-        AgentWireText.put(this, "history_json", historyJson, payloadDirectory)
-        // 分段计时：把「序列化」和「落盘」拆开，才知道 100ms+ 到底花在哪一段（§32.28）。
-        // 落盘（infoPersisted）：logcat 的 main ring 只有 256 KiB，请求日志几十秒就被顶掉（§32.31）。
-        AndroidAgentLogger.infoPersisted(
-            "request history: encode=${encodeMs}ms " +
-                "write=${android.os.SystemClock.elapsedRealtime() - writeStartedAt}ms chars=${historyJson.length}",
-        )
+        val historyStartedAt = android.os.SystemClock.elapsedRealtime()
+        if (processLocalHistory) {
+            // 同进程直传：清洗后的 List 直接交接，不再 JSON 编码 + 落盘 + 读回 + 解析（§32.33）。
+            // 语义与 decodeTranscript(encodeTranscriptForStorage(...)) 一致（§32.25）。
+            putString(KEY_HISTORY_TRANSPORT, HISTORY_TRANSPORT_PROCESS)
+            putString(
+                KEY_HISTORY_HANDOFF,
+                AgentWireHistoryHandoff.offer(AgentConversationCodec.sanitizeTranscript(request.history)),
+            )
+            AndroidAgentLogger.infoPersisted(
+                "request history: handoff=${android.os.SystemClock.elapsedRealtime() - historyStartedAt}ms " +
+                    "messages=${request.history.size}",
+            )
+        } else {
+            val encodeStartedAt = android.os.SystemClock.elapsedRealtime()
+            val historyJson = AgentConversationCodec.encodeTranscriptForStorage(request.history)
+            val encodeMs = android.os.SystemClock.elapsedRealtime() - encodeStartedAt
+            val writeStartedAt = android.os.SystemClock.elapsedRealtime()
+            AgentWireText.put(this, "history_json", historyJson, payloadDirectory)
+            // 分段计时：把「序列化」和「落盘」拆开，才知道 100ms+ 到底花在哪一段（§32.28）。
+            // 落盘（infoPersisted）：logcat 的 main ring 只有 256 KiB，请求日志几十秒就被顶掉（§32.31）。
+            AndroidAgentLogger.infoPersisted(
+                "request history: encode=${encodeMs}ms " +
+                    "write=${android.os.SystemClock.elapsedRealtime() - writeStartedAt}ms chars=${historyJson.length}",
+            )
+        }
         putString(KEY_RUN_ID, request.runId)
         AgentWireText.put(this, KEY_PROMPT, request.prompt, payloadDirectory)
         putString(KEY_ASSISTANT_SCREEN_CONTEXT, request.assistantScreenContext)
@@ -588,6 +616,21 @@ internal object AgentRuntimeWire {
         readText: Boolean,
     ): List<AgentModelClient.ConversationMessage> {
         if (!readText) return emptyList()
+        if (bundle.getString(KEY_HISTORY_TRANSPORT) == HISTORY_TRANSPORT_PROCESS) {
+            // 同进程直传：取引用即可。
+            // 取不到说明「写了 process 标记却不在同一进程」—— 必须立刻失败：
+            // 静默回退成空历史会让对话莫名失忆，比抛错难查得多。
+            val handoffStartedAt = android.os.SystemClock.elapsedRealtime()
+            val handed = AgentWireHistoryHandoff.take(bundle.getString(KEY_HISTORY_HANDOFF))
+                ?: error("history 进程内交接丢失：Runtime 与界面已不在同一进程")
+            AndroidAgentLogger.infoPersisted(
+                "run history: handoff=${android.os.SystemClock.elapsedRealtime() - handoffStartedAt}ms " +
+                    "messages=${handed.size} chars=${handed.sumOf {
+                        it.content.length + it.contentJson.length + it.reasoningContent.length + it.toolCallsJson.length
+                    }}",
+            )
+            return handed
+        }
         val readStartedAt = android.os.SystemClock.elapsedRealtime()
         val raw = AgentWireText.read(bundle, "history_json")
         val readMs = android.os.SystemClock.elapsedRealtime() - readStartedAt

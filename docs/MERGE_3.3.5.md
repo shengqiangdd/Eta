@@ -3735,3 +3735,118 @@ done
 
 所以加了 `run history: read=Xms decode=Yms messages=N chars=M`（同样落盘）。
 在拿到这条之前，**不对 ingest 做任何归因**。
+
+### 32.33.4 拆开了：读文件很小，解析也不是大头
+
+装 `c0ff474d…`（`lastUpdateTime=18:32:40`，`firstInstallTime` 未重置，`FAIL=0`）后拿到第一条分解。
+安装重启后上下文被重建，只有 16 条：
+
+```
+18:33:22.884 [23222] request history: encode=2ms write=1ms chars=31165
+18:33:22.885 [23222] request bundle: build=5ms messages=16 chars=27483
+18:33:22.935 [23222] run history: read=1ms decode=3ms messages=16 chars=31165
+18:33:22.936 [23222] run request: ingest=6ms history=16 chars=27483
+```
+
+31 KB 时 read 1 ms、decode 3 ms。**绝对值太小**（毫秒精度、且是冷启动第一条），不能外推到 41 万字符。
+
+所以补了一份**同代码的 JVM 定标**：用的就是 `AgentConversationCodec` 本身，
+438,925 字符 / UTF-8 743,085 字节 / 279 条消息，先预热一次再测多轮（临时探针跑完即删）：
+
+| 段 | 冷态（前几次） | 热态 |
+|---|---|---|
+| `encode` | 4.8 / **33.9** / 5.4 ms | ~5 ms |
+| `decode` | **20.5 / 22.3 / 21.0** ms | **5.3 ms** |
+| `read`（写临时文件 → 流式读回成 String） | 37.7 / 21.3 / 15.8 / 9.9 / **6.6** ms | **6.6 ms** |
+
+两点必须一起读：
+
+1. **热态下 read + decode 只有约 12 ms**，远小于真机 41 万字符时的 65 ms；
+2. **冷态 decode 是 20~22 ms**，是热态的 4 倍 —— 而每一次真实请求都是「另一条线程、刚起来的代码」。
+
+所以 41 万字符的 65 ms 里，history 这半边大概是**二十几到三十几毫秒**，
+不是 5 ms 也不是 50 ms。**这个量级既不支持「增量编码」，也不支持「改传输形态」。**
+
+### 32.33.5 再追一层：这条链路从来没有跨进程收益
+
+`AndroidManifest.xml` 里 `AgentRuntimeService` **没有 `android:process`** —— 与界面同进程。
+日志的 pid 也印证这一点，客户端行与服务端行永远同一个 pid（`12478`、`23222`、`10591`）。
+
+于是每轮对话都在做这四件事：
+
+1. 客户端把手里**已经有**的 `List<ConversationMessage>` → sanitize → JSON 序列化（41 万字符时 38 ms）；
+2. UTF-8 编码写进临时文件、只把 FD 与长度放进 Bundle（6 ms）；
+3. 服务端 `AutoCloseInputStream` 读回、UTF-8 解码成一个完整 String（约 7 ms）；
+4. kotlinx 把同一份 JSON 解析回**同一批对象**（热 5 ms / 冷 21 ms）。
+
+四步之后拿到的对象，与第 1 步开始时手里那批**逐字段相同**。
+
+值得注意的是 §32.25 早就写了 `sanitizeTranscript`「不做全量 JSON 往返」——
+但那条通路只服务跨进程；而同进程才是常态，反倒一直在走最贵的那条。
+
+## 32.34 同进程直传：把那一圈彻底去掉（2026-10-31，本机 PKX110/A16）
+
+### 32.34.1 改动
+
+新增 `AgentWireHistoryHandoff`：一个进程内的交接表。
+
+- 写侧（`requestBundle`，默认 `processLocalHistory = true`）：
+  `putString(history_transport, "process")` + `handoff = AgentWireHistoryHandoff.offer(sanitizeTranscript(history))`，
+  **不再** encode、**不再**写临时文件；
+- 读侧（`historyFromBundle`）：看到 `transport=process` 就直接取引用。
+  取不到即 `error(...)` —— 静默回退成空历史会让对话「莫名失忆」，比崩溃难查；
+- 跨进程路径（`toLegacyBundle`）显式传 `processLocalHistory = false`，原样保留 JSON + FD 通路。
+
+三条硬约束写进了代码注释，也各有守护用例：
+
+| 约束 | 不这么做的后果 |
+|---|---|
+| **单次消费**（`take` 取出即删） | 同一次请求解析两遍；或读到上一轮的旧数据 |
+| **TTL 60 s + 上限 8 条** | 客户端 offer 了但服务端没来取（发送失败/被杀）→ 每请求留一份几十 MB 的历史 |
+| **取不到就失败** | 真跨进程时静默丢历史，表现为「对话失忆」 |
+
+### 32.34.2 真机数据（决定性一条）
+
+装 `2f5c7ae2…`（`lastUpdateTime=18:49:18`，`firstInstallTime=2026-10-03 10:38:00` 未重置，
+`FAIL=0`，dex 命中 `run history: handoff=`）后：
+
+```
+18:51:57.703 [10591] request history: handoff=1ms messages=132
+18:51:57.708 [10591] run history: handoff=0ms messages=132 chars=222328
+18:51:57.709 [10591] run request: ingest=4ms history=132 chars=222328
+```
+
+**22.2 万字符、132 条，整条链路 5 ms。** 三条日志的 pid 相同（`10591`），也再次印证同进程。
+
+| 版本 | 字符 | 客户端 | 服务端 | 合计 |
+|---|---|---|---|---|
+| `1d94cfef`（read/decode 拆分前） | 410,886 | encode 38 + write 6 | ingest 65（含 read+decode） | **109 ms** |
+| `c0ff474d`（拆分后） | 31,165 | encode 2 + write 1 | read 1 + decode 3（在 ingest 6 内） | ~9 ms |
+| `2f5c7ae2`（直传） | 222,328 | handoff 1 | handoff 0（ingest 4） | **5 ms** |
+
+**必须说清的口径**：没有做「同规模、同状态」的新旧对照 —— 三行是不同字符数、
+不同上下文规模下的测量。从 41 万折算到 22 万（0.54 倍）旧路径约 59 ms，新路径 5 ms，
+但这只是**外推**。可以确定的不是倍数，而是机理：那 4 步（编码/落盘/读回/解析）
+在新路径上**确实一次都没发生**，`ingest=4 ms` 里已经不含 history 了。
+
+### 32.34.3 验证与门禁
+
+- 新增 `AgentWireHistoryHandoffTest` **8 个用例**，含「直传结果 == 原 JSON 往返结果」等价性断言
+  （用带 `image_url` 的 `contentJson` 触发 sanitize 改写，证明 `sanitizeTranscript` 与
+  `decodeTranscript(encodeTranscriptForStorage(...))` 逐字段一致）；
+- `tools/gate.sh` 全量：**835 用例 / 失败 0**（白名单 0），lint 与 baseline 账目一致（412 条），打包成功；
+- APK `2f5c7ae2abba53c590939979491b64b5ca6ccfdcf1ae87003bc8cfe5054d5555`，32,733,212 字节；
+- 四项安装核对全过：sha 一致、User 0 `firstInstallTime` 未重置、dex 含新标记、测试类 0 命中。
+
+### 32.34.4 未验证
+
+- **同规模新旧对照**（唯一能把「5 ms vs 59 ms」变成确定倍数的方法）：需要旧包在 22 万字符下再测一次；
+- **release / R8 构建**的绝对耗时：目前全部数据来自 debug 包，冷态 decode 慢 4 倍很可能与未优化 + 冷 JIT 有关；
+- **`toLegacyBundle` 跨进程通路**：代码保留但从未真机走过（`android:process` 一旦被加上就会用到，
+  写侧标记会让它立刻失败而不是静默降级）。
+
+### 32.34.5 顺带记一条工具事实
+
+`tools/gate.sh` 在 Linux guest 上整跑约 **30 分钟**，其中 `:app:lintAnalyzeDebugUnitTest`
+一段就占 5 分钟以上（`lint.log` 5 分钟不刷新，但 java 进程 CPU 60%，不是死锁）。
+分阶段 `STAGES=assemble` / `STAGES=lint` 可以拆开跑，比整跑省时间。
