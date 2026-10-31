@@ -3308,11 +3308,13 @@ logcat -d -s Eta:* | grep -E "request bundle|result delivery"
 `AgentWireText.put` 的路径是：
 
 ```
-历史 JSON 字符串（约 30 MB）--toByteArray--> 再一份 30 MB 字节数组 --write--> 临时文件
+历史 JSON 字符串（本机实测最大 445,117 字符）--toByteArray--> 再一份同尺寸 byte[] --write--> 临时文件
 ```
 
-读端是反过来的：`ByteArray(size)` 一次性 30 MB，再 `toString(UTF_8)` 生成字符串。
+读端是反过来的：`ByteArray(size)` 一次性申请同样的字节数，再 `toString(UTF_8)` 生成字符串。
 一次请求/回传，堆上各多出一份完整的整块副本，越大越容易触发 GC。
+
+> **更正（§32.28.5）**：本节初稿写的「约 30 MB」没有任何日志支撑，实测最大 445,117 字符。
 
 ### 32.27.2 改法
 
@@ -3327,10 +3329,10 @@ logcat -d -s Eta:* | grep -E "request bundle|result delivery"
 
 ### 32.27.3 顺带改的日志
 
-`request bundle` 加 `chars=`：
+`request bundle` 加 `chars=`（下面这行是 14:39 的真实日志）：
 
 ```
-request bundle: build=119ms messages=267 chars=2,345,678
+request bundle: build=130ms messages=333 chars=445117
 ```
 
 理由：对话每轮都在变，只比 `messages` 或只比毫秒数都不严谨；有字符总量才能归一
@@ -3346,8 +3348,8 @@ request bundle: build=119ms messages=267 chars=2,345,678
 
 ### 32.27.5 取舍
 
-`readText()` 在 30 MB 时是 StringBuilder 扩容，CPU 有可能会略高于一次性 decode；
-换来的是少一次 30 MB `byte[]` 峰值。**净收益要看真机数字**，不预设结论。
+`readText()` 在 0.4 MB 级历史时是 StringBuilder 扩容，CPU 有可能会略高于一次性 decode；
+换来的是少一次同尺寸 `byte[]` 峰值。**净收益要看真机数字**，不预设结论（§32.28.3 是第一组）。
 
 ## 32.28 130 ms 花在哪：给请求序列化分段（2026-10-31，本机 PKX110/A16）
 
@@ -3377,8 +3379,54 @@ request history: encode=Xms write=Yms chars=N
 
 与 client 侧 `request bundle: build=` 的差值，就是其余字段、图片准备和 Bundle 组装。
 
-### 32.28.3 还没做的
+### 32.28.3 真机第一组分段数字（15:00，安装后首次请求）
 
-- 装包后跑一次真实对话才有三段数字；在此之前**不猜**哪一段是大头。
-- 如果证明大头在 `encode`，下一步才是「减少编码量」（例如增量化）；如果在 `write`，
-  才轮到文件 I/O；如果都不在，就去查 `prepare` 和 Bundle 组装。
+装包核对：`base.apk` sha256 `1afb1ab5…` 与产物逐字节一致，User 0 的
+`firstInstallTime` 仍是 **2026-10-03 10:38:00**（未重置），`lastUpdateTime=14:51:30`。
+
+```
+15:00:13.860  request history: encode=5ms write=2ms chars=59756
+15:00:13.875  request bundle:  build=22ms messages=51 chars=48942
+```
+
+三个数字**不是同一口径**，不能相互加减：
+
+| 数字 | 含义 |
+|---|---|
+| `chars=59756` | 历史 **JSON 字符串**长度（编码后） |
+| `encode=5ms` | `sanitizeTranscript` + JSON 序列化 |
+| `write=2ms` | 写临时文件（>16 384 字符必走文件，尺寸用 `file.length()`） |
+| `chars=48942` | 历史四个字段**原始长度之和**（`content`+`contentJson`+`reasoningContent`+`toolCallsJson`），不含 role 与 JSON 元字符 |
+
+- 51 条 / 59,756 字符：**encode 5 ms + write 2 ms = 7 ms**，约占 `build=22ms` 的三分之一。
+- 其余 15 ms 不是历史：`prompt`、屏幕上下文、模型会话 id、自定义头/体与 Bundle 组装都在这里
+  （图片 `prepare` 在 `build` 计时之外）。**单样本不能判定它是稳态还是首次调用的冷启动** ——
+  类加载与 JSON 序列化器的首次初始化都落在这一次里。
+- 归一化：59,756 字符 / 5 ms ≈ **12 M 字符/秒**的编码速度，与 kotlinx.serialization 的正常量级一致，
+  说明这条路径本身没有异常。
+
+### 32.28.4 与 130 ms 那次对不上，差在哪
+
+14:39 的样本是 **333 条 / 445,117 字符**。按上面 12 M 字符/秒线性外推，`encode` 约 37 ms；
+`write` 按 2 ms/59 KB 外推约 15 ms —— 合计约 52 ms，**仍解释不了 130 ms**。
+
+两种可能，都**还没有证据**：
+
+1. 摊还假设不成立（大字符串触发一次完整 GC，或临时文件首次落到慢区）；
+2. 大头不在历史，而在其余字段的 Bundle 组装 —— 59 KB 样本里那 15 ms 就是它的下限。
+
+要区分，只能再抓一次「历史 ≥ 300 KB 且同一进程内非首次」的样本。拿到之前本节不给结论，
+也不据此改代码。
+
+### 32.28.5 对 §32.27.1「约 30 MB」的更正
+
+§32.27.1 与 §32.27.5 原写「历史 JSON 字符串（约 30 MB）」。这是**错的**：当时没有任何字符量
+日志，30 MB 是把 `messages` 条数当量级拍出来的，与实测（最大 445,117 字符，UTF-8 字节约
+0.4~1.3 MB）差了两个数量级。已按实测改写并保留这处更正 —— 性能文档里一个凭空的数量级，
+会让后面所有取舍都建在错的尺度上。
+
+### 32.28.6 还没做的
+
+- 缺一次「历史 ≥ 300 KB 且非首次调用」的样本（§32.28.4）。
+- 若届时 `encode` 占大头，下一步是减少编码量（增量化 / 只编码变化部分）；
+  若 `write` 占大头，才轮到文件 I/O；若都不在，去查 `prepare` 与 Bundle 组装。
