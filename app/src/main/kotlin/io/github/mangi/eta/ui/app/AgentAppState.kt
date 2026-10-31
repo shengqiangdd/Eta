@@ -191,6 +191,13 @@ internal class AgentAppState(
      * 所以 updateConversation 统一用这张表校正 input。
      */
     private val draftsByConversation = HashMap<String, String>()
+
+    /**
+     * `ask_user` 的回答：消息已经落成、还没起新 run（见 [answerPendingAsk]）。
+     *
+     * 它不能和排队消息混在一起 —— 回答不是「等你做完这句再说」，而是「我在回答你问的问题」。
+     */
+    private val pendingAskAnswers = PendingAskAnswers()
     private var conversationTitles: Map<String, String> = bootSnapshot.titles
     private var conversationUpdatedAt: Map<String, Long> = bootSnapshot.updatedAt
     /** 每个会话的消息条数；来自 SQL 统计，未载入消息的会话也有值（见 Snapshot.messageCounts）。 */
@@ -961,17 +968,43 @@ internal class AgentAppState(
                     recoverRuntimeRuns()
                 }
                 AgentRuntimeClient.AttachOutcome.Unavailable -> withContext(Dispatchers.Main) {
-                    // 查询失败不等于 run 结束：保留「运行中」，下一次前台对账会重试。
-                    if (asPrimary && currentRunId == runId) {
-                        currentRunId = null
-                        currentRunJob = null
-                        setConversationStreaming(runId, false)
-                        refreshConversationSummaries()
-                    }
+                    // 查询失败不等于 run 结束：保留「运行中」，自己安排重试。
+                    // 只靠「下一次前台对账」不够：用户此刻已经在前台，不会再触发一次 ON_RESUME。
+                    if (asPrimary) currentRunJob = null
+                    scheduleAttachReconcile()
                 }
             }
         }
         if (asPrimary) currentRunJob = job
+    }
+
+    /**
+     * attach 没问出来时的对账重试。
+     *
+     * 为什么不直接清运行态：那正是「后台久了切回前台，界面显示未运行、其实还在跑」的来源。
+     * 这里最多试 6 次（1s、之后每 5s），只要有一次拿到明确快照就交给 [recoverRuntimeRuns]
+     * 走正常对账：run 真结束了会被 [reconcileStaleRunState] 收掉，不会一直挂着。
+     */
+    private fun scheduleAttachReconcile() {
+        if (attachReconcileScheduled) return
+        attachReconcileScheduled = true
+        scope.launch {
+            try {
+                repeat(6) { index ->
+                    delay(if (index == 0) 1_000L else 5_000L)
+                    val known = withContext(Dispatchers.IO) {
+                        AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRuns() is
+                            AgentRuntimeClient.ActiveRunsQuery.Known
+                    }
+                    if (known) {
+                        recoverRuntimeRuns()
+                        return@launch
+                    }
+                }
+            } finally {
+                attachReconcileScheduled = false
+            }
+        }
     }
 
     private suspend fun importArchivedExternalRuns() {
@@ -1223,6 +1256,9 @@ internal class AgentAppState(
         if (state.messagesDeferred) loadDeferredMessages(conversationId)
         if (state.historyDeferred) loadDeferredHistory(conversationId)
         if (state.journalDeferred) loadDeferredJournal(conversationId)
+        // 回答落成消息后旧 run 收尾时若这里没被选中，起 run 的那一步仍会执行；
+        // 这里补一次只是兜住「收尾回调丢了」的情况。
+        maybeLaunchPendingAskAnswer(conversationId)
         persistConversations()
         scheduleMessageRelease(conversationId)
         // 界面说在跑、本地却没有可对应的 run：先对一次账，别让用户盯着一个
@@ -1458,6 +1494,7 @@ internal class AgentAppState(
 
     fun deleteConversation(conversationId: String) {
         val wasSelected = selectedConversationId == conversationId
+        pendingAskAnswers.remove(conversationId)
         conversationsById = conversationsById - conversationId
         refreshAnyRunningConversation()
         conversationTitles = conversationTitles - conversationId
@@ -1762,6 +1799,102 @@ internal class AgentAppState(
             appContext.getString(R.string.chat_queued_hint),
             Toast.LENGTH_SHORT,
         ).show()
+    }
+
+    /**
+     * 回答 `ask_user` 的提问。
+     *
+     * 与普通发送的关键区别：回答**永远不进排队队列**。
+     *
+     * 空闲时就是一次普通发送。旧 run 还活着时（模型问完问题通常还要把这一轮收尾）先把回答
+     * 落成一条真正的用户消息并落盘，再请求停掉旧 run，等它收尾后用这条消息起新 run。
+     * 以前这里走的是「插话入队」：用户看到自己的回答挂在队列条上，切走会话还会一直发不出去，
+     * 回来又看到「等你回答」的卡片 —— 2026-10-30 真机反馈。
+     *
+     * 先落消息还有一个直接好处：任何进程死亡/切换会话都不会让回答消失。
+     */
+    fun answerPendingAsk(answerText: String) {
+        if (rejectWhileMessagesLoading()) return
+        if (homeState.isCompacting) return
+        val prompt = answerText.trim()
+        if (prompt.isBlank()) return
+        val conversationId = selectedConversationId
+        if (conversationId != null && conversationId.isReadOnlyExternalArchiveConversation()) return
+        if (!homeState.isStreaming) {
+            sendCurrentMessage(prompt)
+            return
+        }
+        // 运行中停在编辑态：这条输入属于编辑框，落成新消息会把用户刚改的内容变成弃稿。
+        if (rejectMessageEditWhileStreaming(prompt)) return
+        val target = conversationId ?: newConversationId().also { selectedConversationId = it }
+        val runId = "run-${UUID.randomUUID()}"
+        val answer = PendingAskAnswer(
+            runId = runId,
+            messageId = "user-$runId",
+            prompt = prompt,
+            reasoningEffort = homeState.reasoningEffort,
+        )
+        // 同一条提问连点两个选项：**后一次选择生效**，并把之前那条回答消息一起换掉。
+        // 以前这里直接 return：第一次没发出去（旧 run 迟迟不收尾）之后再点，界面毫无变化，
+        // 用户看到的就是「点了没反应、切回来还让我重答」。
+        val replaced = pendingAskAnswers.put(target, answer)
+        val userMessage = UserMessageUi(
+            id = answer.messageId,
+            content = prompt,
+            images = emptyList(),
+        )
+        val baseMessages = if (replaced == null) {
+            homeState.messages
+        } else {
+            homeState.messages.filterNot { it.id == replaced.messageId }
+        }
+        updateCurrentConversation(homeState.copy(messages = baseMessages + userMessage))
+        persistConversations()
+        if (replaced != null) {
+            Toast.makeText(
+                appContext,
+                appContext.getString(R.string.ask_answer_updated),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        requestInterruptCurrentRun()
+    }
+
+    /**
+     * 旧 run 收尾后把待发的回答接上。
+     *
+     * 不看「当前选中哪个会话」：回答属于它自己的会话，切走了也得照发 —— 这正是以前排队通道
+     * 漏掉的那一段（`drainQueueAfterRun` 只处理选中会话）。
+     */
+    private fun maybeLaunchPendingAskAnswer(conversationId: String) {
+        if (pendingAskAnswers.get(conversationId) == null) return
+        val state = conversationsById[conversationId] ?: run {
+            pendingAskAnswers.remove(conversationId)
+            return
+        }
+        // 消息还没载入时开新 run，会把空消息表当作会话内容。等载入完成后再接。
+        if (state.messagesDeferred) return
+        val answer = pendingAskAnswers.takeIfIdle(
+            conversationId = conversationId,
+            isStreaming = state.isStreaming,
+            isCompacting = state.isCompacting,
+        ) ?: return
+        launchConversationRun(
+            conversationId = conversationId,
+            runId = answer.runId,
+            prompt = answer.prompt,
+            images = emptyList(),
+            // 回答已经在 messages 里；history 由 launchConversationRun 追加这一条用户消息，
+            // 和普通发送完全同一条路径。
+            history = state.history,
+            userHistoryMessage = AgentModelClient.buildUserHistoryMessage(
+                text = answer.prompt,
+                images = emptyList(),
+            ).copy(messageId = answer.messageId),
+            messages = state.messages,
+            state = state,
+            reasoningEffort = answer.reasoningEffort,
+        )
     }
 
     fun sendCurrentMessage(submittedText: String? = null) {
@@ -2395,6 +2528,11 @@ internal class AgentAppState(
         scope.launch(Dispatchers.IO) {
             try {
                 val ok = ensureMessagesLoaded(listOf(conversationId), requireSelected = true)
+                if (ok) {
+                    // 待发的回答要在消息真的回到内存之后才能起 run，否则会把空消息表
+                    // 写回会话（界面上整段聊天被清空）。
+                    withContext(Dispatchers.Main) { maybeLaunchPendingAskAnswer(conversationId) }
+                }
                 if (!ok) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
@@ -2982,6 +3120,8 @@ internal class AgentAppState(
                     // 界面挂着假运行态、服务端其实没有 run：插话入队的消息不会再有 run 收尾
                     // 来衔接，必须在这里放出去，否则用户点插话只看到「已完成」，消息永远躺在队列里。
                     val dispatched = byInterrupt && dispatchPendingInterrupt(conversationId)
+                    // 同一个坑对「回答」也成立：回答落在消息里，但不会再有收尾回调来起 run。
+                    if (byInterrupt) maybeLaunchPendingAskAnswer(conversationId)
                     toastNotice(
                         if (dispatched) R.string.chat_interrupt_sent_after_finish
                         else R.string.chat_run_already_finished,
@@ -2993,6 +3133,9 @@ internal class AgentAppState(
     }
 
     private var staleHealScheduled = false
+
+    /** attach 没问出来时的对账重试是否已在跑（避免并发叠加多次重试）。 */
+    private var attachReconcileScheduled = false
 
     private fun toastNotice(resId: Int) {
         Toast.makeText(appContext, resId, Toast.LENGTH_SHORT).show()
@@ -3491,6 +3634,9 @@ internal class AgentAppState(
             scope.launch {
                 saved.await()
                 withContext(Dispatchers.Main) {
+                    // 回答优先：它就是这一轮的「下一句」，不需要跟队列抢。
+                    // 不看选中会话 —— 用户切走了，旧 run 收尾也得把回答接上。
+                    maybeLaunchPendingAskAnswer(completedConversationId)
                     drainQueueAfterRun(
                         conversationId = completedConversationId,
                         result = result,

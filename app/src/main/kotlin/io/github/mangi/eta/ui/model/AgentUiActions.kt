@@ -13,6 +13,9 @@ sealed interface AgentHomeAction {
     data class DraftChanged(val text: String) : AgentHomeAction
     data class SubmitMessage(val text: String) : AgentHomeAction
     data class InterruptAndSubmitMessage(val text: String) : AgentHomeAction
+
+    /** 回答 `ask_user` 的提问；不走排队（见 AgentAppState.answerPendingAsk）。 */
+    data class AnswerAsk(val text: String) : AgentHomeAction
     data class SteerQueuedMessage(val id: String) : AgentHomeAction
     data class RecallQueuedMessage(val id: String, val currentDraftText: String) : AgentHomeAction
     data class RemoveQueuedMessage(val id: String) : AgentHomeAction

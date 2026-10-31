@@ -53,6 +53,13 @@ internal object FileToolDispatcher {
                 expectedRevision = revision,
             )
             "project_info" -> operations.projectInfo(path)
+            "code_outline" -> operations.codeOutline(
+                path = path,
+                query = args.optString("query"),
+                kind = args.optString("kind"),
+                limit = args.optInt("limit", 120),
+                depth = args.optInt("depth", 4),
+            )
             "list_directory" -> operations.listDirectory(path, args.optBoolean("show_hidden", false), args.optInt("limit", 80), args.optInt("offset", 0), revision)
             "glob_files" -> operations.globFiles(path, args.requiredText("pattern"), args.optInt("limit", 80), args.optString("cursor").takeIf(String::isNotEmpty), args.optBoolean("include_hidden", false))
             "grep_files" -> {

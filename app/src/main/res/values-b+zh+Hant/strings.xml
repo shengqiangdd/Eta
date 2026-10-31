@@ -1530,6 +1530,7 @@
   <string name="ask_card_title">等你回答</string>
   <string name="ask_card_reply_hint">點一個選項，或直接在下面的輸入框裡回答</string>
   <string name="ask_card_option_sent">已選擇：%1$s</string>
+  <string name="ask_answer_updated">已更新回答</string>
   <string name="state_user_interaction">與使用者互動</string>
   <string name="state_task_planning">任務與計畫</string>
   <string name="state_plugins">外掛</string>
@@ -1742,6 +1743,8 @@
   <string name="tool_glob_files_description">使用路徑模式遞迴搜尋檔案，支援有界續查。</string>
   <string name="tool_grep_files">搜尋檔案內容</string>
   <string name="tool_grep_files_description">搜尋 UTF-8 文字，傳回符合路徑、行號與掃描範圍。</string>
+  <string name="tool_code_outline">程式碼大綱</string>
+  <string name="tool_code_outline_description">列出檔案或目錄中的類別、函式等符號及行號（唯讀）。</string>
   <string name="tool_inspect_app">檢查應用程式</string>
   <string name="tool_inspect_app_description">查看指定應用程式的版本、UID、安裝資訊、啟用狀態與權限。</string>
   <string name="tool_stat_file">查看檔案資訊</string>

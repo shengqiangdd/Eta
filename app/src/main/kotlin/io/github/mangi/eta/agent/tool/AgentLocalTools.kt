@@ -16,6 +16,8 @@ import io.github.mangi.eta.agent.device.RootShellDeviceController
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.VirtualDisplayBudget
 import io.github.mangi.eta.agent.device.VirtualDisplayController
+import io.github.mangi.eta.agent.device.VirtualDisplayHub
+import io.github.mangi.eta.agent.device.VirtualDisplayOwnership
 import io.github.mangi.eta.agent.device.VirtualDisplayTasks
 import io.github.mangi.eta.agent.acp.AcpClient
 import io.github.mangi.eta.agent.acp.AcpModels
@@ -150,6 +152,13 @@ internal class AgentLocalTools(
     private val changeScopeId: String = "",
     /** 文件检查点作用域：同一会话跨轮可恢复；未提供时退回运行级。 */
     private val backupScopeId: String = changeScopeId,
+    /**
+     * 虚拟屏归属（会话级）：同一对话跨轮建的屏都算自己的，别的对话的屏默认不可见、不可释放。
+     * 空串（语音 / 一次性入口）时退回运行级判断，见 [virtualDisplayRunId]。
+     */
+    private val virtualDisplayOwnerId: String = workspaceScopeId,
+    /** 虚拟屏归属（运行级兜底）：没有会话时，只有本次运行建的屏算自己的。 */
+    private val virtualDisplayRunId: String = changeScopeId,
     /**
      * 长时工具的执行中进度出口。
      *
@@ -2338,6 +2347,22 @@ internal class AgentLocalTools(
             else -> textResult(errorResult("UNKNOWN_TOOL", "未知 ACP 工具：$name"))
         }
 
+    /** 这块屏相对当前对话的归属（会话优先、运行级兜底）。 */
+    private fun ownershipOf(info: VirtualDisplayHub.SessionInfo): VirtualDisplayOwnership.Match =
+        VirtualDisplayOwnership.match(
+            ownerConversationId = info.ownerConversationId,
+            ownerRunId = info.ownerRunId,
+            currentConversationId = virtualDisplayOwnerId,
+            currentRunId = virtualDisplayRunId,
+        )
+
+    /** 归属说明：建了多久、用途 —— 模型据此判断「该不该 force 释放别人的屏」。 */
+    private fun describeOwner(info: VirtualDisplayHub.SessionInfo): String {
+        val ageSeconds = ((System.currentTimeMillis() - info.createdAtMs) / 1000).coerceAtLeast(0)
+        val purpose = info.purpose.ifBlank { "未写用途" }
+        return "创建于 $ageSeconds 秒前，用途：$purpose"
+    }
+
     /**
      * 虚拟屏工具执行入口。
      * create/release/list 由 VirtualDisplayController 负责；
@@ -2360,6 +2385,10 @@ internal class AgentLocalTools(
                         height = request.height,
                         densityDpi = request.densityDpi,
                         purpose = request.purpose,
+                        // 带上归属：屏会跨运行存活，不记下来新运行就认不出它，
+                        // 既不敢释放（假成功），也无法判断是不是别的对话的。
+                        ownerConversationId = virtualDisplayOwnerId,
+                        ownerRunId = virtualDisplayRunId,
                     )
                 }.getOrElse { throwable ->
                     // 上限/缓冲不足有自己的错误码：模型据此知道该释放还是该换小尺寸，
@@ -2424,14 +2453,30 @@ internal class AgentLocalTools(
             }
 
             "virtual_display_list" -> {
-                val sessions = virtualDisplays.list()
+                val includeOthers = args.optBoolean("include_others", false)
+                // 以 Hub 为准而不是本 controller：屏会跨运行存活，只读 controller 自己的 map
+                // 会把上一次运行建的屏当成「不存在」——用户切回对话就再也管不到它。
+                val all = VirtualDisplayHub.list()
+                // 登记残留（controller 已无此会话）不列出，避免报出点不开的「幽灵屏」。
+                val live = all.mapNotNull { info ->
+                    VirtualDisplayHub.liveSession(info.id)?.let { session -> info to session }
+                }
+                val mine = live.filter { ownershipOf(it.first) == VirtualDisplayOwnership.Match.SELF }
+                val visible = if (includeOthers) live else mine
+                val others = live.size - mine.size
                 // 一次任务栈查询复用给所有会话：用来回答"这块屏上到底有没有东西"。
                 // 系统会把任务迁回主屏（实测），光看会话存活会以为一切正常。
-                val tasks = if (sessions.isEmpty()) null else deviceController.tasksOrNull()
+                val tasks = if (visible.isEmpty()) null else deviceController.tasksOrNull()
                 JSONObject()
                     .put("ok", true)
                     .put("tool", "virtual_display_list")
-                    .put("count", sessions.size)
+                    // count 与 displays 数组等长（include_others=true 时含别人的屏）；
+                    // 自己的块数单独报，免得模型把「列表里有 2 块」读成「我有 2 块」。
+                    .put("count", visible.size)
+                    .put("mine_count", mine.size)
+                    .put("total_count", live.size)
+                    .put("others_count", others)
+                    .put("include_others", includeOthers)
                     .put(
                         "limits",
                         JSONObject()
@@ -2441,12 +2486,15 @@ internal class AgentLocalTools(
                     )
                     .put(
                         "total_mb",
-                        sessions.sumOf { it.estimatedBytes } * 10 / (1024 * 1024) / 10.0,
+                        // 额度是整机的，不是本对话的：别人的屏也占内存，必须算进去。
+                        live.sumOf { it.second.estimatedBytes } * 10 / (1024 * 1024) / 10.0,
                     )
                     .put(
                         "displays",
                         JSONArray().also { array ->
-                            sessions.forEach { session ->
+                            visible.forEach { entry ->
+                                val info = entry.first
+                                val session = entry.second
                                 // 任务栈只说明「有任务」；进程是否还活着要单独查 ——
                                 // 应用崩溃后任务记录仍留在栈里，只报包名等于说假话。
                                 val foreground = VirtualDisplayTasks.foregroundOn(tasks.orEmpty(), session.displayId)
@@ -2465,7 +2513,10 @@ internal class AgentLocalTools(
                                         .put("age_seconds", session.ageSeconds)
                                         .put("idle_seconds", session.idleSeconds)
                                         .put("estimated_mb", session.estimatedBytes / (1024 * 1024))
-                                        .put("purpose", session.purpose)
+                                        .put("purpose", info.purpose)
+                                        // 归属：self 是本对话的；other 是别的对话的（只有
+                                        // include_others=true 才会出现）；unknown 是旧版本没记归属。
+                                        .put("owner", VirtualDisplayOwnership.label(ownershipOf(info)))
                                         // 这块屏上此刻有几个任务、哪个在前台。
                                         // 0 个通常意味着应用被系统迁回了主屏（见 observe 的提示）。
                                         .put(
@@ -2488,34 +2539,66 @@ internal class AgentLocalTools(
                             }
                         },
                     )
+                    .apply {
+                        if (others > 0 && !includeOthers) {
+                            put(
+                                "others_note",
+                                "另有 $others 块虚拟屏属于其他对话：默认不列出，也不会被 id=all 释放；" +
+                                    "要看时传 include_others=true，确认无人使用后才能用 force 释放",
+                            )
+                        }
+                    }
                     .toString()
             }
 
             "virtual_display_release" -> {
                 val request = AgentVirtualDisplayTools.parseRelease(args)
                     ?: return textResult(errorResult("INVALID_ARGUMENT", "id 不能为空"))
-                val sessionsToRelease = if (request.id.equals("all", ignoreCase = true)) {
-                    virtualDisplays.list()
+                val releaseAll = request.id.equals("all", ignoreCase = true)
+                // 以 Hub 为准：屏会跨运行存活，只查本 controller 会把上一次运行建的屏当成
+                // 「不存在」，于是返回「释放成功」而屏还在 —— 假成功比报错更难查。
+                val all = VirtualDisplayHub.list()
+                val targets = if (releaseAll) {
+                    all.filter { info -> ownershipOf(info) == VirtualDisplayOwnership.Match.SELF }
                 } else {
-                    listOfNotNull(virtualDisplays.find(request.id))
+                    listOfNotNull(all.firstOrNull { it.id == request.id })
+                }
+                if (!releaseAll && targets.isEmpty()) {
+                    // 幂等：重复释放、已被空闲回收都不该报错；但也不能说「释放了 1 块」。
+                    return textResult(
+                        JSONObject()
+                            .put("ok", true)
+                            .put("tool", "virtual_display_release")
+                            .put("released", 0)
+                            .put("id", request.id)
+                            .put("closed_tasks", 0)
+                            .put("note", "这块虚拟屏已经不存在（可能已释放，或被空闲超时回收），无需再处理")
+                            .toString(),
+                    )
+                }
+                val foreign = targets.filter { info ->
+                    ownershipOf(info) != VirtualDisplayOwnership.Match.SELF
+                }
+                if (foreign.isNotEmpty() && !request.force) {
+                    val first = foreign.first()
+                    return textResult(
+                        errorResult(
+                            "VIRTUAL_DISPLAY_OTHER_SESSION",
+                            "虚拟屏 ${first.id} 属于另一个对话（${describeOwner(first)}），本次未释放。" +
+                                "确认那个对话不再使用它之后，再传 force=true 释放",
+                        ),
+                    )
                 }
                 // 释放前先移除任务，避免系统把任务迁回主屏；与 controller 内的
                 // taskCleaner 共用同一条路径，这里额外把数量报给模型。
                 var closedTasks = 0
-                sessionsToRelease.forEach { session ->
-                    closedTasks += deviceController.closeTasksOnDisplay(session.displayId).closedTasks
+                targets.forEach { info ->
+                    closedTasks += deviceController.closeTasksOnDisplay(info.displayId).closedTasks
                 }
-                val expected = if (request.id.equals("all", ignoreCase = true)) {
-                    sessionsToRelease.size
-                } else {
-                    1
-                }
-                val released = if (request.id.equals("all", ignoreCase = true)) {
-                    virtualDisplays.releaseAll()
-                } else {
-                    if (virtualDisplays.release(request.id)) 1 else 0
-                }
-                val releasedAll = released == expected
+                val released = targets.count { info -> VirtualDisplayHub.release(info.id) }
+                val releasedAll = released == targets.size
+                // id=all 只清本对话的：以前它会连别的对话的屏一起拆，等于替用户做了决定。
+                val skippedOthers = if (releaseAll) all.size - targets.size else 0
                 JSONObject()
                     .put("ok", releasedAll)
                     .put("tool", "virtual_display_release")
@@ -2527,11 +2610,18 @@ internal class AgentLocalTools(
                             put("error_code", "VIRTUAL_DISPLAY_TASKS_REMAIN")
                             put(
                                 "error",
-                                "虚拟屏上仍有任务未能移除，本次未释放；请先关闭这些应用或重试",
+                                "虚拟屏上仍有任务未能移除，本次未完全释放；请先关闭这些应用或重试",
                             )
                         }
                         if (closedTasks > 0) {
                             put("note", "释放前已移除屏上的 $closedTasks 个任务，避免它们被系统迁回主屏")
+                        }
+                        if (skippedOthers > 0) {
+                            put("skipped_others", skippedOthers)
+                            put(
+                                "others_note",
+                                "另有 $skippedOthers 块虚拟屏属于其他对话，id=all 不会释放它们",
+                            )
                         }
                     }
                     .toString()

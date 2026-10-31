@@ -173,6 +173,8 @@ internal fun AgentAppShell(
                 // 只在聊天页显示预览面板：设置、运行详情等页面不该被它遮挡。
                 if (currentRoute is AppRoute.Home) {
                     VirtualDisplayPanel(
+                        // 面板跟着当前对话走：别的对话的屏不该出现在这里。
+                        conversationId = conversationPaneState?.selectedConversationId,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(top = padding.calculateTopPadding() + 8.dp, end = 12.dp),

@@ -63,7 +63,9 @@ internal fun AgentHomeScreen(
         } else {
         val todoPlan = rememberTodoPlan(conversationKey)
         val goal = rememberAgentGoal(conversationKey)
-        val pendingAsk = remember(state.messages) { pendingAskOf(state.messages) }
+        val pendingAsk = remember(state.messages, state.queuedMessages) {
+            pendingAskOf(state.messages, hasQueuedInput = state.queuedMessages.isNotEmpty())
+        }
         // 聊天区与运行时共用同一个浏览器会话：Agent 打开的页面，工具卡片里能直接看到。
         val browser = remember(conversationKey) {
             BrowserSessionRegistry.get(conversationKey ?: BrowserSessionRegistry.MANUAL_SESSION_KEY)
@@ -80,7 +82,10 @@ internal fun AgentHomeScreen(
             goal = goal,
             goalScopeId = conversationKey,
             pendingAsk = pendingAsk,
-            onAnswerAsk = { text -> onAction(AgentHomeAction.SubmitMessage(text)) },
+            // `ask_user` 的语义是「模型到此为止，等我回答」：回答必须是下一轮用户消息，
+            // 绝不能变成排队消息。运行中也不排队 —— 由 answerPendingAsk 先落消息、再停旧 run，
+            // 收尾后立刻起新 run（2026-10-30 真机：回答挂在队列条上、切回会话又要重答）。
+            onAnswerAsk = { text -> onAction(AgentHomeAction.AnswerAsk(text)) },
             modelPickerState = modelPickerState,
             isCompacting = state.isCompacting,
             input = state.input,

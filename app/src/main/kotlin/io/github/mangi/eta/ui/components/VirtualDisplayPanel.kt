@@ -48,12 +48,24 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 还会遮挡主屏内容，所以这里做成应用内的可折叠卡片：
  * - 右上角一条标题栏，点一下展开/收起；
  * - 展开时按 700ms 刷新一帧（缩放解码，避免每帧 8MB）；
- * - 只在存在虚拟屏会话时出现，虚拟屏释放后自动消失。
+ * - 只在**当前对话存在虚拟屏**时出现，跟随对话切换，虚拟屏释放后自动消失。
  */
 @Composable
-internal fun VirtualDisplayPanel(modifier: Modifier = Modifier) {
-    val session by VirtualDisplayHub.session.collectAsState()
-    val current = session ?: return
+internal fun VirtualDisplayPanel(
+    modifier: Modifier = Modifier,
+    conversationId: String? = null,
+) {
+    val sessions by VirtualDisplayHub.sessions.collectAsState()
+    // 只显示本对话的屏：虚拟屏登记表是进程级的，不按会话过滤就会把另一个对话
+    // 正在用的屏显示到当前对话里 —— 用户会以为是自己建的，实际操作时又处处不对。
+    // 没有会话（语音 / 一次性入口）时退回「最后一块」，保持原行为。
+    val current = remember(sessions, conversationId) {
+        if (conversationId.isNullOrEmpty()) {
+            sessions.lastOrNull()
+        } else {
+            sessions.lastOrNull { it.ownerConversationId == conversationId }
+        }
+    } ?: return
     var expanded by rememberSaveable(current.id) { mutableStateOf(false) }
     var bitmap by remember(current.id) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(current.id, expanded) {
@@ -62,7 +74,7 @@ internal fun VirtualDisplayPanel(modifier: Modifier = Modifier) {
             return@LaunchedEffect
         }
         while (isActive) {
-            val bytes = withContext(Dispatchers.IO) { VirtualDisplayHub.capture() }
+            val bytes = withContext(Dispatchers.IO) { VirtualDisplayHub.captureOf(current.id) }
             if (bytes != null) {
                 val options = BitmapFactory.Options().apply {
                     inSampleSize = 3

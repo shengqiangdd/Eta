@@ -22,6 +22,13 @@ internal data class FilePatch(
     val expectedRevision: String? = null,
 )
 
+private const val MAX_OUTLINE_FILES = 60
+private const val MAX_OUTLINE_WALK_ENTRIES = 4_000
+private const val MAX_OUTLINE_BYTES_PER_FILE = 256 * 1024
+private const val MAX_OUTLINE_SYMBOLS = 400
+private const val MAX_OUTLINE_OUTPUT_CHARS = 12_000
+private const val OUTLINE_EXTENSIONS = ".kt/.kts/.java/.go/.rs/.py/.pyi/.ts/.tsx/.js/.jsx/.swift/.sh/.bash"
+
 internal class AgentFileOperations(
     private val backend: FileToolBackend,
     private val ledger: FileAccessLedger? = null,
@@ -541,6 +548,221 @@ internal class AgentFileOperations(
                     put("diff", delta.diff).put("diff_truncated", delta.truncated)
                 } else {
                     put("lines_added", 0).put("lines_removed", 0)
+                }
+            }
+    }
+
+    /**
+     * 代码大纲：一次调用回答「这个文件 / 目录里有哪些符号、在第几行」。
+     *
+     * 为什么值得单独做一个工具：手机端上下文更贵，三千行的文件按 16 KB 一段要读十几次；
+     * 而改代码前通常只需要知道类 / 函数在哪一行，再按 `read_file(start_line=…)` 精确跳过去。
+     *
+     * 目录模式只扫有语言扩展名的普通文件，跳过隐藏项与超过 [depth] 层的文件；
+     * 文件数与每文件字节数都有上限，达到上限时 `files_truncated=true`，不假装扫全了。
+     */
+    /**
+     * [FileToolBackend.walkFiles] 不可用时的回退：逐目录 list 整棵子树。
+     *
+     * 只用于本地后端（单测、导出）。shell 后端有 `find` 预扫描，一次往返就能拿到整棵子树。
+     * 这里刻意不返回目录条目、并在末尾按相对路径排序：与预扫描的输出形状保持一致，
+     * 调用方不必分两种情况处理。
+     *
+     * 不在这里按 depth 截断：预扫描同样拿全树，深度过滤和 `files_skipped` 计数都放在调用方，
+     * 否则两个后端对同一次调用的「跳过几个文件」会说的不一样 —— 本地后端曾因此永远报 0，
+     * 单测也就测不到真机（shell 后端）的真实行为。
+     */
+    private fun walkLevels(root: String): FileToolWalk {
+        val out = ArrayList<FileToolWalkEntry>()
+        var truncated = false
+        fun descend(directory: String, relative: String) {
+            var offset = 0
+            while (out.size < MAX_OUTLINE_WALK_ENTRIES) {
+                backend.checkActive()
+                val page = backend.list(directory, offset, 200)
+                for (entry in page.entries) {
+                    if (entry.name.startsWith(".")) continue
+                    val child = if (relative.isEmpty()) entry.name else relative + "/" + entry.name
+                    when (entry.kind) {
+                        FileToolKind.FILE, FileToolKind.SYMLINK ->
+                            out += FileToolWalkEntry(child, entry.kind)
+                        FileToolKind.DIRECTORY -> descend(entry.path, child)
+                        else -> Unit
+                    }
+                    if (out.size >= MAX_OUTLINE_WALK_ENTRIES) {
+                        truncated = true
+                        return
+                    }
+                }
+                if (!page.hasMore) break
+                offset = page.nextOffset
+            }
+        }
+        descend(root, "")
+        return FileToolWalk(out.sortedBy { it.relative }, truncated)
+    }
+
+    fun codeOutline(
+        path: String,
+        query: String = "",
+        kind: String = "",
+        limit: Int = 120,
+        depth: Int = 4,
+    ): String = fileOp("code_outline", path) {
+        val resolved = backend.resolve(path)
+        val stat = backend.stat(resolved)
+        val maxSymbols = limit.coerceIn(1, MAX_OUTLINE_SYMBOLS)
+        val kindFilter = kind.trim().lowercase()
+        if (kindFilter.isNotEmpty() && kindFilter !in CodeOutline.kinds) {
+            throw FileToolException(
+                "INVALID_ARGUMENT",
+                "kind=" + kind + " 不认识；可用值：" + CodeOutline.kinds.joinToString(" / "),
+            )
+        }
+        val queryText = query.trim()
+        val symbols = ArrayList<CodeOutline.Symbol>(minOf(maxSymbols, 64))
+        var scanned = 0
+        var skipped = 0
+        var filesTruncated = false
+        var symbolsTruncated = false
+        var outputChars = 0
+
+        fun matches(symbol: CodeOutline.Symbol): Boolean {
+            if (kindFilter.isNotEmpty() && symbol.kind != kindFilter) return false
+            if (queryText.isNotEmpty() && !symbol.name.contains(queryText, ignoreCase = true)) return false
+            return true
+        }
+
+        fun collect(label: String, text: String) {
+            if (symbols.size >= maxSymbols || outputChars > MAX_OUTLINE_OUTPUT_CHARS) {
+                symbolsTruncated = true
+                return
+            }
+            val parsed = CodeOutline.parse(label, text, limit = maxSymbols - symbols.size + 1)
+            for (symbol in parsed) {
+                if (symbols.size >= maxSymbols) {
+                    symbolsTruncated = true
+                    break
+                }
+                if (!matches(symbol)) continue
+                // 一次调用的结果也要有界：符号多、签名长时不截断会把整页结果推到溢写文件里，
+                // 模型反而看不到结构。超预算就停，并用 symbols_truncated 说明。
+                outputChars += symbol.signature.length + 64
+                if (outputChars > MAX_OUTLINE_OUTPUT_CHARS) {
+                    symbolsTruncated = true
+                    break
+                }
+                symbols.add(symbol.copy(file = label))
+            }
+        }
+
+        val mode: String
+        if (stat.kind == FileToolKind.FILE) {
+            mode = "file"
+            if (!CodeOutline.supports(stat.name)) {
+                throw FileToolException(
+                    "UNSUPPORTED_LANGUAGE",
+                    stat.name + " 不在支持的语言里；支持：" + OUTLINE_EXTENSIONS,
+                )
+            }
+            val text = readWholeTextOrNull(resolved)
+                ?: throw FileToolException(
+                    "NOT_TEXT_OR_TOO_LARGE",
+                    "无法按文本读取（不是普通文件、二进制，或超过 512 KiB）；这种情况请用 grep_files 按名字搜索",
+                )
+            scanned = 1
+            collect(stat.name, text)
+        } else if (stat.kind == FileToolKind.DIRECTORY) {
+            mode = "directory"
+            val root = resolved.trimEnd('/')
+            val walked = ArrayList<Pair<String, FileToolKind>>()
+            val walk = backend.walkFiles(resolved, includeHidden = false, maxEntries = MAX_OUTLINE_WALK_ENTRIES)
+            if (walk != null) {
+                walked.addAll(walk.entries.map { it.relative to it.kind })
+                if (walk.truncated) filesTruncated = true
+            } else {
+                // 本地后端（单测、导出）没有预扫描：逐目录列，结果与预扫描同形（只含文件与符号链接）。
+                val fallback = walkLevels(root)
+                walked.addAll(fallback.entries.map { it.relative to it.kind })
+                if (fallback.truncated) filesTruncated = true
+            }
+            val candidates = ArrayList<String>()
+            for ((relative, kind) in walked) {
+                if (kind != FileToolKind.FILE) {
+                    skipped++
+                    continue
+                }
+                if (!CodeOutline.supports(relative)) continue
+                if (relative.count { it == '/' } + 1 > depth) {
+                    skipped++
+                    continue
+                }
+                if (candidates.size >= MAX_OUTLINE_FILES) {
+                    filesTruncated = true
+                    break
+                }
+                candidates.add(relative)
+            }
+            if (candidates.isNotEmpty()) {
+                val reads = backend.readCheckedBatch(
+                    candidates.map { relative -> root + "/" + relative },
+                    offset = 0,
+                    // 夹到后端上限：本地后端只有 16 KiB，直接传 256 KiB 会让 readBytes 的 require
+                    // 抛参数错误，于是目录模式整次变成「文件工具参数无效」（真机走 shell 后端，是 512 KiB）。
+                    limit = minOf(MAX_OUTLINE_BYTES_PER_FILE, backend.maxReadBytes),
+                )
+                for (read in reads) {
+                    backend.checkActive()
+                    val checked = read.checked
+                    val text = checked?.let { runCatching { decodeWholeText(it.bytes) }.getOrNull() }
+                    if (checked == null || text == null) {
+                        skipped++
+                        continue
+                    }
+                    // 只读到前 256 KiB 的文件：符号可能不全，如实标成不完整，不冒充扫全。
+                    if (checked.statBefore.sizeBytes > MAX_OUTLINE_BYTES_PER_FILE) filesTruncated = true
+                    scanned++
+                    collect(read.path.removePrefix(root + "/"), text)
+                }
+            }
+        } else {
+            throw FileToolException("NOT_A_FILE", "code_outline 只接受普通文件或目录")
+        }
+
+        val array = JSONArray()
+        for (symbol in symbols) {
+            array.put(
+                JSONObject()
+                    .put("file", symbol.file)
+                    .put("line", symbol.line)
+                    .put("kind", symbol.kind)
+                    .put("name", symbol.name)
+                    .put("signature", symbol.signature),
+            )
+        }
+        base("code_outline")
+            .put("path", resolved)
+            .put("mode", mode)
+            .put(
+                "language",
+                if (mode == "file") CodeOutline.languageOf(stat.name).label else "mixed",
+            )
+            .put("files_scanned", scanned)
+            .put("files_skipped", skipped)
+            .put("files_truncated", filesTruncated)
+            .put("symbols_truncated", symbolsTruncated)
+            .put("count", symbols.size)
+            .put("symbols", array)
+            .apply {
+                if (symbols.isEmpty()) {
+                    put(
+                        "hint",
+                        if (queryText.isNotEmpty() || kindFilter.isNotEmpty()) {
+                            "没有匹配的符号：去掉 query / kind 再看一次，或用 grep_files 搜具体字符串。"
+                        } else {
+                            "没有识别到符号（不代表文件为空）：可用 grep_files 按名字搜，或 read_file 看正文。"
+                        },
+                    )
                 }
             }
     }

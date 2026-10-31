@@ -28,6 +28,7 @@ internal object AgentPlanModePolicy {
         "stat_file",
         "glob_files",
         "grep_files",
+        "code_outline",
         "project_info",
         "web_search",
         "fetch_url",

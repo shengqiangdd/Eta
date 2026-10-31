@@ -1453,6 +1453,8 @@
   <string name="tool_glob_files_description">使用路径模式递归查找文件，支持有界续查。</string>
   <string name="tool_grep_files">搜索文件内容</string>
   <string name="tool_grep_files_description">搜索 UTF-8 文本，返回匹配路径、行号与采集范围。</string>
+  <string name="tool_code_outline">代码大纲</string>
+  <string name="tool_code_outline_description">列出文件或目录中的类、函数等符号及行号（只读）。</string>
   <string name="tool_web_search">搜索网页</string>
   <string name="tool_web_search_description">未使用 Provider 托管搜索时检索公开网页，返回标题、链接与摘要，可在网页工具服务中切换内置、DeepSeek 或自定义接口。</string>
   <string name="tool_fetch_url">读取网页正文</string>
@@ -1565,6 +1567,7 @@
   <string name="ask_card_title">等你回答</string>
   <string name="ask_card_reply_hint">点一个选项，或直接在下面的输入框里回答</string>
   <string name="ask_card_option_sent">已选择：%1$s</string>
+  <string name="ask_answer_updated">已更新回答</string>
   <string name="state_user_interaction">与用户交互</string>
   <string name="state_task_planning">任务与计划</string>
   <string name="state_plugins">插件</string>

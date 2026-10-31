@@ -36,6 +36,8 @@ internal class LocalFileToolBackend(
         return candidate.path
     }
 
+    override val maxReadBytes: Int get() = MAX_READ_BYTES
+
     override fun stat(path: String): FileToolStat = metadata(File(resolve(path)).toPath())
 
     override fun readBytes(path: String, offset: Long, limit: Int): ByteArray {

@@ -98,6 +98,7 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "stat_file" -> R.string.tool_stat_file
     "glob_files" -> R.string.tool_glob_files
     "grep_files" -> R.string.tool_grep_files
+    "code_outline" -> R.string.tool_code_outline
     "project_info" -> R.string.tool_project_info
     "read_file" -> R.string.tool_read_file
     "write_file" -> R.string.tool_write_file

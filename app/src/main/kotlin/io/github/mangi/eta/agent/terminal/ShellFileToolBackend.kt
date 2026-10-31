@@ -12,6 +12,8 @@ internal class ShellFileToolBackend(
     private val ensureActive: () -> Unit = {},
     private val execute: (command: String, stdin: ByteArray?, maxOutputBytes: Int) -> OneShotShellResult,
 ) : FileToolBackend {
+    override val maxReadBytes: Int get() = MAX_READ_BYTES
+
     override fun checkActive() = ensureActive()
 
     override fun resolve(path: String): String {

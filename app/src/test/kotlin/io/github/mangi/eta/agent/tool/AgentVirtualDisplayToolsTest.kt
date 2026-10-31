@@ -128,6 +128,23 @@ class AgentVirtualDisplayToolsTest {
     }
 
     @Test
+    fun releaseNeedsExplicitForce() {
+        // 跨对话释放必须显式传 force=true；没写、或写 false 都按「不强行释放」处理。
+        assertEquals(
+            false,
+            AgentVirtualDisplayTools.parseRelease(JSONObject().put("id", "vd1"))!!.force,
+        )
+        assertEquals(
+            false,
+            AgentVirtualDisplayTools.parseRelease(JSONObject().put("id", "vd1").put("force", false))!!.force,
+        )
+        assertEquals(
+            true,
+            AgentVirtualDisplayTools.parseRelease(JSONObject().put("id", "vd1").put("force", true))!!.force,
+        )
+    }
+
+    @Test
     fun launchRejectsValuesThatCouldBreakTheAmCommandLine() {
         assertNull(AgentVirtualDisplayTools.parseLaunch(JSONObject()))
         assertNull(AgentVirtualDisplayTools.parseLaunch(JSONObject().put("id", "vd1")))

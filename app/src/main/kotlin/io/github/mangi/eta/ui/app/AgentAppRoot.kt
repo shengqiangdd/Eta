@@ -540,6 +540,10 @@ fun AgentAppRoot(
                                     requestExecutionNotifications()
                                     agentState.interruptAndSendCurrentMessage(action.text)
                                 }
+                                is AgentHomeAction.AnswerAsk -> {
+                                    requestExecutionNotifications()
+                                    agentState.answerPendingAsk(action.text)
+                                }
                                 is AgentHomeAction.SteerQueuedMessage -> {
                                     requestExecutionNotifications()
                                     agentState.steerQueuedMessage(action.id)

@@ -45,6 +45,10 @@ internal class VirtualDisplayController(
         val densityDpi: Int,
         val createdAtMs: Long,
         val purpose: String,
+        /** 建这块屏的会话 id；空串表示没有会话（语音 / 一次性入口）。 */
+        val ownerConversationId: String = "",
+        /** 建这块屏的运行 id：没有会话时用它区分归属，也用于诊断。 */
+        val ownerRunId: String = "",
         /**
          * 最后一次被真正使用的时间（list/launch/截图/坐标动作都会刷新）。
          * 空闲回收按它算，而不是创建时间：一直在用的屏不该被收走。
@@ -104,6 +108,9 @@ internal class VirtualDisplayController(
     fun find(id: String): Session? =
         sessions[id]?.also { it.lastUsedAtMs = System.currentTimeMillis() }
 
+    /** 只读取会话，不刷新「最后使用时间」：list 这类只读场景不能用 find，否则会重算空闲时间。 */
+    fun peek(id: String): Session? = sessions[id]
+
     fun findByDisplayId(displayId: Int): Session? =
         sessions.values.firstOrNull { it.displayId == displayId }
 
@@ -113,12 +120,17 @@ internal class VirtualDisplayController(
      * @param height 高度 px
      * @param densityDpi 密度；不传则按主屏密度缩放（保证控件尺寸接近真实观感）
      * @param purpose 用途说明，写入日志便于回溯
+     * @param ownerConversationId 建屏的会话 id：跨运行也要能回答「这块屏是哪个对话的」，
+     *   否则新运行看不到旧会话，释放时只能静默假成功
+     * @param ownerRunId 建屏的运行 id：没有会话（语音 / 一次性入口）时用它区分归属
      */
     fun create(
         width: Int,
         height: Int,
         densityDpi: Int? = null,
         purpose: String = "",
+        ownerConversationId: String = "",
+        ownerRunId: String = "",
     ): Session {
         require(width in 240..3840 && height in 240..3840) {
             "虚拟屏尺寸需在 240..3840 px 之间，收到 ${width}x$height"
@@ -164,6 +176,8 @@ internal class VirtualDisplayController(
             densityDpi = dpi,
             createdAtMs = System.currentTimeMillis(),
             purpose = purpose,
+            ownerConversationId = ownerConversationId,
+            ownerRunId = ownerRunId,
         )
         sessions[id] = session
         displays[id] = display

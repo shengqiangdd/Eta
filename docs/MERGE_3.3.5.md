@@ -2836,3 +2836,122 @@ verbose 恒无折叠行、detailed 只收历史轮）。已进 `tools/gate.sh` �
 （`databases/eta.db`、`shared_prefs/eta_agent_preferences.xml`）。当前 shell 里
 `ls /data/data | grep eta` 只看得到主包，但通过 `/proc/<canary_pid>/root/data/data/…` 能直接读。
 后续要在真机上核对设置值，走 `/proc/<pid>/fd` 找打开的文件最省事，别在 `/data/user/0` 里找。
+
+
+### 32.20 `ask_user` 的回答绝不能再进排队（2026-10-30，canary · PKX110 A16）
+
+**用户反馈**：回答过一次之后，切走会话再切回来又要重答；而那个回答「居然放到了排队消息上」。
+
+#### 32.20.1 根因
+
+旧实现 `onAnswerAsk` 直接走 `InterruptAndSubmitMessage`：回答被当成一条「插话」塞进
+`queuedMessages`（`immediateInterrupt=true`），队列条显示「插话中」，而
+`drainQueueAfterRun` 只处理**选中的会话** —— 切走就再没有人把它发出去。
+而待答卡片 `pendingAskOf` 只按消息流判定：回答还在队列里、不在 `messages` 里，于是
+切回来卡片又出现，看起来就是「让你再答一次」。
+
+第二轮补修时又挖出一条：`PendingAskAnswers.put` 在「已有待发回答」时**静默返回 false**。
+第一条 pending 因为旧 run 迟迟不收尾而没发出去，用户再点一次 —— 界面毫无变化，
+与「点了没反应」无法区分。现已改成**后一次选择生效**：`put` 返回被顶掉的旧回答，
+界面把旧消息换成新消息并提示「已更新回答」。
+
+#### 32.20.2 现在的路径
+
+| 时机 | 行为 |
+|---|---|
+| 会话空闲 | 直接 `sendCurrentMessage(回答)`：一条普通用户消息 + 新一轮 |
+| run 还在跑 | 先把回答落成**真正的用户消息**（`messages` + `persistConversations()`），再 `requestInterruptCurrentRun()`；同时把 `runId`/`messageId` 记进 `PendingAskAnswers` |
+| 旧 run 收尾 | `saved.await()` 之后 `maybeLaunchPendingAskAnswer()`，用同一条 `messageId` 起新 run（与普通发送同一条路径） |
+| 其它补接点 | `selectConversation`、`loadDeferredMessages` 成功、`RunResolution.NoActiveRun` |
+
+关键不变量：**回答永远不经过 `queuedMessages`**。队列是「等这轮做完再说」的语义，
+而回答是模型明确停下来要的那一句，两者不能混。
+
+#### 32.20.3 真机验证（canary，虚拟屏）
+
+| 场景 | 结果 |
+|---|---|
+| 空闲时点「甲」 | 卡片消失、用户消息「甲」立刻出现、`9/9`；打开会话列表切到别的会话再切回：「甲」仍在、**没有再出现待答卡片** |
+| 运行中点「甲」（模型在 `ask_user` 后继续跑 `sleep 180`，底部仍是「停止」） | 点下即出现「甲」+「已停止」，卡片消失，**没有队列条**，`11/11`；约 4 秒后新 run 用「甲」起跑（`异步命令 · 等待完成`） |
+| 切走再切回（运行中） | 「甲」与「已停止」都在，卡片不重现 |
+
+#### 32.20.4 未验证（不写成已验证）
+
+1. **进程被杀后重启**：回答已 `persistConversations()`，且 DB 里能查到 `user` 行，但本轮没有
+   实际 `am force-stop` 再拉起核对界面。
+2. **「后一次选择生效」的替换交互**：改完只跑了单测，没有重新构建装机点两次 —— 装机那份 APK
+   还是「第一次被拒」的旧逻辑（也因此上面两条验证都不涉及替换提示）。
+
+## 32.21 后台回来不再误报「未运行」+ 虚拟屏归属隔离（2026-10-31，本机 PKX110/A16）
+
+用户报的两个问题：① 应用退到后台久了再回来，界面显示「未运行」，但会话其实还在跑；
+② 虚拟屏是全局资源，另一个对话建的屏会被当成「自己的」——列表里混在一起，释放也不分归属。
+
+### 32.21.1 运行状态误报的根因
+
+`ui/app/AgentAppState.kt` 的 `attachRunningRun()` 里，`AttachOutcome.Unavailable` 分支在
+`asPrimary=true` 时**直接把 `isStreaming` / `currentRunId` 清空**；而重试只挂在「下一次
+`ON_RESUME`」。于是回前台那一刻只要撞上一次 Unavailable（后台期间看护通道未就绪、查询超时都算），
+界面就退回「未运行」，之后再无补救 —— 与「会话还在跑」直接矛盾。
+
+修复分两层：
+
+| 层 | 内容 |
+|---|---|
+| 纯逻辑 | 新增 `AgentAttachRecovery.decide(outcome)`：`APPLY_RESULT` / `CLEAR_AND_RECONCILE` / `KEEP_RUNNING_AND_RETRY`，把「查不到 ≠ 没在跑」写成可测的判定 |
+| 状态机 | Unavailable 时**保留运行态**，只把 `currentRunJob` 置空，并 `scheduleAttachReconcile()`：首次 1s、其后每 5s，最多 6 次，用 `queryActiveRuns() is Known` 判定；成功即 `recoverRuntimeRuns()`，`finally` 复位标志 |
+
+单测 `AgentAttachRecoveryTest`（5 例）覆盖三种判定与重试窗口，已进 `tools/gate.sh` 的
+`FAST_TEST_FILTERS`。
+
+### 32.21.2 虚拟屏归属：轻量版隔离
+
+不引入按会话配额，只把「谁建的」记下来、并让「默认看不到别人的」：
+
+- `VirtualDisplayController.Session` 增 `ownerConversationId` / `ownerRunId`，`VirtualDisplayHub`
+  记 `sessions` 并提供 `list/find/liveSession/lastOwnedBy/release/captureOf`；
+- `VirtualDisplayOwnership.match()` 三态判定（纯逻辑，`VirtualDisplayOwnershipTest` 5 例）：
+  有会话 id → 同会话 SELF、否则 OTHER；只有运行 id → 同运行 SELF、否则 OTHER；
+  都没有（更早版本建的屏）→ **UNKNOWN，不冒充任何一方**；
+- `virtual_display_list` 默认只列本会话，`others_count` 报数量；`include_others=true` 才全列并带
+  `owner` 标记；
+- `virtual_display_release` 跨会话需 `force=true`，否则返回 `VIRTUAL_DISPLAY_OTHER_SESSION`
+  （带「创建于 N 秒前、用途 X」的理由）；`id=all` 只释放本会话的，并报 `skipped_others`；
+- 预览面板按 `conversationId` 过滤，截图走 `captureOf`。
+
+### 32.21.3 真机验证（canary 覆盖安装，虚拟屏操作，未动主屏）
+
+安装：`pm install -r` 覆盖，`firstInstallTime` 仍是 2026-10-29 16:35:18（未卸载），
+`lastUpdateTime` 08:17:58；装完的 `base.apk` 与构建产物 **sha256 一致**
+（`513290219b0c2ede4f093ee5719a84ef0b2b0e61f8c520c4ce344d6cd23021ed`，32,134,289 字节）。
+
+| 场景 | 实测结果 |
+|---|---|
+| 长任务 `sleep 100` 跑到一半 → 用另一个应用把 canary 压到后台约 55 秒 → 再切回 | 底部仍是「暂停／停止」，工具卡显示「终端 · 执行命令 · Android · 94 秒」；跑完为「执行完毕 / 状态 exited / 退出码 0 / 超时 false」——**没有出现「未运行」** |
+| 新对话 A 建屏（`vdmvvon39x`，display 37，480×800）后用 `sleep 240` 吊住该轮 | 系统侧确认 `uniqueId="virtual:io.github.mangi.eta.canary,10617,eta-virtual-vdmvvon39x"` 存在 |
+| 切到新对话 B 调 `virtual_display_list`（默认） | `count:0, mine_count:0, total_count:1, others_count:1, include_others:false` |
+| 同对话 B 传 `include_others=true` | `count:1, others_count:1, include_others:true`（列出对方的屏） |
+| B 直接释放（不带 force） | `{"ok":false,"code":"VIRTUAL_DISPLAY_OTHER_SESSION","message":"虚拟屏 vdmvvon39x 属于另一个对话（创建于 83 秒前，用途：跨会话验证-D1），本次未释放…"}` |
+| B 带 `force=true` 释放 | `{"ok":true,"released":1,"id":"vdmvvon39x","closed_tasks":0}`；随后 `dumpsys display` 里 `eta-virtual-vdmvvon39x` **消失**，canary 名下虚拟屏计数 0 —— 是真销毁，不是只清记录 |
+
+### 32.21.4 未验证 / 已知缺口（不写成已验证）
+
+1. **Unavailable 分支本身没有在真机复现**：本轮 run 始终是同进程 `Attached`，所以现场验的是
+   「后台回来不丢状态」，而 `KEEP_RUNNING_AND_RETRY` 那条补接路径只有单测覆盖。
+2. **一块主应用遗留屏 `vdmvo7v77`（display 34）**：08:36:31 由主应用进程创建，但当前 Hub 里没有它，
+   `virtual_display_release` 够不到；它随应用进程重启回收。**根因未确认**，本轮只记录，
+   `release()` 里 `displays.remove(id)?.release()` 为空时仍返回成功的写法值得下一轮专门审。
+3. **工具建的屏会被本轮收尾回收**：`VirtualDisplayController.close()` → `releaseAll()`，
+   所以「跨运行存活」只在 controller 未关闭时成立（实测 canary 建完屏、该轮结束后屏即消失）。
+   这与 Hub 注释的表述不一致，本轮未改语义。
+4. **新建对话的瞬间**曾显示「▸ 虚拟屏 · 跨会话验证-D1」（别的对话的屏），发出第一条消息后消失；
+   是否只是新会话尚未落库时的回退，未深究。
+5. 面板里拖动／滚动手势在虚拟屏上仍不稳定（多次 `ACTION_OUTCOME_UNKNOWN`），本轮全部改用节点点击绕开。
+
+### 32.21.5 门禁与产物
+
+- `tools/gate.sh` `STAGES=lint,test,assemble` 全绿：**803 用例 0 失败**；lint 无新增问题，
+  baseline 仍 412 条；打包成功。
+- 产物：`app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk` **32,134,289 字节**，
+  sha256 `513290219b0c2ede4f093ee5719a84ef0b2b0e61f8c520c4ce344d6cd23021ed`；
+  canary 装机包同源（`io.github.mangi.eta.canary`）。

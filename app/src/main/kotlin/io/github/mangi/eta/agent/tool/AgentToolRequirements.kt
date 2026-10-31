@@ -50,7 +50,7 @@ internal object AgentToolRequirements {
             "press_key", "network_info", "get_setting", "recent_notifications",
             "search_personal_orders", "terminal", "terminal_job", "terminal_daemon", "working_directory", "read_file",
             "write_file", "list_directory", "read_image", "edit_file", "edit_files", "list_file_backups", "restore_file",
-            "stat_file", "glob_files", "grep_files", "project_info",
+            "stat_file", "glob_files", "grep_files", "code_outline", "project_info",
             "virtual_display_list", "plugin_list", "plugin_enable", "plugin_reload",
         )
         register(

@@ -92,6 +92,7 @@ has_stage() {
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
+  --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
   --tests io.github.mangi.eta.ui.app.LocaleResourceParityTest
   --tests io.github.mangi.eta.ui.app.WorkspaceRootCommandTest
   --tests io.github.mangi.eta.ui.app.WorkspaceMessagesTest
@@ -100,6 +101,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.WorkspacePickerHistoryTest
   --tests io.github.mangi.eta.agent.device.UiNodeWireTest
   --tests io.github.mangi.eta.agent.device.VirtualDisplayFallbackPolicyTest
+  --tests io.github.mangi.eta.agent.device.VirtualDisplayOwnershipTest
   --tests io.github.mangi.eta.agent.device.RootScrollResendPolicyTest
   --tests io.github.mangi.eta.agent.device.BlindTapSafetyPolicyTest
   --tests io.github.mangi.eta.agent.device.ScrollTargetPolicyTest
@@ -137,7 +139,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.acp.AcpModelsTest
   --tests io.github.mangi.eta.ui.app.MessageSortAlignmentTest
   --tests io.github.mangi.eta.ui.app.AgentMessageQueueReducerTest
-  --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest'
+  --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest
+  --tests io.github.mangi.eta.ui.model.AgentAskUiTest
+  --tests io.github.mangi.eta.ui.app.AgentPendingAskAnswersTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
 # 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆

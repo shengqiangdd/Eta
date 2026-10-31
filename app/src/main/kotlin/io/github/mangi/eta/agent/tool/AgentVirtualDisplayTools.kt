@@ -97,16 +97,35 @@ internal object AgentVirtualDisplayTools {
             .put(
                 tool(
                     name = "virtual_display_list",
-                    description = "列出当前存活的所有虚拟屏及其 displayId、尺寸、存活秒数。",
-                    parameters = JSONObject().put("type", "object").put("properties", JSONObject()),
+                    description =
+                        "列出虚拟屏及其 displayId、尺寸、存活秒数。默认**只列本对话的屏**：" +
+                            "同一会话跨轮建的屏都会列出（工具运行结束后屏仍存活）。" +
+                            "另一个对话建的屏默认不列出，只在 others_count 里报数量；" +
+                            "确需查看全部时传 include_others=true（列出也只是只读，不会动别人的屏）。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put(
+                                    "include_others",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put(
+                                            "description",
+                                            "默认 false，只看本对话的屏；true 时连其他对话的屏一起列，每条带 owner 标记",
+                                        ),
+                                ),
+                        ),
                 )
             )
             .put(
                 tool(
                     name = "virtual_display_release",
                     description =
-                        "释放虚拟屏。id=all 时释放全部。任务结束或失败后**必须**调用，" +
-                            "否则虚拟屏会一直占用系统资源。",
+                        "释放虚拟屏。默认只能释放本对话的屏；id=all 只释放本对话的全部，" +
+                            "不会动其他对话的屏。需要跨对话释放（例如清理另一个对话遗留的屏）时显式传 force=true。" +
+                            "任务结束或失败后**必须**调用，否则虚拟屏会一直占用系统资源。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -116,7 +135,17 @@ internal object AgentVirtualDisplayTools {
                                     "id",
                                     JSONObject()
                                         .put("type", "string")
-                                        .put("description", "create 返回的 id；或 all 表示全部释放"),
+                                        .put("description", "create 返回的 id；或 all 表示本对话的全部"),
+                                )
+                                .put(
+                                    "force",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put(
+                                            "description",
+                                            "默认 false。释放其他对话建的屏需要 true：" +
+                                                "那可能打断另一个对话正在进行的任务，确定无人使用才传",
+                                        ),
                                 ),
                         )
                         .put("required", JSONArray().put("id")),
@@ -219,7 +248,11 @@ internal object AgentVirtualDisplayTools {
         val force: Boolean = false,
     )
 
-    data class ReleaseRequest(val id: String)
+    data class ReleaseRequest(
+        val id: String,
+        /** 跨对话释放：默认只能释放本对话的屏，避免误拆别的对话正在用的屏。 */
+        val force: Boolean = false,
+    )
 
     data class LaunchRequest(
         val id: String,
@@ -312,7 +345,7 @@ internal object AgentVirtualDisplayTools {
     fun parseRelease(args: JSONObject): ReleaseRequest? {
         val id = args.optString("id").trim()
         if (id.isEmpty()) return null
-        return ReleaseRequest(id)
+        return ReleaseRequest(id, force = args.optBoolean("force", false))
     }
 
     fun parseLaunch(args: JSONObject): LaunchRequest? {

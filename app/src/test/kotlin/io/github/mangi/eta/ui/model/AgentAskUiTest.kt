@@ -52,6 +52,15 @@ class AgentAskUiTest {
     }
 
     @Test
+    fun queuedInputCountsAsAnswered() {
+        // 回答先进入队列时（运行中/暂停/编辑态），消息流里还没有用户消息。
+        // 不把队列算进来，卡片会一直挂着，切走会话再回来就像没答过（真机复现）。
+        assertNull(pendingAskOf(listOf(ask()), hasQueuedInput = true))
+        // 队列为空时仍然按消息流正常判定。
+        assertEquals("ask-1", pendingAskOf(listOf(ask()), hasQueuedInput = false)?.messageId)
+    }
+
+    @Test
     fun otherToolsNeverProduceAPendingAsk() {
         val other = ToolActivityMessageUi(
             id = "tool-1",

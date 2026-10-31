@@ -233,6 +233,7 @@ class AgentToolCatalogTest {
             "stat_file",
             "glob_files",
             "grep_files",
+            "code_outline",
             "write_file",
             "list_directory",
             "project_info",

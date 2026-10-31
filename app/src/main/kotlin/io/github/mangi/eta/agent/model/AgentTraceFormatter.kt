@@ -29,6 +29,7 @@ internal class AgentTraceFormatter {
             "glob_files" -> "按路径查找文件"
             "grep_files" -> "搜索文件内容"
             "project_info" -> "识别项目"
+            "code_outline" -> "查看代码结构"
             "inspect_app" -> "检查应用"
             "type_text" -> summarizeTypeText(toolCall.argumentsJson)
             "input_text" -> summarizeTextLength("输入文本", toolCall.argumentsJson, "text")

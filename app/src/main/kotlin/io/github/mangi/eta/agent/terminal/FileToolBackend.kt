@@ -83,6 +83,15 @@ internal class FileToolException(
 internal interface FileToolBackend {
     val environment: String
     val identity: String
+
+    /**
+     * 单次读取的字节上限。
+     *
+     * 为什么要有它：不同后端能力不同（本地后端 16 KiB、shell 后端 512 KiB），而
+     * `readBytes` 对超出上限的请求会直接抛参数错误。调用方（比如 code_outline 的批量读）
+     * 必须先按它夹取，否则整次调用会变成一句笼统的「参数无效」，在本地后端上必现。
+     */
+    val maxReadBytes: Int
     fun checkActive() = Unit
     fun resolve(path: String): String
     fun stat(path: String): FileToolStat

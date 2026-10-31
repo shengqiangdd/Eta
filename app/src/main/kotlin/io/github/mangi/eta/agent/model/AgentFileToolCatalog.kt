@@ -5,7 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal object AgentFileToolCatalog {
-    val names = setOf("working_directory", "read_file", "write_file", "edit_file", "edit_files", "list_file_backups", "restore_file", "stat_file", "list_directory", "glob_files", "grep_files", "project_info")
+    val names = setOf("working_directory", "read_file", "write_file", "edit_file", "edit_files", "list_file_backups", "restore_file", "stat_file", "list_directory", "glob_files", "grep_files", "code_outline", "project_info")
 
     fun appendTo(tools: JSONArray) {
         tools.put(tool("working_directory", "查看或切换当前会话的默认目录（参考 dsh 的 working_directory）。不传 cwd 时返回当前路径；传 cwd 后，后续命令与文件默认使用该目录，并持久化到本会话。environment=android 为宿主目录（相对路径按当前工作区解析）；environment=linux 为 guest 目录（仅支持 /workspace 与 /root 下）。/workspace 本身仍是所有会话共享的挂载。", properties(), emptyList()))
@@ -91,6 +91,12 @@ internal object AgentFileToolCatalog {
                 .put("description", "把 query 当作正则表达式；不支持多行模式与内联标志 (?s)(?m)(?i)。"))
             .put("files_only", JSONObject().put("type", "boolean").put("default", false)
                 .put("description", "只返回命中的文件与每文件命中次数，不返回匹配行，适合先定位再精读。")), listOf("query")))
+        tools.put(tool("code_outline", "代码大纲：列出文件或目录里识别到的类 / 函数 / 接口等符号及行号，先用它看结构，再按行号 read_file。只读；支持 .kt/.kts/.java/.go/.rs/.py/.pyi/.ts/.tsx/.js/.jsx/.swift/.sh。目录模式默认只看 4 层、最多 60 个文件、每文件最多 256 KiB，达到上限会标 files_truncated；符号按行级正则识别，漏报的仍可用 grep_files 找到，count=0 不代表文件为空。", properties()
+            .put("path", path())
+            .put("query", text("按符号名过滤（不区分大小写的子串），留空表示不过滤。", 200))
+            .put("kind", text("按种类过滤，例如 function 或 class；留空表示全部。", 40))
+            .put("limit", integer("最多返回多少个符号，默认 120。", 1, 400))
+            .put("depth", integer("目录模式的递归层数，默认 4。", 1, 20)), listOf("path")))
         tools.put(tool("project_info", "识别工作区项目类型（Android/Gradle、Node、Rust、Go、Python、CMake、Make），给出推断的构建/测试/检查命令、项目规则文件、Git 分支与顶层结构。只读；进入陌生仓库开始编码前先调用它。path 省略时使用当前工作目录。", properties()
             .put("path", path()), emptyList()))
     }

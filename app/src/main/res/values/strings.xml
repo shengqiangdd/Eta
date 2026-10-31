@@ -1479,6 +1479,8 @@
   <string name="tool_glob_files_description">Find files recursively by path pattern, with bounded paging.</string>
   <string name="tool_grep_files">Search file contents</string>
   <string name="tool_grep_files_description">Search UTF-8 text and return matching paths, line numbers, and scan scope.</string>
+  <string name="tool_code_outline">Code outline</string>
+  <string name="tool_code_outline_description">List classes, functions, and other symbols with line numbers; read only.</string>
   <string name="tool_project_info">Detect project</string>
   <string name="tool_project_info_description">Read top-level marker files to report project type, build and test commands, rule files, and Git branch.</string>
   <string name="tool_web_search">Web search</string>
@@ -1598,6 +1600,7 @@
   <string name="ask_card_title">Waiting for your answer</string>
   <string name="ask_card_reply_hint">Tap an option, or answer in the input box below</string>
   <string name="ask_card_option_sent">Selected: %1$s</string>
+  <string name="ask_answer_updated">Answer updated</string>
   <string name="state_user_interaction">Interaction</string>
   <string name="state_task_planning">Tasks</string>
   <string name="state_plugins">Plugins</string>

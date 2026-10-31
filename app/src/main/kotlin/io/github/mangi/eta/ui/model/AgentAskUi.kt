@@ -16,8 +16,19 @@ internal data class AgentAskUi(
  *
  * 只认最后一条 `ask_user`：更早的提问即使没人回答，也已经被后续轮次覆盖，再显示会让用户点到过期的按钮。
  * 是否已回答看它之后有没有用户消息 —— 点选项和手打文字最终都会落成 [UserMessageUi]。
+ * 选项现在由 `AgentAppState.answerPendingAsk` 直接落成用户消息（运行中也一样，不排队）。
  */
-internal fun pendingAskOf(messages: List<AgentChatMessageUi>): AgentAskUi? {
+internal fun pendingAskOf(
+    messages: List<AgentChatMessageUi>,
+    /**
+     * 队列里已经有用户输入。
+     *
+     * 选项回答已经不走队列了；守的是「用户直接把回答打进输入框、运行中点发送」这条路：
+     * 它仍然会先入队，此时消息流里还没有用户消息。
+     */
+    hasQueuedInput: Boolean = false,
+): AgentAskUi? {
+    if (hasQueuedInput) return null
     val index = messages.indexOfLast { message ->
         message is ToolActivityMessageUi &&
             message.toolName == AgentAskUserToolCatalog.NAME &&

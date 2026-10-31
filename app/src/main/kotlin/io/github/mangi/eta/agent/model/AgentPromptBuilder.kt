@@ -161,7 +161,7 @@ internal object AgentPromptBuilder {
                     rootInstructions(rootAvailable) +
                     "普通命令调用 terminal，只需 command；单次命令结束后进程会回收，不要用 & 起后台进程；持续 Shell 工作可 action=open 后用 session_id 复用，目录变化用会话内的 cd。" +
                     "编码任务：先读工作区项目规则（AGENTS.md/CLAUDE.md/ETA.md/.eta/rules.md，若存在）；陌生仓库先 project_info 看项目类型与构建/测试命令；" +
-                    "用 grep_files/glob_files 定位现有实现，不要凭文件名猜；编辑已有文件前必须先 read_file，不要凭记忆或猜测跳过；" +
+                    "用 grep_files/glob_files 定位现有实现，不要凭文件名猜；大文件先 code_outline 看结构与行号，再按行号 read_file；编辑已有文件前必须先 read_file，不要凭记忆或猜测跳过；" +
                     "同一文件的多处修改用 edit_file 的 edits 一次提交，跨文件重构用 edit_files 一次提交（任一文件不匹配则全不改，写入中途失败会回滚）；" +
                     "大范围修改可先 dry_run=true 预览 diff，再让用户确认后应用；需要撤销时用 list_file_backups 查看、restore_file 恢复（工具写入前会自动保存原文）；" +
                     "改完用 read_file/stat_file 核对，并按项目命令跑最小测试；不要重复读同一文件，也不要只声称改好了。" +

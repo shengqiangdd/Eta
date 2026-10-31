@@ -163,6 +163,7 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                     ToolItemUi("stat_file", context.getString(R.string.tool_stat_file), context.getString(R.string.tool_stat_file_description)),
                     ToolItemUi("glob_files", context.getString(R.string.tool_glob_files), context.getString(R.string.tool_glob_files_description)),
                     ToolItemUi("grep_files", context.getString(R.string.tool_grep_files), context.getString(R.string.tool_grep_files_description)),
+                    ToolItemUi("code_outline", context.getString(R.string.tool_code_outline), context.getString(R.string.tool_code_outline_description)),
                     ToolItemUi("read_file", context.getString(R.string.tool_ui_read_file_dc995c), context.getString(R.string.tool_ui_read_the_contents_of_mobile_phone_files_bf3066)),
                     ToolItemUi("write_file", context.getString(R.string.tool_ui_write_file_e620fd), context.getString(R.string.tool_ui_write_or_overwrite_mobile_files_29fae4)),
                     ToolItemUi("list_directory", context.getString(R.string.tool_ui_list_directory_96e765), context.getString(R.string.tool_ui_list_directory_contents_feff30)),
