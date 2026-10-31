@@ -3299,3 +3299,52 @@ logcat -d -s Eta:* | grep -E "request bundle|result delivery"
 - `wait=0ms` 说明 resultIo 没有排队堆积 —— 目前没看到「前面的回传把后面的堵住」。
 
 要评估长对话的真实代价，需要一次 transcript 上千条的 run；这组样本只能作为**基线**。
+
+## 32.27 历史传输改成流式写读：不再整块 `toByteArray`（2026-10-31，本机 PKX110/A16）
+
+### 32.27.1 起因（有数字了才动手）
+
+§32.26.6 的实测：**267 条历史 → `request bundle: build=119ms`**。翻实现，
+`AgentWireText.put` 的路径是：
+
+```
+历史 JSON 字符串（约 30 MB）--toByteArray--> 再一份 30 MB 字节数组 --write--> 临时文件
+```
+
+读端是反过来的：`ByteArray(size)` 一次性 30 MB，再 `toString(UTF_8)` 生成字符串。
+一次请求/回传，堆上各多出一份完整的整块副本，越大越容易触发 GC。
+
+### 32.27.2 改法
+
+| 方向 | 旧 | 新 |
+|---|---|---|
+| 写 | `text.toByteArray()` 后 `write(bytes)` | `bufferedWriter(UTF_8).use { it.write(text) }` |
+| 长度 | 用 `bytes.size` | 用 `file.length()`（中文 3 字节，比按字符数估更准） |
+| 读 | `ByteArray(size)` + 循环读满 | `CountingInputStream` + `reader(UTF_8).readText()` |
+| 校验 | 读满 + 末尾 EOF | 不变：`count == size` 且末尾 `read() == -1` |
+
+上限保护也保留：写完后仍 `require(size <= 64MB)`，超限直接失败、原记录不动。
+
+### 32.27.3 顺带改的日志
+
+`request bundle` 加 `chars=`：
+
+```
+request bundle: build=119ms messages=267 chars=2,345,678
+```
+
+理由：对话每轮都在变，只比 `messages` 或只比毫秒数都不严谨；有字符总量才能归一
+（例如「ms / 百万字符」），否则「改快了」只是感觉。
+
+### 32.27.4 验证
+
+- `STAGES=test`：**835 用例 0 失败**。
+- `AgentHistoryRetentionTest`（6 例，含 descriptor 长度不匹配必须抛错）在本机 **跑不了**：
+  `DefaultNativeRuntimeLoader` 不支持 Linux aarch64（Robolectric 限制），与本次改动无关。
+  所以流式路径**没有**本机单测覆盖，只能靠真机端到端。
+- 真机：装包后看 `request bundle` 的 ms/chars，以及对话是否正常（能正常往返即说明读写正确）。
+
+### 32.27.5 取舍
+
+`readText()` 在 30 MB 时是 StringBuilder 扩容，CPU 有可能会略高于一次性 decode；
+换来的是少一次 30 MB `byte[]` 峰值。**净收益要看真机数字**，不预设结论。

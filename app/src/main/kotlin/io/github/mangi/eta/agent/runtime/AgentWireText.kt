@@ -6,6 +6,8 @@ import android.os.Messenger
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import java.io.File
+import java.io.FilterInputStream
+import java.io.InputStream
 
 /** 大文本通过已取消目录链接的只读文件传输；Binder 只携带描述符与长度。 */
 internal object AgentWireText {
@@ -21,14 +23,15 @@ internal object AgentWireText {
             return
         }
         require(text.length <= MAX_TRANSFER_BYTES) { "历史传输超过单次内存预算，原始记录仍保留" }
-        val bytes = text.toByteArray(Charsets.UTF_8)
-        require(bytes.size <= MAX_TRANSFER_BYTES) { "历史传输超过单次内存预算，原始记录仍保留" }
         val file = File.createTempFile("eta-context-", ".json", directory)
         try {
-            file.outputStream().use { it.write(bytes) }
+            // 流式写：不再先 toByteArray() 拷一份整块字节（30 MB 历史时就是 30 MB 堆内存 + 一次全量拷贝）。
+            file.outputStream().bufferedWriter(Charsets.UTF_8).use { writer -> writer.write(text) }
+            val size = file.length()
+            require(size in 0..MAX_TRANSFER_BYTES) { "历史传输超过单次内存预算，原始记录仍保留" }
             val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             bundle.putParcelable(key + FD_SUFFIX, descriptor)
-            bundle.putLong(key + SIZE_SUFFIX, bytes.size.toLong())
+            bundle.putLong(key + SIZE_SUFFIX, size)
         } finally {
             check(file.delete()) { "Cannot unlink history transfer file" }
         }
@@ -45,15 +48,12 @@ internal object AgentWireText {
             require(size in 0..MAX_TRANSFER_BYTES && descriptor.statSize == size) {
                 "Invalid history transfer descriptor"
             }
-            val bytes = ByteArray(size.toInt())
-            var offset = 0
-            while (offset < bytes.size) {
-                val read = input.read(bytes, offset, bytes.size - offset)
-                check(read > 0) { "Incomplete history transfer" }
-                offset += read
-            }
+            // 同样流式解码：不再一次性 ByteArray(size) 再转 String。
+            val counting = CountingInputStream(input)
+            val text = counting.reader(Charsets.UTF_8).readText()
+            check(counting.count == size) { "History transfer size mismatch" }
             check(input.read() == -1) { "History transfer size mismatch" }
-            bytes.toString(Charsets.UTF_8)
+            text
         }
     }
 
@@ -85,4 +85,15 @@ internal object AgentWireText {
             bundle.remove(key)
         }
     }
+}
+
+/** 只用来核对「读到的字节数 == 声明的字节数」，不参与内容解析。 */
+private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
+    var count = 0L
+        private set
+
+    override fun read(): Int = super.read().also { if (it >= 0) count++ }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int =
+        super.read(b, off, len).also { if (it > 0) count += it }
 }

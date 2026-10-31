@@ -103,9 +103,12 @@ internal class AgentRuntimeClient(
             // 用户按下发送后最直观的等待就在这里：整个历史要序列化成 JSON（§32.26）。
             val bundleStartedAt = android.os.SystemClock.elapsedRealtime()
             msg.data = AgentRuntimeWire.toBundle(request, preparedImages.images, context.cacheDir)
+            val historyChars = request.history.sumOf {
+                it.content.length + it.contentJson.length + it.reasoningContent.length + it.toolCallsJson.length
+            }
             logger.info(
                 "request bundle: build=${android.os.SystemClock.elapsedRealtime() - bundleStartedAt}ms " +
-                    "messages=${request.history.size}",
+                    "messages=${request.history.size} chars=$historyChars",
             )
             AgentWireText.send(serviceMessenger, msg)
             // Messenger 是 oneway：目标服务已销毁时发送不会抛异常，请求会静默消失。
