@@ -128,6 +128,39 @@ class AgentSelfAuditTest {
     }
 
     @Test
+    fun crashOlderThanTheCurrentBuildIsMarkedAsOld() {
+        // 真机踩过：07:17 的 OOM 早于 §32.37 的修复（20:12），却被当成现存缺陷去追。
+        val report = AgentSelfAudit.audit(
+            input(
+                crashFiles = listOf(crash("data_app_crash@15.txt", 3, oomCrash)),
+                installUpdatedMillis = now - 60 * 60_000L,
+            ),
+        )
+        val evidence = report.findings.single().evidence
+        assertTrue(
+            "早于当前安装包的崩溃必须自己说清楚：$evidence",
+            evidence.any { it.startsWith("早于当前安装包") },
+        )
+        assertTrue(report.notes.any { it.contains("只能证明旧版本的问题") })
+    }
+
+    @Test
+    fun crashAfterTheInstallIsNotMarkedAsOld() {
+        val report = AgentSelfAudit.audit(
+            input(
+                crashFiles = listOf(crash("data_app_crash@16.txt", 1, oomCrash)),
+                installUpdatedMillis = now - 20 * 3_600_000L,
+            ),
+        )
+        val evidence = report.findings.single().evidence
+        assertTrue(
+            "装包之后发生的崩溃就是当前版本的问题，不能标成旧的：$evidence",
+            evidence.none { it.startsWith("早于当前安装包") },
+        )
+        assertTrue(report.notes.none { it.contains("只能证明旧版本的问题") })
+    }
+
+    @Test
     fun crashOutsideWindowIsNotCounted() {
         val report = AgentSelfAudit.audit(
             input(crashFiles = listOf(crash("data_app_crash@1.txt", 96, oomCrash))),

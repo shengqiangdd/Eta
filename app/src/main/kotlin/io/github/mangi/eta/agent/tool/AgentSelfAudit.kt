@@ -159,7 +159,18 @@ internal object AgentSelfAudit {
             notes += "窗口内没有本应用的崩溃文件；仓库只保留最近若干条，「没有」不等于「没发生过」"
         }
         mine.sortedByDescending { it.timeMillis }.forEach { file ->
-            findings += classifyFailure(input.packageName, file)
+            findings += classifyFailure(input.packageName, file, input.installUpdatedMillis)
+        }
+        // 崩溃早于当前安装包时，它证明的是**旧版本**的问题。不把这件事说清楚，
+        // 就会去修一个当前版本里已经不存在的崩溃（我自己就差点这么干：
+        // 那份 07:17 的 OOM 发生在 §32.37 修复（20:12）之前，却被我当成了现存缺陷）。
+        val installedAt = input.installUpdatedMillis?.takeIf { it > 0L }
+        if (installedAt != null) {
+            val stale = mine.count { it.timeMillis < installedAt }
+            if (stale > 0) {
+                notes += "其中 $stale 份崩溃早于当前安装包（${stamp(installedAt)}）：那些只能证明旧版本的问题；" +
+                    "当前版本是否已修，要看这之后有没有新的崩溃文件"
+            }
         }
         if (mine.size >= 2) {
             val uptime = input.processStartedMillis?.let { input.nowMillis - it }
@@ -194,7 +205,7 @@ internal object AgentSelfAudit {
         }
     }
 
-    private fun classifyFailure(packageName: String, file: CrashFile): Finding {
+    private fun classifyFailure(packageName: String, file: CrashFile, installUpdatedMillis: Long? = null): Finding {
         val isAnr = file.name.contains("anr")
         val lines = file.text.lineSequence().map { it.trimEnd() }.filter { it.isNotBlank() }.toList()
         val exception = lines.firstOrNull { EXCEPTION_LINE.matches(it.trim()) }?.trim()
@@ -210,6 +221,10 @@ internal object AgentSelfAudit {
             // 真正能改的那一帧往往被截在 4 帧之外 —— §32.37 那次 OOM 自己的帧就在第 5 位，
             // 工具给的证据里只剩「去改 HashMap」。把首个可改的帧补上。
             if (actionable != null && actionable !in frames) add("首个可改的帧：$actionable")
+            val install = installUpdatedMillis?.takeIf { it > 0L }
+            if (install != null && file.timeMillis < install) {
+                add("早于当前安装包（${stamp(install)}）：证明的是旧版本的问题")
+            }
             if (isEmpty() || (exception == null && frames.isEmpty())) {
                 add("未从文件里解析出异常行与代码栈帧（格式可能与预期不同）")
             }
