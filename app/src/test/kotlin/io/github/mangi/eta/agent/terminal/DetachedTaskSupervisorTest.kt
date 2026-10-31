@@ -168,6 +168,45 @@ class DetachedTaskSupervisorTest {
         }
     }
 
+    /**
+     * 后台命令也要带上 env.conf：设置里配了 token，跑 `terminal_job` 时不该「变量是空的」。
+     * 同时守住记录：任务列表/通知里只出现用户写的命令，不能混进临时脚本路径。
+     */
+    @Test
+    fun commandTaskAppliesEnvPrefixWithoutRecordingIt() {
+        val supervisor = newSupervisor()
+        val script = File(temporaryFolder.root, ".eta-env-test.sh")
+        script.writeText("export ETA_TEST_ENV=prefix_value\n")
+        val prefix = ". ${shellQuote(script.path)} 2>/dev/null; rm -f ${shellQuote(script.path)}; "
+        val userCommand = "printf 'seen=[%s]' \"${'$'}ETA_TEST_ENV\""
+        val started = supervisor.start(
+            command = userCommand,
+            cwd = temporaryFolder.root.absolutePath,
+            identity = "user",
+            environment = TerminalEnvironment.ANDROID,
+            commandTask = true,
+            description = "env prefix",
+            timeoutMs = 20_000,
+            envPrefix = prefix,
+        )
+        assertTrue("$started", started is DaemonStartResult.Started)
+        val task = (started as DaemonStartResult.Started).task
+        try {
+            assertEquals("记录里必须是用户写的命令", userCommand, task.command)
+            val deadline = System.currentTimeMillis() + 15_000
+            var logs = ""
+            while (System.currentTimeMillis() < deadline) {
+                supervisor.list()
+                logs = supervisor.readLogs(task.id).text
+                if (logs.contains("seen=[prefix_value]")) break
+                Thread.sleep(100)
+            }
+            assertTrue("后台命令应拿到注入的变量：$logs", logs.contains("seen=[prefix_value]"))
+        } finally {
+            supervisor.stop(task.id)
+        }
+    }
+
     @Test
     fun stopCleansRecordOfDeadTask() {
         val supervisor = newSupervisor()

@@ -47,7 +47,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 环境变量管理：编辑应用私有 `files/terminal-user/env.conf`；旧版 `files/terminal/env.conf` 只读兼容。
  *
  * 设置页只改应用私有文件；`/sdcard/Download/eta-env.conf` 作为只读覆盖源显示提示，
- * 避免「界面改了却不生效」的误解。保存后 Agent 的下一条终端命令会重新读取。
+ * 避免「界面改了却不生效」的误解。保存后下一条终端命令（Agent 与用户终端都算）即重新读取。
+ *
+ * 值不再拼进命令行：执行时写成 0600 临时脚本、source 完立即删除，`ps` 里看不到明文。
  */
 @Composable
 internal fun EnvVarsScreen(context: Context, onBack: () -> Unit) {
@@ -190,6 +192,11 @@ internal fun EnvVarsScreen(context: Context, onBack: () -> Unit) {
                             downloadEntries.size,
                             downloadEntries.take(3).joinToString(stringResource(R.string.list_separator)) { it.key },
                         ),
+                    )
+                    EtaPreferenceDivider(hasLeading = true)
+                    EtaPreference(
+                        title = stringResource(R.string.env_vars_download_risk_title),
+                        summary = stringResource(R.string.env_vars_download_risk_summary),
                     )
                 }
             }

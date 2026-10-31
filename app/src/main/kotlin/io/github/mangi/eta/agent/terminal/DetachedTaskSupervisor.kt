@@ -63,6 +63,13 @@ internal class DetachedTaskSupervisor(
         commandTask: Boolean = false,
         description: String = "",
         timeoutMs: Long = 0,
+        /**
+         * 环境变量注入片段（只有一次性脚本的路径，不含值）。
+         *
+         * 在“拼 shell 行”这一步才拼上，而不在 [command] 里：记录/列表/通知里
+         * 展示的必须是用户写的命令，不能混进一串临时文件路径。
+         */
+        envPrefix: String? = null,
     ): DaemonStartResult {
         if (identity != "root" && identity != "user") return DaemonStartResult.Failed("INVALID_ARGUMENT", "执行身份无效")
         if (identity == "root" && !rootAvailable()) return DaemonStartResult.Failed("ROOT_REQUIRED", "Root 授权不可用")
@@ -77,15 +84,15 @@ internal class DetachedTaskSupervisor(
         }
         val id = (if (commandTask) "job_" else "dm_") + UUID.randomUUID().toString().take(8)
         val token = UUID.randomUUID().toString().replace("-", "")
-        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs)
-        if (identity == "user") return startUserDaemon(id, token, command, cwd, environment)
+        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs, envPrefix)
+        if (identity == "user") return startUserDaemon(id, token, command, cwd, environment, envPrefix)
         val wireDir = wireDaemonDir(environment)
         val wirePidFile = "$wireDir/$id.pid"
         val wireLogFile = "$wireDir/$id.log"
         // 内层 sh 先落 pidfile 再 exec 目标命令，PID 在 exec 前后不变。
         val innerScript = "echo \$\$ > ${shellQuote(wirePidFile)}; " +
             "export $ETA_PROCESS_OWNER_ENV=${shellQuote(token)}; " +
-            "exec sh -c ${shellQuote(command)} >> ${shellQuote(wireLogFile)} 2>&1"
+            "exec sh -c ${shellQuote(envPrefix.orEmpty() + command)} >> ${shellQuote(wireLogFile)} 2>&1"
         val launcherScript = buildString {
             appendLine("mkdir -p ${shellQuote(wireDir)} || exit 1")
             appendLine("rm -f ${shellQuote(wirePidFile)}")
@@ -214,7 +221,8 @@ internal class DetachedTaskSupervisor(
     }
 
     private fun startCommand(id: String, command: String, cwd: String, identity: String,
-        environment: TerminalEnvironment, description: String, timeoutMs: Long): DaemonStartResult {
+        environment: TerminalEnvironment, description: String, timeoutMs: Long,
+        envPrefix: String? = null): DaemonStartResult {
         val workspace = if (identity == "user") TerminalRuntime.userWorkspacePath else TerminalRuntime.ROOT_WORKSPACE_PATH
         val wireDir = when {
             environment.isLinux -> LINUX_DAEMON_DIR
@@ -222,7 +230,7 @@ internal class DetachedTaskSupervisor(
             else -> daemonDir
         }
         val logPath = "$wireDir/$id.log"
-        val payload = commandPayload(command, "$wireDir/$id.exit")
+        val payload = commandPayload(envPrefix.orEmpty() + command, "$wireDir/$id.exit")
         // 含管道时给下游一个终端：否则 grep/sed/awk 这类过滤器会攒满 4 KiB 才落盘，
         // read 长时间只看到空日志。tail -n 只输出末尾若干行，本身就不会显示进度。
         val streaming = ShellPipeline.hasStreamingPipe(command) && ptySupported() &&
@@ -425,13 +433,14 @@ internal class DetachedTaskSupervisor(
     private fun ownerProof(task: DetachedTask): String = "$ETA_PROCESS_OWNER_ENV=${task.token}"
 
     /** 普通守护任务保留完整宿主壳和 tracer；guest 内不能再次脱离 PRoot 的生命周期。 */
-    private fun startUserDaemon(id: String, token: String, command: String, cwd: String, environment: TerminalEnvironment): DaemonStartResult {
+    private fun startUserDaemon(id: String, token: String, command: String, cwd: String, environment: TerminalEnvironment,
+        envPrefix: String? = null): DaemonStartResult {
         val workspace = if (environment.isLinux || daemonDir == DEFAULT_DAEMON_DIR) TerminalRuntime.userWorkspacePath else File(daemonDir).parent!!
         val hostDir = if (environment.isLinux || daemonDir == DEFAULT_DAEMON_DIR) File(workspace, "daemon") else File(daemonDir)
         if (!hostDir.mkdirs() && !hostDir.isDirectory) return DaemonStartResult.Failed("WORKSPACE_UNAVAILABLE", "工作目录不可访问")
         val pidFile = File(hostDir, "$id.pid")
         val logFile = File(hostDir, "$id.log")
-        val commandBody = "exec sh -c ${shellQuote(command)}"
+        val commandBody = "exec sh -c ${shellQuote(envPrefix.orEmpty() + command)}"
         val payload = if (environment.isLinux) {
             val rootfs = rootfsPath(environment)
             if (!LinuxEnvironmentPaths.rootfsReady(rootfs)) return DaemonStartResult.Failed("LINUX_ENVIRONMENT_NOT_READY", "Linux 环境尚未安装")

@@ -1734,11 +1734,13 @@
   <string name="env_vars_delete_summary">确定删除 %1$s？</string>
   <string name="env_vars_save_failed">保存失败，请检查变量名和值</string>
   <string name="env_vars_download_title">下载目录覆盖</string>
+  <string name="env_vars_download_risk_title">该文件位于共享存储</string>
+  <string name="env_vars_download_risk_summary">任何有存储权限的应用都可能读到 \/sdcard\/Download\/eta-env.conf。密钥建议只放上面这份（应用私有），那个文件用来做不敏感的覆盖。</string>
   <plurals name="env_vars_download_summary">
     <item quantity="other">检测到 /sdcard/Download/eta-env.conf（%1$d 个键：%2$s…），同名键会覆盖这里的值。</item>
   </plurals>
   <string name="env_vars_agent_hint_title">Agent 如何读取</string>
-  <string name="env_vars_agent_hint_summary">保存后，Agent 的下一条终端命令会读取；已打开的终端会话如未生效可重启。</string>
+  <string name="env_vars_agent_hint_summary">保存后下一条命令即生效（常驻会话、后台任务、守护服务都算）；已经在运行的服务不会回溯，需要重启才拿到新值。</string>
   <string name="env_vars_error_empty_key">变量名不能为空</string>
   <string name="env_vars_error_invalid_key">变量名只能包含字母、数字和下划线，且不能以数字开头</string>
   <string name="env_vars_error_blocked_key">不允许设置 LD_PRELOAD 或 LD_LIBRARY_PATH</string>

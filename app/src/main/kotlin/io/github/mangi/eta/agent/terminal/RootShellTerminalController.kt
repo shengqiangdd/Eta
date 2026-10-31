@@ -22,8 +22,13 @@ internal class RootShellTerminalController(
         TerminalEnvironment.ALPINE
     },
     private val rootAvailable: () -> Boolean = { TerminalRuntime.rootAvailable },
-    /** 终端环境变量（参考 dsh-env.conf）；每次执行命令前注入，文件改动立即生效。 */
-    private val environmentExportsProvider: () -> String = { "" },
+    /**
+     * 终端环境变量的注入片段（参考 dsh-env.conf）；每次执行命令前注入，文件改动立即生效。
+     *
+     * 参数是本次命令的环境：Android 写 App 私有目录，Linux 写 rootfs 内的 `/tmp`。
+     * 实现方只返回「source 一个 0600 脚本」的片段，变量值绝不进命令行（`ps` 可见）。
+     */
+    private val environmentScriptProvider: (TerminalEnvironment) -> String? = { null },
     /** 读取门禁与文件检查点；为空时（单测/旧入口）保持原有行为。 */
     private val fileAccessLedger: FileAccessLedger? = null,
     private val fileBackupStore: FileBackupStore? = null,
@@ -88,8 +93,17 @@ internal class RootShellTerminalController(
                 val cwd = normalizeCwd(args.optString("cwd").ifBlank { null }, environment, identity)
                 val command = args.requiredText("command")
                 if (command.isBlank()) return errorJson("INVALID_ARGUMENT", "command 不能为空")
-                jobs.start(launcher, command, cwd, identity, environment,
-                    args.optString("description", "后台命令"), args.optLong("timeout_ms", 600_000))
+                jobs.start(
+                    launcher = launcher,
+                    command = command,
+                    cwd = cwd,
+                    identity = identity,
+                    environment = environment,
+                    description = args.optString("description", "后台命令"),
+                    timeoutMs = args.optLong("timeout_ms", 600_000),
+                    // 后台命令也要拿到 env.conf：否则「设置里配了 token，跑后台任务就没有」。
+                    envPrefix = envPrefixFor(environment, surface = "job"),
+                )
             }
             "list" -> jobs.list(args.optBoolean("active_only", true))
             "read" -> jobs.read(args.requiredText("job_id"), args.optInt("max_bytes", 16_000))
@@ -243,7 +257,16 @@ internal class RootShellTerminalController(
         val normalizedIdentity = normalizeIdentity(identity.ifBlank { defaultIdentity(normalizedEnvironment) })
         environmentPreflight(normalizedIdentity, normalizedEnvironment)?.let { return it }
         val safeCwd = normalizeCwd(cwd, normalizedEnvironment, normalizedIdentity)
-        return when (val result = supervisor.start(trimmed, safeCwd, normalizedIdentity, normalizedEnvironment)) {
+        return when (
+            val result = supervisor.start(
+                command = trimmed,
+                cwd = safeCwd,
+                identity = normalizedIdentity,
+                environment = normalizedEnvironment,
+                // 常驻服务与普通命令用同一份 env.conf；值同样只走一次性脚本。
+                envPrefix = envPrefixFor(normalizedEnvironment, surface = "daemon"),
+            )
+        ) {
             is DaemonStartResult.Started -> JSONObject()
                 .put("ok", true)
                 .put("tool", "terminal_daemon")
@@ -476,9 +499,9 @@ internal class RootShellTerminalController(
             val stderrStart = session.stderr.text().length
             val commandBlock = buildString {
                 // 环境变量每次命令前注入：用户改 env.conf 后无需重建会话。
-                val exports = runCatching { environmentExportsProvider() }.getOrDefault("")
-                if (exports.isNotBlank()) {
-                    append(exports)
+                val envPrefix = envPrefixFor(session.environment, surface = "session")
+                if (envPrefix != null) {
+                    append(envPrefix)
                     append('\n')
                 }
                 append(command)
@@ -566,8 +589,9 @@ internal class RootShellTerminalController(
         val setup = if (safeCwd == androidWorkspace()) "mkdir -p ${shellQuote(safeCwd)} && " else ""
         val probeMarker = TerminalExecutionProbe.marker()
         // 单次命令也要注入 env.conf（与常驻会话保持一致）。
-        val envExports = runCatching { environmentExportsProvider() }.getOrDefault("")
-        val envPart = if (envExports.isNotBlank()) "$envExports " else ""
+        // 注意：只能是「source 私有脚本」这种不含值的片段；拼 `export KEY='值'` 会让值出现在
+        // `su -c` / `sh -c` 的 argv 里，任何进程 `ps` 都看得到（token 泄露就出在这）。
+        val envPart = envPrefixFor(environment, surface = "exec") ?: ""
         val fullCommand = "${setup}cd ${shellQuote(safeCwd)} && export TERM=dumb NO_COLOR=1 && $envPart{\n${TerminalExecutionProbe.script(probeMarker)}\n$trimmed\n}"
         val result = runText(
             identity = normalizedIdentity,
@@ -803,6 +827,22 @@ internal class RootShellTerminalController(
 
     private fun rootfsPathFor(environment: TerminalEnvironment): String? =
         if (environment.isLinux) executionContext.linuxRootfsPath else null
+
+    /**
+     * 环境变量注入前缀：值只在 0600 脚本里，命令行里只出现路径。
+     *
+     * 失败时不能静默执行（用户只会看到「变量是空的」），改成往 stderr 写一行提示；
+     * 但绝不回退成把值拼进命令行——那正是 `ps` 能看到 token 的老问题。
+     */
+    private fun envPrefixFor(environment: TerminalEnvironment, surface: String): String? {
+        val outcome = runCatching { environmentScriptProvider(environment) }
+        outcome.exceptionOrNull()?.let { error ->
+            logger.warn("terminal env injection failed surface=$surface error=${error.javaClass.simpleName}")
+            return envFailurePrefix()
+        }
+        val script = outcome.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        return "$script; "
+    }
 
     private fun runText(
         identity: String,

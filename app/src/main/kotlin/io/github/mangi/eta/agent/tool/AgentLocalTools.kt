@@ -293,8 +293,14 @@ internal class AgentLocalTools(
             rootAvailable = rootAvailable,
         ),
         linuxSharedMountsProvider = { SharedFolderMounts.current() },
-        environmentExportsProvider = {
-            io.github.mangi.eta.agent.terminal.TerminalEnvFile(context.filesDir).exportsOrEmpty()
+        environmentScriptProvider = { environment ->
+            // 值只写进 0600 临时脚本，命令行只出现路径：明文的 `export KEY='值'` 会进 argv，`ps` 可见。
+            io.github.mangi.eta.agent.terminal.terminalEnvScript(
+                entries = io.github.mangi.eta.agent.terminal.TerminalEnvFile(context.filesDir).effectiveEntries(),
+                environment = environment,
+                filesDir = context.filesDir,
+                rootfsPath = terminalExecutionContext.linuxRootfsPath,
+            )
         },
         fileAccessLedger = fileAccessLedger,
         fileBackupStore = fileBackupStore,

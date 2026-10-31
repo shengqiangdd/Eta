@@ -1703,11 +1703,13 @@
   <string name="env_vars_delete_summary">確定刪除 %1$s？</string>
   <string name="env_vars_save_failed">儲存失敗，請檢查變數名稱和值</string>
   <string name="env_vars_download_title">下載目錄覆寫</string>
+  <string name="env_vars_download_risk_title">該檔案位於共用儲存空間</string>
+  <string name="env_vars_download_risk_summary">任何有儲存權限的應用程式都可能讀到 \/sdcard\/Download\/eta-env.conf。密鑰建議只放在上面這份（應用程式私有），那個檔案用來做不敏感的覆寫。</string>
   <plurals name="env_vars_download_summary">
     <item quantity="other">偵測到 /sdcard/Download/eta-env.conf（%1$d 個鍵：%2$s…），同名鍵會覆寫這裡的值。</item>
   </plurals>
   <string name="env_vars_agent_hint_title">Agent 如何讀取</string>
-  <string name="env_vars_agent_hint_summary">儲存後，Agent 的下一條終端機指令會讀取；已開啟的終端機工作階段若未生效可重新啟動。</string>
+  <string name="env_vars_agent_hint_summary">儲存後下一條指令即生效（常駐工作階段、背景任務、守護服務都算）；已經在運行的服務不會回溯，需要重新啟動才取得新值。</string>
   <string name="env_vars_error_empty_key">變數名稱不能為空</string>
   <string name="env_vars_error_invalid_key">變數名稱只能包含字母、數字和底線，且不能以數字開頭</string>
   <string name="env_vars_error_blocked_key">不允許設定 LD_PRELOAD 或 LD_LIBRARY_PATH</string>

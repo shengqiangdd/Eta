@@ -22,6 +22,12 @@ internal class UserTerminalController(
     private val linuxSharedMountsProvider: () -> List<SharedFolderMount> = { emptyList() },
     private val rootAvailable: () -> Boolean = { TerminalRuntime.rootAvailable },
     private val onSessionExit: (String) -> Unit = {},
+    /**
+     * 终端环境变量注入片段（与 Agent 终端同一套 env.conf）。与那边一样只返回
+     * 「source 一个 0600 脚本」的片段，值不进命令行——控制台是用户自己看着跑的，
+     * 把 token 写进 `ps` 同样不可接受。
+     */
+    private val environmentScriptProvider: ((TerminalEnvironment) -> String?)? = null,
 ) : AutoCloseable {
 
     private companion object {
@@ -292,7 +298,12 @@ internal class UserTerminalController(
             }
             val marker = SessionStatusProtocol.newMarker()
             // 单逻辑行协议：状态 printf 不进 stdin，交互式命令读 stdin 不会吃掉标记。
-            val commandBlock = SessionStatusProtocol.commandLine(marker, command) + "\n"
+            // 环境变量在同一条 eval 里先 source 再执行，值本身不出现在任何命令行里。
+            val envScript = environmentScriptProvider
+                ?.let { provider -> runCatching { provider(session.environment) }.getOrNull() }
+                ?.takeIf { it.isNotBlank() }
+            val effectiveCommand = if (envScript == null) command else "$envScript; $command"
+            val commandBlock = SessionStatusProtocol.commandLine(marker, effectiveCommand) + "\n"
             runCatching {
                 synchronized(session.stdinLock) {
                     session.process.outputStream.write(commandBlock.toByteArray(Charsets.UTF_8))

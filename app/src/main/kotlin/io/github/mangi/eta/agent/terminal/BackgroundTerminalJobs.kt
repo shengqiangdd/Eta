@@ -36,11 +36,18 @@ internal class BackgroundTerminalJobs(
         environment: TerminalEnvironment,
         description: String,
         timeoutMs: Long,
+        /**
+         * 环境变量注入片段（只有一次性脚本的路径，不含值）。
+         *
+         * 单独传入而不是拼进 [command]：任务列表与通知里展示的是用户写的命令，
+         * 不应该出现一串临时文件路径。
+         */
+        envPrefix: String? = null,
     ): String {
         if (closed) return failure("BACKGROUND_CLOSED", "后台命令宿主已关闭")
         if (!lease()) return failure("BACKGROUND_START_NOT_ALLOWED", "系统未允许启动后台执行，请返回 Eta 后重试")
         return when (val result = launcher.start(command, cwd, identity, environment,
-            commandTask = true, description = description, timeoutMs = timeoutMs.coerceAtLeast(0))) {
+            commandTask = true, description = description, timeoutMs = timeoutMs.coerceAtLeast(0), envPrefix = envPrefix)) {
             is DaemonStartResult.Failed -> {
                 if (monitor == null) release()
                 failure(result.code, result.message)

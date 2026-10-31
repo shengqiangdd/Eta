@@ -1765,12 +1765,14 @@
   <string name="env_vars_delete_summary">Delete %1$s?</string>
   <string name="env_vars_save_failed">Save failed. Check the name and value.</string>
   <string name="env_vars_download_title">Download folder override</string>
+  <string name="env_vars_download_risk_title">That file is on shared storage</string>
+  <string name="env_vars_download_risk_summary">Any app with file access can read \/sdcard\/Download\/eta-env.conf. Keep secrets in the list above; use that file only for non-sensitive overrides.</string>
   <plurals name="env_vars_download_summary">
     <item quantity="one">Found /sdcard/Download/eta-env.conf (%1$d key: %2$s…). Keys with the same name override the values here.</item>
     <item quantity="other">Found /sdcard/Download/eta-env.conf (%1$d keys: %2$s…). Keys with the same name override the values here.</item>
   </plurals>
   <string name="env_vars_agent_hint_title">How the Agent reads these</string>
-  <string name="env_vars_agent_hint_summary">After saving, the Agent\'s next terminal command picks them up; restart an already-open terminal session if it has not taken effect.</string>
+  <string name="env_vars_agent_hint_summary">After saving, the next terminal command picks them up — open sessions and background jobs included. A service that is already running keeps the values it started with.</string>
   <string name="env_vars_error_empty_key">Name cannot be empty</string>
   <string name="env_vars_error_invalid_key">Names may contain only letters, digits, and underscores, and cannot start with a digit</string>
   <string name="env_vars_error_blocked_key">LD_PRELOAD and LD_LIBRARY_PATH are not allowed</string>

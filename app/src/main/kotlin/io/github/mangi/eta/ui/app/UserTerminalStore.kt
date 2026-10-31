@@ -8,10 +8,12 @@ import io.github.mangi.eta.agent.terminal.DetachedTaskStatus
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
 import io.github.mangi.eta.agent.terminal.SharedFolderMounts
+import io.github.mangi.eta.agent.terminal.TerminalEnvFile
 import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.terminal.UserTerminalController
 import io.github.mangi.eta.agent.terminal.isLinux
+import io.github.mangi.eta.agent.terminal.terminalEnvScript
 import io.github.mangi.eta.agent.terminal.terminalEnvironment
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
@@ -102,6 +104,17 @@ internal class UserTerminalStore(
         onSessionExit = { sessionId ->
             sessionLeases.remove(sessionId)?.release()
             scope.launch { updateSessionEntry(sessionId) { it.copy(alive = false) } }
+        },
+        environmentScriptProvider = { environment ->
+            // 与 Agent 终端共用 env.conf；Linux 侧写进 rootfs 的 /tmp（guest 看不到宿主私有目录）。
+            terminalEnvScript(
+                entries = TerminalEnvFile(appContext.filesDir).effectiveEntries(),
+                environment = environment,
+                filesDir = appContext.filesDir,
+                rootfsPath = environment.linuxDistribution?.let { distribution ->
+                    LinuxEnvironmentPaths.rootfsDir(appContext, distribution).absolutePath
+                },
+            )
         },
     )
     private val daemonSupervisor = DetachedTaskSupervisor(

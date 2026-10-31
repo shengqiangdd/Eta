@@ -2955,3 +2955,85 @@ verbose 恒无折叠行、detailed 只收历史轮）。已进 `tools/gate.sh` �
 - 产物：`app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk` **32,134,289 字节**，
   sha256 `513290219b0c2ede4f093ee5719a84ef0b2b0e61f8c520c4ce344d6cd23021ed`；
   canary 装机包同源（`io.github.mangi.eta.canary`）。
+
+## 32.22 终端 env.conf：值不进 argv，四种执行面都吃得到（2026-10-31，本机 PKX110/A16）
+
+### 32.22.1 缺陷：值就在 `ps` 里
+
+旧实现把 env.conf 的每一项拼成 `export KEY='value';` 塞进命令串，于是它成为 `sh -c` / `su -c`
+的 argv。真机上 `ps -A -o pid,args` 能直接读到 `export Github_Token='…'` 与
+`export ETA_PROBE_ENV='…'` —— 任何进程都能看，等于把密钥写在公告板上。
+（文中不写具体值；该 token 应从「已泄露」处理，见 §32.22.6。）
+
+### 32.22.2 方案：一次性 0600 脚本 + 单行 source/rm
+
+| 项目 | 做法 |
+|---|---|
+| 载体 | 每条命令写一个 `.eta-env-<随机>.sh`，**0600**；目录 `env.d` 收紧到 **0700** |
+| 下发 | 命令行只出现**路径**：`if [ -r '<脚本>' ]; then . '<脚本>'; else echo '<提示>' >&2; fi; rm -f '<脚本>'`（单逻辑行，无换行） |
+| 生命周期 | source 后立刻删除；命令被强杀留下的文件由 `sweepStale()` 回收（>10 分钟，按目录 60 秒限流） |
+| Android 落点 | `files/terminal-user/env.d`（root 与 App 身份都能读） |
+| Linux 落点 | rootfs 内 `/tmp`，对 guest 引用 `/tmp/…`；`ownsDirectory=false`，**不动 guest `/tmp` 的 1777** |
+| 覆盖面 | `terminal` exec / 常驻会话 / `terminal_job` / `terminal_daemon` / Linux 侧，均由 `envPrefixFor(environment, surface)` 统一产出 |
+| 失败可见 | 写入失败 → 命令前加一行 stderr 提示（仍不回退拼值）；source 失败 → 另一行提示（见 §32.22.4） |
+| 共用 | Agent 终端与用户终端都走 `TerminalEnvFile.effectiveEntries()`，含 Download 覆盖文件 |
+
+### 32.22.3 真机验证（canary，虚拟屏 display 41，未动主屏）
+
+用下载覆盖文件写探针变量 `ETA_PROBE_ENV`，让 canary 自己的 Agent 执行两条命令并回贴 stdout：
+
+| 检查 | 实测 |
+|---|---|
+| `terminal` exec 取值 | `M=[eta_probe_9f3c]` ✓ |
+| `terminal_job` start 后 read | `J=[eta_probe_9f3c]` ✓ |
+| 落点与权限（canary 自报） | `ENVD 700 /data/data/io.github.mangi.eta.canary/files/terminal-user/env.d` ✓ |
+| 收尾残留 | `left=0`（sourcing 完成后脚本已删）✓ |
+| argv 是否含值 | 500 张 `ps` 快照（约 80 秒，覆盖整个执行窗口）：值 **0 命中**；`eta-env-` 脚本路径 **438 次** ✓ |
+| 正向对照（证明快照真抓到了进程） | `30149 sh -c . '…/env.d/.eta-env-xls90f59i-8iqca.sh' 2>/dev/null; rm -f '…'`、`28419 sleep 12` ✓ |
+
+即：命令行里出现的是**脚本路径**，值只活在 0600 文件里、source 完就没了。
+
+### 32.22.4 本轮挖出的两个坑（都会骗人）
+
+**坑一：扫描器自己命中自己。** 第一版扫描写的是
+`grep -al eta_probe_9f3c /proc/[0-9]*/cmdline` —— grep **自己的 argv 里就有模式串**，
+于是每轮都命中自己，`$()` 取回结果时该进程已退出，日志里只剩 `HIT /proc/N/cmdline` 加一行空内容。
+900 轮刷出 435 条「命中」，全是假的。正确姿势：`ps -A -o pid,args` 打快照（pid 与 args 同在一行，
+没有竞态），再 `grep -Ff 模式文件`（模式从文件读，不进 argv）。
+教训：**用带模式串的命令去扫 argv，先看看它会不会扫到自己**。
+
+**坑二：POSIX `.` 找不到文件会直接终止非交互 shell。** 第一版补充是
+`. '<脚本>' 2>/dev/null || echo '<提示>' >&2; rm -f '<脚本>'` —— 单测立刻红了：
+`||` 后面那段**根本不会执行**，因为 `.` 失败会让整个 shell 退出，`rm -f` 也轮不到，
+用户命令静默不跑。改成
+`if [ -r '<脚本>' ]; then . '<脚本>'; else echo '<提示>' >&2; fi; rm -f '<脚本>'`，
+并加单测 `unreadableScriptIsReportedAndCommandStillRuns` 卡住「提示出现 **且** `after=ok` 仍然打印」。
+这条只有真跑 shell 才会暴露，读代码看不出来。
+
+### 32.22.5 门禁与产物
+
+- `STAGES=test`：**819 用例 0 失败**（比上轮 +1，新用例即上面那条）。
+- `STAGES=lint,assemble`：lint 无新增（baseline 仍 412），打包成功。
+- 产物 `app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk`：**32,142,769 字节**，
+  sha256 `63e457895ba365c7b279523a3b8b5620132529d7788c4a51971bfe6965745499`。
+- canary 覆盖安装（`pm install -r -d`，`firstInstallTime` 仍是 2026-10-29 16:35:18）：
+  **32,142,805 字节**，sha256 `f3042455b89f39d92a7ac3ee5b298545c5ff86ba23794bf275cb800f401410d1`
+  （与 `pm path` 下 `base.apk` 逐字节一致）。
+- 换上新构建后再验一次（虚拟屏 display 42）：`M=[eta_probe_9f3c]`、`left=0`；同窗口 500 张 `ps` 快照
+  里值 **0 命中**，且实际命令行已是 `… && if [ -r '<脚本>' ]; then . '<脚本>'; else …`，
+  旧写法（`. … 2>/dev/null; rm -f …`）**0 次**。
+
+### 32.22.6 未验证 / 必须提醒（不写成已验证）
+
+1. **主应用 `io.github.mangi.eta` 仍是旧版本**：本轮在 `ps` 快照里实测到它把
+   `export Github_Token='…'` 与 `export ETA_PROBE_ENV='…'` 拼进 argv（`/data/user/0/io.github.mangi.eta/…`）。
+   覆盖安装新版本才会生效；因为安装会重启这个正在承载对话的应用，本轮**没有**在会话里执行。
+2. **已经泄露过一次**：该 GitHub token 以明文出现在 argv 中，应视为泄露并**轮换**。
+3. **文件 0600 只有单测覆盖**：真机上脚本存在的时间窗只有 source 前的一瞬，外部抓不到；本轮只验到目录 0700 与「收尾无残留」。
+4. **Linux / proot 落点未上真机**：rootfs `/tmp` 是否可写、guest 是否真能 `source` 到，只有单测（`/tmp/.eta-env-` 前缀、不动 `/tmp` 权限）。
+5. **常驻会话里的旧变量不会回滚**：env.conf 改完后，已开着的会话/已在跑的后台服务保留旧环境（界面提示里已写明，需重开会话或重启服务）。
+6. **同类泄露还有一处，本轮只记录未改**：`AcpClient` 启动 ACP 代理时把凭据写进 `su -c` 的命令串
+   （`AcpClient.kt` 里 `providerExport = "export ${AcpProvider.ENV_KEY}=…"`，旁边注释写的「不会出现在
+   宿主 ps 的命令行里」与实际不符——它就在 `su` 的 argv 里）。修法与终端一致（往 rootfs 写 0600 脚本再
+   source），但要往 AcpClient 里多接一个 rootfs 路径/脚本提供者，并需要能真跑一次 ACP 委派才能验收；
+   本轮不动它，避免把未验证的改动塞进另一条链路。
