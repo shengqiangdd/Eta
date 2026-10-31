@@ -3910,3 +3910,130 @@ history 了（4 ms 里只剩 materialize 与按需补配置）。
 这次全程只读：把 `eta.db` 与 `-wal` / `-shm` 一起复制到 `/data/local/tmp/eta/tmpdb2`，
 在 Linux guest 用 `sqlite3` / `python3` 查询，**没有对设备数据库做任何写操作**；
 副本用完即删。
+
+## 32.36 release 包真机验收 + 「app-ready 到 activity-created 的 3 秒」查清（2026-10-31，本机 PKX110/A16）
+
+### 32.36.1 release 包安装核对（四项全过）
+
+`bin/` 与 APK 的对应关系必须先验，否则后面所有启动数据都不知道测的是谁：
+
+| 核对项 | 期望 | 实测 |
+|---|---|---|
+| base.apk sha256 | 与构建产物逐字节一致 | `cc1e88a1…a365fa0f` ✓ |
+| versionName | `3.3.5`（不是 `-debug`） | `3.3.5` ✓ |
+| User 0 `firstInstallTime` | 不被重置（证明是覆盖安装） | `2026-10-03 10:38:00` 未变 ✓ |
+| dex 里的新标记 | `run history: handoff=` 命中 ≥1 | `classes.dex hits=1` ✓ |
+| 测试类误入包 | 0 | `hits=0` ✓ |
+| 启动阶段新增崩溃 | 与安装前增量一致 | `before=15 after=15` ✓ |
+
+APK 7,199,450 字节、构建 5 分 45 秒。回退包留在设备上（debug `2f5c7ae2`）。
+
+### 32.36.2 启动分段：release 并不比 debug 快
+
+`StartupTrace` 打点，同一台机器、同一份数据：
+
+| 指标 | debug `[25080]` | release 首次 `[32211]` | release 二次 `[7641]` |
+|---|---|---|---|
+| app-onCreate | +1427ms | +42ms | +45ms |
+| app-ready | +1560ms | +154ms | +97ms |
+| activity-created | +1605ms | +3638ms | +3274ms |
+| first-frame | +2905ms（ui=+1300） | +4095ms（ui=+457） | +3491ms（ui=+217） |
+| msgload boot | 204ms | 85ms | 50ms |
+| journal boot | 549ms（historyDecode 172） | 188ms | 159ms |
+
+两件事同时成立，而且都是真的：
+
+- **release 的 Application 阶段快了 10 倍以上**（1427ms → 42ms）：R8 去掉了一批类初始化，几个仓库的 `init` 都便宜了。
+- **release 的 `app-ready → activity-created` 却慢了 20 倍**（45ms → 3200ms 量级）。
+
+也就是说「release 慢」这个体感不是错觉，问题全部集中在那一段。
+
+### 32.36.3 先确认打点没骗人
+
+`markActivityStart()` 紧跟在 `super.onCreate(savedInstanceState)` 之后（`MainActivity.kt`），
+所以这段空白**不含任何 App 自己的 onCreate 代码**，只能是：
+
+1. `Instrumentation.newActivity`（反射创建 `MainActivity`，触发类加载与父类链初始化）；
+2. `activity.attach()`（`PhoneWindow`、`WindowManager`、主题资源解析）；
+3. `super.onCreate()`（ComponentActivity 的 savedState/lifecycle 装配）。
+
+### 32.36.4 高频采样：这段里进程根本没在算
+
+每 50 ms 采一次 `/proc/<pid>/stat`（state / utime / stime）与 `VmRSS`、线程数、`wchan`。
+`/proc/<pid>/stat` 的 utime 是**整个进程所有线程的合计**，不是主线程。
+
+`status=speed` 那一轮（`[4449]`，`app-ready +102ms` → `activity-created +1013ms`）：
+
+| 相对时刻 | 进程态 | utime | RSS | 线程 | wchan |
+|---|---|---|---|---|---|
+| 136ms | R | 16 | 180MB | 32 | — |
+| 298ms | R | 39 | 236MB | 55 | futex |
+| 470ms | **S** | 60 | 264MB | 56 | `do_epoll_wait` |
+| 736ms | S | 65 | 268MB | 59 | `do_epoll_wait` |
+| 1013ms（= activity-created） | S | 66 | 268MB | 57 | `do_epoll_wait` |
+
+**从 470ms 到 1013ms 这 543 ms 里，全进程 CPU 只涨了 6 个 tick（60 ms）**，
+主线程停在 `do_epoll_wait` —— 它在 looper 里等消息，不在算东西。
+
+这条证据把「App 代码里有阻塞/死循环」这条路直接排除了：**等的是系统侧**
+（`ActivityTaskManager` 的启动流程、splash window、进程 attach 的收尾）。
+
+### 32.36.5 把「冷启动」测成 WARM，是个方法学坑
+
+`am force-stop` 之后 logcat 里出现的是：
+
+```
+Start proc 12734:io.github.mangi.eta.canary for service {…AgentAccessibilityService}
+The Process … Already Exists in BG. So sending its PID: 12734
+```
+
+**无障碍服务会立刻把进程拉回来**，随后 `am start` 走的是复用路径：
+`LaunchState: WARM`、`TotalTime: 272ms`、`WaitTime: 279ms`。
+
+两个后果：
+
+1. 用 `am force-stop` 在设备上测不到真正的冷启动，必须先停掉无障碍服务（那本身是系统改动）；
+2. **用户日常打开就是这条 WARM 路径**（服务常驻），所以拿 `TotalTime: 272ms` 去说「启动很快」
+   是在说另一件事 —— 用户看到的首帧是 1.2~3.5 秒，不是 272ms。
+
+### 32.36.6 dexopt 状态：verify（82 KB）与 speed（29 MB）
+
+| 状态 | base.odex | base.vdex | 来源 |
+|---|---|---|---|
+| `status=verify` `reason=install` | 82,848 B | 8,612,944 B | 刚安装完 |
+| `status=speed` `reason=cmdline` | 29,370,016 B | 8,612,416 B | 手动 `cmd package compile -m speed` |
+
+verify 的 odex 只有 82 KB，意味着**没有任何方法被编译成机器码**，只有校验数据。
+
+同一台机器上 `status=speed` 之后的两次启动（`[32722]` / `[4449]`）：
+
+| 轮次 | app-ready | activity-created | 空白 | first-frame |
+|---|---|---|---|---|
+| a | +157ms | +1655ms | **1498ms** | +1829ms |
+| b | +102ms | +1013ms | **911ms** | +1170ms |
+
+### 32.36.7 归因边界（必须写清楚）
+
+「verify 3.2s → speed 1.0s」这个对照**不是单变量实验**：verify 那两次是**刚装完包的头两次启动**
+（还要建 data、首次初始化各仓库），speed 那两次是**跑了一段时间之后**。
+同时变了两个变量，所以只能说「AOT 之后观察到 1.0~1.5 秒」，**不能**说「AOT 省了 2 秒」。
+
+要单变量，得在 speed 状态下 `cmd package compile -m verify -f` 再测一轮，或者反过来。
+本轮没做，如实记为未验证。
+
+另一条旁证来自 canary 包（同代码、debug、空数据目录、`status=run-from-apk`）：
+`app-ready +1411ms → activity-created +1635ms`，空白只有 **224 ms**。
+它也是 WARM、且没有任何历史数据 —— 同样不是可比样本，只说明「这段空白不是代码结构决定的」。
+
+### 32.36.8 结论
+
+1. 这段空白**不是 App 主线程在算**：speed 状态下实测 911 ms 里进程 CPU 只涨 60 ms，主线程在 `do_epoll_wait`。
+2. 它主要是**系统侧把 Activity 从「进程已 attach」推到「onCreate 被调用」的耗时**，加上首次类加载。
+   在 App 代码层能做的优化空间很小（打点已细化到 `super.onCreate` 前后，没有可切的位置）。
+3. **可落地的改善只有 AOT 编译**：装完包跑一次
+   `cmd package compile -m speed -f io.github.mangi.eta`（需 root / adb），
+   或等系统在充电闲置时自己做完 background dexopt。
+4. 本次实验期间设备上的主应用已被编译成 `status=speed`（`base.odex` 29 MB）。
+   这是**对用户有利**的状态（启动更快、占 29 MB 空间），不是测试残留；
+   要回到安装后的原状用 `cmd package compile -m verify -f io.github.mangi.eta`。
+
