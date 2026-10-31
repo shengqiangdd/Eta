@@ -48,7 +48,6 @@
     <string name="capability_workspace">工作區與檔案</string>
     <string name="capability_workspace_summary">匯入、匯出與目錄存取</string>
     <string name="capability_workspace_private">私有工作區</string>
-    <string name="capability_workspace_private_summary">所選對話的私有工作區；不同對話的檔案互相隔離</string>
     <string name="capability_workspace_scope">瀏覽範圍</string>
     <string name="capability_workspace_scope_current">目前對話</string>
     <string name="capability_workspace_scope_global">全域工作區</string>

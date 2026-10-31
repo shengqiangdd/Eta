@@ -4861,3 +4861,62 @@ XML 头）。删掉这 3 条后，baseline 206 = 报告命中 206。
 - 删除的文案只能从 git 历史找回（`60cef2f` 之前），不是「挪到别处」；
 - 未在真机验证：本轮改动是纯资源删除，运行时引用的字符串全部保留，但**没有装机跑一遍界面**
   （风险低不等于验证过，如实记下）。
+
+## §32.44 口径扩到 plurals 与 `values/*.xml`，又清掉 3 条（2026-11-01 凌晨，承接上节）
+
+### 1. 上一节留的两条「边界」，其实是同一个洞
+
+§32.42 的基准只取 `values/strings.xml`，当时把 `R.plurals` 的 2 条和
+`values/root_capabilities.xml` 的 `capability_workspace_private_summary` 都记成「不在口径内」。
+这次把基准换成 `values/*.xml` 目录、并识别 `R.plurals` / `@plurals/` 之后，两件事一起解决：
+
+| 文件 | string / plurals 定义数 |
+|---|---|
+| `strings.xml` | 1972 |
+| `root_capabilities.xml` | 158 |
+| `linux_environment_ui.xml` | 8 |
+| `execution_service.xml` | 6 |
+| `ui_list_details.xml` | 5 |
+| `browser_sessions.xml` | 3 |
+| 合计 | 2152 |
+
+死项正好 **3 条**，与 lint 的 `UnusedResources`（202 条 `R.string` + 2 条 `R.plurals`）逐条对上。
+这也是判断口径是否完整的依据：多了说明误伤，少了说明漏扫。
+
+### 2. 改了什么
+
+- 基准从单文件改为 `values/` 目录下所有 xml。**不含** `values-night` / `values-v*`：那些是同一资源的
+  另一份取值（例如夜间配色），不是新键；
+- 引用识别加 `R.plurals.x` / `@plurals/x`；动态取名判据从「只认 string」放宽到 string 与 plurals；
+- 基线条目带类型前缀（`string:name` / `plurals:name`）。当前两类没有同名，但这个坑不值得等它出现再补——
+  同名时纯名字集合会让「有引用的 string」把「没引用的 plurals」救活。
+
+### 3. 删除（三语同步，共 24 行）
+
+| 资源 | 英文 | 简中 | 繁中 |
+|---|---|---|---|
+| `plurals/work_completed_steps` | 4 行 | 3 行 | 3 行 |
+| `plurals/linux_missing_core_commands` | 4 行 | 3 行 | 3 行 |
+| `string/capability_workspace_private_summary` | 1 行 | 1 行 | 1 行 |
+
+中文 plurals 只有 `other` 一个数量（中文不分单复数），所以比英文少一行。
+删后 `dead_strings` 归零（string 0 / plurals 0），基线为空。
+
+### 4. 连带检查（这次没有额外的）
+
+lint baseline 同步删 3 条 `UnusedResources`（206 → 203，纯删除、无插入）。这次没有别的类型跟着失效：
+两个 plurals 的内容不含 `...`（不触发 `TypographyEllipsis`），而 `PluralsCandidate` 针对的是
+**string** 里「`%d` 后跟词」，不是 plurals 本身。
+
+### 5. 结果
+
+- 门禁 `STAGES=test,lint,assemble` 全绿：契约 minSdk=33 ｜ 动作 65 ｜ 死文案 0 ｜ 单测 **876 / 0** ｜
+  lint 无新增、baseline **203** 命中 ｜ 包 `33,588,715` 字节 sha256 `035b41c504ed8544…`；
+- 本轮没有应用代码改动，只有资源与门禁脚本。
+
+### 6. 现在的边界
+
+- `values-night` / `values-v*` 不参与基准：某个键若只在夜间版定义，本脚本看不见；
+- 颜色 / 样式 / drawable / xml 仍未纳入（`UnusedResources` 里还剩 12 条：7 color、2 xml、1 drawable、
+  1 style、1 条 `ic_assistant_keyboard`）。它们牵涉主题与视觉，改了要装机看，不属「非必要不测」；
+- 仍未装机验证：本轮同样只删资源，运行时引用已由门禁保证，但**界面没跑过**。

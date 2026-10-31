@@ -501,9 +501,6 @@
     <item quantity="other">處理中 · 第 %d 步</item>
   </plurals>
   <string name="work_analyzing">正在分析任務</string>
-  <plurals name="work_completed_steps">
-    <item quantity="other">已完成 %d 個步驟</item>
-  </plurals>
   <string name="work_completed">分析完成</string>
   <string name="tool_elapsed_seconds">%1$d 秒</string>
   <plurals name="tool_group_calls">
@@ -912,9 +909,6 @@
   <string name="linux_not_installed">尚未安裝</string>
   <string name="linux_debian_requirements">需要 Root 與 Magisk、KernelSU 或 APatch BusyBox</string>
   <string name="linux_requirements">需要 Root 與 Magisk、KernelSU 或 APatch BusyBox</string>
-  <plurals name="linux_missing_core_commands">
-    <item quantity="other">缺少 %d 個核心指令</item>
-  </plurals>
   <string name="linux_progress_percent">%1$s · %2$d%%</string>
   <string name="linux_tool_progress_percent">%1$s · %2$s %3$d%%</string>
   <string name="linux_tool">工具</string>

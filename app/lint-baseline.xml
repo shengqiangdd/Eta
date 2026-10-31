@@ -1154,39 +1154,6 @@
 
     <issue
         id="UnusedResources"
-        message="The resource `R.string.capability_workspace_private_summary` appears to be unused"
-        errorLine1="    &lt;string name=&quot;capability_workspace_private_summary&quot;>Private workspace for the selected conversation; files stay isolated per conversation&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/root_capabilities.xml"
-            line="51"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.plurals.work_completed_steps` appears to be unused"
-        errorLine1="  &lt;plurals name=&quot;work_completed_steps&quot;>"
-        errorLine2="           ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="534"
-            column="12"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.plurals.linux_missing_core_commands` appears to be unused"
-        errorLine1="  &lt;plurals name=&quot;linux_missing_core_commands&quot;>"
-        errorLine2="           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1105"
-            column="12"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
         message="The resource `R.style.Theme_EtaVoiceInteractionSession` appears to be unused"
         errorLine1="    &lt;style name=&quot;Theme.EtaVoiceInteractionSession&quot; parent=&quot;@android:style/Theme.Material.Light.NoActionBar.TranslucentDecor&quot;>"
         errorLine2="           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">

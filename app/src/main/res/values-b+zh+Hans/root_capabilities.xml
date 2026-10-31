@@ -48,7 +48,6 @@
     <string name="capability_workspace">工作区与文件</string>
     <string name="capability_workspace_summary">导入、导出与目录访问</string>
     <string name="capability_workspace_private">私有工作区</string>
-    <string name="capability_workspace_private_summary">所选对话的私有工作区；不同对话的文件互相隔离</string>
     <string name="capability_workspace_scope">浏览范围</string>
     <string name="capability_workspace_scope_current">当前对话</string>
     <string name="capability_workspace_scope_global">全局工作区</string>

@@ -48,7 +48,6 @@
     <string name="capability_workspace">Workspace and files</string>
     <string name="capability_workspace_summary">Import, export, and directory access</string>
     <string name="capability_workspace_private">Private workspace</string>
-    <string name="capability_workspace_private_summary">Private workspace for the selected conversation; files stay isolated per conversation</string>
     <string name="capability_workspace_scope">Workspace scope</string>
     <string name="capability_workspace_scope_current">Current conversation</string>
     <string name="capability_workspace_scope_global">Global workspace</string>

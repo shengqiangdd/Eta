@@ -1,3 +1,3 @@
 # 已知死文案（strings.xml 里定义了、全仓没人引用）。
-# 由 tools/dead_strings.py --update 生成；只许减少 —— 新增一条，门禁就红。
-# 处理办法：删掉这条文案（三语一起删），或真的把功能接上；不要往这里加。
+# 条目格式：string:<name> 或 plurals:<name>，由 tools/dead_strings.py --update 生成。
+# 只许减少 —— 新增一条，门禁就红。处理办法：三语一起删掉，或真的把功能接上。
