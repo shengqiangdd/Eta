@@ -4730,7 +4730,7 @@ Unmatched issue types: **UseKtx (2)**」。即 baseline 里有两条记录，现
 | 扫描 | `app/src/main`、`app/src/test`、`app/src/androidTest`；kt/java/xml/json/js/html/txt/md/pro，共 1320 个文件 |
 | 引用写法 | `R.string.x` 与 `@string/x` |
 | 动态取名 | 出现非 `android` 命名空间的 `getIdentifier(...)` 即**报红**，那时「没人引用」的结论不成立 |
-| 基线 | `tools/dead_strings_allow.txt`，当前 201 条，只许减少 |
+| 基线 | `tools/dead_strings_allow.txt`（本轮 201 条；§32.43 清理后归零），只许减少 |
 
 两个口径限制写在脚本注释里：
 
@@ -4776,6 +4776,88 @@ Unmatched issue types: **UseKtx (2)**」。即 baseline 里有两条记录，现
 - `STAGES=test,lint,assemble sh tools/gate.sh` 全绿：契约 minSdk=33 ｜ 动作 7 接口/65 动作 ｜
   死文案 201 ｜ 单测 **876 / 0** ｜ lint 无新增、baseline **410** 命中 ｜ 包 `33,588,715` 字节
   sha256 `f62b1161c2971efc…`（与上一轮同值：本轮只加工具与注释，没有应用代码变化）；
-- **201 条一条都没删**。基线机制的作用是「止血 + 数字可比」，不是「清理完成」。真要删，得先补
-  「测试目录 + 运行时拼接」的口径，再分批删、每批同步收紧基线；
+- 本轮一条都没删。基线机制的作用是「止血 + 数字可比」，不是「清理完成」——
+  下一轮（§32.43）在补齐口径后把 201 条全部删掉了；
 - 未做：把脚本接进门禁之外的开发者自查入口（现在只有两道门禁会跑）。
+
+## §32.43 把 201 条死文案真的删了，并纠正「用官方任务更新 baseline」的坑（2026-11-01 凌晨，承接上节）
+
+### 1. 为什么这次可以删
+
+§32.41 判「收益小、误删风险大」时，缺的是证据；§32.42 把证据补上了：
+
+- 动态取名全仓只有一处，且读的是系统 bool（`config_nightDisplayAvailable`），与本项目资源无关；
+- 扫描覆盖 `main` / `test` / `androidTest`（含 assets 里的 js/html），1320 个文件；
+- 201 条与 lint 的 202 条 `R.string` 完全对齐：交集 201，本脚本多出 0；
+- 三语同名同删，`LocaleResourceParityTest` 守着键集一致。
+
+### 2. 删除方式与一次「脚本自己的误报」
+
+一次性脚本（不进仓库）：只处理 allowlist 里的 name，非死文案哪怕多行也原样保留；
+死文案若是多行块直接报错退出。第一次跑就报错：`values/strings.xml:392` 的
+`ui_core_memory_...` 是 3 行块 —— 查下去发现它**不是死文案**，是我的脚本把「任何多行块」都当成了
+错误。修法是先把「是否在 allowlist」判断前置。
+
+这正是先 dry-run 的价值：第一次 dry-run 用的统计脚本只算了命中块的单行/多行，没暴露这个分支；
+真正执行时才撞上。**「检查脚本」和「执行脚本」的判定口径必须一致**，否则前者给的安心是假的。
+
+结果：三语各删 201 条、各 201 行，共 603 行。文件行数 2350 → 2146、2294 → 2090、2294 → 2090
+（比 201 多减的 3 行来自 §32.41 那次删的 3 条死键）。删除后 XML 解析通过、键集合 = 原集合 − 201、
+三语同步。
+
+### 3. 坑：`updateLintBaseline` 会顺手抹掉别的技术债账目
+
+删完文案，`dead_strings` 归零，但 baseline 里 201 条 `UnusedResources` 已失效。第一反应是用官方任务：
+
+```bash
+./gradlew :app:updateLintBaseline
+```
+
+结果 baseline 从 410 → **206**，而不是预期的 209。逐条对账（id + message + location）：
+
+| | 条数 |
+|---|---|
+| 消失 | 266：`UnusedResources` 203、`PluralsCandidate` 23、`TypographyEllipsis` 21、`UseKtx` 12、`ModifierParameter` 4、`ApplySharedPref` 1、`HandlerLeak` 1、`AutoboxingStateCreation` 1 |
+| 新增 | 62（多为行号漂移后的同一条问题） |
+
+它的语义是「**以本次报告为准整份重写**」：本次没复现的条目一律丢掉。而「没复现」未必是修好了——
+行号漂移、增量分析、依赖图变化都可能让它这次不出现。于是 60 多条与本次改动无关的技术债记录被
+一次抹掉，等它们下次再报出来，就是未抑制问题、门禁直接红。
+
+已 `git checkout` 回滚，改成按块做文本删除：只删「`id="UnusedResources"` 且 message 里的
+`R.string.NAME` 在 201 集合里」的 issue 块，其余字节原样保留。
+
+### 4. 删除后的对账（两处「连带失效」）
+
+第一次删完 209 条，门禁红在 `LintBaselineFixed`：
+
+```
+3 errors/warnings were listed in the baseline file but not found in the project …
+Unmatched issue types: TypographyEllipsis (3)
+```
+
+原因：`TypographyEllipsis`（把 `...` 换成 `…`）有 23 条记录都指向 `strings.xml`，按「同文件同消息
+的实例数」匹配。被删的 201 条里有 1 条含 `...`（`page_processing_dde1db`，三语各一）→ 三语各少
+一个实例 → 3 条记录失配。核对行号也对得上（删前 764/745/730，lint 记的是 762/743/728，差 2 行
+XML 头）。删掉这 3 条后，baseline 206 = 报告命中 206。
+
+**教训**：删资源不只影响 `UnusedResources` —— 其它「按出现次数记账」的类型（`TypographyEllipsis`
+这类纯文本检查）也会跟着失效。删完必须重跑 lint 看 `LintBaselineFixed`，不能只看首尾两个数字。
+
+### 5. 结果
+
+- `dead_strings`：201 → **0 条**，`tools/dead_strings_allow.txt` 只剩表头（以后新增一条就红）；
+- lint baseline：410 → **206**（`UnusedResources` 14 条：2 xml / 7 color / 1 drawable / 1 string /
+  2 plurals / 1 style；其余为 UseKtx 67、PluralsCandidate 29、TypographyEllipsis 20 等）；
+- 门禁 `STAGES=test,lint,assemble` 全绿：契约 minSdk=33 ｜ 动作 65 ｜ 死文案 0 ｜ 单测 **876 / 0** ｜
+  lint 无新增、baseline **206** 命中 ｜ 包 `33,588,715` 字节 sha256 `60066630749e5f19…`
+  （**包体大小与删前完全相同**，sha 变了；不做因果解释）。
+
+### 6. 边界
+
+- 脚本只管 `<string>`：`plurals` 不在扫描内，而 baseline 里正好还有 `work_completed_steps`、
+  `linux_missing_core_commands` 两条 `R.plurals` 死资源 —— 下一轮若要继续清，口径要先扩到 plurals；
+- `capability_workspace_private_summary` 定义在 `values/root_capabilities.xml`，不在基准内，仍未处理；
+- 删除的文案只能从 git 历史找回（`60cef2f` 之前），不是「挪到别处」；
+- 未在真机验证：本轮改动是纯资源删除，运行时引用的字符串全部保留，但**没有装机跑一遍界面**
+  （风险低不等于验证过，如实记下）。

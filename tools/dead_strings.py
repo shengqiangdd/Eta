@@ -117,8 +117,9 @@ def write_allow(names):
     ]
     with open(ALLOW, "w", encoding="utf-8") as f:
         f.write("\n".join(header))
-        f.write("\n".join(sorted(names)))
-        f.write("\n")
+        if names:
+            f.write("\n".join(sorted(names)))
+            f.write("\n")
 
 
 def main():
