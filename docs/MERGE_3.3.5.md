@@ -3430,3 +3430,73 @@ request history: encode=Xms write=Yms chars=N
 - 缺一次「历史 ≥ 300 KB 且非首次调用」的样本（§32.28.4）。
 - 若届时 `encode` 占大头，下一步是减少编码量（增量化 / 只编码变化部分）；
   若 `write` 占大头，才轮到文件 I/O；若都不在，去查 `prepare` 与 Bundle 组装。
+
+## 32.29 每次请求都在算一份没人读的历史（2026-10-31，本机 PKX110/A16）
+
+### 32.29.1 怎么发现的
+
+顺着 §32.28 的「其余 15 ms」读 `requestBundle`，发现它在写完 `history_json`（走文件描述符）
+之后，**又**构造了一份旧客户端兼容载荷：
+
+```kotlin
+putParcelableArrayList(
+    KEY_HISTORY,
+    ArrayList(AgentConversationCodec.decodeTranscript(
+        AgentLegacyConversationProjection.encode(request.history, DIRECT_CHARS)
+    ).map { ... Bundle() ... }),
+)
+```
+
+读端是 `AgentWireText.read(bundle, "history_json") ?: bundle.getParcelableArrayList(KEY_HISTORY)`。
+而 `AgentWireText.put` **无论内联还是走文件都会写上 `history_json` 这个键**（内联 `putString`、
+超限则 `putXxx_fd`），所以只要请求是本版本客户端发的，`KEY_HISTORY` 那一支**永远取不到**。
+
+代价是每次发消息都要额外做：
+
+1. 对同一份历史**再做一遍** `sanitize` + 全量 JSON 编码（§32.25 刚删掉的同类往返，这里还留着一份）；
+2. 把刚编码出来的字符串**再解析回来**（`decodeTranscript`）；
+3. 拆成 N 个 `Bundle`，塞进 `ParcelableArrayList` 内联走 Binder —— 投影上限 `DIRECT_CHARS = 96_000`，
+   Parcel 用 UTF-16，最坏约 **190 KB 进 Binder 事务**。
+
+### 32.29.2 改法
+
+- `requestBundle(..., includeLegacyHistory: Boolean = false)`；正常请求不再构造 `KEY_HISTORY`。
+- `toLegacyBundle()` 传 `includeLegacyHistory = true` —— 它本来就只服务「兼容旧客户端 / 协议测试」，
+  实际调用点只有 `MSG_UPDATE_MODEL`（历史为空）与测试。
+- **读端兜底原样保留**：旧客户端（只写 `KEY_HISTORY`）发来的请求仍能解析，回退路径不会被砍掉。
+
+为什么可以只改写端：`AgentRuntimeService` 与入口在同一 APK、同一版本一起升级；旧 service 进程
+在 `pm install` 时已被杀。协议测试改走 `toLegacyBundle`，仍覆盖旧格式。
+
+### 32.29.3 预计收益（**推算，未实测**）
+
+§32.28.3 的 59 KB 样本：`build=22ms`，其中 `encode=5ms`、`write=2ms`，其余 15 ms 归「其它字段 +
+Bundle 组装」。本次删掉的正是那 15 ms 里的一部分：
+
+| 项 | 59 KB 时的粗算 |
+|---|---|
+| 投影再 sanitize + 编码 | ≈ 5 ms（与主编码同量级） |
+| 再解析回对象 | ≈ 2~3 ms |
+| N 个 Bundle + Binder 内联 | ≈ 2~3 ms |
+
+合计约 10 ms，但**这是逐项相加的估算，没有单独计时**。真实收益要看装包后的
+`request bundle: build=` —— 若它掉到 10 ms 出头，说明这 15 ms 主要就是这块；若几乎不动，
+说明剩下的时间在别处（`prepare`、Messenger 编组、类加载），那就要换方向。
+
+### 32.29.4 验证要求（缺一不可）
+
+1. `STAGES=test` 用例数不降、失败 0（本轮：见 §32.29.5）。
+2. 装包后发一条真实消息：`request history:` 仍在 → 写端没坏。
+3. **回答仍引用上文** → 读端确实读到了 `history_json`。这一条不能省：读端读空列表不报错，
+   表现是「静默失忆」，只测「有没有报错」是测不出来的。
+4. `request bundle: build=` 与 §32.28.3 的 22 ms 对照。
+
+新增单测 `modernRequestKeepsLegacyHistoryOffTheWireButStillRestoresHistory`（`AgentRuntimeWireTest`）
+同时钉住两半不变量：新请求不带 `history` 键但能还原历史；`toLegacyBundle` 仍内联且能往返。
+该类是 Robolectric 测试，本机 aarch64 跑不了（同 §32.27.4），所以它进不了门禁，只能作为
+将来在有 JVM 图形环境的机器上的护栏 —— **本轮的证据仍以真机日志为准**。
+
+### 32.29.5 门禁
+
+- `STAGES=test`：**835 用例 0 失败**（白名单 0 个）。新增用例本身是 Robolectric，本机不跑，见 §32.29.4。
+- `STAGES=lint,assemble`：见 §32.29.6（装包前的构建记录）。

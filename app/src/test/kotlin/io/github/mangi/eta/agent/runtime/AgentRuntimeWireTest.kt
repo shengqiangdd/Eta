@@ -27,6 +27,38 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33, 36])
 class AgentRuntimeWireTest {
+    /**
+     * §32.29：正常请求不再内联 `history`（旧客户端兼容载荷），但读端还必须能读回来。
+     *
+     * 另一半不变量在 [AgentRuntimeWire.toLegacyBundle]：旧客户端发的内联历史必须仍能解析，
+     * 否则一旦回退到旧发端就是静默失忆。
+     */
+    @Test
+    fun modernRequestKeepsLegacyHistoryOffTheWireButStillRestoresHistory() {
+        val history = listOf(
+            AgentModelClient.ConversationMessage(role = "user", content = "第一问"),
+            AgentModelClient.ConversationMessage(role = "assistant", content = "第一答"),
+            AgentModelClient.ConversationMessage(role = "tool", content = "工具结果", toolCallId = "call-1"),
+        )
+        val request = AgentRuntimeWire.RunRequest(
+            runId = "wire-history", prompt = "继续", images = emptyList(),
+            config = AgentModelClient.ModelConfig(
+                baseUrl = "https://example.invalid", apiKey = "test", model = "test",
+                systemPrompt = "", reasoningEffort = ReasoningEffort.OFF,
+            ),
+            history = history,
+        )
+
+        val modern = AgentRuntimeWire.toBundle(request, emptyList(), null)
+        assertFalse("正常请求不得再带内联 legacy 历史", modern.containsKey("history"))
+        assertTrue("history_json 必须仍在", modern.containsKey("history_json"))
+        assertEquals(history, AgentRuntimeWire.runRequestFromBundle(modern).history)
+
+        val legacy = AgentRuntimeWire.toLegacyBundle(request)
+        assertTrue("旧客户端路径仍要内联历史", legacy.containsKey("history"))
+        assertEquals(request, AgentRuntimeWire.runRequestFromBundle(legacy))
+    }
+
     @Test
     fun activeRunResponseCarriesPausedStateAndRunningCount() {
         val paused = AgentRuntimeWire.activeRunBundle("run-1", paused = true, runningCount = 2)

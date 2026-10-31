@@ -350,9 +350,16 @@ internal object AgentRuntimeWire {
                 putBoolean(KEY_PRESERVE_ORIGINAL, image.preserveOriginal)
             }
         },
+        includeLegacyHistory = true,
     )
 
-    private fun requestBundle(request: RunRequest, imageBundles: List<Bundle>, payloadDirectory: File? = null): Bundle = Bundle().apply {
+    private fun requestBundle(
+        request: RunRequest,
+        imageBundles: List<Bundle>,
+        payloadDirectory: File? = null,
+        /** 是否额外内联一份 [#KEY_HISTORY] 投影；仅旧客户端与协议测试需要。 */
+        includeLegacyHistory: Boolean = false,
+    ): Bundle = Bundle().apply {
         require(request.assistantScreenContext.length <= AssistantScreenContextProjection.MAX_CHARS) {
             "助理屏幕上下文超过容量预算"
         }
@@ -401,19 +408,28 @@ internal object AgentRuntimeWire {
         putString(KEY_CUSTOM_HEADERS_JSON, json.encodeToString(request.config.customHeaders))
         putString(KEY_CUSTOM_BODY_JSON, json.encodeToString(request.config.customBody))
         request.handoff?.let { putBundle(KEY_HANDOFF, toBundle(it)) }
-        putParcelableArrayList(
-            KEY_HISTORY,
-            ArrayList(AgentConversationCodec.decodeTranscript(AgentLegacyConversationProjection.encode(request.history, AgentLegacyConversationProjection.DIRECT_CHARS)).map { message ->
-                Bundle().apply {
-                    putString(KEY_ROLE, message.role)
-                    putString(KEY_CONTENT, message.content)
-                    putString(KEY_CONTENT_JSON, message.contentJson)
-                    putString(KEY_TOOL_CALL_ID, message.toolCallId)
-                    putString(KEY_REASONING_CONTENT, message.reasoningContent)
-                    putString(KEY_TOOL_CALLS_JSON, message.toolCallsJson)
-                }
-            })
-        )
+        if (includeLegacyHistory) {
+            // 旧客户端兼容载荷：只给 toLegacyBundle / 协议测试用。
+            //
+            // 正常请求曾经也无条件构造它，于是每次发消息都会对历史再做一遍
+            // sanitize + 全量 JSON 编码，再把刚编出来的字符串**解析回来**，
+            // 最后拆成 N 个 Bundle 内联进 Parcel —— 而读端 `history_json` 一定存在，
+            // 这一整块是死数据（§32.29）。59 KB 历史时约 10 ms，
+            // 且额外让 ~200 KB 走 Binder 事务（DirectChars 96k 字符 × UTF-16）。
+            putParcelableArrayList(
+                KEY_HISTORY,
+                ArrayList(AgentConversationCodec.decodeTranscript(AgentLegacyConversationProjection.encode(request.history, AgentLegacyConversationProjection.DIRECT_CHARS)).map { message ->
+                    Bundle().apply {
+                        putString(KEY_ROLE, message.role)
+                        putString(KEY_CONTENT, message.content)
+                        putString(KEY_CONTENT_JSON, message.contentJson)
+                        putString(KEY_TOOL_CALL_ID, message.toolCallId)
+                        putString(KEY_REASONING_CONTENT, message.reasoningContent)
+                        putString(KEY_TOOL_CALLS_JSON, message.toolCallsJson)
+                    }
+                })
+            )
+        }
         putParcelableArrayList(
             KEY_IMAGES,
             ArrayList(imageBundles)
