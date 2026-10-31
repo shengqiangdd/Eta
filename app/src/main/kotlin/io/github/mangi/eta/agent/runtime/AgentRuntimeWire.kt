@@ -571,8 +571,29 @@ internal object AgentRuntimeWire {
                 customHeaders = decodeCustomHeaders(bundle.getString(KEY_CUSTOM_HEADERS_JSON)),
                 customBody = decodeCustomBody(bundle.getString(KEY_CUSTOM_BODY_JSON))
             ),
-            history = if (!readText) emptyList() else AgentWireText.read(bundle, "history_json")?.let(AgentConversationCodec::decodeTranscript)
-                ?: bundle.getParcelableArrayList(KEY_HISTORY, Bundle::class.java).orEmpty().map { message ->
+            history = historyFromBundle(bundle, readText),
+            images = images,
+            handoff = bundle.getBundle(KEY_HANDOFF)?.let(::entryHandoffFromBundle)
+        )
+
+    /**
+     * 读回历史并解析，并把「读文件」与「JSON 解析」拆开计时（§32.33）。
+     *
+     * 为什么值得单独一行：服务端 `ingest` 此前只有总耗时（实测 478 KB 时 65 ms，
+     * 比客户端整个 build 还大），但不知道是读文件慢、还是解析慢 ——
+     * 到底是前者还是后者，决定了下一步该不该做「增量编码」。
+     */
+    private fun historyFromBundle(
+        bundle: Bundle,
+        readText: Boolean,
+    ): List<AgentModelClient.ConversationMessage> {
+        if (!readText) return emptyList()
+        val readStartedAt = android.os.SystemClock.elapsedRealtime()
+        val raw = AgentWireText.read(bundle, "history_json")
+        val readMs = android.os.SystemClock.elapsedRealtime() - readStartedAt
+        if (raw == null) {
+            // 旧客户端（只写了内联 KEY_HISTORY）的回退路径。
+            return bundle.getParcelableArrayList(KEY_HISTORY, Bundle::class.java).orEmpty().map { message ->
                 AgentModelClient.ConversationMessage(
                     role = message.getString(KEY_ROLE).orEmpty(),
                     content = message.getString(KEY_CONTENT).orEmpty(),
@@ -581,10 +602,16 @@ internal object AgentRuntimeWire {
                     reasoningContent = message.getString(KEY_REASONING_CONTENT).orEmpty(),
                     toolCallsJson = message.getString(KEY_TOOL_CALLS_JSON).orEmpty(),
                 )
-            },
-            images = images,
-            handoff = bundle.getBundle(KEY_HANDOFF)?.let(::entryHandoffFromBundle)
+            }
+        }
+        val decodeStartedAt = android.os.SystemClock.elapsedRealtime()
+        val decoded = AgentConversationCodec.decodeTranscript(raw)
+        AndroidAgentLogger.infoPersisted(
+            "run history: read=${readMs}ms decode=${android.os.SystemClock.elapsedRealtime() - decodeStartedAt}ms " +
+                "messages=${decoded.size} chars=${raw.length}"
         )
+        return decoded
+    }
 
     fun toBundle(handoff: EntryHandoff): Bundle = Bundle().apply {
         putString(KEY_HANDOFF_ID, handoff.id)
