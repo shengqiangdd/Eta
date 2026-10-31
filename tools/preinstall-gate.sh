@@ -79,6 +79,11 @@ for lang in ("values-b+zh+Hans", "values-b+zh+Hant"):
 print("  ✓ 插件页 %d 条文案三语齐全" % len(plugin_keys))
 PY
 
+# 与 tools/gate.sh 共用同一份判据：动作定义了却没人发，界面就永远不会出现那个入口。
+# 放在装前门禁里，是因为「装完才发现某个入口是死的」只能靠用户来回试。
+echo "  ── UI 动作接线 ──"
+python3 tools/ui_action_wiring.py || fail=1
+
 echo "==== 3/4 打包 ===="
 ./gradlew --offline $GRADLE_ARGS :app:assembleDebug >/tmp/gate-apk.log 2>&1
 if [ $? -ne 0 ]; then
