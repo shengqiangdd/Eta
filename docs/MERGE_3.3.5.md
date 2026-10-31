@@ -4380,3 +4380,31 @@ setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
   412 条命中，无新增问题）。教训与 §32.39.4 同源：**把「看不到」当成「没发生」**。
 - 自审工具只在本机（PKX110 / Android 16）跑过；测试机（A13 / MIUI）上没跑，
   那边的 dropbox 路径与 `dumpsys meminfo` 格式未复核。
+
+## §32.39.12 证据里必须有「你能改的那一帧」
+
+第一次真机调用返回的崩溃证据是：文件 → 异常 → `HashMap.resize` → `putVal` → `put` → `MapsKt.putAll`（共 4 帧）。
+真正属于本项目的 `AgentChatBody.kt:1557` 在第 5 帧，**被截掉了** —— 这条路走到底只能得出「去改 HashMap」。
+工具把唯一能动手的那一行丢了。
+
+修法：
+
+- 证据里除前 4 帧外，再补一行 `首个可改的帧：…`；
+- 「可改」的判据：优先取包名匹配的帧；canary 的类名不带 `.canary`，按包名找不到时退回「首个非平台帧」
+  （`java` / `javax` / `kotlin` / `android` / `androidx` / `dalvik` / `libcore` / `org.chromium` /
+  `com.google.android` 这些都不算）；
+- 这一帧已经在前面 4 帧里时不重复添加。
+
+用例 3 条（深层帧 / 不重复 / canary 包名不匹配）。写 canary 用例时顺带确认了一件事：
+「按包名认领崩溃」靠的是 `Process:` 行（applicationId），而类名不带 `.canary` —— 两个判断不能混用。
+
+**真机对比**（同一批崩溃文件，换包前后）：
+
+| | 换包前 | 换包后 |
+|---|---|---|
+| `crash-1793402235989` 证据 | 4 帧全是 `HashMap`/`MapsKt` | 多一行 `首个可改的帧：at …AgentChatBodyKt.toTimelineEntries(AgentChatBody.kt:1557)` |
+| `crash-1793289948247` 证据 | 4 帧全是 Conscrypt `unwrap` | 多一行 `首个可改的帧：at okio.internal.DefaultSocket$SocketSource.read(DefaultSocket.kt:124)` |
+
+第二条顺带把原因说清楚了：那次 OOM 是在**读 socket 响应体**时爆的（OkHttp/Okio 链路），不是莫名其妙的内存泄漏。
+
+门禁：**867 用例 / 0 失败**（864 + 3），`STAGES=assemble` 出包，装上去 `base.apk` sha256 = `f396ce42…` 与产物一致。

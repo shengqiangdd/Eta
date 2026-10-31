@@ -37,6 +37,7 @@ class AgentSelfAuditTest {
         capabilities: Map<String, Boolean> = emptyMap(),
         codeClues: AgentSelfAudit.CodeClues? = null,
         windowHours: Int = 48,
+        pkg: String = this.pkg,
     ) = AgentSelfAudit.Input(
         packageName = pkg,
         versionName = "3.3.5-debug",
@@ -65,6 +66,65 @@ class AgentSelfAuditTest {
         assertTrue(finding.evidence.any { it.contains("AgentChatBody.kt:1557") })
         assertTrue("OOM 的建议要给到分配点", finding.fix.contains("大对象分配"))
         assertTrue(finding.verify.isNotBlank())
+    }
+
+    private fun stack(vararg frames: String) = buildString {
+        appendLine("Process: io.github.mangi.eta")
+        appendLine("java.lang.OutOfMemoryError: Failed to allocate a 262160 byte allocation")
+        frames.forEach { appendLine("\tat $it") }
+    }
+
+    @Test
+    fun theOnlyFrameYouCanChangeIsNotCutOffByTheFirstFourSystemFrames() {
+        val deep = stack(
+            "java.util.HashMap.resize(HashMap.java:709)",
+            "java.util.HashMap.putVal(HashMap.java:668)",
+            "java.util.HashMap.put(HashMap.java:617)",
+            "kotlin.collections.MapsKt__MapsKt.putAll(Maps.kt:597)",
+            "io.github.mangi.eta.ui.components.AgentChatBodyKt.toTimelineEntries(AgentChatBody.kt:1557)",
+        )
+        val evidence = AgentSelfAudit.audit(
+            input(crashFiles = listOf(crash("data_app_crash@12.txt", 1, deep))),
+        ).findings.single().evidence
+        assertTrue(
+            "前 4 帧全是系统代码时，必须把自己那帧补进证据（§32.37 那次就丢在这一步）：$evidence",
+            evidence.any { it.startsWith("首个可改的帧") && it.contains("AgentChatBody.kt:1557") },
+        )
+    }
+
+    @Test
+    fun theActionableFrameIsNotRepeatedWhenItIsAlreadyInTheFirstFrames() {
+        val shallow = stack(
+            "io.github.mangi.eta.ui.components.AgentChatBodyKt.toTimelineEntries(AgentChatBody.kt:1557)",
+            "androidx.compose.runtime.ComposerKt.invokeComposable(Composer.kt:1)",
+        )
+        val evidence = AgentSelfAudit.audit(
+            input(crashFiles = listOf(crash("data_app_crash@13.txt", 1, shallow))),
+        ).findings.single().evidence
+        assertTrue("已经在证据里了就不该再补一行：$evidence", evidence.none { it.startsWith("首个可改的帧") })
+    }
+
+    @Test
+    fun canaryBuildStillFindsTheActionableFrameWhenPackageNameDiffers() {
+        // canary 的崩溃文件里 `Process:` 写的是 applicationId（带 .canary），
+        // 而类名不带 —— 既有的「按包名认领崩溃」靠前者，取可改帧不能也跟着靠后者。
+        val deep = stack(
+            "java.util.HashMap.resize(HashMap.java:709)",
+            "java.util.HashMap.putVal(HashMap.java:668)",
+            "java.util.HashMap.put(HashMap.java:617)",
+            "kotlin.collections.MapsKt__MapsKt.putAll(Maps.kt:597)",
+            "io.github.mangi.eta.ui.components.AgentChatBodyKt.toTimelineEntries(AgentChatBody.kt:1557)",
+        ).replaceFirst("Process: io.github.mangi.eta", "Process: io.github.mangi.eta.canary")
+        val evidence = AgentSelfAudit.audit(
+            input(
+                pkg = "io.github.mangi.eta.canary",
+                crashFiles = listOf(crash("data_app_crash@14.txt", 1, deep)),
+            ),
+        ).findings.single().evidence
+        assertTrue(
+            "canary 的类名不带 .canary，按包名找不到时必须退回「首个非平台帧」：$evidence",
+            evidence.any { it.startsWith("首个可改的帧") && it.contains("AgentChatBody.kt:1557") },
+        )
     }
 
     @Test

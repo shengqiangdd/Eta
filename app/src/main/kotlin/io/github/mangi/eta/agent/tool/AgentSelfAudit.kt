@@ -79,6 +79,12 @@ internal object AgentSelfAudit {
 
     private val EXCEPTION_LINE = Regex("^([A-Za-z_$][A-Za-z0-9_.$]*(?:Exception|Error|Throwable))(?::.*)?$")
     private val CODE_FRAME = Regex("\\bat [^\\s(]+\\((?:[^():]+\\.(?:kt|java):\\d+)\\)")
+
+    /** 平台/框架帧：这些行动不了，改不了一点。 */
+    private val PLATFORM_FRAME = Regex(
+        "^at (java|javax|kotlin|kotlinx|android|com\\.android|androidx|dalvik|libcore|org\\.chromium|com\\.google\\.android)\\.",
+    )
+
     private const val MAX_EVIDENCE_LINES = 4
 
     /** 能力缺失的说明与修复路径；顺序稳定，便于测试与阅读。 */
@@ -192,11 +198,18 @@ internal object AgentSelfAudit {
         val isAnr = file.name.contains("anr")
         val lines = file.text.lineSequence().map { it.trimEnd() }.filter { it.isNotBlank() }.toList()
         val exception = lines.firstOrNull { EXCEPTION_LINE.matches(it.trim()) }?.trim()
-        val frames = lines.map { it.trim() }.filter { CODE_FRAME.containsMatchIn(it) }.take(MAX_EVIDENCE_LINES)
+        val allFrames = lines.map { it.trim() }.filter { CODE_FRAME.containsMatchIn(it) }
+        val frames = allFrames.take(MAX_EVIDENCE_LINES)
+        val actionable = allFrames.firstOrNull { it.contains("$packageName.") }
+            ?: allFrames.firstOrNull { !PLATFORM_FRAME.containsMatchIn(it) }
         val evidence = buildList {
             add("文件：${file.name}")
             exception?.let { add("异常：$it") }
             addAll(frames)
+            // 前几帧常常是 HashMap.resize / ConscryptEngine.unwrap 这类平台代码，
+            // 真正能改的那一帧往往被截在 4 帧之外 —— §32.37 那次 OOM 自己的帧就在第 5 位，
+            // 工具给的证据里只剩「去改 HashMap」。把首个可改的帧补上。
+            if (actionable != null && actionable !in frames) add("首个可改的帧：$actionable")
             if (isEmpty() || (exception == null && frames.isEmpty())) {
                 add("未从文件里解析出异常行与代码栈帧（格式可能与预期不同）")
             }
