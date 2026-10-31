@@ -4037,3 +4037,86 @@ verify 的 odex 只有 82 KB，意味着**没有任何方法被编译成机器�
    这是**对用户有利**的状态（启动更快、占 29 MB 空间），不是测试残留；
    要回到安装后的原状用 `cmd package compile -m verify -f io.github.mangi.eta`。
 
+## 32.37 时间线投影把堆打爆：一条真正被找到的 OOM（2026-10-31，本机 PKX110/A16）
+
+### 32.37.1 不是空指针，是 OOM
+
+早前只记下「`toTimelineEntries` 崩溃」这个结论，没有堆栈。这次从 dropbox 里挖出原文
+（`/data/system/dropbox/data_app_crash@1793402235989.txt`）：
+
+```
+java.lang.OutOfMemoryError: Failed to allocate a 262160 byte allocation
+  with 1794336 free bytes and 1752KB until OOM, target footprint 268435456
+  at java.util.HashMap.resize(HashMap.java:709)
+  at kotlin.collections.MapsKt.toMap(Maps.kt:762)
+  at io.github.mangi.eta.ui.components.AgentChatBodyKt.toTimelineEntries(AgentChatBody.kt:1557)
+  at …AgentConversationMessages-UBWjYJY(AgentChatBody.kt:983)
+  at androidx.compose.runtime.Recomposer.performRecompose(Recomposer.kt:1318)
+```
+
+上下文：`v2026102909 (3.3.5-debug)`、`Process-Runtime: 69971591`（跑了 19.4 小时）、
+`target footprint 268435456`（堆上限 256 MB）。
+
+### 32.37.2 根因：每一帧都在为「每个消息 id」建一次 HashMap
+
+旧实现：
+
+```kotlin
+val previousWorkByMessageId = previous.asSequence()
+    .filterIsInstance<AgentTimelineEntry.WorkProcess>()
+    .flatMap { entry -> entry.messages.asSequence().map { it.id to entry } }
+    .toMap()
+```
+
+`previous` 是上一版的完整时间线。大会话里大多数消息是过程消息（思考/工具/工具汇总），
+全部被折进同一个 `WorkProcess` 块 —— 于是这张 map 的条目数等于**消息总数**（实测会话 8k+ 条，
+数据库侧 21,737 行）。而它在 `remember(visibleMessages)` 的块里，
+流式刷新时 `visibleMessages` 每变一次就重建一次。
+
+量级估算（每条 = 1 个 Pair + 1 个 HashMap.Node）：
+
+| 项 | 旧实现（n = 12,000） | 新实现（k = 工作过程块数，几十） |
+|---|---|---|
+| Pair | 12,000 × 16 B ≈ 192 KB | 0 |
+| HashMap.Node | 12,000 × 32 B ≈ 384 KB | k × 32 B ≈ 3 KB |
+| 桶数组（resize 时一次性） | 32,768 × 4 B ≈ 131 KB | 可忽略 |
+| **单帧额外分配** | **≈ 700 KB** | **≈ 3 KB** |
+
+崩溃点正在 `HashMap.resize` 分配那 262,160 字节的桶数组 —— 堆已只剩 1.7 MB。
+
+### 32.37.3 修法：索引建在「块」上，不建在「消息」上
+
+```kotlin
+val previousWorkEntries = previous.filterIsInstance<AgentTimelineEntry.WorkProcess>()
+val previousWorkByFirstId = previousWorkEntries
+    .mapNotNull { entry -> entry.messages.firstOrNull()?.let { m -> m.id to entry } }
+    .toMap()
+```
+
+只索引每个块的首条 id，规模从「消息数」降到「块数」。语义不能变 —— 前插时当前块的块首
+可能是新消息，所以先按首 id 查，未命中再按块扫描回退：
+
+```kotlin
+previousWorkByFirstId[workMessages.first().id]
+    ?: previousWorkEntries.firstOrNull { entry -> entry.messages.any { it.id in messageIds } }
+```
+
+回退只扫块列表（几十项），不会退化成 O(消息数)。
+
+### 32.37.4 测试与门禁盲区
+
+新增 3 个用例：前插且上一版有多个工作过程块（覆盖回退分支）、上一版存在空块（防御）、
+2000 条过程消息加一条（长会话追加仍复用 key）。原有 4 个用例不改。
+
+**更值得记的是门禁盲区**：`AgentChatTimelineEntriesTest` **原本不在 `tools/gate.sh` 的
+`FAST_TEST_FILTERS` 里**，也就是说改了时间线投影，`STAGES=test` 根本不会跑它（835 个用例里
+不包含这 4 个）。已加进白名单，现在 **842 个用例 / 0 失败**。
+同类问题在 ADR 0028「门禁不进门禁流程 = 没有门禁」里已经写过一次。
+
+### 32.37.5 未验证
+
+**没有在真机上复现验证**。原崩溃是「跑 19 小时后、堆已接近上限」的偶发场景，
+要在设备上构造同等内存压力才能重现；本轮只做到：单测覆盖语义、分配量有估算。
+装包验证留待下一次真机回归。
+
+

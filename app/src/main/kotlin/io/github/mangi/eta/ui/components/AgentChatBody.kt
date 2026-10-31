@@ -1604,9 +1604,15 @@ internal sealed interface AgentTimelineEntry {
 internal fun List<AgentChatMessageUi>.toTimelineEntries(
     previous: List<AgentTimelineEntry> = emptyList(),
 ): List<AgentTimelineEntry> = buildList {
-    val previousWorkByMessageId = previous.asSequence()
-        .filterIsInstance<AgentTimelineEntry.WorkProcess>()
-        .flatMap { entry -> entry.messages.asSequence().map { it.id to entry } }
+    // 索引只建在「工作过程块」上，而且只用块首条消息的 id 作键：规模 = 块数（几十），
+    // 不是消息总数（上万）。旧实现对**每个**消息 id 建 Pair + HashMap 节点，
+    // 长会话流式刷新时每一帧都要分配十几万字节，实测在 256MB 堆上直接崩：
+    //   java.lang.OutOfMemoryError at java.util.HashMap.resize
+    //     → kotlin.collections.MapsKt.toMap → AgentChatBodyKt.toTimelineEntries
+    //   （data_app_crash 2026-10-31 07:17，8k+ 条消息的会话）
+    val previousWorkEntries = previous.filterIsInstance<AgentTimelineEntry.WorkProcess>()
+    val previousWorkByFirstId = previousWorkEntries
+        .mapNotNull { entry -> entry.messages.firstOrNull()?.let { message -> message.id to entry } }
         .toMap()
     val workMessages = mutableListOf<AgentChatMessageUi>()
 
@@ -1614,8 +1620,12 @@ internal fun List<AgentChatMessageUi>.toTimelineEntries(
         if (workMessages.isEmpty()) return
         // 历史页可能从同一工作过程的中间开始；前插补齐后保留已显示分组的身份和滚动锚点。
         val messageIds = workMessages.mapTo(HashSet()) { it.id }
-        val previousEntry = workMessages.firstNotNullOfOrNull { previousWorkByMessageId[it.id] }
-            ?.takeIf { entry -> entry.messages.all { it.id in messageIds } }
+        // 先按块首 id 直接命中；未命中（前插让块首变成新消息）再退回按块扫描，
+        // 保证「同一工作过程前插后仍保留原 key」的语义不变。扫描只走块列表，不走消息列表。
+        val previousEntry = (
+            previousWorkByFirstId[workMessages.first().id]
+                ?: previousWorkEntries.firstOrNull { entry -> entry.messages.any { it.id in messageIds } }
+            )?.takeIf { entry -> entry.messages.all { it.id in messageIds } }
         val key = previousEntry?.key ?: "work-${workMessages.first().id}"
         val reusable = previousEntry?.takeIf { entry ->
             entry.messages.size == workMessages.size &&

@@ -91,6 +91,7 @@ has_stage() {
 # 大会话 journal 有 3100 万字符，任意一处退化成都行拼接都会让导出在真机上 OOM。
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
+  --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
   --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
   --tests io.github.mangi.eta.ui.app.LocaleResourceParityTest
