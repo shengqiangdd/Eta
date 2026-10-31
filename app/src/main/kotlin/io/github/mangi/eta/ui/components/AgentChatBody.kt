@@ -1597,13 +1597,20 @@ internal sealed interface AgentTimelineEntry {
     ) : AgentTimelineEntry
 }
 
+/** 复用普通消息条目时，一次匹配最多扫过多少个 previous 条目（含跳过的过程块）。 */
+private const val MESSAGE_REUSE_SCAN_BUDGET = 32
+
+/** 复用普通消息条目时，一次匹配最多比较多少条普通消息。 */
+private const val MESSAGE_REUSE_COMPARE_BUDGET = 8
+
 /**
  * 投影层只替换真正变化的消息实例；工作过程分组若成员实例全部未变，就复用上一版条目，
  * 让已结束的分组在正文流式刷新时保持参数同一性并跳过重组。
  */
 internal fun List<AgentChatMessageUi>.toTimelineEntries(
     previous: List<AgentTimelineEntry> = emptyList(),
-): List<AgentTimelineEntry> = buildList {
+): List<AgentTimelineEntry> = buildList(capacity = this@toTimelineEntries.size) {
+    // 容量直接给消息条数：条目数不会超过消息数，免掉 ArrayList 扩容的多次复制。
     // 索引只建在「工作过程块」上，而且只用块首条消息的 id 作键：规模 = 块数（几十），
     // 不是消息总数（上万）。旧实现对**每个**消息 id 建 Pair + HashMap 节点，
     // 长会话流式刷新时每一帧都要分配十几万字节，实测在 256MB 堆上直接崩：
@@ -1616,17 +1623,53 @@ internal fun List<AgentChatMessageUi>.toTimelineEntries(
         .toMap()
     val workMessages = mutableListOf<AgentChatMessageUi>()
 
+    // 普通消息条目也复用：流式刷新时只有最后一条在变，前面几千条的包装对象没必要每帧重建。
+    // 用单调游标扫 previous，**不建 Map** —— 按消息 id 建索引正是 §32.37 那次 OOM 的成因。
+    // 匹配不上时**不推进游标**，只向前看有限步：
+    //   · 前插历史、或中间某条被新实例顶替 → 当前位置不等，但游标留在原处，下一条照常复用；
+    //   · previous 头部少了几条（窗口滑动/删除）→ 前瞻窗口内能找到对齐点，从那里继续复用。
+    // 找不到就新建：最坏只是少复用一次，输出的内容始终取自当前 message，语义不变。
+    var previousMessageCursor = 0
+
+    fun messageEntry(message: AgentChatMessageUi): AgentTimelineEntry.Message {
+        var scan = previousMessageCursor
+        var scanned = 0
+        var compared = 0
+        while (scan < previous.size &&
+            scanned < MESSAGE_REUSE_SCAN_BUDGET &&
+            compared <= MESSAGE_REUSE_COMPARE_BUDGET
+        ) {
+            val candidate = previous[scan]
+            scan++
+            scanned++
+            if (candidate !is AgentTimelineEntry.Message) continue
+            compared++
+            if (candidate.message === message) {
+                previousMessageCursor = scan
+                return candidate
+            }
+        }
+        return AgentTimelineEntry.Message(message)
+    }
+
     fun flushWorkProcess() {
         if (workMessages.isEmpty()) return
         // 历史页可能从同一工作过程的中间开始；前插补齐后保留已显示分组的身份和滚动锚点。
-        val messageIds = workMessages.mapTo(HashSet()) { it.id }
+        val first = workMessages.first()
         // 先按块首 id 直接命中；未命中（前插让块首变成新消息）再退回按块扫描，
         // 保证「同一工作过程前插后仍保留原 key」的语义不变。扫描只走块列表，不走消息列表。
-        val previousEntry = (
-            previousWorkByFirstId[workMessages.first().id]
-                ?: previousWorkEntries.firstOrNull { entry -> entry.messages.any { it.id in messageIds } }
-            )?.takeIf { entry -> entry.messages.all { it.id in messageIds } }
-        val key = previousEntry?.key ?: "work-${workMessages.first().id}"
+        // 快路径：块首 id 命中，且上一版块是本块的首段或尾段 —— 只比实例，不分配集合。
+        // 流式追加（块首不变）、前插历史（尾部不变）都走这条路；旧实现每帧给整块消息建 id 集合，
+        // 实测 2000 条过程消息的会话里占 138KB/次（§32.39.14）。
+        val alignedEntry = previousWorkByFirstId[first.id]
+            ?.takeIf { entry -> isPrefixOrSuffixRun(entry.messages, workMessages) }
+        // 慢路径：前插让块首变成新消息、或两段合并时，仍回退到 id 集合，语义与旧实现一致。
+        val previousEntry = alignedEntry ?: run {
+            val messageIds = workMessages.mapTo(HashSet()) { it.id }
+            previousWorkEntries.firstOrNull { entry -> entry.messages.any { it.id in messageIds } }
+                ?.takeIf { entry -> entry.messages.all { it.id in messageIds } }
+        }
+        val key = previousEntry?.key ?: "work-${first.id}"
         val reusable = previousEntry?.takeIf { entry ->
             entry.messages.size == workMessages.size &&
                 entry.messages.indices.all { index -> entry.messages[index] === workMessages[index] }
@@ -1640,10 +1683,30 @@ internal fun List<AgentChatMessageUi>.toTimelineEntries(
             workMessages += message
         } else {
             flushWorkProcess()
-            add(AgentTimelineEntry.Message(message))
+            add(messageEntry(message))
         }
     }
     flushWorkProcess()
+}
+
+/**
+ * short 是否与 long 的首段或尾段按**实例**逐一相同。只做指针比较，不分配集合；
+ * 用来在不建 id 集合的前提下确认「上一版的工作过程块就是这一块的首/尾子串」。
+ */
+private fun isPrefixOrSuffixRun(
+    short: List<AgentChatMessageUi>,
+    long: List<AgentChatMessageUi>,
+): Boolean {
+    if (short.isEmpty() || short.size > long.size) return false
+    val suffixStart = long.size - short.size
+    var prefixMatches = true
+    var suffixMatches = true
+    for (index in short.indices) {
+        if (prefixMatches && short[index] !== long[index]) prefixMatches = false
+        if (suffixMatches && short[index] !== long[suffixStart + index]) suffixMatches = false
+        if (!prefixMatches && !suffixMatches) return false
+    }
+    return true
 }
 
 private fun AgentTimelineEntry.contentType(): Any = when (this) {

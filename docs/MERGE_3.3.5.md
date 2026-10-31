@@ -4431,3 +4431,53 @@ setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
 
 **这证明不了什么**：它只保证「旧证据不会被当成现症状」，不证明当前版本已经修好 OOM ——
 要证明那个，得在装包之后真的再崩一次。
+
+## §32.39.14 长会话每帧重建上万包装对象：时间线条目复用（含实测分配量）
+
+§32.37 删掉「按消息 id 建 HashMap」之后不再爆内存，但每次重组仍然**为每条消息新建一个
+`AgentTimelineEntry.Message`**，工作过程块还要**为整块消息建一个按 id 的 HashSet**。
+真机那次崩溃的会话有 8,435 条消息 —— 也就是每帧新建几千个包装对象、再加一个几千项的集合。
+
+这次改三处：
+
+1. **普通消息条目复用**（`AgentChatBody.kt` 的 `messageEntry`）：单调游标扫上一版条目，**不建 Map**
+   （建 Map 正是 §32.37 的坑）。匹配不上时**不推进游标**，只在 32 个条目 / 8 条消息的预算内前瞻：
+   前插历史、或中间某条被新实例顶替 → 游标留在原处，下一条照常复用；上一版头部被裁掉几条（窗口滑动）
+   → 在窗口内重新对齐。找不到就新建：**最坏只是少复用，输出的内容永远取自当前 message**，语义不变。
+2. **工作过程块快路径**（`flushWorkProcess`）：块首 id 命中、且上一版块是本块的**首段或尾段**
+   （`isPrefixOrSuffixRun`，只比实例、零分配）→ 直接复用，不再每帧建 id 集合。
+   前插让块首变成新消息、或两段合并时，仍回退到旧的 id 集合路径，行为与之前一致。
+3. **`buildList(capacity = 消息条数)`**：条目数不会超过消息数，省掉 ArrayList 扩容的多次复制。
+
+**实测分配量**（JVM 探针，`ThreadMXBean.getThreadAllocatedBytes`，200 次取平均，测完即删）：
+
+| 场景 | 改前 | 改后 | 说明 |
+|---|---|---|---|
+| 5,000 条普通消息，只有末条换实例 | 140,170 B/次（全新建） | **20,188 B/次** | −86%；只加游标复用、还没加容量提示时是 75,412 B/次 |
+| 2,000 条过程消息，追加一步 | 147,038 B/次 | **50,015 B/次** | −66%，其中「建 id 集合」那一项归零 |
+| 2,000 条过程消息，完全没变 | 138,864 B/次 | **41,960 B/次** | −70%；剩下的 42KB 主要是 `workMessages` 列表自身的增长 |
+
+两条工作过程数据里的 13 万字节几乎全是那个按 id 的 HashSet —— 也就是说，二次 OOM 的**分配形态**
+（每帧一个几千项集合）到这一版才真正消失。
+
+**用例**（`AgentChatTimelineEntriesTest` 共 13 条，新增 4 条）：
+`prependingOlderMessagesKeepsTheFollowingEntriesIdentical`（前插 300 条后，后面每一条都 `assertSame`）、
+`replacingOneMiddleMessageOnlyRebuildsThatEntry`（中间替换只重建那一条，游标不能永久卡住）、
+`droppingLeadingMessagesStillReusesTheRemainder`（裁头 3 条后仍复用其余 97 条）、
+`alignmentBeyondTheLookaheadOnlyCostsReuseNotCorrectness`（错位超出窗口时只少复用，绝不把 A 的内容
+配到 B 的位置上）。
+
+**门禁与装机**：`STAGES=test,assemble` → 用例 **875 / 0 失败**；APK `sha256 = 61b16a26…`，
+`pm install -r -d` 后已装 `base.apk` 的 sha256 与产物逐字节一致，`firstInstallTime` 仍是 10-03 10:38
+（没有变成覆盖安装），dex 里能搜到 `isPrefixOrSuffixRun`、搜不到测试类。
+
+**真机观察（只说明「装上能跑」，不是与旧版的对比）**：新进程 16,987 正常起来，dropbox 里的崩溃文件数
+仍是 2（都是装包前的旧崩溃）；`dumpsys gfxinfo` 自本次装机起累计 527 帧、janky 8.73%（50 分位 15ms）。
+
+**没验证的**：真机上的帧率/卡顿改善没有量化 —— 这次只有 JVM 侧的分配量与「条目实例是否同一」两个证据。
+另外 8 条比较预算是对齐窗口的设计选择，超出后退化成全新建（有用例守着「只少复用、不错配」）。
+
+**顺带记一笔（采样器的坑）**：装包会在 22:09:21 杀掉旧进程，而当时那个采样进程从 22:09:52 起
+`pidof`、`dumpsys meminfo`、`/proc/<pid>/status` 全部取不到数，直到 22:26:54 才恢复 ——
+18 分钟的空档。已停掉旧采样进程，改用**装包后重新起算**的 `samples-after-install.txt`。
+教训：装包窗口的观测数据不能直接连起来看，换进程后要重新起算并标明断点。

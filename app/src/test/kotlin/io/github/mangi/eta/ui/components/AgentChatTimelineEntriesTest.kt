@@ -97,6 +97,101 @@ class AgentChatTimelineEntriesTest {
     }
 
     /**
+     * 普通消息条目也要复用：流式刷新时只有最后一条在变，前面几千条不必每帧新建包装对象。
+     * 长会话（真机见过 8,435 条）里这决定了每帧是「新建几个对象」还是「新建几千个」。
+     */
+    @Test
+    fun unchangedPlainMessagesReusePreviousEntries() {
+        val user = UserMessageUi(id = "user-1", content = "问题")
+        val previous = listOf(
+            user,
+            AgentMessageUi(id = "agent-1", content = "答", isStreaming = true),
+        ).toTimelineEntries()
+
+        val next = listOf(
+            user,
+            AgentMessageUi(id = "agent-1", content = "答案", isStreaming = true),
+        ).toTimelineEntries(previous)
+
+        assertSame("没变的那条不该每帧重建", previous[0], next[0])
+        assertNotSame("变了的那条必须新建", previous[1], next[1])
+    }
+
+    @Test
+    fun appendingOneMessageKeepsEveryEarlierEntryIdentical() {
+        val head = (0 until 500).map {
+            UserMessageUi(id = "u-$it", content = "历史 $it")
+        }
+        val previous = head.toTimelineEntries()
+
+        val next = (head + UserMessageUi(id = "u-500", content = "新的一条"))
+            .toTimelineEntries(previous)
+
+        assertEquals(previous.size + 1, next.size)
+        previous.indices.forEach { index -> assertSame("第 $index 条没变却重建了", previous[index], next[index]) }
+    }
+
+    /** 前插历史（向上翻页）不该把后面那些没变的普通消息条目全部重建。 */
+    @Test
+    fun prependingOlderMessagesKeepsTheFollowingEntriesIdentical() {
+        val head = (0 until 300).map { UserMessageUi(id = "u-$it", content = "历史 $it") }
+        val previous = head.toTimelineEntries()
+
+        val next = (listOf(UserMessageUi(id = "u-old", content = "更早的一条")) + head)
+            .toTimelineEntries(previous)
+
+        assertEquals(previous.size + 1, next.size)
+        assertNotSame("新插入的那条必须是新建的", previous[0], next[0])
+        previous.indices.forEach { index ->
+            assertSame("第 $index 条没变却重建了", previous[index], next[index + 1])
+        }
+    }
+
+    /** 中间一条被新实例顶替：只该重建那一条，后面的游标不能永久卡住。 */
+    @Test
+    fun replacingOneMiddleMessageOnlyRebuildsThatEntry() {
+        val head = (0 until 100).map { UserMessageUi(id = "u-$it", content = "历史 $it") }
+        val previous = head.toTimelineEntries()
+
+        val changed = head.toMutableList()
+            .also { it[50] = UserMessageUi(id = "u-50", content = "历史 50（改）") }
+        val next = changed.toTimelineEntries(previous)
+
+        assertEquals(previous.size, next.size)
+        assertNotSame(previous[50], next[50])
+        previous.indices.filter { it != 50 }.forEach { index ->
+            assertSame("第 $index 条没变却重建了", previous[index], next[index])
+        }
+    }
+
+    /** previous 头部被裁掉几条（窗口滑动）：前瞻要在窗口内对齐，余下的继续复用。 */
+    @Test
+    fun droppingLeadingMessagesStillReusesTheRemainder() {
+        val all = (0 until 100).map { UserMessageUi(id = "u-$it", content = "历史 $it") }
+        val previous = all.toTimelineEntries()
+        val next = all.drop(3).toTimelineEntries(previous)
+
+        assertEquals(97, next.size)
+        next.indices.forEach { index ->
+            assertSame("第 $index 条没变却重建了", previous[index + 3], next[index])
+        }
+    }
+
+    /** 错位超出前瞻窗口时只该少复用，绝不能错位配对：内容永远取自当前列表。 */
+    @Test
+    fun alignmentBeyondTheLookaheadOnlyCostsReuseNotCorrectness() {
+        val all = (0 until 40).map { UserMessageUi(id = "u-$it", content = "历史 $it") }
+        val previous = all.toTimelineEntries()
+        val next = all.drop(20).toTimelineEntries(previous)
+
+        assertEquals(20, next.size)
+        next.forEachIndexed { index, entry ->
+            val message = (entry as AgentTimelineEntry.Message).message as UserMessageUi
+            assertEquals("第 $index 条内容必须来自当前列表", "u-${index + 20}", message.id)
+        }
+    }
+
+    /**
      * 长会话的流式刷新：块首不变就要复用原 key。
      * 用 2000 条过程消息跑一遍，覆盖旧实现里要为每个 id 建 map 条目 的那条路径。
      */
