@@ -95,8 +95,13 @@ has_stage() {
 # 它此前**一次都没被门禁跑过**；同一段代码的另一条用例正是在全量跑里被发现断言漂移的。
 # 注意 AgentRuntimeWireTest 不能加：它带 @Config(sdk = [33, 36])，sdk 36 实例在
 # Linux/aarch64 上必然撞 Robolectric native runtime，加进来等于给门禁塞固定红。
+#
+# AgentSelfAuditTest 是纯 JVM（判定逻辑不碰 Android），2026-11-01 随 eta_self_audit 一起加：
+# 它守着「窗口外的旧崩溃、别人的崩溃、有 root 兜底的通知权限都不算本应用缺陷」，
+# 以及「没有 root 时必须写进 unavailable，而不是报『没有崩溃』」。
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
+  --tests io.github.mangi.eta.agent.tool.AgentSelfAuditTest
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest

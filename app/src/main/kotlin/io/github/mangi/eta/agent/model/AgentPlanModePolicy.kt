@@ -38,6 +38,7 @@ internal object AgentPlanModePolicy {
         "skills_read",
         "skills_read_resource",
         "skills_list_curated",
+        "eta_self_audit",
         "skills_inspect_github",
         "wait",
         "wait_for_text",

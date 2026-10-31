@@ -259,6 +259,8 @@ internal class AgentLocalTools(
         }
     }
     private val rootCommandExecutor = BoundedRootCommandExecutor(logger, rootAvailable = rootAvailable)
+    /** 自审：只读，不改任何系统状态；无 root 时崩溃域自动降级为 unavailable。 */
+    private val selfAuditTool = AgentSelfAuditTool(context, rootCommandExecutor, rootAvailable, logger)
     private val structuredDeviceTools = AgentStructuredDeviceTools(
         context = context,
         logger = logger,
@@ -441,6 +443,7 @@ internal class AgentLocalTools(
                 }
             }
             val produced = when (toolCall.name) {
+                "eta_self_audit" -> textResult(selfAuditTool.run(args))
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
                 "launch_app" -> textResult(launchApp(args))

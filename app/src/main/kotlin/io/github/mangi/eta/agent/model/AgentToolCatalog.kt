@@ -32,6 +32,7 @@ internal object AgentToolCatalog {
             AgentTodoToolCatalog.appendTo(tools)
             AgentGoalToolCatalog.appendTo(tools)
             AgentAskUserToolCatalog.appendTo(tools)
+            AgentSelfAuditToolCatalog.appendTo(tools)
             AgentDeviceToolCatalog.appendTo(
                 tools,
                 directTools = deviceDirectTools,

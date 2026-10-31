@@ -4221,3 +4221,87 @@ TTL / 容量上限自清、`discard` 立即失效。
 setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
 # 数据：/data/local/tmp/eta/oomwatch/metrics.csv（每 5 分钟一行）
 ```
+
+## §32.39 `eta_self_audit`：让 Agent 能查 Eta 自己哪里坏了
+
+### 32.39.1 需求与边界
+
+用户要的是「Agent 能自动发现当前 Eta 的缺陷，并知道怎么改」。这句话可以做成两种东西：
+
+- 一个**日志罗列器**（把 crash 文件念一遍）—— 没有判断，价值低；
+- 一个**带判定规则的自审**：把设备上的事实收敛成「有证据的缺陷 + 测不了的域 + 线索」。
+
+做第二种。边界写死：**只读**，不改配置、不停进程、不动系统设置；
+**只说有证据的**，推测进 `clues` 并标 `confidence`。
+
+### 32.39.2 输出三段（这是与「日志搬运」的分界线）
+
+```json
+{"ok":true,"package":"…","version":"3.3.5-debug","window_hours":48,
+ "findings":[{"severity":"P0","confidence":"observed","title":"崩溃：java.lang.OutOfMemoryError",
+              "evidence":["文件：data_app_crash@1793402235989.txt","异常：…","at …(AgentChatBody.kt:1557)"],
+              "impact":"…","fix":"…","verify":"…"}],
+ "clues":[{"title":"读不到 git 状态（这台设备通常没有 git），未提交改动数未知"}],
+ "unavailable":["崩溃与 ANR：读取系统 dropbox 需要 root；当前无法判断有没有崩过"]}
+```
+
+- `findings`：P0/P1/P2 排序，每条必须有 `evidence`，并且 `fix` / `verify` 不能空；
+- `clues`：线索不是缺陷（TODO 数、未提交改动）；
+- `unavailable`：**这次测不了的域**。这一段是诚实性的核心 —— 没有 root 时宁可不说话，
+  也不能返回「暂无崩溃」让模型据此宣称「很健康」。
+
+### 32.39.3 判定规则（都有单测）
+
+| 规则 | 结论 |
+|---|---|
+| 窗口内本包 crash 文件，含异常行 + 代码栈帧 | P0 / observed，证据带首帧 |
+| 窗口内 ANR 文件 | P0，建议看主线程当时在做什么 |
+| 窗口内 ≥2 次崩溃且当前进程刚起（<30 分钟） | P0 / **inferred**「疑似崩溃循环」 |
+| Java Heap PSS / 堆上限 ≥ 90% | P0；≥ 75% P1（`notes` 里写明 PSS≠allocated） |
+| 无障碍未连接 | P1 |
+| 通知使用权未授予 | P1；**有 root 时不报**（root 可兜底读通知） |
+| 使用情况访问未授予 | P1 |
+| 崩溃文件早于窗口 / 属于别的包 | 不计入，只在 `notes` 里说明 |
+
+### 32.39.4 真机挖出的一个假话（本轮）
+
+第一版把 `git -C <src> status --porcelain` 的输出行数直接当「未提交改动数」。
+真机上 **`git` 根本不存在**：命令失败、stdout 为空 → 计数 0 → 报告「工作区是干净的」。
+
+这正是自审工具最不该犯的错：**把「读不到」当成「没问题」**。已改：
+
+- 退出码 0 才算已知；`grep` 允许 0（有匹配）与 1（无匹配）；其余（含超时 -2）记为 `-1` = 未知；
+- `-1` 时 `clues` 明确写「读不到 git 状态（这台设备通常没有 git），未提交改动数未知」；
+- 补一条用例 `unknownGitStateIsNotReportedAsClean` 钉住它。
+
+### 32.39.5 接入点与安全
+
+| 位置 | 改动 |
+|---|---|
+| `AgentSelfAudit.kt` | 纯逻辑判定（无 Android 依赖，可纯 JVM 单测） |
+| `AgentSelfAuditTool.kt` | 取数层：dropbox / `dumpsys meminfo` / 权限 / 可选源码扫描 |
+| `AgentSelfAuditToolCatalog.kt` | schema（scope / hours / source_root） |
+| `AgentToolCatalog` | 无条件注册进目录 |
+| `AgentToolRequirements` | 登记 `RootRequirement.PARTIAL`（无 root 仍可用，crash 域降级） |
+| `AgentLocalTools` | `executeLocal` 分发 |
+| `AgentPlanModePolicy` | 加入只读白名单（计划模式下可用） |
+
+安全：所有 root 命令都是**固定串**；拼进去的只有系统给的 dropbox 文件名与包名，
+两者先过 `^data_(app_crash|anr)@\d+\.txt$` / `^[A-Za-z0-9._]+$` 白名单。
+`source_root` 参数也只接受 `^/[A-Za-z0-9._/\-]+$`，并且只用于 `test` / `grep` / `git` 的目录参数。
+
+### 32.39.6 验证
+
+- **单测**：`AgentSelfAuditTest` 10 个用例（含「窗口外不算」「别人的崩溃不算」「有 root 时通知不算缺陷」
+  「没 root 必须 unavailable」「未知 git 不许报干净」），已进 `FAST_TEST_FILTERS`；
+- **门禁**：`STAGES=test` **860 用例 / 0 失败**；
+- **真机取数核对**（逐条用等价 shell 命令确认真实环境符合假设）：
+  dropbox 文件名 `data_app_crash@<毫秒>.txt` ✓；`dumpsys meminfo` 存在 `Java Heap:` 行 ✓；
+  `grep -rIl -e TODO -e FIXME --include=*.kt` 在源码目录返回 5 个文件 ✓；`git` 不存在 ✓（正是因此改了 32.39.4）。
+
+### 32.39.7 未验证
+
+**没有在真机上真正调用过一次 `eta_self_audit`**（需要模型回合；本轮只验证到「取数环境与判定规则」）。
+装包后第一次真实调用时，需要核对：返回的 `findings` 里 OOM 那条是否指向
+`data_app_crash@1793402235989.txt`、`notes` 里的 PSS 比例是否与 `dumpsys` 一致。
+在此之前，这个工具的定级是「单测覆盖判定 + 取数环境核对」，不是「真机跑通」。

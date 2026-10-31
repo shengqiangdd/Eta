@@ -52,6 +52,8 @@ internal object AgentToolRequirements {
             "write_file", "list_directory", "read_image", "edit_file", "edit_files", "list_file_backups", "restore_file",
             "stat_file", "glob_files", "grep_files", "code_outline", "project_info",
             "virtual_display_list", "plugin_list", "plugin_enable", "plugin_reload",
+            // 自审：没有 root 时仍能给出堆压力与权限缺口，崩溃域会明确标为 unavailable。
+            "eta_self_audit",
         )
         register(
             RootRequirement.REQUIRED,
