@@ -4618,3 +4618,93 @@ UI 动作接线检查：7 个动作接口 / 65 个动作
 - **未验证**：本轮没有新增 UI 行为（只删），所以没有做界面回归；也**没有装包** —— 删掉的动作与
   消息类型在运行时不可达（`RunTraceMessageUi` 从未被构造），编译 + 876 个单测已覆盖签名与分支；
   要装随时可装，不必等下一轮。
+
+## §32.41 「-> Unit」查完没有真缺陷，但删代码留下了死文案（2026-11-01，同轮续）
+
+### 1. 空处理审计：三处都不是缺陷
+
+上一轮删掉两个 `-> Unit` 分支后，`AgentAppRoot` 里已经没有动作落到空分支。往下一层扫
+`onClick = {}`（能点但没反应），全仓 3 处：
+
+| 位置 | 实际语义 | 判定 |
+|---|---|---|
+| `UserTerminalScreen.CommandBlock` | `combinedClickable` 的 `onClick = {}` + `onLongClick = 弹菜单` | 长按模式，不改 |
+| `AgentWorkProcess` 的 `ToolSummaryMessageUi` 分支 | `onSuggestionClick = {}`：该消息类型不含推荐提问，参数是签名必填 | 类型上不可达，不改 |
+| `EtaAssistantComposer` 输入框容器 | `clickable(onClick = {})` 让整块容器接点击，焦点交给内部 `BasicTextField` | 刻意，不改 |
+
+结论：这一层没有「假按钮」。**不是每个空 lambda 都是缺陷** —— 判据是「用户能不能点到、
+点了有没有别的通道」，而不是文本匹配。
+
+### 2. 真正的尾巴：三语文案变成死键
+
+删掉 `ImportZip(uri)` 与能力卡片后，三个字符串再没人引用：
+
+- `state_please_select_the_zip_file_provided_by_the_system_fi_fea145`
+- `state_ui_unable_to_open_selection_9f0004`
+- `ui_available_capacity_743337`
+
+**不删会怎样**：资源还在、引用没了 → lint 的 `UnusedResources` 会新增 3 条未抑制问题，
+而 `lint_baseline_audit.py` 要求「报告里的未抑制问题必须为 0」→ 下次 `STAGES=lint` 直接红。
+删资源不是顺手，是必须。
+
+三个语言目录各一处（`values`、`values-b+zh+Hans`、`values-b+zh+Hant`），按整行精确匹配删除，
+行数同步变化（2350→2347 / 2294→2291 / 2294→2291）。`LocaleResourceParityTest`（三语键集一致）
+随单测通过。
+
+### 3. 顺带把「死文案」的盘子量了一遍
+
+全仓 2122 条基准文案里，**201 条**没有任何 `R.string.` / `@string/` 引用（≈9.5%）。
+`lint-baseline.xml` 里已记 **215 条** `UnusedResources` —— 两者数量接近，说明这基本是**已知
+技术债**，不是本轮造成的。抽查 4 条（`conversation_stop_and_delete`、`ui_reload_5982c4`、
+`tool_personal_context`、`settings_plan_mode_title`）确认除 `strings.xml` 外全仓无引用。
+
+**没有一次删掉 201 条**：扫描没覆盖测试目录与运行时拼接，单凭「没有 `R.string.x`」不足以判定
+无用；一次删 600 行（三语）收益小、误删风险大。记为待办，不假装已清。
+
+### 4. 我自己犯的错（第二笔）
+
+上一轮为了「同步文档」，把 `docs/TECHNICAL.md` 里「只看对话视图」那张表里的
+`RunTraceMessageUi` 删掉了 —— 而那一节开头就写着「**本节是实现历史，不是当前代码**」。
+历史章节记录的是当时的事实，删掉它不是同步，是篡改。已恢复。
+
+教训：改文档前先读它自己的适用范围声明；「代码里没有了」不等于「文档里不该出现」。
+
+### 5. 结果与边界
+
+- 门禁 `STAGES=test,assemble`：**876 用例 / 0 失败**，包 `33,588,715` 字节
+  sha256 `f62b1161c2971efc…`；
+- 包体三轮递减：`36,078,755` → `34,631,246` → `33,588,715`。删的代码量解释不了这个量级；
+  核对 dex：**21 个分片**，`isPrefixOrSuffixRun`、`AgentUiActions`、`AgentAppRootKt`、
+  `AgentChatBodyKt`、`AgentSelfAudit` 都在包内。**可能与 multidex 分片边界变化影响压缩率有关，
+  未验证**，不做因果声称；
+- 仍未做：201 条死文案的清理（需先补「测试目录 + 动态拼接」的扫描口径）。
+
+### 6. 还有一层：删代码会让 lint baseline 变陈旧（本轮真踩到）
+
+删完文案、`STAGES=test,assemble` 全绿之后，我又跑了一次 `STAGES=lint`（约 12 分钟）—— 它红了，
+但**不是**文案的问题：
+
+```
+✗ lint 报告有 1 条问题（报告时间 16:03:39）：
+  - [LintBaselineFixed] lint-baseline.xml:?
+```
+
+报告正文写明：「2 errors/warnings were listed in the baseline file … but not found in the project …
+Unmatched issue types: **UseKtx (2)**」。即 baseline 里有两条记录，现在已经找不到对应的代码。
+
+顺着查，正好是这一轮删掉的两个方法里的 `Uri.parse(...)`：
+
+| baseline 条目 | 原代码 | 本轮 |
+|---|---|---|
+| `AgentPluginsStore.kt:229` | `importZip(uriString)` 里的 `Uri.parse` | 方法已删 |
+| `AgentSkillsStore.kt:139` | `importSkillZip(uriValue)` 里的 `Uri.parse` | 方法已删 |
+
+两条 `UseKtx`（建议改用 `String.toUri`）随之失效。按整块精确匹配删掉后，baseline 从 **412 → 410** 条
+（`UseKtx` 剩 67 条）。
+
+**这说明什么**：删代码不是「编译器过、单测过」就完事 —— `lint-baseline.xml` 按「文件 + 消息」记账，
+被删掉的代码会留下**永远不会再命中的条目**，下一次 lint 就以 `LintBaselineFixed` 报红。
+`lint_baseline_audit.py` 把它当问题处理是对的，否则 baseline 只增不减，很快就没人敢碰。
+
+**教训**：`STAGES=test,assemble` 绿了不等于门禁绿。这一轮原本打算只跑这两段，是「删了资源会不会动账目」
+这个念头才去跑 lint —— 抓到的还不是我预想的那个问题。**跑一遍全部阶段**比「推断哪一段会红」可靠。

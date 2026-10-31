@@ -415,7 +415,6 @@
   <string name="ui_delete_this_conversation_3f351b">删除这轮对话</string>
   <string name="ui_long_press_with_two_fingers_to_trigger_a_circle_sear_ab597a">双指长按触发一圈即搜</string>
   <string name="ui_cancel_edit_c698df">取消编辑</string>
-  <string name="ui_available_capacity_743337">可用能力</string>
   <string name="ui_optional_tools_3097d6">可选工具</string>
   <string name="ui_name_1be7ae">名称</string>
   <string name="ui_enable_vendor_assistant_custom_models_c8e465">启用厂商助手自定义模型</string>
@@ -621,7 +620,6 @@
   <string name="state_memory_b55ff5">记忆</string>
   <string name="state_memory_system_4903eb">记忆系统</string>
   <string name="state_direct_access_to_equipment_eda92c">系统与一方应用操作</string>
-  <string name="state_please_select_the_zip_file_provided_by_the_system_fi_fea145">请选择由系统文件选择器提供的 ZIP 文件。</string>
   <string name="state_run_floating_window_48af02">运行浮窗</string>
   <string name="state_notice_of_use_rights_1ae29a">通知使用权</string>
   <string name="page_sdcard_is_available_cbb808">/sdcard 可用</string>
@@ -950,7 +948,6 @@
   <string name="state_ui_file_path_reference_requires_opening_the_termina_deca4c">文件路径引用需要先开启终端与文件工具</string>
   <string name="state_ui_unable_to_save_skills_original_skills_have_been__9d4748">无法保存 Skills，原有 Skills 已自动恢复。</string>
   <string name="state_ui_unable_to_obtain_the_real_path_please_select_fro_32f367">无法取得真实路径，请从“内部存储”选择或手动输入路径</string>
-  <string name="state_ui_unable_to_open_selection_9f0004">无法打开所选内容</string>
   <string name="state_ui_the_selected_file_cannot_be_read_please_select_a_7265b9">无法读取所选文件，请重新选择。</string>
   <string name="state_ui_unable_to_read_this_image_please_try_again_or_us_d94978">无法读取这张图片，请重试或改用其他图片</string>
   <string name="state_ui_unnamed_skill_a58008">未命名 Skill</string>

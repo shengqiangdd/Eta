@@ -3968,16 +3968,6 @@
             column="19"/>
     </issue>
 
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = Uri.parse(uriString)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentPluginsStore.kt"
-            line="229"
-            column="19"/>
-    </issue>
 
     <issue
         id="UseKtx"
@@ -4023,16 +4013,6 @@
             column="9"/>
     </issue>
 
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = runCatching { Uri.parse(uriValue) }.getOrNull()"
-        errorLine2="                                ~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentSkillsStore.kt"
-            line="139"
-            column="33"/>
-    </issue>
 
     <issue
         id="UseKtx"

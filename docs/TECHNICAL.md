@@ -438,7 +438,7 @@ Robolectric 用例（含本轮新增的 `aDeferredConversationKeepsItsStoredMess
 | --- | --- |
 | `UserMessageUi`、`AgentMessageUi` | `ThinkingMessageUi` |
 | `SystemNoticeMessageUi`（停止 / 失败 / 重试 / 压缩的解释） | `ToolSummaryMessageUi` |
-| `SuggestionChipsMessageUi`（空对话的提问入口） | `ToolActivityMessageUi` |
+| `SuggestionChipsMessageUi`（空对话的提问入口） | `ToolActivityMessageUi`、`RunTraceMessageUi` |
 
 新增消息类型走 `else` 分支默认保留 —— 宁可多显示，也不把正文类型误藏。
 

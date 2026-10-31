@@ -400,7 +400,6 @@
   <string name="ui_delete_this_conversation_3f351b">刪除這輪對話</string>
   <string name="ui_long_press_with_two_fingers_to_trigger_a_circle_sear_ab597a">雙指長按啟動圈選搜尋</string>
   <string name="ui_cancel_edit_c698df">取消編輯</string>
-  <string name="ui_available_capacity_743337">可用能力</string>
   <string name="ui_optional_tools_3097d6">選用工具</string>
   <string name="ui_name_1be7ae">名稱</string>
   <string name="ui_enable_vendor_assistant_custom_models_c8e465">啟用廠商助手自訂模型</string>
@@ -606,7 +605,6 @@
   <string name="state_memory_b55ff5">記憶</string>
   <string name="state_memory_system_4903eb">記憶系統</string>
   <string name="state_direct_access_to_equipment_eda92c">裝置直達</string>
-  <string name="state_please_select_the_zip_file_provided_by_the_system_fi_fea145">請選擇由系統檔案選擇器提供的 ZIP 檔案。</string>
   <string name="state_run_floating_window_48af02">執行浮動視窗</string>
   <string name="state_notice_of_use_rights_1ae29a">通知使用權</string>
   <string name="page_sdcard_is_available_cbb808">/sdcard 可用</string>
@@ -935,7 +933,6 @@
   <string name="state_ui_file_path_reference_requires_opening_the_termina_deca4c">使用檔案路徑參照前，請先啟用終端機與檔案工具</string>
   <string name="state_ui_unable_to_save_skills_original_skills_have_been__9d4748">無法儲存 Skills，原有 Skills 已自動復原。</string>
   <string name="state_ui_unable_to_obtain_the_real_path_please_select_fro_32f367">無法取得真實路徑，請從「內部儲存」選擇或手動輸入路徑</string>
-  <string name="state_ui_unable_to_open_selection_9f0004">無法開啟所選內容</string>
   <string name="state_ui_the_selected_file_cannot_be_read_please_select_a_7265b9">無法讀取所選檔案，請重新選擇。</string>
   <string name="state_ui_unable_to_read_this_image_please_try_again_or_us_d94978">無法讀取這張圖片，請重試或改用其他圖片</string>
   <string name="state_ui_unnamed_skill_a58008">未命名 Skill</string>
