@@ -3176,3 +3176,17 @@ while (bounded.size > 1) {
 4. 新包体积 **32,656,141 字节**，sha256
    `556661dbdf207af17254200b11820f9491177e1da846beaaebe46c06eb569c7c`；
    `pm path` 下 `base.apk` 与构建产物逐字节一致，`lastUpdateTime=12:44:05`。
+
+### 32.24.6 复装核对（12:44 再装一次，确认装进去的真是新实现）
+
+- `pm install -r -d` 返回 `Success`；User 0 的 `firstInstallTime` 仍是 **2026-10-03 10:38:00**
+  （是覆盖安装，不是重装，数据没动）；`lastUpdateTime=12:44:05`。
+- `pm path` 的 `base.apk` sha256 与构建产物一致（`556661db…`）。
+- 直接查包里的 dex：`classes12.dex` 能搜到新方法名 `tailStartWithinBudget`，
+  且 **搜不到** `AgentLegacyConversationProjectionTest` —— 装进去的是新实现，测试类没进包。
+- 新旧包体积差 511,696 字节，但两边都是 **364 个条目**，未压缩总量只差 **1,144 字节**、
+  压缩总量差 **451 字节**：差异来自 zip 打包顺序与对齐，不是功能代码（也解释了为什么
+  `classes12.dex` 的 header 偏移能差 19 MB —— 条目被重排了）。
+- 安装后 8 秒线程采样：`agent-result-io` **不存在**（0 ticks）；主要消耗是
+  `RenderThread` 167 ticks/8s、主线程 116 ticks/8s —— 与旧实现里那个常驻满核的线程不是一回事。
+- 仍未计时：**一次「发 3 MB 结果」的端到端耗时**。算法已不是 O(n²)，但具体几毫秒没单独测。
