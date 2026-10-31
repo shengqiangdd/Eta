@@ -15,16 +15,9 @@ import io.github.mangi.eta.ui.components.iconForTool
 import io.github.mangi.eta.ui.model.projectToolGroups
 import io.github.mangi.eta.ui.model.toolCardRequirement
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
 class ToolCatalogUiTest {
     @Test
     fun everyRuntimeToolAndDisplayedCardHasASpecificIcon() {
@@ -41,11 +34,12 @@ class ToolCatalogUiTest {
         val runtimeNames = (0 until tools.length()).map {
             tools.getJSONObject(it).getJSONObject("function").getString("name")
         }
-        val cardIds = buildToolsState(RuntimeEnvironment.getApplication()).groups
+        val cardIds = buildToolsState { id -> "res:$id" }.groups
             .flatMap { it.tools }.map { it.id }
-        (runtimeNames + cardIds).distinct().forEach { name ->
-            assertNotEquals(name, Icons.Rounded.Build, iconForTool(name))
-        }
+        // 一次报全：逐个 assert 只会在第一个失败处停下，修一个冒一个。
+        val offenders = (runtimeNames + cardIds).distinct()
+            .filter { iconForTool(it) == Icons.Rounded.Build }
+        assertEquals("这些工具落到了默认 Build 图标：$offenders", emptyList<String>(), offenders)
     }
 
     @Test
@@ -60,7 +54,7 @@ class ToolCatalogUiTest {
 
     @Test
     fun publicWebCardsHaveNamesAndStayInTheWebGroup() {
-        val web = buildToolsState(RuntimeEnvironment.getApplication()).groups.first { it.id == "web" }
+        val web = buildToolsState { id -> "res:$id" }.groups.first { it.id == "web" }
         assertTrue(web.tools.map { it.id }.containsAll(listOf("web_search", "fetch_url", "browser_use")))
         assertEquals(R.string.tool_web_search, toolDisplayNameResource("web_search"))
         assertEquals(R.string.tool_fetch_url, toolDisplayNameResource("fetch_url"))
@@ -68,7 +62,7 @@ class ToolCatalogUiTest {
 
     @Test
     fun terminalToolsExposeSeparateLifecyclesInTheSameGroup() {
-        val terminal = buildToolsState(RuntimeEnvironment.getApplication()).groups.first { it.id == "terminal" }
+        val terminal = buildToolsState { id -> "res:$id" }.groups.first { it.id == "terminal" }
         assertTrue(terminal.tools.map { it.id }.containsAll(listOf("terminal", "terminal_job", "terminal_daemon")))
         assertEquals(R.string.tool_terminal_job, toolDisplayNameResource("terminal_job"))
         assertEquals(R.string.tool_terminal_daemon, toolDisplayNameResource("terminal_daemon"))
@@ -76,10 +70,10 @@ class ToolCatalogUiTest {
 
     @Test
     fun personalQueriesAndNativeOperationsHaveSeparateGroups() {
-        val group = buildToolsState(RuntimeEnvironment.getApplication()).groups.first { it.id == "personal_data" }
+        val group = buildToolsState { id -> "res:$id" }.groups.first { it.id == "personal_data" }
         assertTrue(group.tools.any { it.id == "search_bills" })
         assertTrue(group.tools.none { it.id == "personal_context" || it.id == "create_note" })
-        val operations = buildToolsState(RuntimeEnvironment.getApplication()).groups.first { it.id == "device_direct" }
+        val operations = buildToolsState { id -> "res:$id" }.groups.first { it.id == "device_direct" }
         assertTrue(operations.tools.any { it.id == "set_flashlight" })
         assertTrue(operations.tools.any { it.id == "create_calendar_event" })
         assertEquals(RootRequirement.REQUIRED, toolCardRequirement("search_bills").rootRequirement)
@@ -88,7 +82,7 @@ class ToolCatalogUiTest {
 
     @Test
     fun everyDisplayedCardHasExplicitMetadataAndKeepsItsOriginalOrder() {
-        val groups = buildToolsState(RuntimeEnvironment.getApplication()).groups
+        val groups = buildToolsState { id -> "res:$id" }.groups
         val allCards = groups.flatMap { it.tools }
         allCards.forEach { toolCardRequirement(it.id) }
         assertEquals(allCards.size, allCards.map { it.id }.distinct().size)

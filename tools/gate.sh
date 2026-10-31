@@ -108,6 +108,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
   --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
   --tests io.github.mangi.eta.ui.app.LocaleResourceParityTest
+  --tests io.github.mangi.eta.ui.app.ToolCatalogUiTest
   --tests io.github.mangi.eta.ui.app.WorkspaceRootCommandTest
   --tests io.github.mangi.eta.ui.app.WorkspaceMessagesTest
   --tests io.github.mangi.eta.ui.app.WorkspaceExportNameTest
@@ -181,6 +182,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 2026-10-27（fix171）同一个坑又踩了：给 `AccessibilityNodeIdentityTest` 新增两条几何指纹用例，
 # 没加进列表 —— 门禁报 547 例全绿，那两条一例没跑；而这条改动正好是「放宽快照过期判定」的，
 # 恰恰最需要单测兑。**结论同前：新增任何能在本机跑的测试类，第一件事就是把它加到这个列表。**
+# 2026-11-01（§32.45）反过来补上一条：`ToolCatalogUiTest` 原本用 Robolectric 只为拿 Context 读文案，
+# 改成可注入文案来源后是纯 JVM，把它的 6 个用例加进了下面的列表 —— 加之前它从没在门禁里跑过，
+# 一跑就发现 14 个工具图标落到了默认 Build。
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest

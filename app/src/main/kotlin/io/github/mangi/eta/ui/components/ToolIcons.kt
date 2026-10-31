@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Monitor
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.MyLocation
@@ -139,6 +140,16 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "list_directory", "glob_files", "grep_files", "code_outline", "project_info", "list_file_backups" -> Icons.Rounded.FolderOpen
     // 自审：排查自身问题。ToolCatalogUiTest 要求每个运行时工具都有专属图标（不能落到 Build）。
     "eta_self_audit" -> Icons.AutoMirrored.Rounded.ManageSearch
+    // 虚拟屏：独立一块屏上跑应用。之前这四个一直落到 Build —— 那条用例因 @Config(sdk=[36])
+    // 在本机跑不起来，所以从没报过（§32.45）。
+    "virtual_display_create", "virtual_display_list",
+    "virtual_display_launch", "virtual_display_release" -> Icons.Rounded.Monitor
+    // 这三组同样是「一直落到 Build」：测试跑不起来，就没人发现（§32.45）。
+    "acp_agent_list", "acp_delegate", "acp_session_status", "acp_session_close" ->
+        Icons.Rounded.AccountTree
+    "plugin_list", "plugin_install", "plugin_uninstall", "plugin_enable", "plugin_reload" ->
+        Icons.Rounded.Extension
+    "working_directory" -> Icons.Rounded.FolderOpen
     else -> when {
         toolId in io.github.mangi.eta.agent.context.PersonalSearchTools.names -> Icons.Rounded.Insights
         toolId in io.github.mangi.eta.agent.model.AgentPhoneToolCatalog.names -> when {

@@ -4920,3 +4920,67 @@ lint baseline 同步删 3 条 `UnusedResources`（206 → 203，纯删除、无�
 - 颜色 / 样式 / drawable / xml 仍未纳入（`UnusedResources` 里还剩 12 条：7 color、2 xml、1 drawable、
   1 style、1 条 `ic_assistant_keyboard`）。它们牵涉主题与视觉，改了要装机看，不属「非必要不测」；
 - 仍未装机验证：本轮同样只删资源，运行时引用已由门禁保证，但**界面没跑过**。
+
+## §32.45 救活一条「从来没跑过」的用例，它立刻报出 14 个工具没图标（2026-11-01 凌晨，承接上节）
+
+### 1. 问题：门禁报 876 全绿，这 6 个用例不在里面
+
+`ToolCatalogUiTest` 有 6 个用例，守着「每个运行时工具与工具卡都有专属图标」。它一直跑不起来，
+原因有两层，叠在一起就完全隐身：
+
+- `@Config(sdk = [36])`：本机 Linux aarch64 没有对应的 Robolectric native runtime；
+- `gate.sh` 的 `FAST_TEST_FILTERS` 是**显式白名单**，它不在里面 —— 注释里正好记着
+  「Robolectric 测试别塞进这个列表」。
+
+所以「门禁绿」这句话里，这 6 个用例的真实状态是**没跑**，不是通过。§71 记过同一类：
+没跑门禁会伪装成门禁放行。
+
+### 2. 改法：只把「取文案」这一层拆出来
+
+它用 Robolectric 只为一件事：`RuntimeEnvironment.getApplication()` 拿 Context 调
+`context.getString()`。而它真正验证的是分组结构、工具 id、元数据 —— 与文案无关。
+
+`buildToolsState` 加一个重载：
+
+```kotlin
+internal fun buildToolsState(context: Context): AgentToolsUiState =
+    buildToolsState { context.getString(it) }
+
+internal fun buildToolsState(text: (Int) -> String): AgentToolsUiState = ...
+```
+
+测试改成 `buildToolsState { id -> "res:$id" }`，删掉 Robolectric 的三行 import 与两个注解。
+生产路径不变（`AgentAppRoot` 两处仍走 Context 重载）。
+
+顺带把断言从「逐条 `assertNotEquals`」改成「收集全部 offenders 再比」—— 原来的写法在第一个
+失败处就停，修一个冒一个，看不到全貌。
+
+### 3. 第一次跑起来就红：14 个工具落到默认图标
+
+| 组 | 工具 |
+|---|---|
+| 虚拟屏 | `virtual_display_create` / `list` / `launch` / `release` |
+| ACP 代理 | `acp_agent_list` / `acp_delegate` / `acp_session_status` / `acp_session_close` |
+| 插件 | `plugin_list` / `install` / `uninstall` / `enable` / `reload` |
+| 工作目录 | `working_directory` |
+
+14 个全部落在 `Icons.Rounded.Build`。已按语义补图标：虚拟屏 `Monitor`、ACP `AccountTree`、
+插件 `Extension`、工作目录 `FolderOpen`。
+
+补的时候还踩了一个小坑：`Icons.Rounded.Monitor` 是扩展属性，**必须单独 import**；
+只写 `Icons.Rounded.Monitor` 会报 `Unresolved reference 'Monitor'` —— 那是缺 import，
+不是「图标不存在」。我第一反应以为是后者，换了 `DesktopWindows` 才发现同一个错。
+
+### 4. 结果
+
+- 用例数 **876 → 882**。这不是新增测试，是把一直没跑的 6 个接进统计；
+- 门禁 `STAGES=test,lint,assemble` 全绿：882 / 0 ｜ lint 无新增、baseline 203 命中 ｜
+  包 `33,588,959` 字节（比上轮 +244）sha256 `e14d1aec741f061b…`；
+- 门禁注释里补了一条：这类「白名单外」的用例，加进来之前等于不存在。
+
+### 5. 边界
+
+- 只改了 `ToolCatalogUiTest` 一个类的运行方式；其它 Robolectric 测试（`ToolCatalogUiTest` 之外）
+  仍在本机跑不了，仍靠 `STAGES=test-all` 或真机探针；
+- 图标只保证「不是默认 Build」与语义大体贴切，**没有装机看实际渲染**——图标是否好看、
+  尺寸是否协调，得看屏幕。
