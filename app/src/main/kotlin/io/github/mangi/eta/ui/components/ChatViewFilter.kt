@@ -3,7 +3,6 @@ package io.github.mangi.eta.ui.components
 import io.github.mangi.eta.data.model.ChatViewMode
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
-import io.github.mangi.eta.ui.model.RunTraceMessageUi
 import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
@@ -30,7 +29,6 @@ internal fun isProcessMessage(message: AgentChatMessageUi): Boolean = when (mess
     is ThinkingMessageUi,
     is ToolSummaryMessageUi,
     is ToolActivityMessageUi,
-    is RunTraceMessageUi,
     -> true
 
     else -> false

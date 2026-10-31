@@ -4538,3 +4538,79 @@ sha256 就变了（`53eb59f9…`，体积 +11 字节，相比机上的 `61b16a26
 **下一步能提高判断力的做法**（本轮没做）：在长会话上强制 GC 后取基线，隔 10 分钟再取，比较「GC 后基线」
 而不是 PSS 峰值；或者把观测窗口拉到 3 小时以上。`dumpsys meminfo` 里的 Java Heap 是 PSS，含尚未回收的垃圾，
 用它看趋势可以，拿单个峰值当结论不行。
+
+## §32.40 一次清掉 9 个「没人发」的动作，并把这件事变成门禁（2026-11-01，本机 PKX110/A16）
+
+**起因**：`AgentUiActions.kt` 里 74 个动作，逐个核对「界面上到底谁发它」，发现 8 个从来没有发出点
+—— 它们照样编译、照样在 `when` 里有分支、单测与 lint 全绿，因为**「定义了一个动作」这件事本身
+不需要任何使用者**。
+
+**怎么查的**（先写脚本再下结论）：
+- 从 `sealed interface XxxAction` 里抽成员；
+- 在 `app/src/main` 的 Kotlin 里找 `接口.成员`，**排除 when 分支形态**（`is X.Y`、`X.Y ->`、
+  多分支 `X.Y, … ->`）与注释行；
+- 剩下没人引用的，就是「定义了却没人发」。
+
+初版脚本没排除 `when` 分支，一扫全是 0 —— 把「有分支」错当成「有发出点」。这正说明判据比结论重要：
+**「没扫出问题」也可能只是扫描写错了**。
+
+### 清掉的 9 个
+
+| 动作 | 判定依据 | 处置 |
+|---|---|---|
+| `AgentHomeAction.OpenTools` / `OpenSkills` / `OpenPermissions` / `OpenSettings` | 会话侧栏已有一整套真实入口（`AgentAppShell` 的 `onOpenTools…`，由 `AgentAppRoot` 接到 `pushRoute`） | 删 —— 同一目的地两套通路，改一处漏一处 |
+| `AgentHomeAction.OpenSystemEnhance` | 设置页、能力总览、工具页、Linux 环境页共 5 处真实入口 | 删 |
+| `AgentHomeAction.RetryConversationLoad` | 没有对应的加载失败状态，`when` 分支写的是 `-> Unit` | 删 —— 死动作 + 空承诺 |
+| `AgentSkillsAction.ImportZip(uri)` | ZIP 导入早已改走应用内选择器（注释写明：系统 OpenDocument 在虚拟屏会把任务搬到主屏） | 删，连 `ZipSource.Content` 一起 |
+| `AgentPluginsAction.ImportZip(uri)` | 同上 | 删，连 `importZip(uriString)` 一起 |
+| `AgentHomeAction.ExpandRunTrace` | 有发出点，但 `when` 是 `-> Unit`；再查 `RunTraceMessageUi` **全文只有定义、没有任何构造点** | 删整条链 |
+
+**`ExpandRunTrace` 值得单独说**：它对应的是一张「Agent 当前可调用能力」卡片（右侧箭头、可点）。
+类型从未被投影产出 → 这张卡片**从来没出现过**；而点击回调最终落在 `-> Unit`，就算真出现也是点了没反应。
+这类半成品比死代码更坏：它让下一个读代码的人以为这里有功能。
+
+**顺带发现一条会骗人的注释**：`AgentPluginsStore.importZip` 上面写着「保留：仍有调用方走这条」，
+而全仓唯一调用者就是那个 `when` 分支本身 —— 删掉分支后它立刻变成死方法。注释和代码一样会过期，
+`rg` 不会。
+
+### 门禁：让「定义了没人发」变红
+
+`tools/ui_action_wiring.py` 接进 `tools/gate.sh` 的**始终执行**段（与 `STAGES` 无关，秒级）：
+
+```
+==== UI 动作接线 ====
+UI 动作接线检查：7 个动作接口 / 65 个动作
+  ✓ 每个动作都有发出点
+```
+
+**注入实验（证明它会红，不是摆设）**：临时把 `data object OpenTools` 加回去 →
+
+```
+  ✗ AgentHomeAction.OpenTools 没有任何发出点（定义了却没人用）
+未接线 1 个。
+```
+
+还原后 65 个动作、绿。不放宽判据，也不留白名单。
+
+**不做的事**：不检查「发出了但分支是 `-> Unit`」—— 有意的上报类动作就该是空的，那属于 review、
+不属于门禁；否则第一次误报就会让人把整道门当背景。
+
+### 我自己犯的错（记录在案）
+
+批量编辑 `AgentChatBody.kt` 时，第一处的 `old_text` 是 5 行参数、`new_text` 却写成了空串，把
+`onSuggestionClick` / `onOpenBrowser` / `onOpenRunDetail` / `isDrawerOpen` 一起删了。`edit_files`
+每个文件都成功返回（它只保证「匹配上了」），**是编译才会告诉你删多了**。已按原顺序补回，
+随后整跑门禁 876/0。
+
+教训：`edit` 的 `new_text` 只有在「确实要删掉整段」时才留空；删一行就只留那一行的删除。
+
+### 结果与边界
+
+- 动作总数 **74 → 65**；15 个文件 **+19 / −156** 行（含文档与测试），另新增脚本 120 行；
+- 门禁 `STAGES=test,assemble`：**876 用例 / 0 失败**，打包 `34,631,246` 字节
+  sha256 `6ec21d11233535c0…`；
+- `ChatViewFilterTest` 的「过程消息四类」改成三类、DIALOG 隐藏计数 4 → 3 —— 是这次删除的直接
+  后果，不是断言漂移；
+- 包体比上一版（`36,078,755`）小 1.45 MB。删掉的代码量解释不了这个差异，**不做因果声称**，
+  只记数字；
+- **未验证**：本轮没有新增 UI 行为（只删），所以没有界面回归；只做装包启动核对。

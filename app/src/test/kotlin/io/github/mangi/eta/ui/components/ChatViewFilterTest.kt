@@ -3,8 +3,6 @@ package io.github.mangi.eta.ui.components
 import io.github.mangi.eta.data.model.ChatViewMode
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
-import io.github.mangi.eta.ui.model.CapabilityUi
-import io.github.mangi.eta.ui.model.RunTraceMessageUi
 import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
@@ -39,11 +37,6 @@ class ChatViewFilterTest {
 
     private fun toolSummary(id: String) = ToolSummaryMessageUi(id = id, tools = listOf("search"))
 
-    private fun runTrace(id: String) = RunTraceMessageUi(
-        id = id,
-        capabilities = listOf(CapabilityUi(title = "搜索", items = listOf("search"))),
-    )
-
     private fun notice(id: String) = SystemNoticeMessageUi(id = id, code = SystemNoticeCode.Stopped)
 
     private fun chips(id: String) = SuggestionChipsMessageUi(id = id, prompts = listOf("继续"))
@@ -54,18 +47,16 @@ class ChatViewFilterTest {
         agent("m1"),
         toolActivity("a1"),
         toolSummary("s1"),
-        runTrace("r1"),
         notice("n1"),
         chips("c1"),
         user("u2"),
     )
 
     @Test
-    fun `过程消息四类都判为可隐藏`() {
+    fun `过程消息三类都判为可隐藏`() {
         assertEquals(true, isProcessMessage(thinking("t")))
         assertEquals(true, isProcessMessage(toolActivity("a")))
         assertEquals(true, isProcessMessage(toolSummary("s")))
-        assertEquals(true, isProcessMessage(runTrace("r")))
     }
 
     @Test
@@ -89,7 +80,7 @@ class ChatViewFilterTest {
         // 用户提问是回合锚点、系统提示是对结果的解释，两者都必须留下 —— 否则「哪一步属于
         // 哪一问」「为什么中途停了」都会失去依据。
         assertEquals(
-            listOf("u1", "t1", "a1", "s1", "r1", "n1", "u2"),
+            listOf("u1", "t1", "a1", "s1", "n1", "u2"),
             filterForViewMode(mixed(), ChatViewMode.TRACE).map { it.id },
         )
     }
@@ -124,7 +115,7 @@ class ChatViewFilterTest {
 
     @Test
     fun `计数按视图分别统计过程消息与正文`() {
-        assertEquals(4, countHiddenByViewMode(mixed(), ChatViewMode.DIALOG))
+        assertEquals(3, countHiddenByViewMode(mixed(), ChatViewMode.DIALOG))
         assertEquals(2, countHiddenByViewMode(mixed(), ChatViewMode.TRACE))
     }
 

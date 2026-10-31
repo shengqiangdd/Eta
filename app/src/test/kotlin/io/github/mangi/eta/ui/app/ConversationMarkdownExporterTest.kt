@@ -4,7 +4,6 @@ import io.github.mangi.eta.agent.model.AgentFileReference
 import io.github.mangi.eta.agent.model.AgentFileReferenceKind
 import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
 import io.github.mangi.eta.ui.model.AgentMessageUi
-import io.github.mangi.eta.ui.model.RunTraceMessageUi
 import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
@@ -138,7 +137,6 @@ class ConversationMarkdownExporterTest {
     fun exportSkipsBlankStreamingAndNonContentMessages() {
         val messages = listOf(
             AgentMessageUi(id = "a", content = "", isStreaming = true),
-            RunTraceMessageUi(id = "r", capabilities = emptyList()),
             SuggestionChipsMessageUi(id = "s", prompts = listOf("试试这个")),
         )
 

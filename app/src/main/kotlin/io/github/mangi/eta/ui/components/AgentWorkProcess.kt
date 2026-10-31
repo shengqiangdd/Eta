@@ -411,7 +411,6 @@ private fun AgentWorkStepNode(
                 ChatMessageItem(
                     message = message,
                     onSuggestionClick = {},
-                    onRunTraceClick = {},
                     onOpenBrowser = onOpenBrowser,
                     showBrowserShortcut = false,
                     compact = true,

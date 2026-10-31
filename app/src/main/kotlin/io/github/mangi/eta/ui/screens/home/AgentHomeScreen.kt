@@ -135,7 +135,6 @@ internal fun AgentHomeScreen(
             onSuggestionClick = { prompt ->
                 onAction(AgentHomeAction.SubmitMessage(prompt))
             },
-            onRunTraceClick = { onAction(AgentHomeAction.ExpandRunTrace) },
             onOpenBrowser = { onAction(AgentHomeAction.OpenBrowser) },
             onOpenRunDetail = onOpenRunDetail,
             isDrawerOpen = isDrawerOpen,

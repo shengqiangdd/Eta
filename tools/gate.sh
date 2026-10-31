@@ -302,6 +302,18 @@ run_contract() {
 
 run_contract
 
+# ---- UI 动作接线（与 STAGES 无关，始终执行）-----------------------------
+# 为什么无条件跑：多定义一个动作不会让编译、单测、lint 任何一道门变红 ——
+# 它只会在界面上「什么都不发生」。2026-11-01 一次清掉 8 个这种动作，其中
+# RetryConversationLoad 的分支还是 `-> Unit`（死动作 + 空承诺）。
+# 静态扫描是秒级，没有理由把它绑在某一段上。
+run_ui_actions() {
+  echo "==== UI 动作接线 ===="
+  python3 tools/ui_action_wiring.py || fail=1
+}
+
+run_ui_actions
+
 if has_stage test || has_stage test-all; then run_test; fi
 if has_stage lint; then run_lint; fi
 if has_stage assemble; then run_assemble; fi

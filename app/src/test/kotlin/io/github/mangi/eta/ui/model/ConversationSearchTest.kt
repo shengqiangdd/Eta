@@ -103,7 +103,6 @@ class ConversationSearchTest {
     @Test
     fun ignoresNonContentMessages() {
         val state = stateWith(
-            RunTraceMessageUi(id = "r", capabilities = emptyList()),
             SuggestionChipsMessageUi(id = "s", prompts = listOf("试试这个")),
         )
 

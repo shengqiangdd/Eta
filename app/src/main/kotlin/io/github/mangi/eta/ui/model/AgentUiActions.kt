@@ -5,7 +5,6 @@ import io.github.mangi.eta.data.model.ReasoningEffort
 sealed interface AgentHomeAction {
     data object LoadEarlierMessages : AgentHomeAction
     data class HistoryViewportChanged(val atLatest: Boolean) : AgentHomeAction
-    data object RetryConversationLoad : AgentHomeAction
     data object CompactContext : AgentHomeAction
     data class ReasoningEffortChanged(val effort: ReasoningEffort) : AgentHomeAction
     data class ModelSelected(val modelId: String) : AgentHomeAction
@@ -33,13 +32,7 @@ sealed interface AgentHomeAction {
     data class DeleteMessage(val id: String) : AgentHomeAction
     data class RegenerateMessage(val id: String) : AgentHomeAction
     data class SelectReplyCandidate(val id: String, val index: Int) : AgentHomeAction
-    data object OpenTools : AgentHomeAction
-    data object OpenSkills : AgentHomeAction
-    data object OpenPermissions : AgentHomeAction
-    data object OpenSystemEnhance : AgentHomeAction
-    data object OpenSettings : AgentHomeAction
     data object OpenBrowser : AgentHomeAction
-    data object ExpandRunTrace : AgentHomeAction
 }
 
 sealed interface PermissionHealthAction {
@@ -57,8 +50,6 @@ sealed interface AgentToolsAction {
 
 sealed interface AgentSkillsAction {
     data object NavigateBack : AgentSkillsAction
-    data class ImportZip(val uri: String) : AgentSkillsAction
-
     /** 应用内选择器给出的路径（虚拟屏上系统文件选择器不可用）。 */
     data class ImportZipPath(val path: String) : AgentSkillsAction
     data object ConfirmZipReplacement : AgentSkillsAction
@@ -94,8 +85,6 @@ sealed interface AgentPluginsAction {
     data class UninstallPlugin(val pluginId: String) : AgentPluginsAction
     /** 回滚到指定留底版本（[version] 为空表示最新的那份）。 */
     data class RollbackPlugin(val pluginId: String, val version: String? = null) : AgentPluginsAction
-    data class ImportZip(val uri: String) : AgentPluginsAction
-
     /** 应用内选择器给出的路径（虚拟屏上系统文件选择器不可用）。 */
     data class ImportZipPath(val path: String) : AgentPluginsAction
 

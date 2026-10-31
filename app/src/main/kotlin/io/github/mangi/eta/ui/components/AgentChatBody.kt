@@ -226,7 +226,6 @@ internal fun AgentChatBody(
     onRegenerateMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
     onSuggestionClick: (String) -> Unit,
-    onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     isDrawerOpen: Boolean = false,
@@ -483,7 +482,6 @@ internal fun AgentChatBody(
             onRegenerateMessage = onRegenerateMessage,
             onSelectReplyCandidate = onSelectReplyCandidate,
             onSuggestionClick = onSuggestionClick,
-            onRunTraceClick = onRunTraceClick,
             onOpenBrowser = onOpenBrowser,
             onOpenRunDetail = onOpenRunDetail,
             currentBrowserMessageId = currentBrowserMessageId,
@@ -725,7 +723,6 @@ private fun AgentChatScaffold(
     onRegenerateMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
     onSuggestionClick: (String) -> Unit,
-    onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     currentBrowserMessageId: String?,
@@ -937,7 +934,6 @@ private fun AgentChatScaffold(
                 onLoadEarlierMessages = onLoadEarlierMessages,
                 onHistoryViewportChanged = onHistoryViewportChanged,
                 onSuggestionClick = onSuggestionClick,
-                onRunTraceClick = onRunTraceClick,
                 onOpenBrowser = onOpenBrowser,
                 onOpenRunDetail = onOpenRunDetail,
                 onEditMessage = onEditMessage,
@@ -981,7 +977,6 @@ internal fun AgentConversationMessages(
     onHistoryViewportChanged: (Boolean) -> Unit = {},
     assistantOverlay: Boolean = false,
     onSuggestionClick: (String) -> Unit = {},
-    onRunTraceClick: () -> Unit = {},
     onOpenBrowser: () -> Unit = {},
     onOpenRunDetail: (String) -> Unit = {},
     onEditMessage: (String) -> Unit = {},
@@ -1404,7 +1399,6 @@ internal fun AgentConversationMessages(
                                     }
                                 },
                             onSuggestionClick = onSuggestionClick,
-                            onRunTraceClick = onRunTraceClick,
                             onOpenBrowser = onOpenBrowser,
                             showBrowserShortcut = message is ToolActivityMessageUi &&
                                 message.toolName == "browser_use" &&

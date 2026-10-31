@@ -162,21 +162,6 @@ data class ThinkingMessageUi(
 ) : AgentChatMessageUi
 
 /**
- * 首页的 Run trace 入口卡片：展示 Agent 当前可调用的能力分组。
- */
-@Immutable
-data class RunTraceMessageUi(
-    override val id: String,
-    val capabilities: List<CapabilityUi>,
-) : AgentChatMessageUi
-
-@Immutable
-data class CapabilityUi(
-    val title: String,
-    val items: List<String>,
-)
-
-/**
  * 工具调用摘要：出现在消息流中，显示当前/最近一步调用了哪些工具。
  */
 @Immutable

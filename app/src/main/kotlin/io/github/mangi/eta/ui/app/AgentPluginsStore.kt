@@ -1,7 +1,6 @@
 package io.github.mangi.eta.ui.app
 
 import android.content.Context
-import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -222,18 +221,6 @@ internal class AgentPluginsStore(
             }
             refresh()
         }
-    }
-
-    /** 系统 SAF 给的 uri（保留：仍有调用方走这条）：解析后交给 [importZipFrom]。 */
-    fun importZip(uriString: String) {
-        val uri = Uri.parse(uriString)
-        importZipFrom(
-            openStream = {
-                appContext.contentResolver.openInputStream(uri)
-                    ?: error("selected uri is not readable")
-            },
-            location = uriString,
-        )
     }
 
     /** 应用内选择器给出的路径：虚拟屏上系统文件选择器不可用，所以导入得自己实现。 */

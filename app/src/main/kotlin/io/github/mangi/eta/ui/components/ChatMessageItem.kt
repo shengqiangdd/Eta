@@ -96,7 +96,6 @@ import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
 import io.github.mangi.eta.ui.markdown.THINKING_LINE_HEIGHT_SP
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
-import io.github.mangi.eta.ui.model.RunTraceMessageUi
 import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
@@ -192,7 +191,6 @@ internal fun rememberActivePulse(
 internal fun ChatMessageItem(
     message: AgentChatMessageUi,
     onSuggestionClick: (String) -> Unit,
-    onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
     showBrowserShortcut: Boolean,
     modifier: Modifier = Modifier,
@@ -263,7 +261,6 @@ internal fun ChatMessageItem(
             modifier = modifier,
             compact = compact,
         )
-        is RunTraceMessageUi -> RunTraceRow(message = message, onClick = onRunTraceClick, modifier = modifier)
         is ToolActivityMessageUi -> ToolActivityInline(
             message = message,
             onOpenBrowser = onOpenBrowser,
@@ -1055,50 +1052,6 @@ private fun ThinkingTailWindow(
 }
 
 private const val THINKING_TAIL_WINDOW_LINES = 4
-
-// ── Run trace：轻量入口行 ─────────────────────────────────────────────
-
-@Composable
-private fun RunTraceRow(
-    message: RunTraceMessageUi,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 4.dp)
-            .squircleSurface(color = MiuixTheme.colorScheme.surface, cornerRadius = ChatCardCorner)
-            .squircleBorder(
-                width = 0.5.dp,
-                color = MiuixTheme.colorScheme.outline.copy(alpha = ChatCardOutlineAlpha),
-                cornerRadius = ChatCardCorner,
-            )
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Check,
-            contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = MiuixTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = stringResource(R.string.ui_available_capacity_743337),
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            imageVector = Icons.Rounded.ChevronRight,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f),
-        )
-    }
-}
 
 // ── 工具摘要 ──────────────────────────────────────────────────────────
 

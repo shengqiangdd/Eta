@@ -1,8 +1,6 @@
 package io.github.mangi.eta.ui.app
 
-import android.content.ContentResolver
 import android.content.Context
-import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -134,31 +132,7 @@ internal class AgentSkillsStore(
         }
     }
 
-    fun importSkillZip(uriValue: String) {
-        if (skillsState.isImporting || skillsState.busySkillId != null) return
-        val uri = runCatching { Uri.parse(uriValue) }.getOrNull()
-            ?.takeIf { it.scheme == ContentResolver.SCHEME_CONTENT }
-        if (uri == null) {
-            skillsState = skillsState.copy(
-                notice = newSkillNotice(
-                    title = appContext.getString(R.string.state_unable_to_read_skill_pack_a53563),
-                    message = appContext.getString(R.string.state_please_select_the_zip_file_provided_by_the_system_fi_fea145),
-                    isError = true,
-                ),
-            )
-            return
-        }
-        pendingSkillZipSource = ZipSource.Content(uri)
-        pendingSkillZipSha256 = null
-        launchSkillZipImport(
-            source = ZipSource.Content(uri),
-            replaceUserSkill = false,
-            expectedReplacementId = null,
-            expectedArchiveSha256 = null,
-        )
-    }
-
-    /** 应用内选择器拿到 ZIP 路径：与 uri 路径共用安装与二次确认流程。 */
+    /** 应用内选择器拿到 ZIP 路径。 */
     fun importSkillZipPath(path: String) {
         if (skillsState.isImporting || skillsState.busySkillId != null) return
         if (!File(path).isFile) {
@@ -408,19 +382,13 @@ internal class AgentSkillsStore(
 }
 
 /**
- * 本地 ZIP 的来源：系统 SAF 给的 uri，或应用内选择器给的路径。
+ * 本地 ZIP 的来源：应用内选择器给出的文件路径。
  *
  * 抽出来的理由：安装流程（包括冲突时的二次确认）必须能重放同一个归档，
- * 而重放时只能记住“从哪里读”，不能只记一个 uri。
+ * 而重放时只能记住“从哪里读”。
  */
 private sealed interface ZipSource {
     fun open(context: Context): InputStream
-
-    data class Content(val uri: Uri) : ZipSource {
-        override fun open(context: Context): InputStream =
-            context.contentResolver.openInputStream(uri)
-                ?: error(context.getString(R.string.state_ui_unable_to_open_selection_9f0004))
-    }
 
     data class LocalFile(val path: String) : ZipSource {
         override fun open(context: Context): InputStream = File(path).inputStream()

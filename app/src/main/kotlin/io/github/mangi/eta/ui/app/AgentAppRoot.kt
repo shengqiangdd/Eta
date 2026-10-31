@@ -535,7 +535,6 @@ fun AgentAppRoot(
                                 AgentHomeAction.LoadEarlierMessages -> agentState.loadEarlierMessages()
                                 is AgentHomeAction.HistoryViewportChanged ->
                                     agentState.updateHistoryViewport(action.atLatest)
-                                AgentHomeAction.RetryConversationLoad -> Unit
                                 is AgentHomeAction.InterruptAndSubmitMessage -> {
                                     requestExecutionNotifications()
                                     agentState.interruptAndSendCurrentMessage(action.text)
@@ -579,13 +578,7 @@ fun AgentAppRoot(
                                     }
                                 }
                                 is AgentHomeAction.SelectReplyCandidate -> agentState.selectReplyCandidate(action.id, action.index)
-                                AgentHomeAction.OpenTools -> pushRoute(AppRoute.Tools)
-                                AgentHomeAction.OpenSkills -> pushRoute(AppRoute.Skills)
-                                AgentHomeAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
-                                AgentHomeAction.OpenSystemEnhance -> pushRoute(AppRoute.SystemEnhance)
-                                AgentHomeAction.OpenSettings -> pushRoute(AppRoute.Settings)
                                 AgentHomeAction.OpenBrowser -> pushRoute(AppRoute.Browser())
-                                AgentHomeAction.ExpandRunTrace -> Unit
                             }
                         },
                         historyLoadState = agentState.historyLoadState,
@@ -641,7 +634,6 @@ fun AgentAppRoot(
                     onAction = { action ->
                         when (action) {
                             AgentSkillsAction.NavigateBack -> popRoute()
-                            is AgentSkillsAction.ImportZip -> skills.importSkillZip(action.uri)
                             is AgentSkillsAction.ImportZipPath -> skills.importSkillZipPath(action.path)
                             AgentSkillsAction.ConfirmZipReplacement -> skills.confirmSkillZipReplacement()
                             AgentSkillsAction.CancelZipReplacement -> skills.cancelSkillZipReplacement()
@@ -666,7 +658,6 @@ fun AgentAppRoot(
                             is AgentPluginsAction.UninstallPlugin -> plugins.uninstall(action.pluginId)
                             is AgentPluginsAction.RollbackPlugin ->
                                 plugins.rollback(action.pluginId, action.version)
-                            is AgentPluginsAction.ImportZip -> plugins.importZip(action.uri)
                             is AgentPluginsAction.ImportZipPath -> plugins.importZipFile(action.path)
                             is AgentPluginsAction.PrepareLinkInstall -> plugins.prepareLinkInstall(action.url)
                             AgentPluginsAction.ConfirmLinkInstall -> plugins.confirmLinkInstall()
