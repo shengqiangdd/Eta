@@ -25,6 +25,7 @@ import android.os.Message
 import android.os.PowerManager
 import android.os.Messenger
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
@@ -933,16 +934,23 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     private fun sendResultTo(target: Messenger?, result: AgentRuntimeWire.RunResult) {
-        dispatchResultIo { sendResultNow(target, result) }
+        val queuedAt = SystemClock.elapsedRealtime()
+        dispatchResultIo {
+            // resultIo 是单线程：等待时间能直接看出前面有没有别的回传在堵着（§32.26）。
+            sendResultNow(target, result, SystemClock.elapsedRealtime() - queuedAt)
+        }
     }
 
     private fun sendResultNow(
         target: Messenger?,
         result: AgentRuntimeWire.RunResult,
+        waitMs: Long = 0,
     ) {
         runCatching {
+            val startedAt = SystemClock.elapsedRealtime()
             val msg = Message.obtain(null, AgentRuntimeWire.MSG_RESULT)
             msg.data = AgentRuntimeWire.toBundle(result, cacheDir)
+            logResultDeliveryCost(waitMs, SystemClock.elapsedRealtime() - startedAt, result)
             AgentWireText.send(target, msg)
         }.onFailure { throwable ->
             AndroidAgentLogger.warnThrottled("runtime_result_delivery_failed") {
@@ -962,6 +970,23 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 }
             }
         }
+    }
+
+    /**
+     * 每轮回传只记一行：等待（resultIo 是单线程，前面有活就会排队）+ 构造（两次编码）+ 规模。
+     * 长对话卡不卡，以后看这一行就够了，不用再 SIGQUIT 抓栈（§32.26）。
+     */
+    private fun logResultDeliveryCost(
+        waitMs: Long,
+        buildMs: Long,
+        result: AgentRuntimeWire.RunResult,
+    ) {
+        val chars = result.transcript.sumOf {
+            it.content.length + it.reasoningContent.length + it.contentJson.length + it.toolCallsJson.length
+        }
+        AndroidAgentLogger.info(
+            "result delivery: wait=${waitMs}ms build=${buildMs}ms messages=${result.transcript.size} chars=$chars",
+        )
     }
 
     private fun sendRequestIngestedTo(

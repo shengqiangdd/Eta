@@ -3242,3 +3242,37 @@ val bounded = AgentConversationCodec.decodeTranscript(
   `RenderThread` 253 ticks/8s、主线程 242 ticks/8s —— 界面在流式渲染时的正常开销，
   与 §32.24 那个「常驻满核」不是一回事。
 - 仍然**没有**测「一次回传的端到端耗时」；要测它得在发送路径上埋点，属于下一轮的事。
+
+## 32.26 把「回传到底多慢」变成一行日志（2026-10-31，本机 PKX110/A16）
+
+### 32.26.1 为什么做这个
+
+§32.24 和 §32.25 都是「从代码结构上确定更快」，但**没有秒表**。真出事时还是得
+`kill -3` 抓栈、翻 `/data/anr/trace_*` 才知道卡在哪个方法 —— 这不适合日常判断。
+所以补两个计时点，把长对话的成本变成可以直接 grep 的一行。
+
+### 32.26.2 埋点
+
+| 位置 | 日志行 | 说明 |
+|---|---|---|
+| `AgentRuntimeClient` 构造请求 | `request bundle: build=Xms messages=N` | 用户按下发送后，整个历史序列化成 JSON 的耗时 |
+| `AgentRuntimeService` 回传结果 | `result delivery: wait=Xms build=Yms messages=N chars=C` | `wait` = resultIo 单线程队列排队；`build` = 两次编码（完整 JSON + 投影）总耗时 |
+
+`wait` 单独记的理由：`resultIo` 是单线程，若一次回传要 800ms，后面排队的会被拖住，
+只看 build 会漏掉「排队」。
+
+### 32.26.3 不改变行为
+
+只加了两处 `SystemClock.elapsedRealtime()` 和一行 `Log.i`：不开线程、不改协议、
+不改 Bundle 内容。字符数是 `transcript` 四个文本字段求和，O(条数)，相对编码可忽略。
+
+### 32.26.4 怎么用
+
+```
+logcat -d -s Eta:* | grep -E "request bundle|result delivery"
+```
+
+### 32.26.5 已验证 / 未验证
+
+- 编译与单测：`STAGES=test` **835 用例 0 失败**。
+- 真机数字：**要等装包后跑一次真实对话**才有；本轮不预先写假数据。

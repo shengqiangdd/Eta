@@ -100,7 +100,13 @@ internal class AgentRuntimeClient(
             msg.replyTo = clientMessenger
             val preparedImages = AgentRuntimeImageTransfer.prepare(context, request.images)
             preparedImagesRef.set(preparedImages)
+            // 用户按下发送后最直观的等待就在这里：整个历史要序列化成 JSON（§32.26）。
+            val bundleStartedAt = android.os.SystemClock.elapsedRealtime()
             msg.data = AgentRuntimeWire.toBundle(request, preparedImages.images, context.cacheDir)
+            logger.info(
+                "request bundle: build=${android.os.SystemClock.elapsedRealtime() - bundleStartedAt}ms " +
+                    "messages=${request.history.size}",
+            )
             AgentWireText.send(serviceMessenger, msg)
             // Messenger 是 oneway：目标服务已销毁时发送不会抛异常，请求会静默消失。
             // 服务侧收到请求会回一次 ingested，等不到就说明这条链路没通，必须报错而不是
