@@ -3106,3 +3106,73 @@ payload 里 source 脚本后打印 `KEYLEN`（只打印长度，不打印值）�
 - canary（`ETA_APP_ID_SUFFIX=.canary`）：32,144,481 字节，
   sha256 `4da510f101e3bd4093c5e4358ef48e31b080c7dfd2258b1b516856ddfe0d2e9e`；
   `pm install -r -d` 后 `firstInstallTime` 仍 **2026-10-29 16:35:18**，`base.apk` 与构建产物逐字节一致。
+
+## 32.24 「越聊越卡」的真因：旧客户端投影是 O(n²) 序列化（2026-10-31，本机 PKX110/A16）
+
+### 32.24.1 现象：新包装完，用户仍说卡
+
+进程盘点（`ps -A` / `top -b`）：
+
+- 只有一个 Eta 主进程（12:21 随覆盖安装重启），**没有旧实例残留**；
+- 真正的“残留”是 3 个 Java 守护进程：Gradle 9.7.1（另一个项目留下的，RSS **1.6 GB**）、
+  Gradle 8.9、Kotlin 编译 daemon。全部停掉后：空闲内存 **600 MB → 2.77 GB**，
+  系统 idle **18% → 76%**。
+
+但 Eta 自己仍有一个线程持续 **≈99% 单核**（785 ticks / 8s），系统整体 idle 76% 时它照样满。
+
+### 32.24.2 定位：栈直接指到 JSON 序列化
+
+`/proc/<pid>/task/*/comm` 找出线程名 `agent-result-io`；`kill -3` 抓到的
+`/data/anr/trace_07` 里栈是：
+
+```
+AgentRuntimeService.sendResultNow
+  → AgentRuntimeWire.toBundle
+    → AgentLegacyConversationProjection.encode
+      → Json.encodeToString / JsonToStringWriter.ensureTotalCapacity
+```
+
+读实现就明白了 —— 超预算时它做的是：
+
+```kotlin
+while (bounded.size > 1) {
+    bounded.removeAt(0)
+    encoded = json.encodeToString(listOf(notice) + bounded)   // 每删一条，整段重编码
+}
+```
+
+**O(条数 × 总字符量)**：对话越长越慢，几 MB 的 transcript 就能把一个核跑满几分钟。
+用户感觉到的“手机很卡”，在这个会话里主要就是它（RenderThread / GC 只是跟着忙）。
+
+### 32.24.3 改法
+
+| 项目 | 做法 |
+|---|---|
+| 长度预算 | 每条只 `encodeToString` 一次算长度；从尾部累加「条目 + 1 个逗号」定起点 |
+| 编码次数 | 列表编码 1 次（正常路径）；预算误差最多再校验 8 次，**绝不回到每条重编码** |
+| 语义 | 尾部优先、加压缩提示、跳过开头的 tool、单条超限压缩（与旧一致） |
+| 空 / 全是 tool | 与旧一致返回 `[]` |
+
+### 32.24.4 验证
+
+- 新增 `AgentLegacyConversationProjectionTest` 4 例：不截断、超预算保尾部、
+  尾部 tool 空投影、**2000 条 × 1 KB（2 MB）在 5 秒内**（旧实现约 2000 次全量重编码）。
+  已加进 `FAST_TEST_FILTERS`。
+- `STAGES=test`：**829 用例 0 失败**（上轮 825 + 4）。
+- 首次误用 `--tests 'io.github.mangi.eta.agent.runtime.*'` 跑了整包：73 例失败，
+  全是 `DefaultNativeRuntimeLoader`（Robolectric native runtime 不支持 Linux aarch64），
+  与本改动无关 —— 又一次印证 gate 只收纯 JVM 用例的理由。
+- 真机：安装后单独实测了该线程的 CPU（§32.24.5 第 3 条）。
+
+### 32.24.5 还没治的 / 未验证
+
+1. 只优化了**投影编码**。`toBundle` 仍每次重建 Bundle（O(结果大小)），只是不再是 O(n²)。
+2. `AgentConversationCodec.encodeTranscriptForStorage` 每轮仍全量一遍（O(n)），长对话下是固定成本。
+3. **真机已实测（2026-10-31 12:44 安装，sha `556661db…`）**：同一长对话下
+   `agent-result-io` 从 **785 ticks/8s（≈99% 单核）** 降到 **0 ticks/8s**；
+   该线程自 12:44 起累计 CPU 仅 **5.6 秒**（旧实现单次回传就要 200+ 秒）。
+   同时停掉 3 个 Java 守护进程（Gradle 9.7.1 / 8.9 / Kotlin）：
+   空闲内存 600 MB → 2.77 GB，系统 idle 18% → 76%。
+4. 新包体积 **32,656,141 字节**，sha256
+   `556661dbdf207af17254200b11820f9491177e1da846beaaebe46c06eb569c7c`；
+   `pm path` 下 `base.apk` 与构建产物逐字节一致，`lastUpdateTime=12:44:05`。
