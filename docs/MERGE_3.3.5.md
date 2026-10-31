@@ -3032,8 +3032,77 @@ verbose 恒无折叠行、detailed 只收历史轮）。已进 `tools/gate.sh` �
 3. **文件 0600 只有单测覆盖**：真机上脚本存在的时间窗只有 source 前的一瞬，外部抓不到；本轮只验到目录 0700 与「收尾无残留」。
 4. **Linux / proot 落点未上真机**：rootfs `/tmp` 是否可写、guest 是否真能 `source` 到，只有单测（`/tmp/.eta-env-` 前缀、不动 `/tmp` 权限）。
 5. **常驻会话里的旧变量不会回滚**：env.conf 改完后，已开着的会话/已在跑的后台服务保留旧环境（界面提示里已写明，需重开会话或重启服务）。
-6. **同类泄露还有一处，本轮只记录未改**：`AcpClient` 启动 ACP 代理时把凭据写进 `su -c` 的命令串
+6. **同类泄露已修（见 §32.23）**：`AcpClient` 启动 ACP 代理时把凭据写进 `su -c` 的命令串
    （`AcpClient.kt` 里 `providerExport = "export ${AcpProvider.ENV_KEY}=…"`，旁边注释写的「不会出现在
-   宿主 ps 的命令行里」与实际不符——它就在 `su` 的 argv 里）。修法与终端一致（往 rootfs 写 0600 脚本再
-   source），但要往 AcpClient 里多接一个 rootfs 路径/脚本提供者，并需要能真跑一次 ACP 委派才能验收；
-   本轮不动它，避免把未验证的改动塞进另一条链路。
+   宿主 ps 的命令行里」与实际不符——它就在 `su` 的 argv 里）。当时的结论是「修法与终端一致（往 rootfs 写 0600 脚本再
+   source），但要往 AcpClient 里多接一个 rootfs 脚本提供者，并需要能真跑一次 ACP 委派才能验收」；
+   本轮已改成同一套 rootfs 0600 脚本（§32.23）；仍未做到的只有「真跑一次 ACP 委派」，原因见 §32.23.4。
+
+## 32.23 ACP 凭据也不进 argv：改走 rootfs 内一次性 0600 脚本（2026-10-31，本机 PKX110/A16）
+
+### 32.23.1 缺陷：同一处坑的第二条链路
+
+§32.22 修完终端后记过一笔：`AcpClient` 启动 ACP 代理时把凭据拼成 `export KEY='value';` 交给
+`su -c`，于是值成为 `su` 的 argv，`ps -A -o pid,args` 直接可读。旁边那句注释
+「凭据在**环境内** export：值不经过宿主 shell，也不会出现在宿主 ps 的命令行里」是错的 ——
+它确实在 `su` 的命令串里。
+
+### 32.23.2 改法
+
+| 项目 | 做法 |
+|---|---|
+| 拆分 | `AcpLaunchEnv(marker, secrets)`：`ETA_ACP_SESSION`（收尾靠它扫进程树）**非机密、仍内联**；其余全部进脚本 |
+| 落点 | 新增 `envScript` 回调 → `AgentLocalTools.wrapEnvForLinux` → `TerminalEnvInjection(File(rootfs,"tmp"), "/tmp", ownsDirectory=false)`，与终端 env.conf **同一套** |
+| 命令行 | `export ETA_ACP_SESSION='…'; <单行 source/rm 片段>`，只出现脚本路径 |
+| 失败即中止 | `envScript` 返回 null（rootfs 未就绪 / 写不进去）→ 抛异常、不启动；**绝不回退拼值** |
+| 值不合法 | 含换行 / NUL / 超长 → 报出具体键名并中止（不在上游静默过滤，否则表现成「代理说没凭证」） |
+| 同名键 | `distinctBy { key }` 保留第一次出现：provider 里配的 key 必须压过环境里的同名旧值（脚本按行 export，后写会覆盖前写） |
+
+代码位置：`AcpClient.kt`（`AcpLaunchEnv` / `acpLaunchEnv` / `acpEnvPrefix` / `launch()`）、
+`AgentLocalTools.kt`（`wrapEnvForLinux`）。测试：`AcpLaunchEnvTest`（6 例）。
+
+### 32.23.3 真机验证（机制层，本机）
+
+用与 `AcpClient` **同形**的启动链跑一条 15 秒命令：
+`su -c '<busybox> chroot <rootfs> /usr/bin/env -i HOME=/root … PATH=… /bin/sh -lc '<payload>''`，
+payload 里 source 脚本后打印 `KEYLEN`（只打印长度，不打印值）：
+
+| 检查 | 实测 |
+|---|---|
+| 脚本权限 | `SCRIPT 600 root:root`（写在 rootfs `/tmp`） |
+| guest 内 source | `KEYLEN=16`，与探针值长度 16 一致（值确实进了子进程环境） |
+| source 后删除 | `LEFTOVER=0` |
+| `/tmp` 权限没被改 | 仍 `drwxrwxrwt root:root`（1777） |
+| argv 扫描 | 110 张 `ps -A -o pid,args` 快照：值 **0 命中**；脚本路径 114 次、`ETA_ACP_SESSION` 114 次 |
+| 正向对照 | 快照里能读到 `… chroot <rootfs> /usr/bin/env -i … /bin/sh -lc 'export ETA_ACP_SESSION…'` |
+
+这一轮同时补齐了 §32.22.6 第 4 条（Linux 落点未上真机）：rootfs `/tmp` 可写、guest 能 `source`、
+宿主 `File(rootfs,"tmp")` 与 guest `/tmp` 是同一目录（inode 一致）。
+
+**探针自己踩的坑（记录一下，别误判成产品缺陷）**：第一版探针的 chroot 命令没带 `PATH`，
+于是 guest 里 `rm` / `sleep` 都 `not found`，脚本删不掉、`LEFTOVER=1`。真实 `ShellProcessSupervisor`
+会通过 `/usr/bin/env -i … PATH=…` 显式给 PATH，所以这条只说明：**命令缺失时脚本会残留，靠
+`sweepStale()`（>10 分钟）兜底**。
+
+### 32.23.4 未验证（不写成已验证）
+
+1. **没有真跑过一次 ACP 委派**：本机 rootfs 里没有 codex 类代理（`/opt/eta/node/bin` 为空、
+   `acp_agent_list` 会报未安装），`delegate()` 在「代理可执行文件不存在」这一步就返回，
+   走不到凭据下发。端到端（代理真的用 `ETA_CODEX_API_KEY` 拿到 key）仍缺，
+   需要一台装了 codex-acp 的环境。
+2. **ACP 凭据不读 env.conf**：`acpLaunchEnv` 的来源只有 `provider.apiKey` 与 **App 进程环境**
+   （`System.getenv`）；`agents()` 的 `credentialPresent` 也只看这两者加代理自己的凭证文件。
+   所以「在终端 env.conf 里配 `OPENAI_API_KEY`」不会让 ACP 用上它 —— 这是既有语义，本轮没改，
+   但用户容易误会，写在手册里更合适。
+3. **canary 没有 GUI 验证**：canary 数据目录当前不存在（装过但从未启动），本轮只核对安装与哈希；
+   ACP 这条链路本来也点不出来（见第 1 条）。
+
+### 32.23.5 门禁与产物
+
+- `STAGES=test`：**825 用例 0 失败**（上一轮 819 里其实**不含** `AcpLaunchEnvTest` —— 它没进
+  `FAST_TEST_FILTERS`，所以「绿」来自没跑到。本轮已加进列表，+6 例即 4+2）。
+- `STAGES=lint,assemble`：lint 无新增，baseline 账目一致（**412 条命中**：405 errors + 7 hints）；
+  打包 32,144,445 字节，sha256 `0917bcee0faa95c73d671cb6ba421e39e469a10ae9952ba47c015df427e6fd5b`。
+- canary（`ETA_APP_ID_SUFFIX=.canary`）：32,144,481 字节，
+  sha256 `4da510f101e3bd4093c5e4358ef48e31b080c7dfd2258b1b516856ddfe0d2e9e`；
+  `pm install -r -d` 后 `firstInstallTime` 仍 **2026-10-29 16:35:18**，`base.apk` 与构建产物逐字节一致。

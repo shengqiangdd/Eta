@@ -3,6 +3,8 @@ package io.github.mangi.eta.agent.acp
 import android.os.Handler
 import android.os.HandlerThread
 import io.github.mangi.eta.agent.device.RootAccess
+import io.github.mangi.eta.agent.terminal.TerminalEnvEntry
+import io.github.mangi.eta.agent.terminal.TerminalEnvRules
 import io.github.mangi.eta.core.AgentLogger
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -28,6 +30,41 @@ import org.json.JSONObject
  *    因为 Eta 无法在工具调用中弹窗问用户；宁可让代理停下来报告，也不能替用户决定落盘。
  * 4. **收尾**：进程、读线程、HandlerThread 全部显式回收；close 幂等。
  */
+/**
+ * 一次 ACP 启动需要的环境：会话标记（非机密）+ 凭据（机密）。
+ *
+ * 拆成两组是为了让机密只走 0600 脚本，而标记仍可内联——收尾靠标记扫环境变量
+ * 找出整棵进程树（Android 的 Process 没有 pid，destroyForcibly 只杀 su 那一层）。
+ */
+internal data class AcpLaunchEnv(
+    val marker: TerminalEnvEntry,
+    val secrets: List<TerminalEnvEntry>,
+)
+
+internal fun acpLaunchEnv(
+    sessionId: String,
+    provider: AcpProvider.Config?,
+    credentialEnvKeys: List<String>,
+    env: (String) -> String? = { System.getenv(it) },
+): AcpLaunchEnv {
+    val secrets = buildList {
+        provider?.apiKey?.takeIf { it.isNotBlank() }
+            ?.let { add(TerminalEnvEntry(AcpProvider.ENV_KEY, it)) }
+        credentialEnvKeys.forEach { key ->
+            env(key)?.takeIf { it.isNotBlank() }?.let { add(TerminalEnvEntry(key, it)) }
+        }
+    }
+        // 同名键只留第一次出现的值：脚本按行 export，后写的会覆盖前写的。
+        // provider 里配的 key 必须压过环境里同名的旧变量，否则用户改了设置却仍在用旧 key。
+        .distinctBy { it.key }
+    // 与 AcpOrphanReaper 的 marker 逐字一致，改一边必须改另一边。
+    return AcpLaunchEnv(TerminalEnvEntry("ETA_ACP_SESSION", sessionId), secrets)
+}
+
+/** 标记内联 + 机密只给脚本路径。 */
+internal fun acpEnvPrefix(marker: TerminalEnvEntry, script: String?): String =
+    "export ${marker.key}=${AcpProvider.shellQuote(marker.value)}; " + (script?.let { "$it; " } ?: "")
+
 internal class AcpClient(
     private val logger: AgentLogger,
     private val rootAvailable: () -> Boolean = { RootAccess.isGranted },
@@ -41,6 +78,11 @@ internal class AcpClient(
      * 而代理其实可能装得好好的。启动进程同理：必须先进环境再 exec。
      */
     private val linuxShell: (String) -> String? = { null },
+    /**
+     * 把凭据写成「guest 内的一次性 0600 脚本」并返回可直接拼进命令的 source 片段。
+     * 返回 null 表示环境未就绪——调用方必须**中止**，不能回退成拼值。
+     */
+    private val envScript: (List<TerminalEnvEntry>) -> String? = { null },
 ) {
     data class Agent(
         val id: String,
@@ -580,18 +622,22 @@ internal class AcpClient(
             append("cd ").append(shellQuote(cwd)).append(" 2>/dev/null || cd /workspace; ")
             append("exec ").append(shellQuote(executablePath))
         }
-        // 凭据在**环境内** export：值不经过宿主 shell，也不会出现在宿主 ps 的命令行里。
-        // 环境变量标签：收尾时靠它捞出整棵进程树（Android 的 Process 没有 pid()，
-        // destroyForcibly 又只杀 su 那一层）。子进程会继承它。
-        val sessionMarker = "export ETA_ACP_SESSION=${shellQuote(sessionId)}; "
-        val providerExport = provider?.let {
-            "export ${AcpProvider.ENV_KEY}=${shellQuote(it.apiKey)}; "
-        } ?: ""
-        val envExports = sessionMarker + providerExport + spec.credentialEnvKeys
-            .mapNotNull { key ->
-                System.getenv(key)?.takeIf { it.isNotBlank() }?.let { "export $key=${shellQuote(it)}; " }
-            }
-            .joinToString("")
+        val launchEnv = acpLaunchEnv(sessionId, provider, spec.credentialEnvKeys)
+        // 含换行/NUL 的值会被脚本过滤掉（TerminalEnvRules）；那不是「环境没就绪」，
+        // 必须指出是哪一项，否则用户会去查 rootfs 而永远修不好。
+        launchEnv.secrets.firstOrNull { !TerminalEnvRules.isInjectable(it) }?.let { bad ->
+            throw IllegalStateException(
+                "凭据 ${bad.key} 的值无法安全注入（含换行/NUL 或超长）；已中止，避免 key 出现在 ps 命令行里",
+            )
+        }
+        // 凭据**不能**拼成 `export KEY='value'`：那串会成为 `su -c` 的 argv，`ps` 里直接可读。
+        // 改为写进 rootfs 的一次性 0600 脚本，命令行只留脚本路径（同终端 env.conf，§32.22）。
+        val secretScript = launchEnv.secrets.takeIf { it.isNotEmpty() }?.let { secrets ->
+            envScript(secrets) ?: throw IllegalStateException(
+                "无法安全下发 ACP 凭据（Linux 工具环境未就绪）；已中止，避免 key 出现在 ps 命令行里",
+            )
+        }
+        val envExports = acpEnvPrefix(launchEnv.marker, secretScript)
         val wrapped = linuxShell(envExports + innerScript)
             ?: throw IllegalStateException("Linux 工具环境未就绪（或无 Root），无法在环境内启动 ACP 代理")
         val process = ProcessBuilder("su", "-c", wrapped)

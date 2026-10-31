@@ -82,6 +82,8 @@ import io.github.mangi.eta.agent.terminal.terminalEnvironment
 import io.github.mangi.eta.agent.terminal.RootShellTerminalController
 import io.github.mangi.eta.agent.terminal.SharedFolderMounts
 import io.github.mangi.eta.agent.terminal.ShellProcessSupervisor
+import io.github.mangi.eta.agent.terminal.TerminalEnvEntry
+import io.github.mangi.eta.agent.terminal.TerminalEnvInjection
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AgentLogger
 import io.github.mangi.eta.core.HookSupport
@@ -193,7 +195,22 @@ internal class AgentLocalTools(
             logger = logger,
             rootAvailable = rootAvailable,
             linuxShell = ::wrapForLinuxEnvironment,
+            envScript = ::wrapEnvForLinux,
         )
+    }
+
+    /**
+     * ACP 凭据的落点：与终端 env.conf 完全同一套（rootfs 内 `/tmp` 的一次性 0600 脚本）。
+     * 返回 null 表示环境未就绪，[AcpClient] 会中止而不是把 key 拼回命令行。
+     */
+    private fun wrapEnvForLinux(entries: List<TerminalEnvEntry>): String? {
+        val rootfs = terminalExecutionContext.linuxRootfsPath ?: return null
+        if (!LinuxEnvironmentPaths.rootfsReady(rootfs)) return null
+        return TerminalEnvInjection(
+            hostDirectory = File(rootfs, "tmp"),
+            shellDirectory = "/tmp",
+            ownsDirectory = false,
+        ).script(entries)
     }
 
     /**

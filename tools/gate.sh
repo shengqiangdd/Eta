@@ -137,6 +137,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.acp.AcpUpdateAccumulatorTest
   --tests io.github.mangi.eta.agent.acp.AcpDelegateSummaryTest
   --tests io.github.mangi.eta.agent.acp.AcpModelsTest
+  --tests io.github.mangi.eta.agent.acp.AcpLaunchEnvTest
   --tests io.github.mangi.eta.ui.app.MessageSortAlignmentTest
   --tests io.github.mangi.eta.ui.app.AgentMessageQueueReducerTest
   --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest
