@@ -89,7 +89,14 @@ has_stage() {
 # ConversationHistoryExportTest 是纯 JVM（假数据源 + StringWriter），2026-10-25 补上：
 # 它守着「完整历史导出逐块流式写、没有被当成整串拼进内存」和「正常结束必有 end 行」——
 # 大会话 journal 有 3100 万字符，任意一处退化成都行拼接都会让导出在真机上 OOM。
+#
+# AgentWireHistoryHandoffTest 是纯 JVM（只碰 ConcurrentHashMap），2026-11-01 补上：
+# §32.33 的进程内直传靠三条硬约束撑着 —— 单次消费、TTL / 容量自清、句柄失效即失败。
+# 它此前**一次都没被门禁跑过**；同一段代码的另一条用例正是在全量跑里被发现断言漂移的。
+# 注意 AgentRuntimeWireTest 不能加：它带 @Config(sdk = [33, 36])，sdk 36 实例在
+# Linux/aarch64 上必然撞 Robolectric native runtime，加进来等于给门禁塞固定红。
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
+  --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest

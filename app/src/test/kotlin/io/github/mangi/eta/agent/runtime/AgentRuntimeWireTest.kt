@@ -30,6 +30,11 @@ class AgentRuntimeWireTest {
     /**
      * §32.29：正常请求不再内联 `history`（旧客户端兼容载荷），但读端还必须能读回来。
      *
+     * §32.33 起载体也换了：`AgentRuntimeService` 在 AndroidManifest 里没有 `android:process`，
+     * 与界面同进程，所以正常请求连 `history_json` 都不写，改为 [AgentWireHistoryHandoff] 直传。
+     * 这条测试真正守的不变量是**还原能力**，不是「必须有某个键」——
+     * 断言旧载体等于把实现细节写死，实现一变就红，看起来像回归。
+     *
      * 另一半不变量在 [AgentRuntimeWire.toLegacyBundle]：旧客户端发的内联历史必须仍能解析，
      * 否则一旦回退到旧发端就是静默失忆。
      */
@@ -51,12 +56,50 @@ class AgentRuntimeWireTest {
 
         val modern = AgentRuntimeWire.toBundle(request, emptyList(), null)
         assertFalse("正常请求不得再带内联 legacy 历史", modern.containsKey("history"))
-        assertTrue("history_json 必须仍在", modern.containsKey("history_json"))
+        assertFalse("同进程直传后不再写 history_json", modern.containsKey("history_json"))
+        assertEquals("process", modern.getString("history_transport"))
+        assertFalse(
+            "必须携带进程内交接句柄",
+            modern.getString("history_handoff").isNullOrBlank(),
+        )
         assertEquals(history, AgentRuntimeWire.runRequestFromBundle(modern).history)
 
         val legacy = AgentRuntimeWire.toLegacyBundle(request)
         assertTrue("旧客户端路径仍要内联历史", legacy.containsKey("history"))
         assertEquals(request, AgentRuntimeWire.runRequestFromBundle(legacy))
+    }
+
+    /**
+     * §32.33 的反面：句柄已被消费（或真的跨进程）时，读端必须**立刻失败**。
+     *
+     * 静默返回空历史不会崩，只会让模型看不见上下文 —— 用户看到的是一段"莫名失忆"的回答，
+     * 比崩溃难查得多。这条用例把该分支钉死，防止有人为了"容错"改成 orEmpty()。
+     */
+    @Test
+    fun lostProcessLocalHistoryFailsInsteadOfSilentlyForgetting() {
+        val history = listOf(
+            AgentModelClient.ConversationMessage(role = "user", content = "第一问"),
+            AgentModelClient.ConversationMessage(role = "assistant", content = "第一答"),
+        )
+        val request = AgentRuntimeWire.RunRequest(
+            runId = "wire-history-lost", prompt = "继续", images = emptyList(),
+            config = AgentModelClient.ModelConfig(
+                baseUrl = "https://example.invalid", apiKey = "test", model = "test",
+                systemPrompt = "", reasoningEffort = ReasoningEffort.OFF,
+            ),
+            history = history,
+        )
+
+        val bundle = AgentRuntimeWire.toBundle(request, emptyList(), null)
+        // 第一次消费正常；同一次请求被重复解析时，句柄已删，必须失败而不是给空历史。
+        assertEquals(history, AgentRuntimeWire.runRequestFromBundle(bundle).history)
+        val failure = assertThrows(IllegalStateException::class.java) {
+            AgentRuntimeWire.runRequestFromBundle(bundle)
+        }
+        assertTrue(
+            "错误信息要说明「不在同一进程」，否则线上分不清是退化还是并发：${failure.message}",
+            failure.message.orEmpty().contains("进程内交接丢失"),
+        )
     }
 
     @Test

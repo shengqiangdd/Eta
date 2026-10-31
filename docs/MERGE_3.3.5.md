@@ -4120,3 +4120,72 @@ previousWorkByFirstId[workMessages.first().id]
 装包验证留待下一次真机回归。
 
 
+
+## §32.38 全量单测暴露的「断言漂移」：不是回归，但门禁确实漏了这段代码
+
+### 32.38.1 现象
+
+`5eccf0e`（§32.37 OOM 修复）之后，按惯例跑了一次**不限白名单**的全量单测，用真实结果替代
+「门禁绿了就算数」：
+
+- **3219 用例 / 448 失败 / 9 跳过**；
+- 其中 **447 个是 `DefaultNativeRuntimeLoader` 的已知环境噪声**
+  （`The Robolectric native runtime is not supported on Linux (aarch64)`），
+  6 个是「平台不支持就 assume 跳过」；
+- **1 个是真实失败**：`AgentRuntimeWireTest.modernRequestKeepsLegacyHistoryOffTheWireButStillRestoresHistory`
+  （`AgentRuntimeWireTest.kt:54`）。
+
+### 32.38.2 判定：测试约定过期，不是跨进程回归
+
+第一步先排除最坏可能 —— 「历史真的不跨进程了，会静默失忆」。三条证据都指向否：
+
+1. `app/src/main/AndroidManifest.xml` 里 `AgentRuntimeService` **没有 `android:process`**
+   → 与界面同进程，`Messenger` 本地 binder 不经过 Parcel；
+2. 发端 `requestBundle(processLocalHistory = true)`（§32.33）**有意**只写
+   `history_transport=process` + `history_handoff`，`history_json` 只在
+   `toLegacyBundle`（旧客户端通路）里写；
+3. 读端对 `transport=process` 的处理是 `AgentWireHistoryHandoff.take(id) ?: error(...)`，
+   **取不到就立刻失败**，不存在「静默变空历史」。
+
+失败在第 54 行 `assertTrue("history_json 必须仍在", ...)`，而第 55 行的
+`assertEquals(history, runRequestFromBundle(modern).history)` 根本没执行到。
+也就是说：这条用例写在 §32.29（去掉内联 `history`、保留 `history_json`），
+§32.33 换掉载体后**没有同步**。断言守的是载体键名，不是不变量。
+
+> 结论：**实现不改**。改的是断言 —— 让它盯「历史能不能原样还原」。
+
+### 32.38.3 改法
+
+正向用例改为：不带 `history`、不带 `history_json`、`history_transport=process`、
+`history_handoff` 非空、且 `runRequestFromBundle` 还原出同一批消息；`toLegacyBundle` 的一半不动
+（旧客户端内联历史仍必须可解析）。
+
+另补一条**反面用例** `lostProcessLocalHistoryFailsInsteadOfSilentlyForgetting`：
+把同一个 bundle 解析两次（第二次句柄已被单次消费删掉），断言抛 `IllegalStateException`
+且消息里含「进程内交接丢失」。这条钉住的是读端的 `error` 分支 —— 将来若有人为了「容错」
+改成 `orEmpty()`，对话会莫名失忆而不崩溃，正是最难查的一类退化。
+
+### 32.38.4 真正的问题在门禁：这段代码一次都没被跑过
+
+`AgentRuntimeWireTest` **不在 `tools/gate.sh` 的 `FAST_TEST_FILTERS`** 里，
+所以 `STAGES=test` 的 842 个用例从来不包含它 —— 断言漂移能躺两个版本就是这个原因。
+
+但它**不能**整类加进白名单：类上标着 `@Config(sdk = [33, 36])`，本机 66 个实例里
+sdk 33 的 34 个能真跑（全 PASS），sdk 36 的 34 个必然撞 native runtime
+（与改动前**同为 34 个**，是环境噪声不是新红）。加进去等于给门禁塞固定红。
+
+取舍：把同属 §32.33、**纯 JVM** 的 `AgentWireHistoryHandoffTest`（8 用例，只碰
+`ConcurrentHashMap`）加进白名单。它守的正是这段代码的三条硬约束：单次消费、
+TTL / 容量上限自清、`discard` 立即失效。
+
+门禁现在 **850 用例 / 0 失败**（842 + 8）。白名单旁边已写明「为什么加这个、为什么不加那个」，
+避免下次有人按「都是 runtime 的测试」一刀切。
+
+### 32.38.5 教训
+
+1. **断言实现细节的测试，会在实现合法演进时变红** —— 红得像回归，实际是测试没跟上。
+   断言要写不变量（能力），不要写载体（键名 / 编码方式）。
+2. **门禁白名单是双刃剑**：不进去 = 新代码永不执行（本轮实证）；盲目进去 = 固定环境红。
+   唯一可靠标准是「能不能在本机真跑」，并且必须把理由写在白名单旁。
+3. 全量跑（哪怕一次）能发现白名单看不见的东西，代价是几百条已知噪声要人工分拣 ——
+   分拣时按 `failure.message` 分组，只有分组计数**与预期不符**的那一组才值得深挖。
