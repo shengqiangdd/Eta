@@ -3276,3 +3276,26 @@ logcat -d -s Eta:* | grep -E "request bundle|result delivery"
 
 - 编译与单测：`STAGES=test` **835 用例 0 失败**。
 - 真机数字：**要等装包后跑一次真实对话**才有；本轮不预先写假数据。
+
+### 32.26.6 真机第一组数字（13:32 装包，14:00 的对话）
+
+安装核对：`Success`，`base.apk` sha256 `00f4aae1…` 与产物一致，User 0 的
+`firstInstallTime` 仍是 **2026-10-03 10:38:00**，`lastUpdateTime=13:32:49`。
+
+装完第一次真实对话直接抓到：
+
+```
+14:00:46.853  request bundle: build=119ms messages=267
+14:00:41.950  result delivery: wait=0ms build=7ms messages=2 chars=1063
+14:00:42.111  result delivery: wait=0ms build=0ms messages=0 chars=0
+```
+
+读法：
+
+- **267 条历史 → 119 ms**：这是按下发送后、请求真正发出去之前的固定等待，
+  每轮都要付。约占「用户感知延迟」的大头之一（另一个是模型本身）。
+- **回传 2 条 → 7 ms**：这一轮 run 的 transcript 只有 2 条，不是长对话样本，
+  所以只能说明「短结果几乎不花时间」，**不能**用它推断上千条的耗时。
+- `wait=0ms` 说明 resultIo 没有排队堆积 —— 目前没看到「前面的回传把后面的堵住」。
+
+要评估长对话的真实代价，需要一次 transcript 上千条的 run；这组样本只能作为**基线**。
