@@ -455,6 +455,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val pending = PendingStartRequest(generation, incoming, replyTo)
         pendingStartRequests[generation] = pending
         thread(name = "agent-runtime-image-ingest") {
+            val ingestStartedAt = android.os.SystemClock.elapsedRealtime()
             val prepared = runCatching {
                 val request = AgentRuntimeImageTransfer.materialize(incoming)
                 if (!AgentRuntimeRequestConfigResolver.requiresRuntimeConfig(request)) {
@@ -465,6 +466,17 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     } ?: throw RuntimeConfigUnavailableException()
                     AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, runtimeConfig)
                 }
+            }
+            // 与客户端 `request history:` 是同一笔账的两半：客户端编码+落盘，服务端读回+解析。
+            // 只对成功准备的请求打；失败时下游已有 warnThrottled，不在这里重复报（§32.30）。
+            prepared.getOrNull()?.let { request ->
+                val historyChars = request.history.sumOf {
+                    it.content.length + it.contentJson.length + it.reasoningContent.length + it.toolCallsJson.length
+                }
+                AndroidAgentLogger.info(
+                    "run request: ingest=${android.os.SystemClock.elapsedRealtime() - ingestStartedAt}ms " +
+                        "history=${request.history.size} chars=$historyChars"
+                )
             }
             mainHandler.post {
                 if (pendingStartRequests.remove(generation) !== pending) {
