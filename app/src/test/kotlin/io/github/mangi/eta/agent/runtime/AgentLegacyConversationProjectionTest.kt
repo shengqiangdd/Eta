@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
+import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
 import kotlin.system.measureTimeMillis
 import org.junit.Assert.assertEquals
@@ -56,5 +57,32 @@ class AgentLegacyConversationProjectionTest {
         }
         // 旧实现约 2000 次 × 2MB 全量重编码；新实现是两次 O(总量)。5 秒足够宽松。
         assertTrue("耗时 ${elapsed}ms，疑似回到 O(n²)", elapsed < 5_000)
+    }
+
+    /**
+     * 投影现在直接走 `sanitizeTranscript`，不再「序列化 → 解析」一次往返。
+     * 这里钉住两者等价，否则清洗逻辑一旦分叉就会静默泄露到 IPC。
+     */
+    @Test
+    fun sanitizePathMatchesJsonRoundTrip() {
+        val messages = listOf(
+            AgentModelClient.ConversationMessage(
+                role = "assistant",
+                content = "答案",
+                toolCallId = "call-1",
+                reasoningContent = "先分析",
+                toolCallsJson = "[]",
+                contextSummary = true,
+                compactedUserTurns = 2,
+                summaryThroughUserTurn = 1,
+                messageId = "m-1",
+            ),
+            AgentModelClient.ConversationMessage(role = "tool", content = "结果", toolCallId = "call-1"),
+            AgentModelClient.ConversationMessage(role = "user", content = "下一问"),
+        )
+        val roundTrip = AgentConversationCodec.decodeTranscript(
+            AgentConversationCodec.encodeTranscriptForStorage(messages),
+        )
+        assertEquals(roundTrip, AgentConversationCodec.sanitizeTranscript(messages))
     }
 }

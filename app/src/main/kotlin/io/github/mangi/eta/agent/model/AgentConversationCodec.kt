@@ -29,6 +29,14 @@ internal object AgentConversationCodec {
     fun encodeTranscriptForStorage(messages: List<AgentModelClient.ConversationMessage>): String =
         json.encodeToString(messages.map(::sanitizeMessage))
 
+    /**
+     * 与 `decodeTranscript(encodeTranscriptForStorage(messages))` 结果相同，但不做全量 JSON 往返。
+     * 长对话里那次往返是几十 MB 的编码 + 解析，只为拿到同一批已清洗的 DTO（§32.25）。
+     */
+    fun sanitizeTranscript(
+        messages: List<AgentModelClient.ConversationMessage>,
+    ): List<AgentModelClient.ConversationMessage> = messages.map(::sanitizeMessage)
+
     fun encodeConversationCheckpoint(messages: List<AgentModelClient.ConversationMessage>): String =
         encodeTranscriptForStorage(messages)
 

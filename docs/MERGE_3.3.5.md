@@ -3190,3 +3190,40 @@ while (bounded.size > 1) {
 - 安装后 8 秒线程采样：`agent-result-io` **不存在**（0 ticks）；主要消耗是
   `RenderThread` 167 ticks/8s、主线程 116 ticks/8s —— 与旧实现里那个常驻满核的线程不是一回事。
 - 仍未计时：**一次「发 3 MB 结果」的端到端耗时**。算法已不是 O(n²)，但具体几毫秒没单独测。
+
+## 32.25 投影不再「序列化一遍再解析回来」（2026-10-31，本机 PKX110/A16）
+
+### 32.25.1 剩下的固定成本
+
+§32.24 把裁剪从 O(n²) 改成 O(n)，但 `encode` 开头还留着这段：
+
+```kotlin
+val bounded = AgentConversationCodec.decodeTranscript(
+    AgentConversationCodec.encodeTranscriptForStorage(messages),
+)
+```
+
+目的只是拿到 **sanitize 之后的对象**（图片正文、敏感工具参数要被替换掉），
+却为此付了一次全量 JSON 编码 + 一次全量解析：长对话 30 MB 就是几十 MB 的中间字符串、
+再展开成一整份对象图。每次结果回传都会走一遍。
+
+### 32.25.2 改法
+
+- 新增 `AgentConversationCodec.sanitizeTranscript(messages)`：直接 `map(::sanitizeMessage)`。
+  与旧往返等价 —— 两个方向都只搬运 DTO 已有字段，内存里的对象本来就没有未知字段。
+- `AgentLegacyConversationProjection.encode` 改用它；`encodeTranscriptForStorage` 原样保留
+  （写存储/传历史仍然需要 JSON 文本）。
+
+### 32.25.3 验证
+
+- 新增 `sanitizePathMatchesJsonRoundTrip`：对带 `toolCallId` / `reasoningContent` /
+  `toolCallsJson` / `contextSummary` / `compactedUserTurns` / `messageId` 的消息，
+  断言 `decodeTranscript(encode(x)) == sanitizeTranscript(x)`。清洗逻辑一旦分叉会立刻红。
+- `AgentConversationCodecTest`（5 例，含「图片观察不落 base64」「IPC 投影有硬预算且不以孤儿 tool 开头」）
+  此前**不在门禁白名单**，本轮纳入；试跑 5/0。
+- 门禁 `STAGES=test`：**835 用例 0 失败**（§32.24 的 829 + codec 5 例 + 等价性 1 例）。
+
+### 32.25.4 未验证
+
+- 真机端到端耗时仍未计时。这一轮省掉的是「每次回传一次全量编解码」，
+  属于可以从代码结构直接确认的收益，但**没有秒表数字**，不冒充实测。

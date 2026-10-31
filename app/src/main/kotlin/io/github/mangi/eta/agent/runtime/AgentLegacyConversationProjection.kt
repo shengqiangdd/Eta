@@ -17,9 +17,9 @@ internal object AgentLegacyConversationProjection {
         messages: List<AgentModelClient.ConversationMessage>,
         maxChars: Int,
     ): String {
-        val bounded = AgentConversationCodec.decodeTranscript(
-            AgentConversationCodec.encodeTranscriptForStorage(messages),
-        )
+        // 直接按 DTO 清洗，不再「整段序列化 → 再解析」：那一次往返在长对话里是几十 MB 的
+        // 分配与解析，只是为了拿回同一批对象（§32.25）。
+        val bounded = AgentConversationCodec.sanitizeTranscript(messages)
         if (bounded.isEmpty()) return "[]"
         val direct = json.encodeToString(bounded)
         if (direct.length <= maxChars) return direct
