@@ -4916,9 +4916,11 @@ lint baseline 同步删 3 条 `UnusedResources`（206 → 203，纯删除、无�
 
 ### 6. 现在的边界
 
-- `values-night` / `values-v*` 不参与基准：某个键若只在夜间版定义，本脚本看不见；
-- 颜色 / 样式 / drawable / xml 仍未纳入（`UnusedResources` 里还剩 12 条：7 color、2 xml、1 drawable、
-  1 style、1 条 `ic_assistant_keyboard`）。它们牵涉主题与视觉，改了要装机看，不属「非必要不测」；
+- `values-night` / `values-v*` 不参与基准：某个键若只在夜间版定义，本脚本看不见
+  （§32.46 补了一例单测：night 不得凭空造键）；
+- 颜色 / 样式 / drawable / xml 仍未纳入。原文写「还剩 12 条：7 color、2 xml、1 drawable、1 style、
+  1 条 `ic_assistant_keyboard`」是**重复计数** —— 最后一项就是那 1 个 drawable，实数 11 条。
+  §32.46 删掉其中 9 条，只剩 2 条 xml（被 manifest 按属性名引用，属 lint 误报）；
 - 仍未装机验证：本轮同样只删资源，运行时引用已由门禁保证，但**界面没跑过**。
 
 ## §32.45 救活一条「从来没跑过」的用例，它立刻报出 14 个工具没图标（2026-11-01 凌晨，承接上节）
@@ -4984,3 +4986,60 @@ internal fun buildToolsState(text: (Int) -> String): AgentToolsUiState = ...
   仍在本机跑不了，仍靠 `STAGES=test-all` 或真机探针；
 - 图标只保证「不是默认 Build」与语义大体贴切，**没有装机看实际渲染**——图标是否好看、
   尺寸是否协调，得看屏幕。
+
+## §32.46 把 lint 里剩下的死资源逐条判死刑，删掉 9 条，并把「night 不许凭空造键」变成单测（2026-11-01，承接上节）
+
+### 1. 先数清楚还剩几条：上一节自己写错了
+
+上一节的边界写「还剩 12 条：7 color、2 xml、1 drawable、1 style、1 条 `ic_assistant_keyboard`」，
+把同一个 drawable 数了两次 —— 7 + 2 + 1 + 1 = 11。实测 `lint-baseline.xml` 里 `UnusedResources`
+正是 11 条，与 7+2+1+1 一致。已在上节更正：**文档里的数字也要能被自己加一遍**。
+
+### 2. 逐条核实：只有「真没人引用」才删
+
+| 项 | 数 | 怎么核实的 | 处置 |
+|---|---|---|---|
+| `colors.xml` 的 purple_200/500/700、teal_200/700、black、white | 7 | 全仓 grep `@color/x` 与 `R.color.x` 零命中（Compose 配色在 `Theme.kt` 里硬编码） | 删 |
+| `drawable/ic_assistant_keyboard` | 1 | 代码引用的是 `ic_assistant_keyboard_float`（另一个文件）；`@drawable/ic_assistant_keyboard\b` 零命中 | 删 |
+| `style/Theme.EtaVoiceInteractionSession` | 1 | manifest 只用了 `Theme.Eta` 与 `Theme.EtaVoiceAssistBridge`；`R.style.` 全仓零命中 | 删（values 与 values-night 两份一起） |
+| `xml/backup_rules`、`xml/data_extraction_rules` | 2 | manifest 用 `android:fullBackupContent` / `dataExtractionRules` **按属性名**引用，lint 的 `UnusedResources` 看不到 | 保留 |
+
+### 3. 我的脚本先骗了我一次
+
+第一次比对 `values-night` 与默认资源时，脚本报「night 有 3 个 style，默认 0 个」—— 差点写成
+「night 里有凭空造键」。实际是脚本 bug：key 里带了目录前缀，`en.get("values-night:style")`
+永远取不到。按 tag 重新比对：两边各 3 个（删掉那个无用 style 后各 2 个），完全一致。
+
+顺带实测到一条 aapt 行为：探针写成 `<style name="Theme.NightOnlyProbe">` 时 **aapt 直接链接失败**
+（`resource style/Theme not found` —— style 名的点号表示隐式继承）。所以要造「凭空键」的探针，
+名字不能带点号。
+
+### 4. 改法
+
+- `values/styles.xml` 与 `values-night/styles.xml` 各删 7 行（同一个 style、parent 不同，必须两份一起删）；
+- `colors.xml` 删空后整文件删掉，`ic_assistant_keyboard.xml` 直接删；
+- `lint-baseline.xml` 按 file+message 精确删 9 块：**2235 → 2136 行**（每块 11 行），
+  没有用 `updateLintBaseline`（§32.43 记过它会按当前报告整份重写）。
+
+### 5. 把人工核对固化成门禁（`LocaleResourceParityTest` 新增一例）
+
+`nightOverridesOnlyKeysThatExistByDefault`：读 `values/` 与 `values-night/` 的**全部**顶层定义，
+按 `tag/name` 比集合，night 多出来的键就红。理由不是洁癖 —— 只在 night 定义的键，白天配置下
+根本不存在，一旦被 manifest 或代码引用就是 `Resources$NotFoundException`。
+
+注入实验（喂一个已知会失败的输入）：往 night 加一个默认没有的 `NightOnlyProbe` style →
+用例红，失败信息精确点名 `style/NightOnlyProbe`；删掉探针 → 全绿。
+
+### 6. 结果
+
+- `STAGES=test,lint,assemble` 全绿（删资源那次）：882 / 0 ｜ 死文案 0 ｜ lint 无新增、
+  baseline **194** 命中（203−9）｜ 包 `33,588,875` 字节 sha256 `feb207fa80b3a231…`；
+- 随后加单测再跑 `STAGES=test`：**883 / 0**；
+- 包体比上轮小 84 字节 —— 只记数字不解释（删的是 2.8KB 的 vector + 7 个色值 + 1 个 style，
+  压缩与对齐会让差值不成正比）。
+
+### 7. 边界
+
+- 剩下的 2 条 `UnusedResources` 是 lint 误报（manifest 按属性名引用），理由留在报告里；
+- 仍未装机：删的是资源，引用已由全仓 grep 与 lint 双向确认，但图标与主题的**实际渲染没看**；
+- 新用例只守 `values-night`；将来若出现 `values-v*`，按同样规则加（默认目录必须有同名键）。

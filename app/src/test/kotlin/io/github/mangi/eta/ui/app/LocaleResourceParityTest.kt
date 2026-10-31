@@ -86,6 +86,25 @@ class LocaleResourceParityTest {
         assertTrue("占位符不一致会导致运行时格式化崩溃：\n" + mismatches.joinToString("\n"), mismatches.isEmpty())
     }
 
+    /**
+     * `values-night` 这类限定目录只允许**覆盖默认已有的键**。
+     *
+     * 理由：aapt 允许只在 night 里定义某个 style，但白天（默认配置）下这个键根本不存在——
+     * 一旦 manifest 或代码引用它，夜间正常、白天直接 `Resources$NotFoundException` 崩。
+     * 这条检查是把 §32.46 的人工核对固化下来：当时手工比对过 night 与默认，结论一致，
+     * 但「手工核过」防不住下次改坏（§32.44 的教训同源）。
+     */
+    @Test
+    fun nightOverridesOnlyKeysThatExistByDefault() {
+        val en = definitionsOf("values")
+        val night = definitionsOf("values-night")
+        val invented = (night - en).sorted()
+        assertTrue(
+            "values-night 定义了默认资源里没有的键（白天配置下找不到）：\n" + invented.joinToString("\n"),
+            invented.isEmpty(),
+        )
+    }
+
     private fun englishEntries(): Map<String, String> = entriesOf("values")
 
     private fun keysOf(dir: String): Set<String> = entriesOf(dir).keys
@@ -135,6 +154,26 @@ class LocaleResourceParityTest {
                     if (element.tagName != "string") continue
                     if (element.getAttribute("translatable") != "false") continue
                     element.getAttribute("name").takeIf { it.isNotEmpty() }?.let { out += it }
+                }
+            }
+        return out
+    }
+
+    /** `tag/name` 形式的全量定义，用于判断限定目录有没有「凭空造键」。 */
+    private fun definitionsOf(dir: String): Set<String> {
+        val folder = File(resRoot, dir)
+        assertTrue("找不到资源目录：$folder", folder.isDirectory)
+        val out = linkedSetOf<String>()
+        folder.listFiles { file -> file.isFile && file.name.endsWith(".xml") }
+            .orEmpty()
+            .sortedBy { it.name }
+            .forEach { file ->
+                val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
+                val nodes = document.documentElement.childNodes
+                for (i in 0 until nodes.length) {
+                    val element = nodes.item(i) as? Element ?: continue
+                    val name = element.getAttribute("name").takeIf { it.isNotEmpty() } ?: continue
+                    out += "${element.tagName}/$name"
                 }
             }
         return out
