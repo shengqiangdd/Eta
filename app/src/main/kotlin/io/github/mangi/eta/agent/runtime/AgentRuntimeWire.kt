@@ -369,7 +369,8 @@ internal object AgentRuntimeWire {
         val writeStartedAt = android.os.SystemClock.elapsedRealtime()
         AgentWireText.put(this, "history_json", historyJson, payloadDirectory)
         // 分段计时：把「序列化」和「落盘」拆开，才知道 100ms+ 到底花在哪一段（§32.28）。
-        AndroidAgentLogger.info(
+        // 落盘（infoPersisted）：logcat 的 main ring 只有 256 KiB，请求日志几十秒就被顶掉（§32.31）。
+        AndroidAgentLogger.infoPersisted(
             "request history: encode=${encodeMs}ms " +
                 "write=${android.os.SystemClock.elapsedRealtime() - writeStartedAt}ms chars=${historyJson.length}",
         )

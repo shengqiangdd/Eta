@@ -3556,9 +3556,10 @@ N 个 Bundle 内联进 Parcel）就是那 15 ms 的主要内容，量级对得�
 0
 ```
 
-原因是脚本在设备上用 `unzip -p <apk> <dex> | strings -a | grep -c` 逐个 dex 扫，管道在 busybox
-下没有命中（同一份 APK，在 Linux 侧逐个 `classes*.dex` 扫则 `classes12.dex` 命中 1 次）。
-也就是说：**这次「dex 里有新代码」实际上没被脚本验证过**，是我另外单独验的。
+初版把原因写成「管道在 busybox 下没命中」—— **这个归因是错的**（见 §32.32）：真正原因是循环的列举命令用了
+`unzip -Z1`，而设备上的 unzip 是 BusyBox 版，**根本不支持 `-Z`**（`invalid option -- Z`），
+于是 `DEXES` 为空、循环一次都不跑、`HIT` 恒为 0。也就是说：**这次「dex 里有新代码」
+实际上没被脚本验证过**，是我另外单独验的。
 
 如果没人复查，这种「没有输出」很容易被读成「没问题」。核对脚本的正确写法是
 **命中数为 0 就报错退出**，而不是只在命中时打印。这条先记下来，下次写安装脚本按这个改。
@@ -3603,3 +3604,90 @@ run request: ingest=Xms history=N chars=M
 
 这样一次请求的固定成本就被拆成三段可对账：客户端 `encode` → `write` → 服务端 `ingest`。
 三段加起来才是「发出去之前等了多久」。
+
+## 32.31 请求耗时日志必须落盘：logcat 只留几十秒（2026-10-31，本机 PKX110/A16）
+
+### 32.31.1 抓不到的原因不是没打，是滚掉了
+
+§32.30 加了 `run request: ingest=` 之后，装包（sha `51017c8e…`，15:51:36）并复跑，
+再查 `logcat -s Eta` 却**一行都找不到**。不是日志没打，而是：
+
+```
+main: ring buffer is 256 KiB (250 KiB consumed, 728 KiB readable)
+```
+
+设备 `main` 环形缓冲只有 **256 KiB**，而本次 run 的事件流每轮都要刷十几行 DEBUG。
+实测 `logcat -s Eta` 只剩 **43 行**，最早一条是 `17:32:18`，而这次请求的 `request history:`
+发生在 `17:31:5x` —— **几十秒就被顶掉了**。
+
+结论很直接：**任何需要「事后对账」的性能日志，只打 logcat 等于没打。** 这也是为什么
+`boot.log` 早就存在（`AgentLogger.infoPersisted`，128 KiB、超额保留后半、按 pid 区分进程）。
+
+### 32.31.2 改法
+
+三条计时行从 `info(...)` 改成 `infoPersisted(...)`（仍同时进 logcat，行为不变）：
+
+| 行 | 位置 |
+|---|---|
+| `request history: encode/write/chars` | `AgentRuntimeWire.requestBundle` |
+| `request bundle: build/messages/chars` | `AgentRuntimeClient.run` |
+| `run request: ingest/history/chars` | `AgentRuntimeService.ingestRunRequest` |
+
+落点是 `files/diagnostics/boot.log`，客户端与服务端在同一份文件里按 pid 标记，
+正好能拼成一次请求的完整账。
+
+### 32.31.3 代价与边界
+
+- 每次请求多 3 行（约 300 字节）。128 KiB 大约能留 **400 次请求**，之后按「保留后半」轮转，
+  不会无限增长。
+- 写盘在单线程 daemon 池里异步执行，热路径只多一次队列提交。
+- **不要**把普通 info 也改成落盘：`boot.log` 一旦变成第二个日志洪水源，启动分段那些
+  真正抢救不回来的行就会被冲掉（`AgentLogger` 里已有注释警告）。
+
+### 32.31.4 这一轮还没验证的
+
+装包后要确认：`files/diagnostics/boot.log` 里确实出现三行，且 `ingest` 与客户端两行时间相邻。
+在那之前，`ingest` 的具体毫秒数**仍然未知**——本节只解决「能不能留下证据」。
+
+## 32.32 设备上的 `unzip` 是 BusyBox 版：没有 `-Z`（2026-10-31，本机 PKX110/A16）
+
+### 32.32.1 现象与真因
+
+§32.29.9 的核对脚本在设备上枚举 dex 时用了 `unzip -Z1`，结果 `HIT=0`、直接判 FAIL，
+而 Linux 侧扫同一个 APK 明明命中。当时我把它归因成「管道在 busybox 下不灵」—— 错的。
+
+实测：
+
+```
+$ unzip -Z1 base.apk | head -3
+unzip: invalid option -- Z
+BusyBox v1.36.1.1 topjohnwu multi-call binary.
+```
+
+设备（APatch/KernelSU 环境）里的 `unzip` 是 **BusyBox 多合一**，只实现了 `-l/-p/-x` 等少数选项，
+**没有 zipinfo 模式**。所以：
+
+- `unzip -Z1 … | grep -E '^classes.*\.dex$'` → 命令报错、stdout 为空 → 循环 0 次 → `HIT=0`；
+- 与「管道」「strings」都无关：`unzip -p base.apk classes12.dex | strings -a | grep -c '…'`
+  在设备上**是能命中的**（返回 1）。
+
+### 32.32.2 正确的写法
+
+```sh
+DEXES=$(unzip -l "$APK" 2>/dev/null | awk '/classes[0-9]*\.dex$/ {print $NF}')
+for f in $DEXES; do
+  n=$(unzip -p "$APK" "$f" 2>/dev/null | strings -a | grep -c "$MARK")
+  …
+done
+```
+
+`unzip -l` 在 BusyBox 下可用，`awk '{print $NF}'` 取最后一列就是条目名（实测 21 个 dex 全部取到）。
+
+### 32.32.3 教训
+
+1. **在设备上写核对脚本，先确认命令是哪个实现**：`unzip`/`awk`/`sed`/`find` 都可能是 BusyBox
+   精简版，GNU 选项不一定存在。
+2. 「命令不存在某个选项」在 `$(…)` 里会**静默变成空**（stderr 被 `2>/dev/null` 吞掉），
+   表现为「循环没跑」，而不是「报错」—— 这正是 §32.29.9 那种「空结果被当成结论」的同类。
+3. 判失败的方向这次是对的（`HIT=0` → FAIL），所以它至少**没有假绿**；假红浪费了一次安装，
+   但假绿会让人把坏包当成好包。

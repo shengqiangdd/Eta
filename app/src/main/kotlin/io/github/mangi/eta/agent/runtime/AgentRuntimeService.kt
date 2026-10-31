@@ -473,7 +473,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 val historyChars = request.history.sumOf {
                     it.content.length + it.contentJson.length + it.reasoningContent.length + it.toolCallsJson.length
                 }
-                AndroidAgentLogger.info(
+                // 同样落盘：这条要与客户端两行在同一份文件里才能拼成一次请求的完整账（§32.31）。
+                AndroidAgentLogger.infoPersisted(
                     "run request: ingest=${android.os.SystemClock.elapsedRealtime() - ingestStartedAt}ms " +
                         "history=${request.history.size} chars=$historyChars"
                 )

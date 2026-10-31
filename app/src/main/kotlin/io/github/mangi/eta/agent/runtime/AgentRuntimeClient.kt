@@ -9,6 +9,7 @@ import android.os.Message
 import android.os.Messenger
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.core.AgentLogger
+import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -106,7 +107,9 @@ internal class AgentRuntimeClient(
             val historyChars = request.history.sumOf {
                 it.content.length + it.contentJson.length + it.reasoningContent.length + it.toolCallsJson.length
             }
-            logger.info(
+            // 落盘而不是只打 logcat：main ring buffer 只有 256 KiB，几十秒后这条就会被
+            // DEBUG 事件顶掉，事后想对账根本抓不到（§32.31）。
+            AndroidAgentLogger.infoPersisted(
                 "request bundle: build=${android.os.SystemClock.elapsedRealtime() - bundleStartedAt}ms " +
                     "messages=${request.history.size} chars=$historyChars",
             )
