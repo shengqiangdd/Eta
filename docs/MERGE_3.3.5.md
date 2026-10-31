@@ -3348,3 +3348,37 @@ request bundle: build=119ms messages=267 chars=2,345,678
 
 `readText()` 在 30 MB 时是 StringBuilder 扩容，CPU 有可能会略高于一次性 decode；
 换来的是少一次 30 MB `byte[]` 峰值。**净收益要看真机数字**，不预设结论。
+
+## 32.28 130 ms 花在哪：给请求序列化分段（2026-10-31，本机 PKX110/A16）
+
+### 32.28.1 先承认一组**不能直接对比**的数字
+
+| 时间 | 包 | 日志 |
+|---|---|---|
+| 14:00 | 改前（整块 `toByteArray`） | `build=119ms messages=267`（当时还没有 `chars`） |
+| 14:39 | 改后（流式写读） | `build=130ms messages=333 chars=445117` |
+
+条数、字符数都不同，旧样本又没有 `chars`，所以**既不能宣称变快，也不能宣称变慢**。
+唯一能算的是量级：445,117 字符 / 130 ms ≈ **3.4 MB/s**，而 kotlinx.serialization
+正常能到几十 MB/s —— 说明这 130 ms 里**大头很可能不在 JSON 编码本身**。
+
+猜测没有意义，所以先分段。
+
+### 32.28.2 新增的分段日志
+
+`requestBundle` 里把「编码」和「落盘」拆开：
+
+```
+request history: encode=Xms write=Yms chars=N
+```
+
+- `encode` = `encodeTranscriptForStorage`（sanitize 的 `map` + JSON 序列化）
+- `write` = `AgentWireText.put`（>16 384 字符时写临时文件并打开 FD）
+
+与 client 侧 `request bundle: build=` 的差值，就是其余字段、图片准备和 Bundle 组装。
+
+### 32.28.3 还没做的
+
+- 装包后跑一次真实对话才有三段数字；在此之前**不猜**哪一段是大头。
+- 如果证明大头在 `encode`，下一步才是「减少编码量」（例如增量化）；如果在 `write`，
+  才轮到文件 I/O；如果都不在，就去查 `prepare` 和 Bundle 组装。

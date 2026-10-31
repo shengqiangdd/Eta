@@ -11,6 +11,7 @@ import android.os.ParcelFileDescriptor
 import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.config.Prefs
+import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.CustomBody
 import io.github.mangi.eta.data.model.CustomHeader
 import io.github.mangi.eta.data.model.ModelReasoningCapabilities
@@ -355,7 +356,16 @@ internal object AgentRuntimeWire {
         require(request.assistantScreenContext.length <= AssistantScreenContextProjection.MAX_CHARS) {
             "助理屏幕上下文超过容量预算"
         }
-        AgentWireText.put(this, "history_json", AgentConversationCodec.encodeTranscriptForStorage(request.history), payloadDirectory)
+        val encodeStartedAt = android.os.SystemClock.elapsedRealtime()
+        val historyJson = AgentConversationCodec.encodeTranscriptForStorage(request.history)
+        val encodeMs = android.os.SystemClock.elapsedRealtime() - encodeStartedAt
+        val writeStartedAt = android.os.SystemClock.elapsedRealtime()
+        AgentWireText.put(this, "history_json", historyJson, payloadDirectory)
+        // 分段计时：把「序列化」和「落盘」拆开，才知道 100ms+ 到底花在哪一段（§32.28）。
+        AndroidAgentLogger.info(
+            "request history: encode=${encodeMs}ms " +
+                "write=${android.os.SystemClock.elapsedRealtime() - writeStartedAt}ms chars=${historyJson.length}",
+        )
         putString(KEY_RUN_ID, request.runId)
         AgentWireText.put(this, KEY_PROMPT, request.prompt, payloadDirectory)
         putString(KEY_ASSISTANT_SCREEN_CONTEXT, request.assistantScreenContext)
