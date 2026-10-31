@@ -31,6 +31,7 @@ class AgentSelfAuditTest {
         root: Boolean = true,
         crashFiles: List<AgentSelfAudit.CrashFile> = emptyList(),
         processStartedMillis: Long? = null,
+        installUpdatedMillis: Long? = null,
         heapLimitMb: Int? = null,
         javaHeapPssKb: Int? = null,
         capabilities: Map<String, Boolean> = emptyMap(),
@@ -45,6 +46,7 @@ class AgentSelfAuditTest {
         rootAvailable = root,
         crashFiles = crashFiles,
         processStartedMillis = processStartedMillis,
+        installUpdatedMillis = installUpdatedMillis,
         heapLimitMb = heapLimitMb,
         javaHeapPssKb = javaHeapPssKb,
         capabilities = capabilities,
@@ -143,6 +145,46 @@ class AgentSelfAuditTest {
         val loop = report.findings.first { it.id == "restart-loop" }
         assertEquals(AgentSelfAudit.Severity.P0, loop.severity)
         assertEquals("这是推断，不是观察到的事实", AgentSelfAudit.Confidence.INFERRED, loop.confidence)
+    }
+
+    /**
+     * 真机踩过的假话：刚 `pm install -r` 完，进程只跑了 217 秒，而窗口内两次崩溃都在装包之前，
+     * 却被报成 P0「崩溃循环」。装包本身就会换进程，不能当成崩溃证据。
+     */
+    @Test
+    fun freshInstallExplainsRestartInsteadOfReportingACrashLoop() {
+        val report = AgentSelfAudit.audit(
+            input(
+                crashFiles = listOf(
+                    crash("data_app_crash@10.txt", 2, oomCrash),
+                    crash("data_app_crash@11.txt", 1, oomCrash),
+                ),
+                processStartedMillis = now - 60_000L,
+                installUpdatedMillis = now - 90_000L,
+            ),
+        )
+        assertFalse(
+            "两次崩溃都在装包之前，循环是装包造成的假象",
+            report.findings.any { it.id == "restart-loop" },
+        )
+        assertTrue(report.clues.any { it.title.contains("不能据此判定崩溃循环") })
+    }
+
+    @Test
+    fun crashesAfterTheInstallStillCountAsARestartLoop() {
+        val report = AgentSelfAudit.audit(
+            input(
+                crashFiles = listOf(
+                    crash("data_app_crash@10.txt", 2, oomCrash),
+                    crash("data_app_crash@11.txt", 1, oomCrash),
+                ),
+                processStartedMillis = now - 60_000L,
+                installUpdatedMillis = now - 3 * 3_600_000L,
+            ),
+        )
+        val loop = report.findings.single { it.id == "restart-loop" }
+        assertEquals(AgentSelfAudit.Severity.P0, loop.severity)
+        assertTrue("更新之后的崩溃仍是循环证据", loop.evidence.size == 2)
     }
 
     @Test

@@ -261,6 +261,7 @@
   <string name="overlay_pause">暂停</string>
   <string name="overlay_resume">继续</string>
   <string name="tool_observe_screen">观察屏幕</string>
+  <string name="tool_eta_self_audit">自检：Eta 自身</string>
   <string name="tool_tap">点击</string>
   <string name="tool_tap_element">点击元素</string>
   <string name="tool_long_press">长按</string>

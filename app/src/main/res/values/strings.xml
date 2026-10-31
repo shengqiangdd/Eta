@@ -323,6 +323,7 @@
   <string name="settings_plan_mode_title">Plan mode</string>
   <string name="settings_plan_mode_summary">Read-only research first, then a plan. Write tools are hidden while it is on; terminal should only run read-only commands. Turn it off when you are done.</string>
   <string name="tool_observe_screen">Observe screen</string>
+  <string name="tool_eta_self_audit">Self audit</string>
   <string name="tool_tap">Tap</string>
   <string name="tool_tap_element">Tap element</string>
   <string name="tool_long_press">Long press</string>

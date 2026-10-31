@@ -137,6 +137,8 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "read_file", "stat_file" -> Icons.Rounded.Description
     "write_file", "edit_file", "edit_files", "restore_file" -> Icons.Rounded.EditNote
     "list_directory", "glob_files", "grep_files", "code_outline", "project_info", "list_file_backups" -> Icons.Rounded.FolderOpen
+    // 自审：排查自身问题。ToolCatalogUiTest 要求每个运行时工具都有专属图标（不能落到 Build）。
+    "eta_self_audit" -> Icons.AutoMirrored.Rounded.ManageSearch
     else -> when {
         toolId in io.github.mangi.eta.agent.context.PersonalSearchTools.names -> Icons.Rounded.Insights
         toolId in io.github.mangi.eta.agent.model.AgentPhoneToolCatalog.names -> when {

@@ -4305,3 +4305,73 @@ setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
 装包后第一次真实调用时，需要核对：返回的 `findings` 里 OOM 那条是否指向
 `data_app_crash@1793402235989.txt`、`notes` 里的 PSS 比例是否与 `dumpsys` 一致。
 在此之前，这个工具的定级是「单测覆盖判定 + 取数环境核对」，不是「真机跑通」。
+
+## §32.39.8 真机第一次真实调用：四处核对
+
+`eta_self_audit(scope=all, hours=48)` 装好包后第一次真跑（21:19:51，pid 2692），返回 3 findings / 2 clues /
+0 unavailable。逐条用等价 shell 命令核对：
+
+| 返回内容 | 用 shell 查到的事实 | 结论 |
+|---|---|---|
+| `crash-1793402235989` 的异常行 + 前 4 个栈帧 | dropbox 原文同段**逐字一致**；第 5 帧才是 `AgentChatBody.kt:1557`（与 §32.37 同一次崩溃） | 一致 |
+| `crash-1793289948247`（Conscrypt `unwrap` 里的 OOM）确实在窗口内 | 距今 45.2 小时（< 48），没被窗口过滤掉 | 正确 |
+| `notes`：Java Heap PSS ≈ 15.1% / 256 MB | `Java Heap: 35440` → 13.5% | 量级一致（两次取样之间过了一次 GC） |
+| 没有 ANR 条目、`unavailable` 也是空的 | dropbox 里 `data_anr` 文件数 = 0 | 不是「没检查」，是真没有 |
+
+取数层读到的是设备上真实存在的那些字节，判定层没有把「读不到」洗成「没问题」。
+
+**顺带修掉一个可复核性问题**：`notes` 原来只写百分比。同一个进程前后两次取样实测到
+22.0%（57,784 KB）与 18.1%（47,420 KB）—— 差 3.9 个百分点，只写百分比根本无法核对。现在把原始 KB 一起写进
+`notes`，可以直接对 `dumpsys meminfo` 的 `Java Heap:` 那一列。
+
+## §32.39.9 真机挖出的第二个假话：装包把进程换掉，被当成「崩溃循环」
+
+第一次真实调用除了两条 OOM，还多报了一条 P0：
+
+> 疑似崩溃循环：48 小时内 2 次崩溃，当前进程只跑了 217 秒
+
+核对后发现是假的：
+
+- `lastUpdateTime=2026-10-31 21:16:10`，进程 21:16:12 起 —— 那 217 秒就是**我自己 `pm install -r` 造成的重启**；
+- 两次崩溃分别在 14.0 / 45.2 小时前，**都早于这次装包**。
+
+「装包换进程」被读成「崩了又重启」。这与 §32.39.4 的 git 假话同源：**把外部原因当成自己的症状**。
+自审工具犯这种错比不报更糟 —— 它会让人去追一个不存在的循环。
+
+修法（纯逻辑，都可单测）：
+
+1. `Input` 增加 `installUpdatedMillis`，取数层填 `PackageInfo.lastUpdateTime`（读不到就是 null，不额外报缺陷）；
+2. 只有**本次更新之后**的崩溃才算循环证据 —— 装完包真的还在反复崩，照样报得出来；
+3. 窗口内崩溃全早于本次更新时，改出一条 `clue`，写明进程活了多久、`lastUpdateTime` 是几点、
+   窗口内几次崩溃各在哪个文件，让人一眼能复核「这是装包造成的」。
+
+用例两条：`freshInstallExplainsRestartInsteadOfReportingACrashLoop`（不再报 P0、改出 clue）与
+`crashesAfterTheInstallStillCountAsARestartLoop`（更新之后的崩溃仍判 P0，防止修过头）。
+
+**先坏后好的直接证据**（同一台设备、同一批崩溃文件，只换了装上去的包）：
+
+| | 修前 21:19:51 | 修后 21:35:41 |
+|---|---|---|
+| `finding_count` | 3（含 P0 `restart-loop`） | **2**（只剩两条真 OOM） |
+| 关于重启 | 一条 P0 缺陷 | clue：「进程刚起（646 秒）与最近一次装包/更新（10-31 21:24:52）重合：窗口内 2 次崩溃都早于本次更新，不能据此判定崩溃循环」 |
+
+装上去的包 `base.apk` sha256 = `e50cdcab…f23fdb`，与 `tools/gate.sh STAGES=assemble` 的产物一致；
+`firstInstallTime` 仍是 2026-10-03（没被重装重置）。修复后单测 **862 用例 / 0 失败**（原 860 + 2）。
+
+## §32.39.10 顺带补的两处（其中一处没有任何门禁验证过）
+
+- **图标**：`ToolIcons.iconForTool` 给 `eta_self_audit` 加了专属图标
+  （`Icons.AutoMirrored.Rounded.ManageSearch`），否则会落到兜底的 `Icons.Rounded.Build`。
+  守这条的是 `ToolCatalogUiTest` —— 它是 **Robolectric 测试，在本机（Linux aarch64）跑不了**
+  （同一限制在 gate.sh 的注释里已记过多次）。因此这一处只有「读断言 + 改映射」，
+  **既没跑过测试，也没在真机界面上核对过**。
+- **显示名**：`AgentOverlayText.toolDisplayNameResource` 加 `tool_eta_self_audit`，三语
+  （`values` / `values-b+zh+Hans` / `values-b+zh+Hant`）同步。三语键集由 `LocaleResourceParityTest`
+  （纯 JVM、在门禁里）守着，已随本轮跑过。
+
+## §32.39.11 仍未验证 / 未完成
+
+- **Android Lint 没跑完**：`lintAnalyzeDebug` 在本机 11 分钟无任何输出（既不报错也不前进），已停掉。
+  本轮**不宣称 lint 通过**。
+- 自审工具只在本机（PKX110 / Android 16）跑过；测试机（A13 / MIUI）上没跑，
+  那边的 dropbox 路径与 `dumpsys meminfo` 格式未复核。

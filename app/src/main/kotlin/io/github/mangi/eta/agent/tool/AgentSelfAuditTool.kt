@@ -42,6 +42,7 @@ internal class AgentSelfAuditTool(
             rootAvailable = root,
             crashFiles = crashFiles,
             processStartedMillis = processStartedMillis(),
+            installUpdatedMillis = lastUpdateMillis(),
             heapLimitMb = heapLimitMb(),
             javaHeapPssKb = meminfo,
             capabilities = readCapabilities(),
@@ -117,6 +118,14 @@ internal class AgentSelfAuditTool(
         val started = File("/proc/self").lastModified()
         return if (started > 0L) started else null
     }
+
+    /**
+     * 装包/更新会把进程换掉，使「进程刚起」失去「崩了重启」的含意。
+     * 读不到时返回 null —— 判定逻辑会退回只看崩溃时间，不会因此多报一条缺陷。
+     */
+    private fun lastUpdateMillis(): Long? = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrNull()?.takeIf { it > 0L }
 
     private fun versionName(): String = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()

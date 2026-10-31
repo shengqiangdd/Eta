@@ -124,5 +124,6 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "set_device_state" -> R.string.tool_set_device_state
     "app_state_control" -> R.string.tool_app_state_control
     "get_logcat" -> R.string.tool_get_logcat
+    "eta_self_audit" -> R.string.tool_eta_self_audit
     else -> null
 }

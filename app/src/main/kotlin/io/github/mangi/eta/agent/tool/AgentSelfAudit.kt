@@ -1,5 +1,8 @@
 package io.github.mangi.eta.agent.tool
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -44,6 +47,8 @@ internal object AgentSelfAudit {
         val rootAvailable: Boolean,
         val crashFiles: List<CrashFile> = emptyList(),
         val processStartedMillis: Long? = null,
+        /** APK 的 `lastUpdateTime`。装包/更新也会把进程换掉，所以「刚起」不等于「崩了」。 */
+        val installUpdatedMillis: Long? = null,
         val heapLimitMb: Int? = null,
         val javaHeapPssKb: Int? = null,
         val capabilities: Map<String, Boolean> = emptyMap(),
@@ -103,7 +108,7 @@ internal object AgentSelfAudit {
         val since = input.nowMillis - input.windowHours.coerceIn(1, 720) * 3_600_000L
 
         if (Domain.CRASH in input.domains) {
-            collectCrashes(input, since, findings, unavailable, notes)
+            collectCrashes(input, since, findings, clues, unavailable, notes)
         }
         if (Domain.RESOURCE in input.domains) {
             collectResource(input, findings, unavailable, notes)
@@ -129,6 +134,7 @@ internal object AgentSelfAudit {
         input: Input,
         since: Long,
         findings: MutableList<Finding>,
+        clues: MutableList<Clue>,
         unavailable: MutableList<String>,
         notes: MutableList<String>,
     ) {
@@ -152,16 +158,32 @@ internal object AgentSelfAudit {
         if (mine.size >= 2) {
             val uptime = input.processStartedMillis?.let { input.nowMillis - it }
             if (uptime != null && uptime in 0 until 30 * 60_000L) {
-                findings += Finding(
-                    id = "restart-loop",
-                    severity = Severity.P0,
-                    confidence = Confidence.INFERRED,
-                    title = "疑似崩溃循环：${input.windowHours} 小时内 ${mine.size} 次崩溃，当前进程只跑了 ${uptime / 1000} 秒",
-                    evidence = mine.sortedByDescending { it.timeMillis }.take(MAX_EVIDENCE_LINES).map { it.name },
-                    impact = "用户会反复看到闪退或白屏，进行中的任务无法完成",
-                    fix = "先修最新一次崩溃（它最可能仍在复现），修完观察一个完整会话周期；只修旧的会被新的掩盖",
-                    verify = "连续运行 ≥ 1 小时且窗口内崩溃计数不再增加",
-                )
+                // 「进程刚起」有两个原因：崩了重启，或者刚装包/更新把进程换掉了。
+                // 真机上踩过第二种：装完包进程刚起 217 秒，而窗口内两次崩溃都发生在装包之前，
+                // 却被报成 P0「崩溃循环」。只把**本次更新之后**的崩溃当成循环证据。
+                val install = input.installUpdatedMillis?.takeIf { it > 0L }
+                val afterInstall = if (install == null) mine else mine.filter { it.timeMillis >= install }
+                if (afterInstall.size >= 2) {
+                    findings += Finding(
+                        id = "restart-loop",
+                        severity = Severity.P0,
+                        confidence = Confidence.INFERRED,
+                        title = "疑似崩溃循环：${input.windowHours} 小时内 ${afterInstall.size} 次崩溃，当前进程只跑了 ${uptime / 1000} 秒",
+                        evidence = afterInstall.sortedByDescending { it.timeMillis }.take(MAX_EVIDENCE_LINES)
+                            .map { it.name },
+                        impact = "用户会反复看到闪退或白屏，进行中的任务无法完成",
+                        fix = "先修最新一次崩溃（它最可能仍在复现），修完观察一个完整会话周期；只修旧的会被新的掩盖",
+                        verify = "连续运行 ≥ 1 小时且窗口内崩溃计数不再增加",
+                    )
+                } else if (install != null) {
+                    clues += Clue(
+                        title = "进程刚起（${uptime / 1000} 秒）与最近一次装包/更新（${stamp(install)}）重合：" +
+                            "窗口内 ${mine.size} 次崩溃都早于本次更新，不能据此判定崩溃循环",
+                        evidence = "lastUpdateTime=${stamp(install)}；崩溃：" +
+                            mine.sortedByDescending { it.timeMillis }.take(MAX_EVIDENCE_LINES)
+                                .joinToString("、") { it.name },
+                    )
+                }
             }
         }
     }
@@ -218,6 +240,12 @@ internal object AgentSelfAudit {
         else -> "按首帧路径写一条最小复现，先把它固定住再谈优化"
     }
 
+    /** 只用于把人能读的时间写进句子，不参与任何判定。 */
+    private fun stamp(millis: Long): String = DateTimeFormatter
+        .ofPattern("MM-dd HH:mm:ss", Locale.US)
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.ofEpochMilli(millis))
+
     private fun collectResource(
         input: Input,
         findings: MutableList<Finding>,
@@ -233,9 +261,10 @@ internal object AgentSelfAudit {
         val ratio = heapKb / (limitMb * 1024.0)
         notes += String.format(
             Locale.US,
-            "Java Heap PSS ≈ %.1f%% / %d MB（PSS 与 allocated 不等价，只用于看趋势）",
+            "Java Heap PSS ≈ %.1f%% / %d MB（%d KB；PSS 与 allocated 不等价，只用于看趋势）",
             ratio * 100,
             limitMb,
+            heapKb,
         )
         val severity = when {
             ratio >= 0.90 -> Severity.P0
