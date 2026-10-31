@@ -4460,14 +4460,22 @@ setsid sh /data/local/tmp/eta/oomwatch/watch.sh < /dev/null > /dev/null 2>&1 &
 两条工作过程数据里的 13 万字节几乎全是那个按 id 的 HashSet —— 也就是说，二次 OOM 的**分配形态**
 （每帧一个几千项集合）到这一版才真正消失。
 
-**用例**（`AgentChatTimelineEntriesTest` 共 13 条，新增 4 条）：
+**用例**（`AgentChatTimelineEntriesTest` 共 14 条，新增 5 条）：
 `prependingOlderMessagesKeepsTheFollowingEntriesIdentical`（前插 300 条后，后面每一条都 `assertSame`）、
 `replacingOneMiddleMessageOnlyRebuildsThatEntry`（中间替换只重建那一条，游标不能永久卡住）、
 `droppingLeadingMessagesStillReusesTheRemainder`（裁头 3 条后仍复用其余 97 条）、
 `alignmentBeyondTheLookaheadOnlyCostsReuseNotCorrectness`（错位超出窗口时只少复用，绝不把 A 的内容
-配到 B 的位置上）。
+配到 B 的位置上）、
+`randomMutationSequencesNeverMisPairEntries`（追加/前插/中间替换/裁头随机交替 200 步，每步都断言
+「条目里的 message 就是当前列表那个位置的同一个实例」，并额外断言单步至少复用 100 条 ——
+否则「压根儿不复用」的实现也能让前面那些断言全绿，等于空跑）。
 
-**门禁与装机**：`STAGES=test,assemble` → 用例 **875 / 0 失败**；APK `sha256 = 61b16a26…`，
+**用例不是空跑（注入实验）**：把 `candidate.message === message` 故意改成 `candidate.message.id == message.id`
+（按 id 配对，最容易写出的那种错），立刻 **3 条用例红**：随机压测、`unchangedPlainMessagesReusePreviousEntries`、
+`replacingOneMiddleMessageOnlyRebuildsThatEntry`，报错位置就是“配错了实例”那一行。
+还原后 14/14 全绿。
+
+**门禁与装机**：`STAGES=test` → 用例 **876 / 0 失败**；`STAGES=assemble` → APK `sha256 = 61b16a26…`，
 `pm install -r -d` 后已装 `base.apk` 的 sha256 与产物逐字节一致，`firstInstallTime` 仍是 10-03 10:38
 （没有变成覆盖安装），dex 里能搜到 `isPrefixOrSuffixRun`、搜不到测试类。
 

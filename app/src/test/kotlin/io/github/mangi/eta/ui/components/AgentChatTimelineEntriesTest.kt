@@ -6,6 +6,7 @@ import io.github.mangi.eta.ui.model.UserMessageUi
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentChatTimelineEntriesTest {
@@ -209,5 +210,55 @@ class AgentChatTimelineEntriesTest {
         assertEquals(1, next.size)
         assertEquals(previous[0].key, next[0].key)
         assertNotSame(previous[0], next[0])
+    }
+
+    /**
+     * 随机序列压测：追加 / 前插 / 中间替换 / 裁头 随意交替 200 步，每一步都要求
+     * 「每个条目的 message 就是当前列表里那个位置的同一个实例」。
+     * 前瞻对齐一旦配错，这条会第一个碰上的例子就杠。
+     */
+    @Test
+    fun randomMutationSequencesNeverMisPairEntries() {
+        val random = java.util.Random(20261031L)
+        var messages = (0 until 200)
+            .map { UserMessageUi(id = "u-$it", content = "历史 $it") }
+            .toMutableList()
+        var previous = messages.toList().toTimelineEntries()
+        var counter = 0
+        var maxReused = 0
+
+        repeat(200) { step ->
+            when (random.nextInt(4)) {
+                0 -> messages = messages.toMutableList()
+                    .also { it += UserMessageUi(id = "n-${counter++}", content = "新增") }
+                1 -> messages = messages.toMutableList()
+                    .also { it.add(0, UserMessageUi(id = "p-${counter++}", content = "更早")) }
+                2 -> {
+                    val index = random.nextInt(messages.size)
+                    val old = messages[index]
+                    messages = messages.toMutableList()
+                        .also { it[index] = UserMessageUi(id = old.id, content = "改过 ${counter++}") }
+                }
+                else -> {
+                    val drop = random.nextInt(minOf(5, messages.size))
+                    messages = messages.drop(drop).toMutableList()
+                }
+            }
+
+            val entries = messages.toTimelineEntries(previous)
+            assertEquals("第 $step 步条目数不对", messages.size, entries.size)
+            entries.forEachIndexed { index, entry ->
+                entry as AgentTimelineEntry.Message
+                assertSame("第 $step 步第 $index 条配错了实例", messages[index], entry.message)
+            }
+            val reused = entries.indices.count { index ->
+                index < previous.size && entries[index] === previous[index]
+            }
+            maxReused = maxOf(maxReused, reused)
+            previous = entries
+        }
+
+        // 没有这一行，上面的断言在「压根儿不复用」的实现上也会全绿 —— 等于空跑。
+        assertTrue("单步最多只复用了 $maxReused 条，复用已经名存实亡", maxReused >= 100)
     }
 }
