@@ -84,6 +84,10 @@ PY
 echo "  ── UI 动作接线 ──"
 python3 tools/ui_action_wiring.py || fail=1
 
+# 同一个道理：删了代码却没删文案，装完不会有任何症状，要等下一次 lint 才红。
+echo "  ── 死文案（只许减少） ──"
+python3 tools/dead_strings.py || fail=1
+
 echo "==== 3/4 打包 ===="
 ./gradlew --offline $GRADLE_ARGS :app:assembleDebug >/tmp/gate-apk.log 2>&1
 if [ $? -ne 0 ]; then

@@ -312,7 +312,17 @@ run_ui_actions() {
   python3 tools/ui_action_wiring.py || fail=1
 }
 
+# ---- 死文案（与 STAGES 无关，始终执行）-----------------------------
+# 为什么紧跟动作接线：删代码 → 引用消失 → 文案变死，这三件事总是一起发生。
+# 等 lint 发现要十几分钟，而且那时已经很难想起是哪次改动造成的（§32.41 踩过）。
+# 基线 tools/dead_strings_allow.txt 记录已知技术债，只许减少。
+run_dead_strings() {
+  echo "==== 死文案（只许减少） ===="
+  python3 tools/dead_strings.py || fail=1
+}
+
 run_ui_actions
+run_dead_strings
 
 if has_stage test || has_stage test-all; then run_test; fi
 if has_stage lint; then run_lint; fi

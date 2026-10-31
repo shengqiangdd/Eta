@@ -4708,3 +4708,74 @@ Unmatched issue types: **UseKtx (2)**」。即 baseline 里有两条记录，现
 
 **教训**：`STAGES=test,assemble` 绿了不等于门禁绿。这一轮原本打算只跑这两段，是「删了资源会不会动账目」
 这个念头才去跑 lint —— 抓到的还不是我预想的那个问题。**跑一遍全部阶段**比「推断哪一段会红」可靠。
+
+## §32.42 把「死文案」变成可比的数字，并接进两道门禁（2026-11-01 凌晨，承接上节）
+
+### 1. 为什么需要一个脚本
+
+§32.41 量出 201 条死文案后没有删——判断是「单凭没有 `R.string.x` 不足以判定无用，一次删 600 行
+收益小、误删风险大」。但这也意味着这个数字**只能靠人重算**：下次谁删了代码、引用跟着消失，
+文案留在原地，编译不报、单测不红，要等 `STAGES=lint` 的 `UnusedResources` 多几条才可能察觉——
+而那时已经很难想起是哪次改动造成的。
+
+所以这一轮做的不是「删文案」，是**把「现在有多少条死文案」变成可比的数字**，并让它在变动时变红。
+
+### 2. 脚本口径（边界写进注释，不留在脑子里）
+
+`tools/dead_strings.py`：
+
+| 项 | 取值 |
+|---|---|
+| 基准 | 仅 `app/src/main/res/values/strings.xml`（默认语言），2122 条 |
+| 扫描 | `app/src/main`、`app/src/test`、`app/src/androidTest`；kt/java/xml/json/js/html/txt/md/pro，共 1320 个文件 |
+| 引用写法 | `R.string.x` 与 `@string/x` |
+| 动态取名 | 出现非 `android` 命名空间的 `getIdentifier(...)` 即**报红**，那时「没人引用」的结论不成立 |
+| 基线 | `tools/dead_strings_allow.txt`，当前 201 条，只许减少 |
+
+两个口径限制写在脚本注释里：
+
+- **基准只取 `values/strings.xml`**：`values/root_capabilities.xml` 里的名字不在基准内，脚本对它们
+  不发表意见（实测差集里正好只有 `capability_workspace_private_summary` 一条，归 lint 管）；
+- **动态取名的判据要收窄**：全仓唯一一处 `getIdentifier("config_nightDisplayAvailable", "bool", "android")`
+  读的是系统开关，与本项目资源无关，所以判据限定「取 string 且包名不是 android」。
+
+### 3. 门禁必须被证明会红
+
+绿的门禁不叫门禁（§71 的教训）。三次注入实验：
+
+| 实验 | 做法 | 结果 |
+|---|---|---|
+| A 新增死文案 | 往 `strings.xml` 加一条没人引用的 | exit=1，报出名字 |
+| B 基线过期 | 从基线删一条（模拟删了文案没同步基线） | exit=1，提示同步 |
+| C 还原 | 撤销两处 | exit=0，201 条与基线一致 |
+
+第一次写实验 B 时用了 `python3 … | head -6` 再取退出码，取到的是 `head` 的 0——**假绿**。
+改成先重定向到文件再取 `$?`，才是被测脚本的退出码。同类坑第二次（§71 那次是 `go fmt | git diff`）。
+
+### 4. 接入位置
+
+- `tools/gate.sh`：新增 `run_dead_strings`，**不挂在 STAGES 下、始终执行**（与动作接线同段）。
+  为什么紧挨着动作接线：删代码 → 引用消失 → 文案变死，这三件事总是一起发生；
+- `tools/preinstall-gate.sh`：第 2 段之后同跑一次。装完不会有任何症状，等 lint 发现要十几分钟。
+
+### 5. 与 lint 交叉验证（对账，不是互相相信）
+
+| | 条数 |
+|---|---|
+| 本脚本死文案 | 201 |
+| `lint-baseline.xml` 中 `R.string` 的 `UnusedResources` | 202 |
+| 交集 | 201 |
+| 仅本脚本有 | **0** |
+| 仅 lint 有 | 1（`capability_workspace_private_summary`，在 `values/root_capabilities.xml`） |
+
+`UnusedResources` 合计 215 条，另含 color 7 / xml 2 / plurals 2 / style 1 / drawable 1——记下来，
+下次看到「215 ≠ 201」不必重查。
+
+### 6. 结果与边界
+
+- `STAGES=test,lint,assemble sh tools/gate.sh` 全绿：契约 minSdk=33 ｜ 动作 7 接口/65 动作 ｜
+  死文案 201 ｜ 单测 **876 / 0** ｜ lint 无新增、baseline **410** 命中 ｜ 包 `33,588,715` 字节
+  sha256 `f62b1161c2971efc…`（与上一轮同值：本轮只加工具与注释，没有应用代码变化）；
+- **201 条一条都没删**。基线机制的作用是「止血 + 数字可比」，不是「清理完成」。真要删，得先补
+  「测试目录 + 运行时拼接」的口径，再分批删、每批同步收紧基线；
+- 未做：把脚本接进门禁之外的开发者自查入口（现在只有两道门禁会跑）。
