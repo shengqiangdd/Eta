@@ -3859,3 +3859,54 @@ history 了（4 ms 里只剩 materialize 与按需补配置）。
 `tools/gate.sh` 在 Linux guest 上整跑约 **30 分钟**，其中 `:app:lintAnalyzeDebugUnitTest`
 一段就占 5 分钟以上（`lint.log` 5 分钟不刷新，但 java 进程 CPU 60%，不是死锁）。
 分阶段 `STAGES=assemble` / `STAGES=lint` 可以拆开跑，比整跑省时间。
+
+## 32.35 下一笔账查过了：落库不是瓶颈（附一次差点写错的推断）
+
+### 32.35.1 为什么去查
+
+每轮发出前已经从 111 ms 降到 3 ms（§32.34），于是想知道「剩下的每轮成本在哪」。
+落库（`AgentConversationStore.saveChanges`）此前**完全没有计时**，是唯一的黑盒。
+
+### 32.35.2 数据（只读副本，未改设备）
+
+`conversation_context_checkpoints` 的正文按 chunk 外置到 `agent_text_chunks`
+（分块字段名是 `history` / `journal`，不是列名里的 `history_json` / `journal_json`）。
+当前会话 `conv-1a25f9f1`：
+
+| 字段 | chunks | 字符 | UTF-8 字节 |
+|---|---|---|---|
+| `history` | 18 | 289,180 | 366,027 |
+| `journal` | 252 | 4,118,981 | 4,462,933 |
+
+`conversation_messages` 里该会话 21,601 行。`history` 开头正是
+`[{"role":"assistant","content":"[Eta 上下文摘要：…`，与请求里那 25.4 万字符对得上。
+
+### 32.35.3 差点写错的推断
+
+看到 4.4 MB 时第一反应是「每轮要重写 4.4 MB」——**这是错的**，差一点写进文档。
+
+`journalWritableFor` = `!state.journalDeferred && old?.journalDeferred != true`，
+而启动日志写明 `journal boot sessions=20 inline=0 planInline=0 tooLarge=1` ——
+**journal 因过大被判为不内联，永远不写**，库里保留旧值。每轮真正写的只有 history 那 0.3 MB。
+
+### 32.35.4 结论
+
+每轮落库 = `history` 28.9 万字符的编码 + 366 KB 写入，跑在 `Dispatchers.IO`。
+按 §32.33.4 的 JVM 定标（41 万字符 encode 约 5 ms）外推，量级约 **10 ms，且在 IO 线程**，
+不阻塞界面。**不是瓶颈，本轮不做优化。**
+
+这条线到此收敛：
+
+| 环节 | 量级 | 位置 |
+|---|---|---|
+| 发出前（客户端 build + 服务端 ingest） | **3 ms**（25.4 万字符） | 主线程路径 |
+| 每轮落库 | 约 10 ms（估算） | IO 线程 |
+| 模型 API 往返 | 秒级 | 网络 + 推理，**不在应用侧** |
+
+再往下就不是「代码里的固定成本」了。
+
+### 32.35.5 方法学备注
+
+这次全程只读：把 `eta.db` 与 `-wal` / `-shm` 一起复制到 `/data/local/tmp/eta/tmpdb2`，
+在 Linux guest 用 `sqlite3` / `python3` 查询，**没有对设备数据库做任何写操作**；
+副本用完即删。
