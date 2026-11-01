@@ -1046,6 +1046,8 @@
   <string name="background_run_finished">后台任务已完成</string>
   <string name="background_run_failed">后台任务失败</string>
   <string name="background_run_stopped">后台任务已停止</string>
+  <string name="background_tasks_finished">已结束</string>
+  <string name="background_tasks_card_hint">只读：读日志或停止任务请用 terminal_job / terminal_daemon</string>
   <string name="chat_send">发送</string>
   <string name="chat_send_steer">插话发送（打断本轮）</string>
   <string name="chat_send_queue">排队发送（本轮结束后发出）</string>

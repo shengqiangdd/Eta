@@ -1061,6 +1061,8 @@
   <string name="background_run_finished">Background task finished</string>
   <string name="background_run_failed">Background task failed</string>
   <string name="background_run_stopped">Background task stopped</string>
+  <string name="background_tasks_finished">Finished</string>
+  <string name="background_tasks_card_hint">Read-only: use terminal_job / terminal_daemon to read logs or stop tasks</string>
   <string name="chat_send">Send</string>
   <string name="chat_send_steer">Steer now (interrupt this turn)</string>
   <string name="chat_send_queue">Queue and send after this turn</string>

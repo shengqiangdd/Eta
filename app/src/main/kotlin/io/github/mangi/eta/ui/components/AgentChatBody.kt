@@ -1857,6 +1857,8 @@ private fun AgentChatBottomBar(
             taskLedger?.let { ledger ->
                 AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
             }
+            // 后台任务回答「这台机器上还有什么在跑」，与台账卡同属「未收尾的东西」，紧跟在它后面。
+            BackgroundTasksCard(modifier = Modifier.padding(bottom = 8.dp))
             pendingAsk?.let { ask ->
                 AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))
             }

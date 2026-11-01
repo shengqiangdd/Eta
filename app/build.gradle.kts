@@ -134,6 +134,13 @@ android {
         warningsAsErrors = true
         // versionCode 采用日期编码，已发布值只能递增；上限 2100000000 足够覆盖到 2099 年。
         disable += "HighAppVersionCode"
+        // 2026-11-01：GradleDependency 会因「上游发了新版本」把门禁变红（本轮一次报 4 条：
+        // kotlin 2.4.20→2.4.21、markdown 0.7.16→0.7.18、hiddenapibypass 6.1→6.2），
+        // 与代码质量无关，且离线构建不可能自动升级。它还带 autofix：本轮 lint 打印过
+        // 「This issue has been automatically fixed」，虽然 git diff 显示 toml 没被改，
+        // 但把「自动改构建文件」留在门禁里不值得赌。
+        // 升级依赖应当是一次显式决定（改 toml + 重跑门禁），不该由 lint 在每一轮捎带决定。
+        disable += "GradleDependency"
     }
 
     testOptions {

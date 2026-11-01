@@ -264,6 +264,38 @@ class DetachedTaskSupervisorTest {
         )
     }
 
+    @Test
+    fun recordSaveAdvancesChangesSignal() {
+        // 界面刷新依赖这个信号：任务结束时只改记录，不会产生新的会话消息。
+        val records = File(temporaryFolder.root, "terminal-daemons.json")
+        val supervisor = DetachedTaskSupervisor(
+            logger = NoopLogger,
+            recordsFile = records,
+            daemonDir = File(temporaryFolder.root, "daemon").absolutePath,
+        )
+        supervisors += supervisor
+        val finished = DetachedTask(
+            id = "job_done01",
+            pid = 1L,
+            token = "token",
+            command = "true",
+            cwd = temporaryFolder.root.absolutePath,
+            identity = "user",
+            environment = TerminalEnvironment.ANDROID,
+            logPath = File(temporaryFolder.root, "daemon/job_done01.log").absolutePath,
+            startedAt = 1_000L,
+            commandTask = true,
+            completedAt = 2_000L,
+            exitCode = 0,
+            completionNotified = false,
+        )
+        records.writeText(JSONArray().put(finished.toRecordJson()).toString())
+
+        val before = DetachedTaskSupervisor.changes.value
+        assertTrue(supervisor.markCompletionNotified("job_done01"))
+        assertTrue("落盘成功必须推进信号", DetachedTaskSupervisor.changes.value > before)
+    }
+
     private fun writeRecord(pid: Long, token: String) {
         val records = JSONArray().put(
             JSONObject()

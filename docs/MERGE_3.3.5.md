@@ -5485,3 +5485,100 @@ assertFalse(projected.toString().contains("/data/local/tmp/eta"))
 - 定向测试第一版就红了一次：测试夹具 `store()` 的默认参数每次都 `newFolder("events")`，
   同一用例里调用两次就撞名抛 IOException。这是夹具问题，不是实现问题；
   但它提醒「默认参数里有副作用」在测试里同样会咬人。
+
+## §32.56 后台任务上界面：用户也能看见谁在跑、最近谁结束了（2026-11-01）
+
+### 1. 做了什么
+
+§32.54 让模型知道「还有谁在跑」，§32.55 让模型知道「谁结束了」。这两段都只进提示 ——
+用户想看，仍然要去终端页翻 `terminal_job` / `terminal_daemon` 的列表。这一批把同一份记录
+做成聊天页底部常驻卡，**只读**，不动任务的生命周期。
+
+- 入口：`AgentChatBody` 的底部常驻区，紧跟 `AgentTaskLedgerCard`；记录为空时整卡不出现。
+- 数据：`DetachedTaskSupervisor.readRecords`（只读快照，与提示段同源）。新增
+  `DetachedTaskSupervisor.changes`（`StateFlow<Long>`，**落盘成功才自增**）：任务结束只改记录、
+  不产生会话消息，按消息刷新永远看不到收尾（与台账卡同一条教训）。
+- 投影：`summarizeBackgroundTasks(records)` → `BackgroundTasksView`（job / daemon 计数、
+  运行中按开始时间升序最多 6 条、最近结束按完成时间倒序最多 3 条、已结束总数）。
+  只把 id、类型、状态、年龄交给界面；命令正文、令牌、pid、日志路径都不进渲染路径。
+- 行素材：`backgroundTaskLine(task, now)` 只给字段与毫秒年龄，时间格式化留在界面
+  （运行中用 `DateUtils.formatElapsedTime`，结束用 `getRelativeTimeSpanString`）。
+  纯逻辑里写中文，英文界面就会冒出中文时间。
+- 文案：复用已有的 `daemon_status_*` 与 `tool_status_running`（三语齐全），不认识的状态码原样显示，
+  不猜成「失败」；新增只有两条键 `background_tasks_finished`、`background_tasks_card_hint`（三语同步）。
+- 只读：不提供停止 / 读日志按钮 —— 这些动作必须经过 `terminal_job` / `terminal_daemon`，
+  界面直接触发会让「谁在调度」变成两套真相。
+
+### 2. 顺手抓到自己写的一个「界面说假话」
+
+第一版 `now` 是 `remember(records) { System.currentTimeMillis() }`：时间只在记录变化时算一次。
+后果是运行中的一行写着「已运行 00:05」就永远停在 00:05，挂十分钟也不动 —— 与
+`AgentToolActivity.rememberRunningSeconds` 当初修的是同一类问题（那里已经写明「静止的计时器就是假话」）。
+
+改法：展开期间重算。有运行中任务 1 秒一跳（那一行显示的是「已运行多久」，秒级才有意义）；
+只剩已结束的行时 30 秒一跳（那里是「多久以前」，一秒一跳纯属白重组）。收起时停掉 ——
+收起状态本来就不显示时间，展开瞬间会立刻重算一次，所以不会先闪一下过期秒数。
+
+### 3. 验证（本机）
+
+| 项 | 结果 |
+|---|---|
+| 定向 2 类 | 20 例 0 失败（`BackgroundTasksViewTest` +8、`DetachedTaskSupervisorTest` +1） |
+| `STAGES=test,lint,assemble` | 991 例 0 失败；lint baseline 194（183 命中 + 11 条依赖更新提示）；死文案 0；扫描 1337 文件 |
+| `STAGES=test-wide` | 2849 例 0 失败 |
+| 包 | 门禁产物 36,040,839 字节 `1ca8792824e17a99…`；删包重建 32,140,697 `55a29a55eaceb0c9…`（详见 §6） |
+
+`changes` 的单测直接盯住了「落盘成功才通知」这条不变量：写入失败时计数不动，
+界面就不会拿着尚未落盘的记录去渲染。
+
+### 4. 门禁自己的两个缺陷（这一批真正花时间的地方）
+
+第一次跑门禁就红了，且两次都不是业务代码：
+
+1. **`GradleDependency` 把门禁变红**：上游发版后 lint 报 4 条「有新版本可用」
+   （kotlin 2.4.20→2.4.21、markdown 0.7.16→0.7.18、hiddenapibypass 6.1→6.2）。
+   这类检查依赖远端元数据，与代码质量无关，离线构建也不可能自动升级；它**还带 autofix**
+   （lint 打印过「This issue has been automatically fixed」）。升级依赖应当是一次显式决定，
+   不该由 lint 每轮捎带决定 → 在 `app/build.gradle.kts` 的 lint 块 `disable += "GradleDependency"` 并写明原因。
+2. **对账脚本只认得一个类型名**：`tools/lint_baseline_audit.py` 报 `LintBaselineFixed`，
+   但 `NETWORK_DEPENDENT_TYPES` 里只有 `GradleDependency`，而 lint 的消息里还带着
+   `AndroidGradlePluginVersion`、`NewerVersionAvailable`，且类型名末尾追加了 ` (N)`
+   （未复现条数，不是类型名的一部分）。→ 三个类型一起视为「依赖更新提示」，
+   并在解析时剥掉尾部的 ` (N)`。
+
+改完**不敢直接信**，因为门禁最怕「看起来在拦、其实永远放行」。喂了四个已知答案的合成输入：
+
+| 输入 | 期望 | 实测 |
+|---|---|---|
+| 11 条依赖类陈旧 + 19 条 baseline 过滤 8 条 | 通过 | 通过（打印「另有 11 条…已放过」） |
+| 陈旧条目里混入 `UnusedResources (2)` | 红 | 红（`[LintBaselineFixed]`） |
+| baseline 19 条但只过滤 18 条 | 红（账目不平） | 红（差 1） |
+| 报告里有新增问题 | 红 | 红（`[UnusedResources] b.kt:9`） |
+
+也就是说：放过**只**覆盖「整条消息里的未复现类型全是依赖更新检查」这一种情况，
+真类型一旦混进来照样红。
+
+### 5. 边界（如实记录）
+
+- **真机未验证**：设备上仍是旧版本（`files/agent` 下没有 `detached_tasks.json`），
+  卡片的布局、小屏高度、长 id 截断、计时器是否真的每秒跳，都只有编译 + 纯逻辑单测。
+- 底部常驻区仍不可滚动（与 §32.53 同一处）：目标卡 + 清单卡 + 台账卡 + 后台任务卡 + 追问卡
+  同时出现时高度会叠加。
+- 刷新只覆盖本进程写入：别的进程启动 / 结束的任务，要等下一次写入或重进界面才出现。
+- 卡片只列最近 3 条结束；完整历史仍在 `terminal_job` / `terminal_daemon` 的 list 里。
+- 展开 / 收起用 `rememberSaveable`，只在进程内保留，重进页面会收起。
+- 不显示退出码、环境、cwd；30 秒档的「多久以前」最多差 30 秒。
+- 不探活（沿用 §32.54 的边界）：被 SIGKILL 的 daemon 仍显示为运行中。
+- 不做事件触发 / 自动续跑：那涉及循环保护与计费边界，另开一轮（与 §32.55 一致）。
+
+### 6. 顺带
+
+- **包体积不是可复现的量**（这一轮终于有证据）：同一份源码，门禁那次打出 36,040,839 字节，
+  删掉 APK 再 `assembleDebug` 打出 32,140,697 字节，连做两次都是 32,140,697（sha 也一致）。
+  363 个条目两边相同，差异全在 dex：解压后 92,067,582 vs 87,537,288 —— 多出来的约 4.5 MB
+  在 dex 里（是否是增量 dex 合并带进了旧分块，本轮没有逐块核对，不做结论）。
+  **结论只到这一步**：包体积不能当「产物是否更新」的证据，看 sha + dex 内的类。
+  前几轮的体积对比也因此失去意义（同样的源码可能是 32.1 MB 或 36.0 MB）；而「大小相同、sha 不同」
+  那几次体积是一致的，这一条**仍无法解释**，继续留着。
+- baseline 仍是 194 条，其中 11 条是依赖更新检查留下的陈旧条目（`GradleDependency` 已被关闭，
+  另外两类的远端元数据不稳定）。对账脚本会把它们打印成提示行，而不是静默吞掉。

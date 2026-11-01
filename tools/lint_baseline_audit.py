@@ -17,11 +17,15 @@ import time
 import xml.etree.ElementTree as ET
 
 # 依赖版本检查依赖「远端元数据 + 本次解析出的依赖图」，两者都不确定：
-# 同一个 commit 在不同时间／不同网络下，GradleDependency 可能报也可能不报
+# 同一个 commit 在不同时间／不同网络下，这几类可能报也可能不报
 # （2026-10-26 实测：同一份 baseline，一次全部命中，另两次各差 1 条，
 #  而两条依赖的远端最新版都仍存在）。这种不确定性不该让整道门禁忽红忽绿，
-# 所以只对它降级为「提示」，其余类型的陈旧条目依旧按红处理。
-NETWORK_DEPENDENT_TYPES = {"GradleDependency"}
+# 所以只对它们降级为「提示」，其余类型的陈旧条目依旧按红处理。
+#
+# 2026-11-01 补：`AndroidGradlePluginVersion` 与 `NewerVersionAvailable` 是同一类
+# （「有新版本可用」），本轮上游发版后它们和 GradleDependency 一起变成 11 条陈旧条目，
+# 脚本只认识 GradleDependency，于是门禁红。三条都属于同一个不稳定来源。
+NETWORK_DEPENDENT_TYPES = {"GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable"}
 
 
 def _unmatched_types(issue) -> set:
@@ -30,7 +34,12 @@ def _unmatched_types(issue) -> set:
     match = re.search(r"Unmatched issue types:\s*(.+)$", message)
     if not match:
         return set()
-    return {part.strip() for part in match.group(1).split(",") if part.strip()}
+    # lint 会在末尾追加 ` (N)`（该类型未复现的条数），不是类型名的一部分。
+    return {
+        re.sub(r"\s*\(\d+\)$", "", part.strip())
+        for part in match.group(1).split(",")
+        if part.strip()
+    }
 
 
 def _unmatched_count(issue) -> int:

@@ -7,6 +7,10 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -51,6 +55,21 @@ internal class DetachedTaskSupervisor(
         /** AI 工具侧与 UI 侧共用同一份记录文件，路径只能在这里定义一次。 */
         fun defaultRecordsFile(context: Context): File =
             File(context.filesDir, "terminal-daemons.json")
+
+        private val _changes = MutableStateFlow(0L)
+
+        /**
+         * 记录每落盘成功一次就自增；界面靠它刷新。
+         *
+         * 不能按消息条数刷新：后台任务结束时只改磁盘上的记录，会话消息根本不变。
+         * 与 `AgentTaskLedgerStore.changes` 同一约定（计入写入次数，而不是存内容）。
+         * 只反映本进程写入；进程外的变化靠下次写入或界面重进刷新。
+         */
+        val changes: StateFlow<Long> = _changes.asStateFlow()
+
+        private fun notifyChanged() {
+            _changes.update { it + 1 }
+        }
 
         /** 记录文件再大也不读了：正常只有几十条，超过这个量说明文件被写坏。 */
         const val MAX_RECORDS_BYTES = 256L * 1024
@@ -655,8 +674,8 @@ internal class DetachedTaskSupervisor(
         }
     }
 
-    private fun saveTasksLocked(tasks: List<DetachedTask>): Boolean =
-        runCatching {
+    private fun saveTasksLocked(tasks: List<DetachedTask>): Boolean {
+        val saved = runCatching {
             recordsFile.parentFile?.mkdirs()
             val array = JSONArray()
             tasks.forEach { array.put(it.toRecordJson()) }
@@ -670,5 +689,9 @@ internal class DetachedTaskSupervisor(
             logger.warn("Agent terminal daemon records save failed")
             false
         }
+        // 落盘成功才通知界面：写失败时刷新出去的是旧数据，反而让人以为「没变」。
+        if (saved) notifyChanged()
+        return saved
+    }
 
 }
