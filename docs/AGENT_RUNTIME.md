@@ -1105,6 +1105,25 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 边界：锁按 scopeId 粒度（跨会话不阻塞）；`resetChain()` 仍 `runCatching` 吞异常；写盘失败只留
 一条 warn、不重试；没有真机验证。
 
+### 第十八批：手动「继续」是第三个写者（2026-11-01）
+
+第十七批给 watcher 的 `runOnce` 与 `resetChain()` 上了同一把作用域锁，注释写「两个写者」——
+实际有三个：卡片点「继续」是 `markResumed()` + `rememberCoroutineScope().launch { persist() }`。
+它写整份状态（`resumed` / `chain` / `seen_until`）却不拿锁，落在 watcher 之后会把 `chain` /
+`seenUntil` 盖回旧值（重启后链上限被重置、已处理的任务被重放）。而 `rememberCoroutineScope()`
+随组合销毁取消：点完立刻离开会话，这次点击只活在内存里，重启后等于没点过。
+
+修法：新增 `resumeManually()`（**同步记账**）与 `BackgroundResumeMemory.persistSoon()`（进程级
+写入器 + `mutexFor(scopeId)`），卡片改调它并删掉 `rememberCoroutineScope()`；写入器里按
+`runGuarded` 的规则处理异常（取消原样抛，其余上报 `onPersistFailed`，不落到线程 uncaught handler）。
+
+验证：先红（2 例，实现前 `Unresolved reference 'resumeManually'`）→ 反证一（去掉锁）1 红、
+反证二（只记账不落盘）2 红 → 定向 `agent.terminal.*` **525 例 0 失败**（恢复实现文件后复跑
+同样 525／0）→ `STAGES=test,lint,assemble` **1093 例 0 失败**（lint 无新增，包 32,186,737 字节
+`bbdb2fc054477368…`）→ `STAGES=test-wide` **2951 例 0 失败**。
+边界：「点完立刻离开」这一半没有用例守（aarch64 跑不了 Robolectric）；锁按 scopeId 粒度；
+`persistSoon` 不重试，失败仍只有一条 warn；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

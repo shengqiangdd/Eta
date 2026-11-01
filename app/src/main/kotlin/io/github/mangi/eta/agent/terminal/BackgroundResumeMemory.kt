@@ -7,8 +7,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.mangi.eta.agent.runtime.BackgroundResumeState
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -78,6 +83,23 @@ internal class BackgroundResumeScope(
         markResumed(id)
         autoResumed += 1
         chainTouched = true
+    }
+
+    /**
+     * 用户手动点「继续」（第十八批）：记账是同步的，落盘交给进程级写入器。
+     *
+     * 三段都不能省，缺一个就有一类静默失败：
+     * - 不记账 → 按钮不消失，同一条能点第二次；
+     * - 不串行（[BackgroundResumeMemory.mutexFor]）→ 与 watcher 的整份状态写入互相覆盖，
+     *   `chain` / `seenUntil` 可能被盖回旧值：重启后链上限被重置（多花额度），
+     *   或者用户刚发消息清掉的链又回来了（提前停用）；
+     * - 不用进程级写入器 → 卡片原来写在自己的 `rememberCoroutineScope()` 里，
+     *   用户点完立刻离开会话，组合销毁就会取消它，这次点击只活在内存里，
+     *   重启之后等于没点过（按钮重现，自动续跑也可能再发一条）。
+     */
+    fun resumeManually(id: String) {
+        if (!markResumed(id)) return
+        BackgroundResumeMemory.persistSoon(scopeId) { persist() }
     }
 
     /**
@@ -172,6 +194,34 @@ internal object BackgroundResumeMemory {
 
     private val scopes = HashMap<String, BackgroundResumeScope>()
     private val locks = HashMap<String, Mutex>()
+
+    /**
+     * 进程级写入器（第十八批）。
+     *
+     * 界面侧的手动「继续」不能把落盘挂在自己的协程作用域上：`rememberCoroutineScope()`
+     * 随组合销毁取消，用户点完就切走时那次写入会被取消掉。
+     */
+    private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 把一次状态写入排进写入器，并与 watcher、`resetChain()` 共用同一把作用域锁。
+     *
+     * 不返回任务：调用方（界面点击）不该等落盘，失败会经 [onPersistFailed] 留痕。
+     */
+    internal fun persistSoon(scopeId: String, persist: suspend () -> Boolean) {
+        writer.launch {
+            // 不能把异常丢给线程默认处理器：`launch` 里未捕获的异常会直接带到
+            // 线程的 uncaught handler，真机上就是一次闪退 —— 而这里只是“记一笔状态没写成”。
+            // 取消照旧原样抛出（与第十五批的 `runGuarded` 同一条规则）。
+            try {
+                mutexFor(scopeId).withLock { persist() }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                onPersistFailed?.invoke(scopeId)
+            }
+        }
+    }
 
     fun scopeFor(store: BackgroundResumeStore?, scopeId: String): BackgroundResumeScope =
         synchronized(scopes) {

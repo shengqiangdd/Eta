@@ -4,8 +4,10 @@ import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.withLock
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -114,6 +116,75 @@ class BackgroundResumeDurabilityTest {
         gate.complete(Unit)
         job.join()
         assertFalse("分发结束后必须释放", BackgroundResumeMemory.mutexFor("conv-a").isLocked)
+    }
+
+    /**
+     * 手动「继续」必须和自动续跑**串行**：watcher 持锁期间不许写盘。
+     *
+     * 卡片原来是 `markResumed()` + `rememberCoroutineScope().launch { persist() }`，
+     * 那是第三个写者、而且不走锁：它把整份状态（含 `chain` / `seenUntil`）写回去，
+     * 只要落在 watcher 之后，就会把刚写下的新值盖回旧值 —— 重启后表现为
+     * 「链上限被重置」（多花额度）或「用户刚发消息清掉的链又回来了」（提前停用）。
+     */
+    @Test
+    fun manualResumeWaitsForScopeLock() = runBlocking {
+        val resumeStore = store()
+        val scope = BackgroundResumeMemory.scopeFor(resumeStore, "conv-a")
+        val mutex = BackgroundResumeMemory.mutexFor("conv-a")
+        val gate = CompletableDeferred<Unit>()
+        val holder = launch(Dispatchers.Default) { mutex.withLock { gate.await() } }
+        repeat(200) {
+            if (!mutex.isLocked) delay(5)
+        }
+        assertTrue("先确认锁已被持住", mutex.isLocked)
+        scope.resumeManually("job_a")
+        delay(150)
+        assertFalse(
+            "持锁期间不许写盘（否则与 watcher 互相覆盖）",
+            resumeStore.loadState("conv-a").resumed.contains("job_a"),
+        )
+        gate.complete(Unit)
+        holder.join()
+        assertTrue("解锁后必须落盘", waitForResumed(resumeStore, "conv-a", "job_a"))
+    }
+
+    /**
+     * 手动「继续」不能依赖调用方的协程作用域。
+     *
+     * 卡片用的是 `rememberCoroutineScope()`：用户点完立刻离开会话，组合销毁就会取消它 ——
+     * 这次点击只活在内存里，重启后等于没点过（按钮重现，自动续跑也可能再发一条）。
+     */
+    @Test
+    fun manualResumeWritesWithoutCallerScope() = runBlocking {
+        val resumeStore = store()
+        val scope = BackgroundResumeMemory.scopeFor(resumeStore, "conv-a")
+        scope.resumeManually("job_a")
+        assertTrue("没有调用方协程也必须写成", waitForResumed(resumeStore, "conv-a", "job_a"))
+    }
+
+    /** 写入器里的异常不能变成闪退：上报一次就够了（与 watcher 的 `runGuarded` 同一条规则）。 */
+    @Test
+    fun writerFailureIsReportedNotCrashed() = runBlocking {
+        val reported = mutableListOf<String>()
+        BackgroundResumeMemory.onPersistFailed = { scopeId -> reported += scopeId }
+        BackgroundResumeMemory.persistSoon("conv-a") { error("boom") }
+        repeat(200) {
+            if (reported.isEmpty()) delay(10)
+        }
+        assertEquals(listOf("conv-a"), reported)
+    }
+
+    /** 轮询等落盘：写入跑在进程级写入器里，用例不能假设它同步完成。 */
+    private suspend fun waitForResumed(
+        store: BackgroundResumeStore,
+        scopeId: String,
+        id: String,
+    ): Boolean {
+        repeat(200) {
+            if (store.loadState(scopeId).resumed.contains(id)) return true
+            delay(10)
+        }
+        return false
     }
 
     /**

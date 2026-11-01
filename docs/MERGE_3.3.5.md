@@ -6438,3 +6438,52 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
 - 写盘失败只留一条 warn，**不重试**：重试要引入退避与队列，这批只解决「静默」。失败后内存里仍是
   最新值，同一进程内判定是对的，重启才会回退。
 - 没有真机验证：自动续跑默认关闭，打开会真发模型调用、改用户会话。第十三批起每批都只有单测。
+
+## §32.67 手动「继续」是第三个写者，而且写在会消失的作用域里（2026-11-01）
+
+第十七批把 watcher 的 `runOnce` 与 `AgentAppState` 的 `resetChain()` 串到同一把作用域锁上，
+文档与注释都写「同一作用域有两个写者」。**实际有三个** —— 卡片里点「继续」的那一行是
+`markResumed()` + `rememberCoroutineScope().launch { persist() }`。
+
+它写的是**整份**状态（`resumed` / `chain` / `seen_until`），既没有拿锁，也不在任何人的串行区间里。
+落在 watcher 之后就把新值盖回旧值：重启后 `chain` 回到 0（链上限被重置，多花额度），
+或 `seenUntil` 回退（已处理的任务变回候选，重放）。内存里两边是同一个对象，所以**当场看不出来**，
+只有「随后进程被杀」才暴露。
+
+同一个 `uiScope` 还有第二个问题：它是 `rememberCoroutineScope()`，随组合销毁取消。用户点完立刻
+离开会话（或界面被回收），那个 `launch` 还没跑就被取消 —— 这次点击只活在内存里，重启后等于没点过：
+按钮重现，自动续跑也可能再发一条（水位线还没推进时）。
+
+修法：
+
+1. 新增 `BackgroundResumeScope.resumeManually(id)`：**记账同步**（点下去立刻生效），落盘交给
+   进程级写入器 `BackgroundResumeMemory.persistSoon()`。
+2. `persistSoon()` 跑在 `writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)` 上，并拿
+   `mutexFor(scopeId)` —— 与 watcher、`resetChain()` 同一把锁，第三个写者并入同一串行区间。
+3. 写入器里的异常不能变成闪退：`launch` 里未捕获的异常会走到线程 uncaught handler。按第十五批
+   `runGuarded` 的规则处理：`CancellationException` 原样抛，其余上报 `onPersistFailed`。
+4. 卡片改调 `resumeManually()`，删掉 `rememberCoroutineScope()` 与本文件里的 `launch` 导入。
+
+验证：
+
+- **先红**：2 例（持锁期间不许写盘 / 没有调用方协程也必须写成），实现前编译失败
+  `Unresolved reference 'resumeManually'`。
+- **反证一**（`persistSoon` 去掉 `withLock`）→ 1 红：`manualResumeWaitsForScopeLock`
+  「持锁期间不许写盘（否则与 watcher 互相覆盖）」。
+- **反证二**（`resumeManually` 只记账不落盘）→ 2 红：`manualResumeWaitsForScopeLock`
+  「解锁后必须落盘」、`manualResumeWritesWithoutCallerScope`「没有调用方协程也必须写成」。
+- 定向 `agent.terminal.*`：**525 例 0 失败**（新增 3 例；第三个是写入器异常上报
+  `writerFailureIsReportedNotCrashed`）。恢复实现文件后复跑同样 **525 例 0 失败**。
+- `STAGES=test,lint,assemble`：**1093 例 0 失败**；lint 无新增（baseline 183 命中 + 11 条依赖更新
+  提示未复现）；包 32,186,737 字节 `bbdb2fc054477368…`。
+- `STAGES=test-wide`：**2951 例 0 失败**。
+
+### 边界（如实记录）
+
+- 「点完立刻离开」这一半**没有用例守**：组合销毁要 Compose 运行时（本机 aarch64 跑不了
+  Robolectric）。用例只覆盖「不需要调用方协程也能写成」；机制上已由「记账同步 + 进程级写入器」
+  消除，但这一步是推理，不是真机验证。
+- 锁仍按 scopeId 粒度：同一会话的手动续跑与自动续跑排队，不同会话互不阻塞。
+- `persistSoon` 不返回任务、不重试：失败仍只有一条 warn（第十七批）。界面不会因为写盘失败卡住，
+  代价是「这次失败只能从日志看出来」。
+- 没有真机验证（自动续跑默认关闭，打开会真发模型调用、改用户会话）。

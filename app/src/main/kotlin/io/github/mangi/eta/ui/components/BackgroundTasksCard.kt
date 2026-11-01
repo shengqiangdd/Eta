@@ -20,7 +20,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,7 +46,6 @@ import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.Text
@@ -134,7 +132,6 @@ internal fun BackgroundTasksCard(
     }
     // 先把磁盘记忆读进来再判定：`isLoaded` 之前的集合是空的，拿它判「没续过」会重复续。
     LaunchedEffect(resumeScope) { resumeScope.loadFromStore() }
-    val uiScope = rememberCoroutineScope()
     val resumed = resumeScope.resumed
     val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
     val title = stringResource(R.string.background_run_channel)
@@ -200,9 +197,9 @@ internal fun BackgroundTasksCard(
                         resumeLabel = resumeLabel,
                         onResume = if (canResumeThis) {
                             {
-                                if (resumeScope.markResumed(task.id)) {
-                                    uiScope.launch { resumeScope.persist() }
-                                }
+                                // 记账同步、落盘进程级（第十八批）：不用 `rememberCoroutineScope()`，
+                                // 用户点完立刻离开会话也不会把这次点击取消掉。
+                                resumeScope.resumeManually(task.id)
                                 onResume(resumePrompt(promptTemplate, task))
                             }
                         } else {
