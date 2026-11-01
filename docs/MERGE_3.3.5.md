@@ -5875,6 +5875,53 @@ internal fun planAutoResume(
 - 卡片里那份判定仍然保留（界面正开着时立即响应）；两边共用同一个作用域对象去重。
 - 记录跨进程写仍只有进程级锁 + rename，没有文件锁。
 
-### 8. 真机验证
+### 8. 真机验证（2026-11-01 21:30~21:45，本机 PKX110 / Android 16）
 
-待做（下一步：切到别的会话后让后台任务结束，看是否自动发出续跑）。
+装的是**主包** `io.github.mangi.eta`（不是 canary）：`/data/local/tmp/eta-b10-canary.apk`
+其实是 20:50 那次 `STAGES=test,lint,assemble` 的产物，`applicationId` 没有后缀，
+文件名里的 canary 是复制时起错了。核对：`lastUpdateTime=2026-11-01 20:50:43`、
+`firstInstallTime` 仍是 10-03（未重置）、`base.apk` 32,169,213 字节 `07c4d21e…`；
+21 个 dex 里能搜到 `canOfferManualResume` 与 `BackgroundAutoResumeWatcher`，
+测试类（`BackgroundResumeTest` 等）0 命中。
+
+做法：新建一块虚拟屏（display 6）把 Eta 启动过去，主屏留给用户，全程没碰主屏前台。
+
+| 观察点 | 实际 |
+|---|---|
+| 卡片 | 「后台任务 · 已结束 32」展开，列最近 3 条：`job_23578824`、`job_46ae6eb0`（都属于当前主会话 `conv-1a25f9f1…`）、`job_89a250fc`（`session_scope=null`，无归属） |
+| 所在会话 | 切到一个 **idle 的旧会话**（「你是什么模型，有什么能力」），不是这三条任务的归属会话 |
+| 「继续」按钮 | **三条都没有** |
+| 对照条件 | `agent_background_resume_button` 在 `eta_agent_preferences.xml` 里**没有这个键** → 取默认 `true`（`Prefs.kt:129`）；该会话 `isStreaming=false` → `canSend=true` |
+
+按钮开关是开的、会话也是空闲的，三条任务仍不出现「继续」。按老代码
+（`task.id !in resumed` 就算可续）它们会**全部**出现 —— 两条属于别的会话、
+一条根本没有归属。这一轮要修的就是这个，真机上已经看不到了。
+
+**没验证到的**：属于**该会话自己**的已结束任务仍然显示「继续」——正向对照没做
+（要造这种记录得真的让那个会话跑一个后台任务，属于会花钱、会改用户会话的操作），
+由单测 `manualResumeOnlyForOwnFinishedTask` 覆盖（4 例）。
+
+自动续跑本身仍未真机验证：`agent_background_resume_auto` 默认 `false`，打开后任务一结束
+就会真的发起一轮模型调用（改用户会话、花额度），本轮没有擅自打开。
+`BackgroundAutoResumeWatcherTest` 10 例覆盖的是纯编排。
+
+### 9. 补丁（同日）：手动「继续」也认主人
+
+第 2~5 节把**自动**路径按会话收紧了，卡片的**手动**按钮却还只判「没续过」：
+
+```kotlin
+val canResumeThis = resumeButtonEnabled && canSend && task.id !in resumed
+```
+
+后果：别的会话（以及第九批之前没有 `session_scope` 的旧记录）只要排进「最近结束」，
+当前会话里就会长出一个「继续」——点一下等于用这个会话的额度替别人干活。
+
+改法：判定抽成 `canOfferManualResume(task, scopeId, buttonEnabled, canSend, handled)`，
+与 `planAutoResume` 共用同一条归属规则（`scopeId.isNotBlank() && task.sessionScope == scopeId`），
+卡片只调它。抽成函数而不是复制条件，是因为两处判定分居两个文件时最容易只改一处
+——这一轮的缺陷就是这么来的。
+
+`BackgroundResumeTest` 加 4 例（本会话显示、别的会话不显示、旧记录不显示、已续过/开关关不显示）。
+
+门禁：`STAGES=test,lint,assemble` **1045／0**（lint 无新增，baseline 194）；
+`STAGES=test-wide` **2903／0**；包 32,169,213 字节 `07c4d21e…`（主包）。

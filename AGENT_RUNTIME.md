@@ -888,6 +888,25 @@ lint 抓住一处真错：`scopeId` 放在 `modifier` 前面 → `ModifierParame
 - 自动续跑会把该会话的消息读进内存（大会话有真实开销）。
 - 语音 \/ 一次性入口没有会话键 → 记录无归属 → 不自动续（手动按钮仍可用）。
 
+补丁（同日）：手动「继续」也认主人。自动路径按 `sessionScope` 收紧之后，卡片的按钮
+还只判「没续过」，于是别的会话（和第九批之前没有 `session_scope` 的旧记录）排进
+「最近结束」时，当前会话里会多出一个「继续」——点一下等于拿这个会话的额度替别人干活。
+判定抽成 `canOfferManualResume(task, scopeId, buttonEnabled, canSend, handled)`，
+与 `planAutoResume` 共用同一条归属规则；抽函数而不是复制条件，因为两处分居两个文件时
+最容易只改一处。`BackgroundResumeTest` 加 4 例。
+
+真机（2026-11-01，本机 PKX110 \/ Android 16，虚拟屏 display 6 里跑的 Eta）：
+切到一个 **idle 的旧会话**展开「后台任务 · 已结束 32」，最近 3 条分别是
+`job_23578824` \/ `job_46ae6eb0`（都属于当前主会话）和 `job_89a250fc`（无归属），
+**三条都没有「继续」**；同期 `agent_background_resume_button` 在 prefs 里没有键
+（默认 `true`）、会话 `isStreaming=false`，所以隐藏只能来自归属过滤。
+没做的正向对照：属于该会话的已结束任务仍显示按钮——要造这种记录得真的发消息跑后台任务，
+本轮没做，由 `manualResumeOnlyForOwnFinishedTask` 单测覆盖。
+
+门禁：`STAGES=test,lint,assemble` 1045／0；`STAGES=test-wide` 2903／0；
+包 32,169,213 字节（`07c4d21e…`，主包）。自动续跑本身仍未真机验证
+（`agent_background_resume_auto` 默认关；打开会真的触发一轮模型调用）。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

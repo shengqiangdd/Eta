@@ -56,3 +56,25 @@ internal fun planAutoResume(
     // 一次只发一条：第二条要等这一轮跑完、界面重新空闲，否则等于把两条提问挤在一起。
     return AutoResumePlan(next = candidates.first(), skipped = candidates.size - 1)
 }
+
+/**
+ * 卡片里那条手动「继续」该不该出现。
+ *
+ * 与 [planAutoResume] 共用同一条归属规则：**任务必须属于本会话**。抽成函数是因为
+ * 两处判定分居两个文件时很容易只改一处 —— 2026-11-01 真机就是这样：自动路径加了
+ * `sessionScope` 过滤，卡片只判「没续过」，于是别的会话（以及第九批之前没有归属的
+ * 旧记录）一旦排进「最近结束」，当前会话里就长出一个「继续」，点一下等于用本会话的
+ * 额度替别人干活。
+ *
+ * @param scopeId 本会话作用域键；空串表示无会话，此时永不提供手动续跑
+ * @param handled 本作用域已经续过的任务 id（手动 + 自动同集合）
+ */
+internal fun canOfferManualResume(
+    task: DetachedTask,
+    scopeId: String,
+    buttonEnabled: Boolean,
+    canSend: Boolean,
+    handled: Collection<String>,
+): Boolean = buttonEnabled && canSend &&
+    scopeId.isNotBlank() && task.sessionScope == scopeId &&
+    task.id !in handled

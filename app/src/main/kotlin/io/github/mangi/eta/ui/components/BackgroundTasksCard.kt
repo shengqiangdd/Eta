@@ -41,6 +41,7 @@ import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.backgroundTaskLine
+import io.github.mangi.eta.agent.terminal.canOfferManualResume
 import io.github.mangi.eta.agent.terminal.planAutoResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
@@ -202,7 +203,14 @@ internal fun BackgroundTasksCard(
                 }
                 val resumeLabel = stringResource(R.string.background_tasks_resume)
                 view.recentFinished.forEach { task ->
-                    val canResumeThis = resumeButtonEnabled && canSend && task.id !in resumed
+                    // 归属规则与自动续跑同一个函数：两处分别写就会只修一处（真机上就是这样漏的）。
+                    val canResumeThis = canOfferManualResume(
+                        task = task,
+                        scopeId = scopeId.orEmpty(),
+                        buttonEnabled = resumeButtonEnabled,
+                        canSend = canSend,
+                        handled = resumed,
+                    )
                     BackgroundTaskRow(
                         task = task,
                         now = now,

@@ -189,4 +189,41 @@ class BackgroundResumeTest {
         assertEquals("job_mine_early", plan.next?.id)
         assertEquals(1, plan.skipped)
     }
+
+    /**
+     * 手动「继续」的显示条件。真机 2026-11-01 抓到的缺陷就是这里：
+     * 自动路径已经按 `sessionScope` 过滤，卡片却只判「没续过」，于是别的会话
+     * （和第九批之前没有归属的旧记录）会在当前会话里长出「继续」。
+     */
+    @Test
+    fun manualResumeOnlyForOwnFinishedTask() {
+        val mine = task("job_mine", 100L, 600L, sessionScope = "conv-a")
+        assertEquals(true, canOfferManualResume(mine, "conv-a", true, true, emptyList()))
+    }
+
+    @Test
+    fun manualResumeHiddenForOtherSessionTask() {
+        val other = task("job_other", 100L, 600L, sessionScope = "conv-b")
+        assertEquals(false, canOfferManualResume(other, "conv-a", true, true, emptyList()))
+    }
+
+    /** 第九批之前的记录没有 `session_scope`：卡片里也不该冒出「继续」。 */
+    @Test
+    fun manualResumeHiddenForLegacyRecordWithoutOwner() {
+        val legacy = task("job_legacy", 100L, 600L, sessionScope = null)
+        assertEquals(false, canOfferManualResume(legacy, "conv-a", true, true, emptyList()))
+    }
+
+    @Test
+    fun manualResumeHiddenWhenAlreadyResumedOrDisabled() {
+        val mine = task("job_mine", 100L, 600L, sessionScope = "conv-a")
+        // 本作用域已续过（手动或自动都记在同一个集合里）
+        assertEquals(false, canOfferManualResume(mine, "conv-a", true, true, listOf("job_mine")))
+        // 设置里的手动开关关掉
+        assertEquals(false, canOfferManualResume(mine, "conv-a", false, true, emptyList()))
+        // 会话正在跑，发不出去
+        assertEquals(false, canOfferManualResume(mine, "conv-a", true, false, emptyList()))
+        // 没有会话键（语音 / 一次性入口）
+        assertEquals(false, canOfferManualResume(mine, "", true, true, emptyList()))
+    }
 }
