@@ -17,6 +17,13 @@ internal class RootShellTerminalController(
     private val processSupervisor: ShellProcessSupervisor = ShellProcessSupervisor(),
     private val detachedSupervisor: DetachedTaskSupervisor? = null,
     private val backgroundJobs: BackgroundTerminalJobs? = null,
+    /**
+     * 本工具实例所属的会话作用域键，写进新建任务的记录。
+     *
+     * 空串表示没有归属（语音 / 一次性入口）：这类任务不会自动续跑，
+     * 但手动「继续」仍然可用。
+     */
+    private val backgroundScopeId: String = "",
     private val linuxSharedMountsProvider: () -> List<SharedFolderMount> = { emptyList() },
     selectedLinuxEnvironmentProvider: () -> TerminalEnvironment = {
         TerminalEnvironment.ALPINE
@@ -103,6 +110,7 @@ internal class RootShellTerminalController(
                     timeoutMs = args.optLong("timeout_ms", 600_000),
                     // 后台命令也要拿到 env.conf：否则「设置里配了 token，跑后台任务就没有」。
                     envPrefix = envPrefixFor(environment, surface = "job"),
+                    sessionScope = backgroundScopeId.takeIf { it.isNotBlank() },
                 )
             }
             "list" -> jobs.list(args.optBoolean("active_only", true))
@@ -265,6 +273,7 @@ internal class RootShellTerminalController(
                 environment = normalizedEnvironment,
                 // 常驻服务与普通命令用同一份 env.conf；值同样只走一次性脚本。
                 envPrefix = envPrefixFor(normalizedEnvironment, surface = "daemon"),
+                sessionScope = backgroundScopeId.takeIf { it.isNotBlank() },
             )
         ) {
             is DaemonStartResult.Started -> JSONObject()

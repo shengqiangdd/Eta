@@ -26,6 +26,9 @@ internal data class AutoResumePlan(
  * 挑出本轮可以自动续跑的那一条。
  *
  * @param records 当前记录（与提示段、卡片同源）
+ * @param scopeId 本会话的作用域键（`conversationId ?: runId`）。**只认归属本会话的任务**：
+ *   记录里的任务属于别的会话（或旧记录没有归属）时，不自动续 —— 否则当前显示着的会话
+ *   会替用户没看着的会话花额度。空串表示无会话，此时永不会命中。
  * @param handled 已经续过的任务 id（手动点「继续」也算，避免刚点完又自动发一条）
  * @param finishedAfterMs 只认这个时刻**之后**结束的任务。传「卡片打开的时刻」：
  *   否则一进一个旧会话，历史里所有已结束任务都会被当成新事件续一遍。
@@ -34,6 +37,7 @@ internal data class AutoResumePlan(
  */
 internal fun planAutoResume(
     records: List<DetachedTask>,
+    scopeId: String,
     handled: Set<String>,
     finishedAfterMs: Long,
     alreadyResumed: Int,
@@ -42,7 +46,8 @@ internal fun planAutoResume(
     val candidates = records
         .filter { task ->
             val done = task.completedAt
-            done != null && done > finishedAfterMs && task.id !in handled
+            scopeId.isNotBlank() && task.sessionScope == scopeId &&
+                done != null && done > finishedAfterMs && task.id !in handled
         }
         .sortedBy { it.completedAt }
     if (candidates.isEmpty()) return AutoResumePlan(next = null, skipped = 0)

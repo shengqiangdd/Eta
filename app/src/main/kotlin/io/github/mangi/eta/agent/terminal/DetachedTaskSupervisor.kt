@@ -111,6 +111,13 @@ internal class DetachedTaskSupervisor(
          * 展示的必须是用户写的命令，不能混进一串临时文件路径。
          */
         envPrefix: String? = null,
+        /**
+         * 派发这次任务的会话作用域键；null 表示没有归属（外部直调 / 语音一次性入口）。
+         *
+         * 只用于「任务结束后自动续跑」的归属判定，不参与任何启动行为 ——
+         * 旧调用方不传也不会变。
+         */
+        sessionScope: String? = null,
     ): DaemonStartResult {
         if (identity != "root" && identity != "user") return DaemonStartResult.Failed("INVALID_ARGUMENT", "执行身份无效")
         if (identity == "root" && !rootAvailable()) return DaemonStartResult.Failed("ROOT_REQUIRED", "Root 授权不可用")
@@ -125,8 +132,8 @@ internal class DetachedTaskSupervisor(
         }
         val id = (if (commandTask) "job_" else "dm_") + UUID.randomUUID().toString().take(8)
         val token = UUID.randomUUID().toString().replace("-", "")
-        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs, envPrefix)
-        if (identity == "user") return startUserDaemon(id, token, command, cwd, environment, envPrefix)
+        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs, envPrefix, sessionScope)
+        if (identity == "user") return startUserDaemon(id, token, command, cwd, environment, envPrefix, sessionScope)
         val wireDir = wireDaemonDir(environment)
         val wirePidFile = "$wireDir/$id.pid"
         val wireLogFile = "$wireDir/$id.log"
@@ -177,6 +184,7 @@ internal class DetachedTaskSupervisor(
             commandTask = commandTask,
             description = description,
             timeoutMs = timeoutMs,
+            sessionScope = sessionScope,
         )
         if (!synchronized(RECORDS_LOCK) { saveTasksLocked(loadTasksLocked() + task) }) {
             stopTaskProcess(task)
@@ -263,7 +271,7 @@ internal class DetachedTaskSupervisor(
 
     private fun startCommand(id: String, command: String, cwd: String, identity: String,
         environment: TerminalEnvironment, description: String, timeoutMs: Long,
-        envPrefix: String? = null): DaemonStartResult {
+        envPrefix: String? = null, sessionScope: String? = null): DaemonStartResult {
         val workspace = if (identity == "user") TerminalRuntime.userWorkspacePath else TerminalRuntime.ROOT_WORKSPACE_PATH
         val wireDir = when {
             environment.isLinux -> LINUX_DAEMON_DIR
@@ -323,7 +331,8 @@ internal class DetachedTaskSupervisor(
         val task = DetachedTask(id, ownership.pid, ownership.token, command, cwd, identity, environment,
             logPath, System.currentTimeMillis(), LinuxEnvironmentPaths.backendOf(rootfsPath(environment)), workspace,
             commandTask = true, description = description, timeoutMs = timeoutMs,
-            isolatedGroup = ownership.isolatedGroup, outputMode = outputMode.orEmpty())
+            isolatedGroup = ownership.isolatedGroup, outputMode = outputMode.orEmpty(),
+            sessionScope = sessionScope)
         if (!synchronized(RECORDS_LOCK) { saveTasksLocked(loadTasksLocked() + task) }) {
             oneShotSupervisor.terminateAndReap(process)
             oneShotSupervisor.unregisterProcess(process)
@@ -475,7 +484,7 @@ internal class DetachedTaskSupervisor(
 
     /** 普通守护任务保留完整宿主壳和 tracer；guest 内不能再次脱离 PRoot 的生命周期。 */
     private fun startUserDaemon(id: String, token: String, command: String, cwd: String, environment: TerminalEnvironment,
-        envPrefix: String? = null): DaemonStartResult {
+        envPrefix: String? = null, sessionScope: String? = null): DaemonStartResult {
         val workspace = if (environment.isLinux || daemonDir == DEFAULT_DAEMON_DIR) TerminalRuntime.userWorkspacePath else File(daemonDir).parent!!
         val hostDir = if (environment.isLinux || daemonDir == DEFAULT_DAEMON_DIR) File(workspace, "daemon") else File(daemonDir)
         if (!hostDir.mkdirs() && !hostDir.isDirectory) return DaemonStartResult.Failed("WORKSPACE_UNAVAILABLE", "工作目录不可访问")
@@ -525,7 +534,8 @@ internal class DetachedTaskSupervisor(
             }
             val task = DetachedTask(id, pid, token, command, cwd, "user", environment,
                 if (environment.isLinux) "$LINUX_DAEMON_DIR/$id.log" else logFile.absolutePath,
-                System.currentTimeMillis(), if (environment.isLinux) LinuxExecutionBackend.PROOT else LinuxExecutionBackend.CHROOT, workspace)
+                System.currentTimeMillis(), if (environment.isLinux) LinuxExecutionBackend.PROOT else LinuxExecutionBackend.CHROOT, workspace,
+                sessionScope = sessionScope)
             USER_WAITERS.add(id)
             if (!synchronized(RECORDS_LOCK) { saveTasksLocked(loadTasksLocked() + task) }) {
                 USER_WAITERS.remove(id)

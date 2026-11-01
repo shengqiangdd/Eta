@@ -5777,3 +5777,104 @@ BackgroundTasksCard.kt:92: Error: Modifier parameter should be the first optiona
 「目录不存在」与「没有权限」都可能是命名空间造成的假象。
 
 顺带确认：主包 `io.github.mangi.eta` 的 `lastUpdateTime` 仍是 2026-10-31 22:09:21，全程未被触碰。
+
+## §32.59 任务结束的触发点搬出界面，记录也认会话（2026-11-01）
+
+### 1. 上一节末尾那两条「未做」，正是这一批
+
+§32.58 第 5 节写着：
+
+- 「自动续跑仍只在『会话界面可见』时触发（Compose 副作用），切走 / 锁屏 / 回收都不触发。」
+- 「记录仍无会话归属：别的会话起的任务结束仍是候选。」
+
+第一条是触发点位置问题，第二条是数据模型问题。两条都不是「再加个开关」能解决的：
+判定还写在卡片里就一定受组合生命周期约束；记录不认主人就分不清「谁的任务」。
+
+### 2. 记录加 `session_scope`
+
+| 环节 | 变化 |
+|---|---|
+| `DetachedTask` | 新增 `sessionScope: String?`（JSON 键 `session_scope`，加在末尾，位置参数构造不受影响） |
+| `DetachedTaskSupervisor.start` | 新增 `sessionScope: String? = null`；根守护 / 命令 / 用户守护三个构造点都带上 |
+| `BackgroundTerminalJobs.start` | 透传 |
+| `RootShellTerminalController` | 新增 `backgroundScopeId`（默认空串），`terminal_job` 与 `terminal_daemon` 两处 start 都传 |
+| `AgentLocalTools` | 构造 controller 时传 `goalScopeId`（= `conversationId ?: runId`，与台账 / 目标 / 待办同一个键） |
+
+兼容性：旧记录没有这个键 → `null`；空串、空白与字面 `"null"` 也一律按无归属。
+`DetachedTaskRecordTest` 5 例守着往返、缺键、空串、字面 null、未知键。
+
+### 3. `planAutoResume` 的 `scopeId` 是必填参数
+
+```kotlin
+internal fun planAutoResume(
+    records: List<DetachedTask>,
+    scopeId: String,          // 必填：空串永不命中
+    handled: Set<String>,
+    finishedAfterMs: Long,
+    alreadyResumed: Int,
+    maxCount: Int = AutoResumeMaxPerSession,
+): AutoResumePlan
+```
+
+刻意的选择：**不给默认值**。给默认值的话，漏传的调用点会静默变成「谁的都算我的」——
+这类缺陷在界面上完全看不出来（只是偶尔多续一次）。必填会让它编译期就红。
+`BackgroundResumeTest` 从 8 例扩到 12 例：别的会话不算候选、旧记录不算候选、空作用域永不命中、
+混合场景只在本会话内排序。
+
+### 4. 进程级 `BackgroundAutoResumeWatcher`
+
+`agent/terminal/BackgroundAutoResumeWatcher.kt`：
+
+- `start(context)` 在 `EtaApp.onCreate` 调一次（`TerminalRuntime.initialize` 之后、`resume()` 之前）；
+  监听 `DetachedTaskSupervisor.changes`，另有 30 秒兜底扫描。
+- `runOnce(records, finishedAfterMs, scopeFor, dispatch)` 是可测的纯编排：按 `sessionScope` 分组，
+  每个会话先 `loadFromStore()`（没读完不判定），再用 `planAutoResume` 挑一条。
+- **先 `dispatch` 成功再 `markAutoResumed` + `persist`**：发不出去（会话在跑 / 不在内存）不占预算。
+- `startedAtMs` 是 watcher 起跑时刻：只续这之后结束的任务，避免一启动就把历史任务全续一遍。
+- `install` / `uninstall` 存分发器引用：Activity 重建时新旧实例先后注册，旧实例注销只清自己。
+
+`BackgroundAutoResumeWatcherTest` 10 例：无归属不派发、运行中不派发、早于起跑不派发、
+正常派发并记账、派发失败不记账、预算只影响该会话、已续过不再派发、每会话每轮最多一条、
+磁盘记忆阻止重启后重复续、空记录零调用。
+
+### 5. 按会话发消息：`AgentAppState.resumeConversationAfterBackgroundTask`
+
+`AgentAppState` 注册的分发器实现这个方法。与 `sendCurrentMessage` 的差别是**不碰界面态**：
+
+- 不用 `homeState`、不碰输入框 / 草稿 / 编辑态、不改 `selectedConversationId`；
+- 会话消息被释放过（`messagesDeferred`）时先 `ensureMessagesLoaded(listOf(id))` 再发
+  —— history 不完整就发，模型看到的是残缺上下文；
+- 该会话正在跑（`isStreaming`）→ 返回 false，下个 tick 再来；
+- 只读外部归档会话 → 不发；
+- `launchConversationRun(..., asPrimary = conversationId == selectedConversationId)`：
+  后台会话的 run 不抢 `currentRunId` / `currentRunJob`（那是「停止」按钮的目标）。
+
+`launchConversationRun` 里原来无条件写 `currentRunId` / `currentRunJob`，现在都按 `asPrimary` 判断。
+`AgentAppViewModel.onCleared` 注销分发器；watcher 本身不随 Activity 结束。
+
+### 6. 验证（本机 2026-11-01）
+
+| 项 | 结果 |
+|---|---|
+| 定向 4 类 | **39 例 0 失败**（`BackgroundResumeTest` 12 + `BackgroundAutoResumeWatcherTest` 10 + `BackgroundResumeMemoryTest` 12 + `DetachedTaskRecordTest` 5） |
+| `STAGES=test,lint,assemble` | **1041 例 0 失败**；lint 无新增问题（baseline 183 命中 + 11 条依赖提示未复现）；死文案 0；包 32,168,865 字节 `a3e5f8e2…` |
+| `STAGES=test-wide` | **2899 例 0 失败** |
+
+门禁第一次跑红在一处真错：`EmptySuperCall` —— `onCleared` 里调了 `super.onCleared()`
+（AndroidX 里是空实现），lint 判错。删掉即可。这不是「格式问题」，是习惯性写法带来的错。
+
+### 7. 边界（别把它读成「一定能续」）
+
+- **只在 App 进程存活时触发**。进程被系统杀掉后不触发；回来后第一次探活写回的
+  `completed_at` 会被当成「刚结束」，受每会话 2 次上限约束。
+- **守护任务（`terminal_daemon`）结束不保证被感知**：watcher 读记录不探活，只有命令任务的
+  完成线程会写 `completed_at`。守护任务要等有人调 `list()`。
+- 自动续跑会把该会话的消息读进内存（大会话有真实开销）。
+- 语音 / 一次性入口没有会话键 → 记录无归属 → 不自动续（手动「继续」仍可用）。
+- 「续过」按会话落盘、「自动续了几次」仍只在进程内（重启归零，见 §32.58 的取舍）。
+- 卡片里那份判定仍然保留（界面正开着时立即响应）；两边共用同一个作用域对象去重。
+- 记录跨进程写仍只有进程级锁 + rename，没有文件锁。
+
+### 8. 真机验证
+
+待做（下一步：切到别的会话后让后台任务结束，看是否自动发出续跑）。

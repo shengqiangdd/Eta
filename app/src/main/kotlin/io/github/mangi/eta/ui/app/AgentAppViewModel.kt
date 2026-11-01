@@ -50,6 +50,12 @@ internal class AgentAppViewModel(application: Application) : AndroidViewModel(ap
         private set
     private var kimiWebJob: Job? = null
 
+    override fun onCleared() {
+        // 进程级 watcher 继续跑（它不属于任何一个 Activity）；只注销这个实例的分发器。
+        // 不调 `super.onCleared()`：它在 AndroidX 里是空实现，lint `EmptySuperCall` 会判错。
+        state.detachBackgroundResume()
+    }
+
     fun refreshKimiWeb() {
         if (kimiWebJob?.isActive == true) return
         viewModelScope.launch {

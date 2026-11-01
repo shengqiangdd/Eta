@@ -842,6 +842,52 @@ lint 抓住一处真错：`scopeId` 放在 `modifier` 前面 → `ModifierParame
 - 跨进程并发（主进程 + 语音）只有进程级锁 + rename，没有文件锁：可能丢掉另一个进程刚记的 id。
 - 包体积再次不可复现（同源码两次 33,628,670 / 33,628,697），原因未查明。
 
+### 第十批：任务结束不再依赖「界面正好活着」，记录也认主人（2026-11-01）
+
+问题有两层，分开看：
+
+1. **触发点在组合里**：自动续跑写在卡片的 `LaunchedEffect` 里。会话页被切走、界面被回收、
+   或卡片的 `records` 没刷新时，任务结束只是磁盘上多了一个 `completed_at`，没人发起下一轮。
+2. **记录没有归属**：`DetachedTask` 只知道自己是谁派出的命令，不知道属于哪个会话。
+   当前打开着的会话会把任何刚结束的任务当成「我的」，替用户没看着的会话花掉额度。
+
+改法：
+
+- 记录加 `session_scope`（`conversationId ?: runId`，由 `AgentLocalTools.goalScopeId` 一路传到
+  `RootShellTerminalController` → `BackgroundTerminalJobs.start` → `DetachedTaskSupervisor.start`）。
+  旧记录没有这个键 → `null`（无归属）；空串与字面 `"null"` 同样按无归属，解析不抛异常。
+- `planAutoResume` 的 `scopeId` 改为**必填**：只认 `task.sessionScope == scopeId`。
+  改签名而不是加默认值，是为了让所有调用点在编译期暴露出来（默认值会让「忘记传」静默通过）。
+- 新增进程级 `BackgroundAutoResumeWatcher`：监听 `DetachedTaskSupervisor.changes`（记录写入信号）
+  并每 30 秒兜底扫一次；每个会话各自判定、各自预算；**先分发成功再记账**，
+  发不出去（会话在跑 \/ 不在内存）不占预算。
+- `AgentAppState.resumeConversationAfterBackgroundTask`：按 conversationId 发消息，不碰草稿与编辑态；
+  会话消息被释放过（`messagesDeferred`）时先 `ensureMessagesLoaded` 再发；
+  用户没在看的会话传 `asPrimary = false` —— 不抢 `currentRunId` \/ `currentRunJob`
+  （那是「停止」按钮指向的目标）。
+- `AgentAppViewModel.onCleared` 注销分发器；watcher 本身是进程级，不随 Activity 结束。
+
+与界面的关系：卡片保留同一套判定（界面正好开着时立刻响应），两边共用
+`BackgroundResumeMemory` 的同一个作用域对象 —— 续过哪些、自动续了几次是同一份状态，
+谁先处理都不会重复发。
+
+验证（本机 2026-11-01）：定向 4 类 **39／0**（`BackgroundResumeTest` 12 +
+`BackgroundAutoResumeWatcherTest` 10 + `BackgroundResumeMemoryTest` 12 + `DetachedTaskRecordTest` 5）；
+`STAGES=test,lint,assemble` **1041／0**；lint baseline 194（183 命中 + 11 条依赖提示未复现）；
+死文案 0；包 32,168,865 字节（`a3e5f8e2…`）。`STAGES=test-wide` 结果见 docs 节。
+
+顺带：lint 第一次跑红在 `EmptySuperCall` —— `onCleared` 里调了 `super.onCleared()`
+（AndroidX 里是空实现）。这不是「无关的格式问题」，而是按 Java 习惯写出来的错；删掉即可。
+
+边界（如实记录）：
+
+- **只在 App 进程存活时触发**。进程被系统杀掉后不触发；回来后的第一次探活写回的
+  `completed_at` 会被当成「刚结束」（受每会话 2 次上限约束）。
+- **守护任务（`terminal_daemon`）结束不保证被感知**：watcher 读记录不探活，只有命令任务的
+  完成线程会写 `completed_at`；守护任务的结束要等有人调 `list()` 探活。
+- 自动续跑会把该会话的消息读进内存（大会话有真实开销）。
+- 语音 \/ 一次性入口没有会话键 → 记录无归属 → 不自动续（手动按钮仍可用）。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

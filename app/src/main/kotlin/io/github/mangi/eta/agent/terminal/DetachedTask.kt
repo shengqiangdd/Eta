@@ -25,6 +25,17 @@ internal data class DetachedTask(
     val isolatedGroup: Boolean? = null,
     /** "pty" 表示日志由 PTY 捕获（管道下游按行刷新），空表示直接重定向。 */
     val outputMode: String = "",
+    /**
+     * 派发这条任务的会话作用域键（与台账 / 目标 / 待办同一个 `conversationId ?: runId`）。
+     *
+     * 为什么记录里需要它：任务结束要不要「自动接着跑」，取决于这条任务**属于哪个会话**。
+     * 记录原先没有归属，A 会话的任务结束时 B 会话的卡片也会把它当成自己的候选 ——
+     * 用户没看着的会话就这样花掉了别的会话的额度。
+     *
+     * null 表示「没有归属」（旧记录、语音一次性入口、外部直接调 supervisor 的路径）：
+     * 这类任务不会自动续跑，手动「继续」按钮照常可用。
+     */
+    val sessionScope: String? = null,
 )
 
 internal data class DetachedTaskStatus(
@@ -66,6 +77,7 @@ internal fun DetachedTask.toRecordJson(): JSONObject = JSONObject()
     .put("completion_notified", completionNotified)
     .put("isolated_group", isolatedGroup ?: JSONObject.NULL)
     .put("output_mode", outputMode)
+    .put("session_scope", sessionScope ?: JSONObject.NULL)
 
 internal fun JSONObject.toDetachedTask(): DetachedTask = DetachedTask(
     id = getString("id"),
@@ -92,6 +104,8 @@ internal fun JSONObject.toDetachedTask(): DetachedTask = DetachedTask(
     completionNotified = optBoolean("completion_notified", false),
     isolatedGroup = if (isNull("isolated_group")) null else getBoolean("isolated_group"),
     outputMode = optString("output_mode"),
+    // 旧记录没有这个键：缺失 / 空串 / 字面 null 一律按「没有归属」，不抛异常。
+    sessionScope = optString("session_scope").takeIf { it.isNotBlank() && it != "null" },
 )
 
 internal val DetachedTask.commandStatus: String get() = when {

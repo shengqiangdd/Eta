@@ -7,12 +7,18 @@ import org.junit.Test
 /**
  * 自动续跑的判定。
  *
- * 这里守的是「不会自己跑飞」：旧任务不自动续、续过的不再续、次数上限到了就停。
- * 真正发消息那一步（Compose 副作用 + 本地化文案）本机测不了，只能在真机上看。
+ * 这里守的是「不会自己跑飞」：旧任务不自动续、续过的不再续、次数上限到了就停，
+ * 以及**只续本会话派出去的任务**（记录从第十批起带会话归属）。
+ * 真正发消息那一步（启动 run + 本地化文案）本机测不了，只能在真机上看。
  */
 class BackgroundResumeTest {
 
-    private fun task(id: String, startedAt: Long, completedAt: Long?) = DetachedTask(
+    private fun task(
+        id: String,
+        startedAt: Long,
+        completedAt: Long?,
+        sessionScope: String? = "conv-a",
+    ) = DetachedTask(
         id = id,
         pid = 42L,
         token = "token",
@@ -23,18 +29,19 @@ class BackgroundResumeTest {
         logPath = "/data/local/tmp/eta/daemon/$id.log",
         startedAt = startedAt,
         completedAt = completedAt,
+        sessionScope = sessionScope,
     )
 
     @Test
     fun noRecordsMeansNoResume() {
-        val plan = planAutoResume(emptyList(), emptySet(), 0L, alreadyResumed = 0)
+        val plan = planAutoResume(emptyList(), "conv-a", emptySet(), 0L, alreadyResumed = 0)
         assertNull(plan.next)
         assertEquals(0, plan.skipped)
     }
 
     @Test
     fun runningTaskIsNotACandidate() {
-        val plan = planAutoResume(listOf(task("job_a", 100L, null)), emptySet(), 0L, 0)
+        val plan = planAutoResume(listOf(task("job_a", 100L, null)), "conv-a", emptySet(), 0L, 0)
         assertNull(plan.next)
         assertEquals(0, plan.skipped)
     }
@@ -42,10 +49,10 @@ class BackgroundResumeTest {
     @Test
     fun taskFinishedBeforeCardOpenedIsIgnored() {
         // 卡片打开的那一刻是 500：这条 499 结束的属于历史，不能被自动续
-        val plan = planAutoResume(listOf(task("job_a", 100L, 499L)), emptySet(), 500L, 0)
+        val plan = planAutoResume(listOf(task("job_a", 100L, 499L)), "conv-a", emptySet(), 500L, 0)
         assertNull(plan.next)
         // 恰好等于边界也不行：判据是「严格晚于」
-        val edge = planAutoResume(listOf(task("job_a", 100L, 500L)), emptySet(), 500L, 0)
+        val edge = planAutoResume(listOf(task("job_a", 100L, 500L)), "conv-a", emptySet(), 500L, 0)
         assertNull(edge.next)
     }
 
@@ -53,6 +60,7 @@ class BackgroundResumeTest {
     fun handledTaskIsNotResumedAgain() {
         val plan = planAutoResume(
             records = listOf(task("job_a", 100L, 600L)),
+            scopeId = "conv-a",
             handled = setOf("job_a"),
             finishedAfterMs = 500L,
             alreadyResumed = 0,
@@ -69,6 +77,7 @@ class BackgroundResumeTest {
                 task("job_early", 100L, 600L),
                 task("job_mid", 100L, 700L),
             ),
+            scopeId = "conv-a",
             handled = emptySet(),
             finishedAfterMs = 500L,
             alreadyResumed = 0,
@@ -81,6 +90,7 @@ class BackgroundResumeTest {
     fun budgetExhaustedStops() {
         val plan = planAutoResume(
             records = listOf(task("job_a", 100L, 600L), task("job_b", 100L, 700L)),
+            scopeId = "conv-a",
             handled = emptySet(),
             finishedAfterMs = 500L,
             alreadyResumed = AutoResumeMaxPerSession,
@@ -93,6 +103,7 @@ class BackgroundResumeTest {
     fun overBudgetDoesNotGoNegative() {
         val plan = planAutoResume(
             records = listOf(task("job_a", 100L, 600L)),
+            scopeId = "conv-a",
             handled = emptySet(),
             finishedAfterMs = 500L,
             alreadyResumed = AutoResumeMaxPerSession + 5,
@@ -105,12 +116,77 @@ class BackgroundResumeTest {
     fun zeroCapNeverSends() {
         val plan = planAutoResume(
             records = listOf(task("job_a", 100L, 600L)),
+            scopeId = "conv-a",
             handled = emptySet(),
             finishedAfterMs = 500L,
             alreadyResumed = 0,
             maxCount = 0,
         )
         assertNull(plan.next)
+        assertEquals(1, plan.skipped)
+    }
+
+    /**
+     * 别的会话派出的任务不算本会话的候选。
+     *
+     * 这条守的是真缺陷：记录原先没有归属，当前打开着的会话会把任何刚结束的任务当成
+     * 「我的任务」自动续，用户没看着的那个会话的额度就这样被花掉。
+     */
+    @Test
+    fun taskFromAnotherConversationIsIgnored() {
+        val plan = planAutoResume(
+            records = listOf(task("job_b", 100L, 600L, sessionScope = "conv-b")),
+            scopeId = "conv-a",
+            handled = emptySet(),
+            finishedAfterMs = 500L,
+            alreadyResumed = 0,
+        )
+        assertNull(plan.next)
+        // 不是候选，也不该计入「因预算没排上」
+        assertEquals(0, plan.skipped)
+    }
+
+    @Test
+    fun recordsWithoutOwnerAreNeverAutoResumed() {
+        val plan = planAutoResume(
+            records = listOf(task("job_legacy", 100L, 600L, sessionScope = null)),
+            scopeId = "conv-a",
+            handled = emptySet(),
+            finishedAfterMs = 500L,
+            alreadyResumed = 0,
+        )
+        assertNull(plan.next)
+        assertEquals(0, plan.skipped)
+    }
+
+    /** 没有会话键（语音 / 一次性入口的卡片）时，任何任务都不自动续。 */
+    @Test
+    fun blankScopeNeverMatches() {
+        val plan = planAutoResume(
+            records = listOf(task("job_a", 100L, 600L, sessionScope = "")),
+            scopeId = "",
+            handled = emptySet(),
+            finishedAfterMs = 500L,
+            alreadyResumed = 0,
+        )
+        assertNull(plan.next)
+    }
+
+    /** 混合场景：只在本会话的候选里挑最早的一条，别的会话不参与排序也不占位。 */
+    @Test
+    fun onlyOwnTasksTakePartInOrdering() {
+        val plan = planAutoResume(
+            records = listOf(
+                task("job_other_early", 100L, 550L, sessionScope = "conv-b"),
+                task("job_mine_late", 100L, 800L, sessionScope = "conv-a"),
+                task("job_mine_early", 100L, 650L, sessionScope = "conv-a"),
+            ),
+            scopeId = "conv-a",
+            handled = emptySet(),
+            finishedAfterMs = 500L,
+            alreadyResumed = 0,
+        )
+        assertEquals("job_mine_early", plan.next?.id)
         assertEquals(1, plan.skipped)
     }
 }

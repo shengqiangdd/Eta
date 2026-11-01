@@ -307,6 +307,9 @@ internal class AgentLocalTools(
         rootAvailable = rootAvailable,
         executionContext = terminalExecutionContext,
         backgroundJobs = io.github.mangi.eta.agent.terminal.TerminalRuntime.backgroundJobs(context),
+        // 后台任务记录带上「哪个会话派的」：任务结束时只有该会话会收到自动续跑，
+        // 不再让当前显示着的会话替别的会话花额度。
+        backgroundScopeId = goalScopeId,
         detachedSupervisor = DetachedTaskSupervisor(
             logger = logger,
             recordsFile = DetachedTaskSupervisor.defaultRecordsFile(context),

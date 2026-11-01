@@ -19,6 +19,8 @@ import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.AgentFileReferenceGateway
 import io.github.mangi.eta.agent.device.RootAccess
+import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
+import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.media.AgentImageCodec
 import io.github.mangi.eta.agent.model.AgentFileReference
@@ -127,6 +129,73 @@ internal class AgentAppState(
     private var replayTraceBatchDepth = 0
     private var currentRunId: String? = null
     private var currentRunJob: Job? = null
+
+    /**
+     * 后台任务结束后自动续跑的分发器（注册给 [BackgroundAutoResumeWatcher]）。
+     *
+     * 单独存一份引用：Activity 重建时新旧实例会先后 install —— 旧实例注销时只能清自己，
+     * 不能把新实例刚注册的分发器一并清掉。
+     */
+    private val backgroundResumeDispatcher =
+        BackgroundAutoResumeWatcher.BackgroundResumeDispatcher { scopeId, task ->
+            resumeConversationAfterBackgroundTask(scopeId, task)
+        }
+
+    /**
+     * 为一个**不是当前正在看**的会话发起续跑。
+     *
+     * 与 `sendCurrentMessage` 的差别：全程按 conversationId 操作，不碰输入框、草稿、
+     * 当前选中会话与编辑态 —— 那些都是“用户正在这个会话里打字”才存在的概念。
+     *
+     * 返回 false 表示这一刻不能发（会话不在内存里 / 正在跑 / 消息还没载入），
+     * 调用方（watcher）不记「已续」，下个 tick 再试。
+     */
+    internal suspend fun resumeConversationAfterBackgroundTask(conversationId: String, task: DetachedTask): Boolean {
+        if (conversationId.isBlank()) return false
+        var state = conversationsById[conversationId] ?: return false
+        // 同一会话同时只能有一个 run：正在跑就别插队（等它跑完 watcher 会再来）。
+        if (state.isStreaming) return false
+        // 消息被释放过（用户切走后释内存）时先载回来：history 不完整就发，模型看到的是残缺上下文。
+        // 这一步代价是真实的（大会话要读一大段 JSON），所以只在真的要续跑时才做。
+        if (state.messagesDeferred) {
+            if (!ensureMessagesLoaded(listOf(conversationId))) return false
+            state = conversationsById[conversationId] ?: return false
+            if (state.isStreaming || state.messagesDeferred) return false
+        }
+        if (conversationId.isReadOnlyExternalArchiveConversation()) return false
+        val prompt = appContext.getString(
+            R.string.background_tasks_resume_prompt,
+            task.id,
+            task.description.ifBlank { task.command },
+        ).trim()
+        if (prompt.isBlank()) return false
+        val runId = "run-${java.util.UUID.randomUUID()}"
+        val userMessage = UserMessageUi(id = "user-$runId", content = prompt)
+        val userHistoryMessage = AgentModelClient.buildUserHistoryMessage(
+            text = prompt,
+            images = emptyList(),
+        ).copy(messageId = userMessage.id)
+        launchConversationRun(
+            conversationId = conversationId,
+            runId = runId,
+            prompt = prompt,
+            images = emptyList(),
+            history = state.history,
+            userHistoryMessage = userHistoryMessage,
+            messages = state.messages + userMessage,
+            state = state.copy(input = "", pendingImages = emptyList(), pendingFileReferences = emptyList()),
+            reasoningEffort = state.reasoningEffort,
+            // 用户正在看的会话：这就是 primary；否则只变更那个会话的状态，
+            // 不能把当前会话的「停止」按钮指向一条它看不到的 run。
+            asPrimary = conversationId == selectedConversationId,
+        )
+        return true
+    }
+
+    /** Activity 结束时注销分发器；进程级 watcher 本身继续存活。 */
+    internal fun detachBackgroundResume() {
+        BackgroundAutoResumeWatcher.uninstall(backgroundResumeDispatcher)
+    }
     private val persistenceLock = Any()
     private var persistenceJob: Job? = null
     // 导入期间暂停保存：旧状态的增量保存会删除刚导入的会话；导入成功后整体重载，失败时数据库已回滚。
@@ -293,6 +362,9 @@ internal class AgentAppState(
         // 冷启动就先把“开着但当前没有任务”的真实状态发布给设置页：
         // 以前只有“运行状态变化”才会发布，冷启动且没跑过任务时设置页会错报“已关闭”。
         applyKeepScreenLock()
+        // 进程级自动续跑：任务结束不再依赖「卡片那张组合恰好活着」。
+        // 分发器就是这个状态对象：只有它知道会话历史、模型与会话级预算。
+        BackgroundAutoResumeWatcher.install(backgroundResumeDispatcher)
         refreshConversationSummaries()
         observeRuntimeSelection()
         observeAppVisibility()
@@ -2250,9 +2322,16 @@ internal class AgentAppState(
         reasoningEffort: ReasoningEffort,
         operation: String = AgentRuntimeWire.OP_CHAT,
         rewriteTargetMessageId: String? = null,
+        /**
+         * 是否把这条 run 设成「当前会话的 primary」。
+         *
+         * 后台会话（用户没看着）的 run 传 false：`currentRunId` / `currentRunJob` 是界面
+         * 「停止」按钮指向的目标，不能被一条看不见的 run 抢走。
+         */
+        asPrimary: Boolean = true,
     ) {
         runConversationIds[runId] = conversationId
-        currentRunId = runId
+        if (asPrimary) currentRunId = runId
         // 发送即绑定：会话记住本轮实际使用的模型，回落到默认模型时也随之更新。
         val runModelId = state.effectiveModelId
 
@@ -2390,7 +2469,7 @@ internal class AgentAppState(
                 applyRunResult(runId, result, acknowledgeRuntimeResult = true)
             }
         }
-        currentRunJob = preparationJob
+        if (asPrimary) currentRunJob = preparationJob
         if (!RootAccess.isGranted) {
             val leaseId = "prepare:$runId"
             val acquired = AgentExecutionService.acquire(appContext, leaseId) {

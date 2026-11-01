@@ -43,11 +43,14 @@ internal class BackgroundTerminalJobs(
          * 不应该出现一串临时文件路径。
          */
         envPrefix: String? = null,
+        /** 派发这次任务的会话作用域键；null 表示没有归属（语音一次性入口 / 外部直调）。 */
+        sessionScope: String? = null,
     ): String {
         if (closed) return failure("BACKGROUND_CLOSED", "后台命令宿主已关闭")
         if (!lease()) return failure("BACKGROUND_START_NOT_ALLOWED", "系统未允许启动后台执行，请返回 Eta 后重试")
         return when (val result = launcher.start(command, cwd, identity, environment,
-            commandTask = true, description = description, timeoutMs = timeoutMs.coerceAtLeast(0), envPrefix = envPrefix)) {
+            commandTask = true, description = description, timeoutMs = timeoutMs.coerceAtLeast(0), envPrefix = envPrefix,
+            sessionScope = sessionScope)) {
             is DaemonStartResult.Failed -> {
                 if (monitor == null) release()
                 failure(result.code, result.message)

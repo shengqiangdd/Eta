@@ -83,6 +83,11 @@ private fun rememberDetachedTasks(): List<DetachedTask>? {
  *
  * 「继续」是这个卡片唯一会发消息的入口：默认要用户点一下，自动续跑要单独在设置里打开，
  * 且有次数上限（判定在 [planAutoResume]）。
+ *
+ * 自动续跑的**主路径已经不在这个组件里**：任务结束由进程级 `BackgroundAutoResumeWatcher`
+ * 触发（用户切到别的会话 / 桌面也能续）。这里保留同一套判定，是为了界面正在看着时
+ * 能立刻响应，而不是等下一次兜底扫描；两边共用 `BackgroundResumeMemory` 去重与预算，
+ * 谁先处理都不会重复发。
  */
 @Composable
 internal fun BackgroundTasksCard(
@@ -131,13 +136,15 @@ internal fun BackgroundTasksCard(
     LaunchedEffect(resumeScope) { resumeScope.loadFromStore() }
     val uiScope = rememberCoroutineScope()
     val resumed = resumeScope.resumed
-    /** 只认卡片出现之后结束的任务：否则一进旧会话，历史任务会被当成新事件自动续一遍。 */
+    /** 只认卡片出现之后、**归属本会话**的任务：否则一进旧会话，历史任务会被当成新事件续一遍，
+     *  别处会话的任务也会被当前会话替它花掉额度（后者由 `planAutoResume` 的 scopeId 过滤）。 */
     val openedAt = remember { System.currentTimeMillis() }
     val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
     LaunchedEffect(autoResumeEnabled, canSend, records, resumeScope.isLoaded) {
         if (!autoResumeEnabled || !canSend || !resumeScope.isLoaded) return@LaunchedEffect
         val target = planAutoResume(
             records = records,
+            scopeId = scopeId.orEmpty(),
             handled = resumed.toSet(),
             finishedAfterMs = openedAt,
             alreadyResumed = resumeScope.autoResumed,

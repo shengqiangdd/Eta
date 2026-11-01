@@ -11,6 +11,7 @@ import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.VirtualDisplayImeRestore
+import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
@@ -63,6 +64,9 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         registerVisibilityCallbacks()
         StartupTrace.mark("app-onCreate")
         TerminalRuntime.initialize(this)
+        // 后台任务结束后的触发点：进程级，不靠任何界面组合活着（第十批）。
+        // 放在 resume() 之前：watcher 的“只续启动之后结束的任务”基准要早于探活写回。
+        BackgroundAutoResumeWatcher.start(this)
         RootAccess.initialize(this)
         applicationScope.launch {
             // 若上一次在虚拟屏输入租约期间被系统杀掉，先把默认输入法修回来，避免主屏没有键盘。
