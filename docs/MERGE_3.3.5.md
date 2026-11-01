@@ -5234,3 +5234,60 @@ assertFalse(projected.toString().contains("/data/local/tmp/eta"))
 - 43 个「混合类里的通过用例」被按类排除了，属于已知损失；
 - wide 档还没接进 `ci.sh` / `preinstall-gate.sh`：装前门禁仍跑它自己的小集合；
 - 跑完 wide 档后 `test-results` 里只剩 385 类，想复算覆盖率得重新全量跑。
+
+## §32.50 把「派出去就忘」补上：会话级子代理任务台账（2026-11-01）
+
+### 1. 动机：super-agent 的调度层缺了「记录」
+
+把 DeepSeek super-agent 的调度拆成四层，对着 Eta 的现状看：
+
+| super-agent 的层 | Eta 现状 | 本批 |
+|---|---|---|
+| 主 Agent 调度子 Agent | 有 `subagent`（同轮同步执行）+ `resume`（按会话隔离） | — |
+| 任务台账 / 状态查询 | **没有**：子代理结果只活在一轮的工具结果里 | 本轮补 `tasks` |
+| 后台 worker（长任务） | 有 `terminal_job` / `terminal_daemon` / `acp_delegate`，但各有一套状态 | 下一批 |
+| 事件触发（automation） | 没有 | 后续 |
+
+缺台账的具体后果：第二轮想接着用一个子代理，模型必须自己记得 `sub_id` —— 它记不住
+（工具结果会被压缩 / 淘汰），用户也看不到「刚才那个还在跑吗」。
+
+### 2. 落地
+
+- 新文件：`AgentTaskRecord`（单条）、`AgentTaskLedger`（32 条上限、按开始时间倒序、同 id 覆盖）、
+  `AgentTaskLedgerStore`（`files/agent/tasks/<sha256(scope)>.json`，`.tmp` + rename，64KB 上限）。
+- 写入：`SubagentExecutor` 四个出口 —— 开始 / 完成 / 失败 / 取消；模型配置加载失败也补一条
+  FAILED，否则台账会永久停在 RUNNING。全部 `runCatching`：台账是旁路记录，写不进去不能拖垮子代理。
+- 读取：`tasks` 工具（只读，`status` 过滤、`limit` 默认 10 / 上限 32）。**只读是刻意的** ——
+  一份能被模型改写的「执行状态」既不能用来判断「还有谁在跑」，也会和子代理会话的真实状态矛盾。
+- 并发：锁是**进程级一把**（`AgentTaskLedgerStore` 的 companion），不是每实例一把 ——
+  子代理执行器与工具执行器是两个实例，指向同一批文件。
+- 接线：`AgentToolCatalog`、`ToolArgumentSchema`、`AgentToolRequirements`（NONE）、
+  `AgentPlanModePolicy`（只读白名单）、`AgentOverlayText` + 三语文案、`AgentToolsCatalogUi`、
+  `ToolIcons`、`AgentTraceFormatter`（卡片摘要）。
+
+### 3. 实测
+
+- 新增 25 例纯 JVM 单测（11 台账模型 / 8 存储 / 6 目录），全过；
+- 门禁 `STAGES=test,lint,assemble`：**916 / 0**（原 891，+25）｜lint 无新增、baseline **194** 命中｜
+  死文案 0 条；
+- 包：`Eta-v3.3.5-debug.apk` **34,544,806 字节**，sha256 `b21ddc20a551f6ab…`。
+  比文档里 §32.48 记的 33,588,875 大 955,931 字节 —— **原因未查明，不做推测**
+  （可能那轮记录的是更早的产物；本轮没有改依赖、没有加资源）。
+
+### 4. 这轮踩到的两个坑
+
+1. **测试夹具自己写错了 `startedAt`**：并发用例拿 `index` 当开始时间，`sub-0` 的
+   `started_at=0` 被读端当成坏记录丢掉，表现成「8 条并发只留下 7 条」—— 差点被读成锁失效。
+   读端拒收非法值是对的，错在夹具；也提醒「读端丢弃」必须有明确契约（`AgentTaskRecord.fromJson`
+   里 `startedAt <= 0` 即丢）。
+2. **`gate.sh` 的「JDK 固定」其实不生效**：`gradle/gradle-daemon-jvm.properties` 写着
+   `toolchainVersion=25`，daemon 永远跑 JDK 25，`export JAVA_HOME=jdk17` 只作用于客户端。
+   本轮 lint 阶段约 8 分钟，daemon 进程确为 `java-25-openjdk`（`ps` 实测）。**没在本轮改** ——
+   动 toolchain 影响整个构建，先记录下来。
+
+### 5. 边界（未验证，别当已完成）
+
+- **真机往返未验证**：没有在设备上让模型实际调 `tasks`、再据其 `resume` 一个子代理；
+- 台账**不进系统提示**（要看得自己调 `tasks`），不跨会话；进程被杀残留的 `running` 不自愈；
+- `ToolCatalogUiTest` 是 Robolectric，本机跑不了；「每个工具都有专属图标 / 显示名」这条
+  由新增的映射本身保证，本机门禁只覆盖 `ToolIconMappingTest` 钉住的那几条。

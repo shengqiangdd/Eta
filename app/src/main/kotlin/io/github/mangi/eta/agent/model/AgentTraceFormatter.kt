@@ -59,6 +59,7 @@ internal class AgentTraceFormatter {
             "read_image" -> "查看图片"
             AgentSubagentToolCatalog.TOOL_NAME -> summarizeSubagentArguments(toolCall.argumentsJson)
             AgentSubagentToolCatalog.PROFILE_TOOL_NAME -> summarizeSubagentProfileArguments(toolCall.argumentsJson)
+            AgentTasksToolCatalog.NAME -> "查看任务台账"
             AgentConversationToolCatalog.READ_HISTORY -> "读取当前会话历史"
             "memory_get", "character_memory_get" -> summarizeMemoryGetArguments(toolCall.argumentsJson)
             "memory_write", "character_memory_write" -> summarizeMemoryWriteArguments(toolCall.argumentsJson)
@@ -346,6 +347,7 @@ internal class AgentTraceFormatter {
             "search_apps" -> json?.let(::summarizeSearchAppsResult) ?: "完成"
             "launch_app" -> json?.let(::summarizeLaunchAppResult) ?: "已打开"
             AgentTodoToolCatalog.WRITE -> json?.let(::summarizeTodoResult) ?: "完成"
+            AgentTasksToolCatalog.NAME -> json?.let(::summarizeTasksResult) ?: "完成"
             AgentGoalToolCatalog.NAME -> json?.let(::summarizeGoalResult) ?: "完成"
             AgentAskUserToolCatalog.NAME -> json?.let(::summarizeAskUserResult) ?: "已向用户提问"
             "write_file" -> json?.let(::summarizeWriteResult) ?: "写入完成"
@@ -424,6 +426,12 @@ internal class AgentTraceFormatter {
         if (active > 0) parts += "$active 进行中"
         if (done > 0) parts += "$done 已完成"
         return parts.joinToString(" · ")
+    }
+
+    /** 台账汇总已经在结果里拼好（"运行中 1 · 已完成 2"），这里只负责空台账与失败的口径。 */
+    private fun summarizeTasksResult(json: JSONObject): String {
+        if (!json.optBoolean("ok", true)) return "台账未读取"
+        return json.optString("summary").takeIf { it.isNotBlank() } ?: "没有记录"
     }
 
     /**

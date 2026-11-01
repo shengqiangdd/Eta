@@ -30,6 +30,7 @@ internal object AgentToolCatalog {
             AgentPluginTools.appendTo(tools)
             AgentTextSystemToolCatalog.appendTo(tools)
             AgentTodoToolCatalog.appendTo(tools)
+            AgentTasksToolCatalog.appendTo(tools)
             AgentGoalToolCatalog.appendTo(tools)
             AgentAskUserToolCatalog.appendTo(tools)
             AgentSelfAuditToolCatalog.appendTo(tools)

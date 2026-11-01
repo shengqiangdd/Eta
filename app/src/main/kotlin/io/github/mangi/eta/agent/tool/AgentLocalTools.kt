@@ -41,6 +41,7 @@ import io.github.mangi.eta.agent.device.LocalNetworkPermission
 import io.github.mangi.eta.agent.web.AgentWebTools
 import io.github.mangi.eta.agent.web.WebHttpTransport
 import io.github.mangi.eta.agent.model.AgentScreenObservationContract
+import io.github.mangi.eta.agent.model.AgentTasksToolCatalog
 import io.github.mangi.eta.agent.model.AgentTodoPlan
 import io.github.mangi.eta.agent.model.AgentSensitiveToolPolicy
 import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
@@ -58,6 +59,7 @@ import io.github.mangi.eta.agent.runtime.AgentGoalStore
 import io.github.mangi.eta.agent.runtime.AgentFileBackups
 import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.agent.runtime.AgentRunFileChanges
+import io.github.mangi.eta.agent.runtime.AgentTaskLedgerStore
 import io.github.mangi.eta.agent.runtime.AgentTodoStore
 import io.github.mangi.eta.agent.skill.SkillCompatibilityChecker
 import io.github.mangi.eta.agent.skill.SkillIndexService
@@ -181,6 +183,7 @@ internal class AgentLocalTools(
     private val closed = AtomicBoolean(false)
     private val browserSessionRef = lazy { browserSession ?: AgentBrowserSession() }
     private val todoStore by lazy { AgentTodoStore.forApp(context) }
+    private val taskStore by lazy { AgentTaskLedgerStore.forApp(context) }
     private val goalStore by lazy { AgentGoalStore.forApp(context) }
     private val runFileChanges by lazy { AgentRunFileChanges.forApp(context) }
     private val virtualDisplays = VirtualDisplayController(context, logger, rootAvailable)
@@ -558,6 +561,7 @@ internal class AgentLocalTools(
                     }
                 })
                 "todo_write" -> textResult(todoWrite(args))
+                AgentTasksToolCatalog.NAME -> textResult(tasks(args))
                 AgentGoalToolCatalog.NAME -> textResult(goal(args))
                 AgentAskUserToolCatalog.NAME -> textResult(askUser(args))
                 "memory_get" -> textResult(memoryGet(args))
@@ -680,6 +684,41 @@ internal class AgentLocalTools(
             .put("cleared", plan.isEmpty)
             .put("todos", plan.toJson().getJSONArray("todos"))
             .put("checklist", plan.renderChecklist())
+            .toString()
+    }
+
+    /**
+     * 会话级任务台账的只读查询。
+     *
+     * 台账由 [io.github.mangi.eta.agent.subagent.SubagentExecutor] 在子代理生命周期里写，
+     * 这里只负责展示。读失败（文件坏了）按"空台账"处理而不是报错：对模型来说
+     * "看不到记录"和"没有记录"是同一个结论，而报错会让它以为工具坏了、进而放弃查证。
+     */
+    private fun tasks(args: JSONObject): String {
+        if (todoScopeId.isBlank()) {
+            return errorResult("TASK_SCOPE_UNAVAILABLE", "当前运行没有会话作用域，任务台账不可用")
+        }
+        val query = try {
+            AgentTasksToolCatalog.parse(args)
+        } catch (error: IllegalArgumentException) {
+            return errorResult("INVALID_ARGUMENT", error.message ?: "tasks 参数不正确")
+        }
+        val ledger = taskStore.load(todoScopeId)
+        val entries = ledger.withStatus(query.status).take(query.limit)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", AgentTasksToolCatalog.NAME)
+            .put("total", ledger.entries.size)
+            .put("shown", entries.size)
+            .put("summary", ledger.renderSummary())
+            .put(
+                "tasks",
+                JSONArray().also { array ->
+                    entries.forEach { entry ->
+                        array.put(entry.toJson().put("line", entry.renderLine()))
+                    }
+                },
+            )
             .toString()
     }
 

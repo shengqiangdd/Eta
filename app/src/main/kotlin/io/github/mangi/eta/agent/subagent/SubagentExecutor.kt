@@ -4,9 +4,12 @@ import android.os.SystemClock
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.model.AgentModelExecutionException
+import io.github.mangi.eta.agent.model.AgentTaskRecord
+import io.github.mangi.eta.agent.model.AgentTaskStatus
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
+import io.github.mangi.eta.agent.runtime.AgentTaskLedgerStore
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
@@ -28,6 +31,14 @@ internal class SubagentExecutor(
     private val mcpTools: JSONArray,
     private val executionContext: TerminalExecutionContext?,
     private val onProgress: (AgentEvent.SubagentProgress) -> Unit,
+    /**
+     * 会话级任务台账；null 表示不记账（纯 JVM 单测与不开台账的入口）。
+     *
+     * 台账是**旁路记录**：写失败不能影响子代理本身，所以这里不抛异常、也不改变返回值。
+     */
+    private val taskLedger: AgentTaskLedgerStore? = null,
+    private val taskScopeId: String = "",
+    private val nowMillis: () -> Long = System::currentTimeMillis,
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val latestSnapshots = ConcurrentHashMap<String, String>()
@@ -96,12 +107,15 @@ internal class SubagentExecutor(
 
         val profile = entry.profile
         val subagentId = entry.subagentId
+        val startedAt = nowMillis()
+        recordTaskStart(subagentId, description, startedAt)
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
 
         val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
             SubagentSessionStore.releaseRunning(conversationKey, subagentId)
             controllerBinding.close()
+            recordTaskEnd(subagentId, AgentTaskStatus.FAILED, throwable.message ?: "无法加载 Subagent 模型配置")
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")
         }
         val modelLabel = resolvedConfig.modelDisplayName.ifBlank { resolvedConfig.model }
@@ -182,6 +196,7 @@ internal class SubagentExecutor(
                 AgentModelClient.buildUserHistoryMessage(prompt, emptyList()) +
                 response.transcript
             SubagentSessionStore.complete(conversationKey, subagentId, updatedHistory)
+            recordTaskEnd(subagentId, AgentTaskStatus.COMPLETED, response.content)
             tracker.markCompleted(response.content)
             publishSnapshot(force = true)
 
@@ -227,6 +242,11 @@ internal class SubagentExecutor(
             } else {
                 tracker.markFailed(errorMessage, partial)
             }
+            recordTaskEnd(
+                subagentId,
+                if (cancelled) AgentTaskStatus.CANCELLED else AgentTaskStatus.FAILED,
+                errorMessage,
+            )
             publishSnapshot(force = true)
 
             if (parentController.isCancelled) {
@@ -265,6 +285,38 @@ internal class SubagentExecutor(
         } finally {
             controllerBinding.close()
         }
+    }
+
+    /**
+     * 台账写入的两种动作。刻意不抛异常：这是旁路记录，磁盘写不进去不该让子代理任务失败。
+     *
+     * `title` 用模型给的 description（已截到 120 字），而不是 prompt：台账是给"下一步该干什么"
+     * 看的索引，prompt 往往几百上千字，塞进来会把列表挤得没法扫。
+     */
+    private fun recordTaskStart(id: String, title: String, startedAt: Long) {
+        val store = taskLedger ?: return
+        if (taskScopeId.isBlank()) return
+        runCatching {
+            store.recordStarted(
+                taskScopeId,
+                AgentTaskRecord(
+                    id = id,
+                    kind = AgentTaskRecord.KIND_SUBAGENT,
+                    title = title,
+                    status = AgentTaskStatus.RUNNING,
+                    ref = null,
+                    summary = null,
+                    startedAt = startedAt,
+                    endedAt = null,
+                ),
+            )
+        }
+    }
+
+    private fun recordTaskEnd(id: String, status: AgentTaskStatus, summary: String?) {
+        val store = taskLedger ?: return
+        if (taskScopeId.isBlank()) return
+        runCatching { store.recordFinished(taskScopeId, id, status, summary, nowMillis()) }
     }
 
     fun executeProfileManagement(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {

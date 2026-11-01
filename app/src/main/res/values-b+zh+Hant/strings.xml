@@ -1304,6 +1304,7 @@
   <string name="conversation_messages_load_failed_1f6a92">這個會話的訊息沒有載入成功，請重新開啟應用程式後再試。</string>
   <string name="tool_todo_write">任務計畫</string>
   <string name="tool_goal">長期目標</string>
+  <string name="tool_tasks">任務台帳</string>
   <string name="goal_card_title">長期目標</string>
   <string name="goal_card_expand">展開目標</string>
   <string name="goal_card_collapse">收起目標</string>
@@ -1331,6 +1332,7 @@
   <string name="todo_plan_collapse">收起任務計畫</string>
   <string name="tool_todo_write_description">維護本會話的任務清單，隨步驟完成情況更新</string>
   <string name="tool_goal_description">記住本會話的一個長期目標，並隨進展更新狀態</string>
+  <string name="tool_tasks_description">查看本會話派出過哪些子代理、哪些還在執行</string>
   <string name="tool_ask_user">向使用者提問</string>
   <string name="tool_ask_user_description">問一個必須由使用者決定的問題，問完就停下等回答</string>
   <string name="ask_card_title">等你回答</string>

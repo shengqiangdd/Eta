@@ -1341,6 +1341,7 @@
   <string name="conversation_messages_load_failed_1f6a92">这个会话的消息没有载入成功，请重新打开应用后再试。</string>
   <string name="tool_todo_write">任务计划</string>
   <string name="tool_goal">长期目标</string>
+  <string name="tool_tasks">任务台账</string>
   <string name="goal_card_title">长期目标</string>
   <string name="goal_card_expand">展开目标</string>
   <string name="goal_card_collapse">收起目标</string>
@@ -1368,6 +1369,7 @@
   <string name="todo_plan_collapse">收起任务计划</string>
   <string name="tool_todo_write_description">维护本会话的任务清单，随步骤完成情况更新</string>
   <string name="tool_goal_description">记住本会话的一个长期目标，并随进展更新状态</string>
+  <string name="tool_tasks_description">查看本会话派发过哪些子代理、哪些还在运行</string>
   <string name="tool_ask_user">向用户提问</string>
   <string name="tool_ask_user_description">问一个必须由用户决定的问题，问完就停下等回答</string>
   <string name="ask_card_title">等你回答</string>

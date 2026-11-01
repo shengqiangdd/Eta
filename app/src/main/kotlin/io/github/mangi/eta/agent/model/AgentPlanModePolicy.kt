@@ -46,6 +46,8 @@ internal object AgentPlanModePolicy {
         // 只写本机任务清单与长期目标，不改设备状态；计划模式用得上。
         "todo_write",
         "goal",
+        // 台账只读：模型能看见自己派过什么，但改不了执行记录。
+        "tasks",
         // 提问不改任何状态。
         "ask_user",
         // 见类注释：调研必需，靠提示约束只读。

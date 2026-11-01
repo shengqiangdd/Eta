@@ -14,6 +14,7 @@ import io.github.mangi.eta.agent.model.AgentPersonalSearchToolCatalog
 import io.github.mangi.eta.agent.model.AgentSkillToolCatalog
 import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
 import io.github.mangi.eta.agent.model.AgentTextSystemToolCatalog
+import io.github.mangi.eta.agent.model.AgentTasksToolCatalog
 import io.github.mangi.eta.agent.model.AgentTodoToolCatalog
 import io.github.mangi.eta.agent.model.AgentWebToolCatalog
 import io.github.mangi.eta.agent.plugin.AgentPluginTools
@@ -66,6 +67,7 @@ internal object ToolArgumentSchema {
                 { array -> AgentPluginTools.appendTo(array) },
                 { array -> AgentTextSystemToolCatalog.appendTo(array) },
                 { array -> AgentTodoToolCatalog.appendTo(array) },
+                { array -> AgentTasksToolCatalog.appendTo(array) },
                 { array -> AgentGoalToolCatalog.appendTo(array) },
                 { array -> AgentAskUserToolCatalog.appendTo(array) },
                 { array -> AgentBrowserToolCatalog.appendTo(array) },

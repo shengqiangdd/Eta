@@ -107,6 +107,7 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "memory_write" -> R.string.tool_memory_write
     "todo_write" -> R.string.tool_todo_write
     "goal" -> R.string.tool_goal
+    "tasks" -> R.string.tool_tasks
     "ask_user" -> R.string.tool_ask_user
     "set_alarm" -> R.string.tool_set_alarm
     "set_timer" -> R.string.tool_set_timer

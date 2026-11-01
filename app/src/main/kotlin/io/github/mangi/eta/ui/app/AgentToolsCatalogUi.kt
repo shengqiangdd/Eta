@@ -138,6 +138,7 @@ internal fun buildToolsState(text: (Int) -> String): AgentToolsUiState =
                 tools = listOf(
                     ToolItemUi("todo_write", text(R.string.tool_todo_write), text(R.string.tool_todo_write_description)),
                     ToolItemUi("goal", text(R.string.tool_goal), text(R.string.tool_goal_description)),
+                    ToolItemUi("tasks", text(R.string.tool_tasks), text(R.string.tool_tasks_description)),
                 ),
             ),
             ToolGroupUi(

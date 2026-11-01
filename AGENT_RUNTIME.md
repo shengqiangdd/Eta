@@ -507,6 +507,41 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 未做：`blocked` 需要「连续 N 轮受阻」才允许（dsh 有阈值，Eta 没有轮次概念，模型说受阻就记受阻）；
 目标的跨会话列表页（当前按会话作用域存储，只有该会话能看到）。
 
+## 子代理任务台账 `tasks`（2026-11-01）
+
+参考 DeepSeek super-agent 架构里「任务台账」那一层：调度不能只把任务派出去，还要留一份
+「派过什么、现在什么状态、哪个还能接着用」的记录。Eta 原本没有这层—— `subagent` 的结果
+只活在当前轮的工具结果里；下一轮换个话题回来，模型既不知道子代理的 id，也不知道它还能不能
+`resume`。
+
+- 数据模型：`AgentTaskRecord`（id / kind / title / status / ref / summary / startedAt / endedAt）
+  与 `AgentTaskLedger`（最多 32 条、按 `startedAt` 倒序、**同一 id 只留最新一条**）。
+  `id` 就是子代理 id（`sub-…`），所以拿到台账就能直接 `subagent(resume="…")`。
+- 只留摘要：完整输出仍在 `SubagentSessionStore`；台账存 600 字以内的摘要，避免同一段结论
+  在两个地方各存一份、随时间分叉。
+- 写入点在 `SubagentExecutor`：开始（RUNNING）、完成（COMPLETED）、失败（FAILED）、
+  取消（CANCELLED）；模型配置加载失败也记一条 FAILED，否则台账会永久停在 RUNNING。
+- 并发：同一轮可以并发派多个子代理，执行器与工具执行器各自持有 store 实例、指向同一批文件，
+  所以锁是**进程级一把**而不是每实例一把；单测用 8 个线程 + 8 个实例验证不丢记录。
+- 落盘：`files/agent/tasks/<sha256(scope).take(32)>.json`，`.tmp` + rename，单文件上限 64KB；
+  坏文件按「没有台账」处理，坏条目只丢那一条。
+- 读取：`tasks` 工具，只读，支持 `status` 过滤与 `limit`（默认 10，上限 32）。
+  **只读是刻意的**：一份能被模型改写的「执行状态」既不能用来判断「还有谁在跑」，
+  也会和子代理会话的真实状态互相矛盾。
+- 作用域：与 `todo_write` / `goal` 同一个会话 scopeId；没有会话（语音等一次性入口）时退回 runId。
+- 计划模式保留 `tasks`：与 `todo_write` 同一判断——只读本机记录，不改设备状态。
+
+未做（如实记录）：
+
+- 台账**不进系统提示**：要看得自己调 `tasks`。本轮先把「写—读—过滤」这条链路做通；
+  注入系统提示要改 `AgentPromptBuilder` 与两条调用路径的参数，留给下一批。
+- 不跨会话：台账按会话作用域存，A 会话看不见 B 会话的子代理。
+- 进程被杀时残留的 `running` 不会自愈：`tasks` 会照实说它在跑，直到用户 `resume` 拿到
+  `SUBAGENT_NOT_FOUND`，或下一次同 id 覆盖。没做「启动时把 stale running 标成失败」，
+  因为判据只能靠时间，误伤长跑子代理的风险比收益大。
+- 真机往返未验证：本轮只有纯 JVM 单测与门禁；「模型真的调 `tasks` 并据此 resume」
+  没有在设备上跑过。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

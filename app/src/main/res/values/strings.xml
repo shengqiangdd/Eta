@@ -1368,6 +1368,7 @@
   <string name="conversation_messages_load_failed_1f6a92">Unable to load this conversation because its messages could not be read. Reopen the app and try again.</string>
   <string name="tool_todo_write">Task plan</string>
   <string name="tool_goal">Long-term goal</string>
+  <string name="tool_tasks">Task ledger</string>
   <string name="goal_card_title">Goal</string>
   <string name="goal_card_expand">Expand goal</string>
   <string name="goal_card_collapse">Collapse goal</string>
@@ -1395,6 +1396,7 @@
   <string name="todo_plan_collapse">Collapse plan</string>
   <string name="tool_todo_write_description">Keep a per-conversation task list and update it as steps complete</string>
   <string name="tool_goal_description">Remember one long-running goal for this conversation and update its state</string>
+  <string name="tool_tasks_description">See which subagents this conversation dispatched and what is still running</string>
   <string name="tool_ask_user">Ask user</string>
   <string name="tool_ask_user_description">Ask one question that needs the user to decide, then stop and wait for the answer</string>
   <string name="ask_card_title">Waiting for your answer</string>

@@ -382,6 +382,10 @@ internal class AgentRuntimeRunExecutor(
                         checkpointRecorder,
                     )
                 },
+                // 任务台账与清单/目标同一作用域：同一会话跨轮可见，跨会话互不可见。
+                // 由子代理执行器写入，`tasks` 工具只读它，两边共用同一批文件。
+                taskLedger = AgentTaskLedgerStore.forApp(appContext),
+                taskScopeId = todoScopeId,
             )
             val runTools = JSONArray(mcpTools.toString()).also { tools ->
                 if (subagentAllowed()) AgentSubagentToolCatalog.appendSchemas(tools)
