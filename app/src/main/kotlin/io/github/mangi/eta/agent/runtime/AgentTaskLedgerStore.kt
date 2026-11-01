@@ -6,6 +6,8 @@ import io.github.mangi.eta.agent.model.AgentTaskRecord
 import io.github.mangi.eta.agent.model.AgentTaskStatus
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
+import org.json.JSONObject
 
 /**
  * 会话级任务台账的落盘存储。
@@ -17,7 +19,11 @@ import java.security.MessageDigest
  *
  * 返回 Boolean / null 而不是抛异常：台账是**旁路记录**，写不进去不该让子代理本身失败。
  */
-internal class AgentTaskLedgerStore(private val root: File) {
+internal class AgentTaskLedgerStore(
+    private val root: File,
+    /** 写者身份：用来分辨「这条 RUNNING 是本进程写的」还是上一个进程的残留。 */
+    private val owner: String = ProcessOwner.current,
+) {
 
     fun fileFor(scopeId: String): File? {
         if (scopeId.isBlank()) return null
@@ -33,7 +39,12 @@ internal class AgentTaskLedgerStore(private val root: File) {
         if (!file.isFile || file.length() > MAX_BYTES) return AgentTaskLedger()
         val text = runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
             ?: return AgentTaskLedger()
-        return AgentTaskLedger.fromStoredJson(text) ?: AgentTaskLedger()
+        val stored = runCatching { JSONObject(text) }.getOrNull() ?: return AgentTaskLedger()
+        val ledger = AgentTaskLedger.fromStoredJson(stored) ?: return AgentTaskLedger()
+        // 写者身份不同 = 这份记录来自上一个进程；那时的「运行中」不可能还在跑。
+        // 只在内存里修正、不在这里写盘：读路径要快，修正会在下一次 start/finish 落盘。
+        if (stored.optString("owner") == owner) return ledger
+        return ledger.abandonRunning() ?: ledger
     }
 
     /** 记一条"开始了"；同 id 覆盖（resume 同一个子代理时保持台账只有一条）。 */
@@ -65,7 +76,7 @@ internal class AgentTaskLedgerStore(private val root: File) {
         return runCatching {
             if (!dir.isDirectory && !dir.mkdirs()) return false
             val tmp = File(dir, file.name + ".tmp")
-            tmp.writeText(ledger.toJson().toString(), Charsets.UTF_8)
+            tmp.writeText(ledger.toJson(owner).toString(), Charsets.UTF_8)
             // 直接 rename 覆盖在某些文件系统上会失败，先删再换；失败就清掉临时文件。
             if (file.exists() && !file.delete()) {
                 tmp.delete()
@@ -93,4 +104,15 @@ internal class AgentTaskLedgerStore(private val root: File) {
         fun forApp(context: Context): AgentTaskLedgerStore =
             AgentTaskLedgerStore(File(context.applicationContext.filesDir, "agent/tasks"))
     }
+}
+
+/**
+ * 本进程的标识，只用于台账判活。
+ *
+ * 不用时间判据：设备会改时间，跨重启的时钟也不可比；而「同一个会话作用域只由一个进程写」
+ * 是业务事实（子代理在主进程执行），拿写者身份对比既准确又便宜。
+ * 它不是安全凭据，也不写进任何用户可见文本。
+ */
+private object ProcessOwner {
+    val current: String = UUID.randomUUID().toString().replace("-", "").take(16)
 }

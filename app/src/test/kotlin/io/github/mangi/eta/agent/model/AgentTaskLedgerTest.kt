@@ -27,6 +27,23 @@ class AgentTaskLedgerTest {
     )
 
     @Test
+    fun abandonRunningKeepsExistingSummaryAndSkipsWhenNothingRuns() {
+        assertNull("没有运行中的条目时返回 null，调用方不必写盘", AgentTaskLedger().abandonRunning())
+        assertNull(AgentTaskLedger().upsert(record("a", status = AgentTaskStatus.COMPLETED)).abandonRunning())
+
+        val ledger = AgentTaskLedger()
+            .upsert(record("plain", startedAt = 200))
+            .upsert(record("with-note", startedAt = 100, summary = "第 2 轮"))
+        val fixed = ledger.abandonRunning()!!
+
+        val plain = fixed.entries.first { it.id == "plain" }
+        assertEquals(AgentTaskStatus.CANCELLED, plain.status)
+        assertEquals(AgentTaskLedger.ORPHAN_NOTE, plain.summary)
+        // 上一轮写下的真实进度不该被「未知」盖掉。
+        assertEquals("第 2 轮", fixed.entries.first { it.id == "with-note" }.summary)
+    }
+
+    @Test
     fun promptSectionIsEmptyForEmptyLedger() {
         assertEquals("", AgentTaskLedger().promptSection())
         // 空台账与 maxLines=0 都不产生段落：调用方据此不追加系统消息。

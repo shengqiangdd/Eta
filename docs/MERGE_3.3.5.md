@@ -5326,3 +5326,36 @@ assertFalse(projected.toString().contains("/data/local/tmp/eta"))
 ### 4. 仍未验证
 
 真机上没有跑过「模型读到这段后真的去 `resume`，而不是重新派一个」。仍是纯 JVM + 门禁验证。
+
+## §32.52 进程重启后的孤儿条目：用写者身份代替时间判据（2026-11-01）
+
+§32.50 曾把「stale running 不自愈」列为已知边界，理由是「判据只能靠时间，误伤长跑的风险大于收益」。
+这个前提是错的：子代理只在本进程内执行，所以**写者身份**就是精确判据。
+
+### 1. 做法
+
+- 台账文件顶层加 `owner`（`ProcessOwner.current`，进程级 UUID 前 16 位，仅落盘时写）。
+- `AgentTaskLedgerStore.load()`：`owner` 与当前进程不一致时调用
+  `AgentTaskLedger.abandonRunning()`，把 RUNNING 改成 CANCELLED（摘要为空才补说明）。
+- 读路径不写盘；下一次 `recordStarted` / `recordFinished` 落盘时自然带上新 owner。
+- 老文件（无 `owner`）按上一个进程处理 —— 升级必然伴随进程重启。
+- 同进程内的 RUNNING 原样保留：卡死是另一类问题，用时间猜只会把「跑得久」当成「已死」。
+
+### 2. 验证（本机）
+
+| 项 | 结果 |
+|---|---|
+| 定向 3 类 | 34 例 0 失败（Store +5、Ledger +1） |
+| `STAGES=test,lint,assemble` | 940 例 0 失败；lint baseline 194；死文案 0 |
+| `STAGES=test-wide` | 2798 例 0 失败 |
+| 包 | 34,544,806 字节 `20522adb1e9a9404…`（连续三轮大小相同、sha256 不同，原因未查） |
+
+### 3. 边界
+
+- 前提是「同一会话作用域只由一个进程写」；语音进程用 runId 作作用域，不共用文件。
+- 卡在活进程里的子代理仍显示 running（没有心跳机制）。
+- 真机未验证：设备上装的还是旧版本（`files/agent/tasks` 目录不存在），只有单测覆盖。
+
+### 4. 顺带
+
+修掉 §32.51 文档里的一处重复：「不跨会话」条目被写了两遍（上一轮替换脚本把锚点前后各留了一份）。

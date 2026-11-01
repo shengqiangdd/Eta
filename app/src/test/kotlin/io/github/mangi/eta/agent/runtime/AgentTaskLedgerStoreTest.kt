@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
+import io.github.mangi.eta.agent.model.AgentTaskLedger
 import io.github.mangi.eta.agent.model.AgentTaskRecord
 import io.github.mangi.eta.agent.model.AgentTaskStatus
 import java.util.concurrent.CountDownLatch
@@ -30,6 +31,64 @@ class AgentTaskLedgerStoreTest {
         startedAt = startedAt,
         endedAt = null,
     )
+
+    @Test
+    fun runningEntryLeftByAnotherProcessIsReportedAsStopped() {
+        val before = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+        assertTrue(before.recordStarted("conversation-1", record("sub-a")))
+
+        // 模拟进程被系统回收后重启：新进程 token 不同，旧记录里的 RUNNING 不可能还在跑。
+        val restarted = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b")
+        val entry = restarted.load("conversation-1").entries.single()
+        assertEquals(AgentTaskStatus.CANCELLED, entry.status)
+        assertEquals(AgentTaskLedger.ORPHAN_NOTE, entry.summary)
+        assertNull("结束时间未知就不编一个", entry.endedAt)
+    }
+
+    @Test
+    fun sameProcessKeepsRunningStatus() {
+        val store = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+        assertTrue(store.recordStarted("c", record("sub-a")))
+        assertEquals(AgentTaskStatus.RUNNING, store.load("c").entries.single().status)
+    }
+
+    @Test
+    fun legacyFileWithoutOwnerIsTreatedAsLeftover() {
+        // 老版本写的文件没有 owner 字段；升级必然伴随进程重启，里面的 RUNNING 同样是残留。
+        val legacy = AgentTaskLedger().upsert(record("sub-a"))
+        val path = AgentTaskLedgerStore(temporaryFolder.root).fileFor("c")!!
+        path.parentFile!!.mkdirs()
+        path.writeText(legacy.toJson().toString(), Charsets.UTF_8)
+
+        val entry = AgentTaskLedgerStore(temporaryFolder.root, owner = "any").load("c").entries.single()
+        assertEquals(AgentTaskStatus.CANCELLED, entry.status)
+    }
+
+    @Test
+    fun stoppedOrphanIsPersistedOnTheNextWrite() {
+        val before = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+        before.recordStarted("c", record("sub-a"))
+
+        // 重启后派了新任务：写入时会带上新 owner，顺手把旧的 RUNNING 落盘成已停止。
+        val after = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b")
+        assertTrue(after.recordStarted("c", record("sub-b", startedAt = 2_000L)))
+
+        val entries = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b").load("c").entries
+        assertEquals(2, entries.size)
+        assertEquals(AgentTaskStatus.RUNNING, entries.first { it.id == "sub-b" }.status)
+        assertEquals(AgentTaskStatus.CANCELLED, entries.first { it.id == "sub-a" }.status)
+    }
+
+    @Test
+    fun completedEntriesAreNotTouchedAcrossProcesses() {
+        val before = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+        before.recordStarted("c", record("sub-a"))
+        before.recordFinished("c", "sub-a", AgentTaskStatus.COMPLETED, "完成", 2_000L)
+
+        val entry = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b").load("c").entries.single()
+        assertEquals(AgentTaskStatus.COMPLETED, entry.status)
+        assertEquals("完成", entry.summary)
+    }
 
     @Test
     fun recordsStartThenFinish() {

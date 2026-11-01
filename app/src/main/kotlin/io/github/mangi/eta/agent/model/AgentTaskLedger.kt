@@ -58,8 +58,9 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
     fun counts(): Map<AgentTaskStatus, Int> =
         AgentTaskStatus.entries.associateWith { status -> entries.count { it.status == status } }
 
-    fun toJson(): JSONObject = JSONObject()
+    fun toJson(owner: String = ""): JSONObject = JSONObject()
         .put("version", VERSION)
+        .apply { if (owner.isNotEmpty()) put("owner", owner) }
         .put(
             "tasks",
             JSONArray().also { array -> entries.forEach { entry -> array.put(entry.toJson()) } },
@@ -103,6 +104,31 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
         }
     }
 
+    /**
+     * 把「运行中」的条目判为已停止，返回新台账；没有运行中的条目时返回 null，调用方据此省一次写盘。
+     *
+     * 判据不是时间，而是**写者身份**：子代理只在本进程里执行，所以带着上一个进程 token 的
+     * RUNNING 条目不可能还在跑 —— 进程被杀、被系统回收或升级重启都会留下这种孤儿。
+     * 不修正的后果是 `tasks` 永远报「运行中」，用户等一个不会再更新的结果。
+     *
+     * 已有摘要不覆盖：那条摘要可能是上一轮真实写下的进度，只在没有摘要时补一句说明。
+     */
+    fun abandonRunning(note: String = ORPHAN_NOTE): AgentTaskLedger? {
+        if (entries.none { it.status == AgentTaskStatus.RUNNING }) return null
+        return AgentTaskLedger(
+            entries.map { entry ->
+                if (entry.status != AgentTaskStatus.RUNNING) {
+                    entry
+                } else {
+                    entry.copy(
+                        status = AgentTaskStatus.CANCELLED,
+                        summary = entry.summary?.takeIf { it.isNotBlank() } ?: note,
+                    )
+                }
+            },
+        )
+    }
+
     companion object {
         /** 32 条 × 一条几百字节的摘要 ≈ 十几 KB，远小于文件上限；再多也不是"当前状态"了。 */
         const val MAX_ENTRIES = 32
@@ -112,6 +138,9 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
          * 更早的交给 `tasks` 按状态过滤，不必每轮都塞进前缀。
          */
         const val DEFAULT_PROMPT_LINES = 8
+
+        /** 孤儿条目的说明文案；同时用于 `tasks` 输出与系统提示，改文案前先想清楚两者都会变。 */
+        const val ORPHAN_NOTE = "进程重启前未收尾，实际结果未知"
         const val VERSION = 1
 
         fun statusLabel(status: AgentTaskStatus): String = when (status) {
@@ -125,8 +154,11 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
          * 读回落盘内容。整体坏掉返回 null（当作没有台账），单条坏掉只丢那一条：
          * 一条字段超限不该让整份台账消失。
          */
-        fun fromStoredJson(text: String): AgentTaskLedger? {
-            val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        fun fromStoredJson(text: String): AgentTaskLedger? =
+            runCatching { JSONObject(text) }.getOrNull()?.let(::fromStoredJson)
+
+        /** 已经解析过的根对象直接用，省一次解析（读路径每轮都跑）。 */
+        fun fromStoredJson(root: JSONObject): AgentTaskLedger? {
             val array = root.optJSONArray("tasks") ?: return null
             val seen = HashSet<String>()
             val parsed = ArrayList<AgentTaskRecord>(array.length())
