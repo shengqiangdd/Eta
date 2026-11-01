@@ -5672,3 +5672,83 @@ java.lang.AssertionError at PrefsDefaultsTest.kt:10
 
 值得记住的是顺序：**先跑快跑得到的「全绿」不等于可以提交** —— 这次要是不跑宽跑，
 默认值快照就带着旧内容进仓库了，下一个人加开关时会拿到一条莫名其妙的红。
+
+## §32.58 真机先打脸：那两条防线其实一条都没站住（2026-11-01，承接上节）
+
+### 1. 真机怎么发现的
+
+第八批装 canary 上虚拟屏，手动点「继续」——模型确实收到了提示，自己调 `terminal_job list`
+与 `terminal_daemon list`，回答「没有需要接着做的事」。手动路径是真的通了。
+
+但同一轮跑完之后，「继续」按钮**又出现了**。原因是卡片把「续过哪些」放在
+`remember { mutableStateListOf<String>() }` 里：重组 / 运行结束后这份状态丢了，
+`task.id !in resumed` 恒为真，于是：
+
+- 「同一条不再续」失效；
+- 「最多 2 次」也失效（计数 `autoResumed` 是另一个 `remember`，一起归零）。
+
+按文档写的「进程内生效、重启清零」本来就不该用 `remember` —— 文档说的是「进程内」，
+`remember` 给的是「这次组合内」。
+
+### 2. 两步修
+
+**第一步（commit `7406747`）**：把状态挪到进程级对象 `BackgroundResumeMemory`，
+上限 64 条、超限丢最旧。单测 6 例。这一步只解决「重组丢状态」。
+
+**第二步（本节）**：按会话作用域落盘。
+
+| 组件 | 位置 | 作用 |
+|---|---|---|
+| `BackgroundResumeStore` | `agent/runtime/` | `files/agent/background_resume/<sha256(scope)>.json`，只存 `{"resumed": [...]}` |
+| `BackgroundResumeScope` | `agent/terminal/` | 一条作用域的内存态：`resumed` 落盘、`autoResumed` 只在进程内 |
+| `BackgroundResumeMemory` | `agent/terminal/` | 作用域 → Scope 的进程级表 |
+
+几个刻意的取舍：
+
+1. **只落盘「续过哪些」，不落盘次数**。次数是「这一轮的预算」，落盘会变成
+   「自动续了 2 次」永久生效 —— 与 §122「一次失败即永久停用」同一类错误。
+2. **读盘完成前不许判定**。`isLoaded` 之前集合是空的，拿它判「没续过」会把一条
+   已经续过的任务再续一遍。自动续跑的 `LaunchedEffect` 因此把 `isLoaded` 当 key 并提前 return。
+3. **坏文件当没有记录**。8KB 上限、JSON 坏、字段缺失、作用域空串，一律安静退回空集合：
+   这个记忆的唯一用途是少显示一个按钮，读不出来就该退回原来的行为。
+4. **作用域键沿用 `conversationId ?: runId`**（卡片接 `goalScopeId`，与台账 / 目标 / 待办同一个）。
+   记录本身没有会话归属，但「在 A 会话续过」不该让 B 会话少一个按钮。
+
+### 3. 验证（本机）
+
+| 项 | 结果 |
+|---|---|
+| 定向 2 类 | **23 例 0 失败**（`BackgroundResumeMemoryTest` 12 + `BackgroundResumeStoreTest` 11） |
+| `STAGES=test,lint,assemble` | **1022 例 0 失败**；lint baseline 194（183 命中 + 11 条依赖提示）；死文案 0 |
+| `STAGES=test-wide` | **2880 例 0 失败** |
+| 包 | 33,628,697 字节 `8c9537a2…` |
+
+`BackgroundResumeStoreTest` 的 11 条：写读往返、未知作用域、后写覆盖、作用域隔离、
+超上限只留最新、空白 id 丢弃、重复 id 保留最近位置、空作用域不落盘、坏文件当空且能再写、
+超限文件忽略、字段缺失当空。
+
+### 4. 又一次被 lint 抓住
+
+第一版把 `scopeId` 放在 `modifier` 前面，lint 直接红：
+
+```
+BackgroundTasksCard.kt:92: Error: Modifier parameter should be the first optional parameter
+[ModifierParameter from androidx.compose.ui]
+```
+
+`STAGES=lint` 单跑复现 → 改成 `modifier` 在前、`scopeId` 在后，重跑全绿。
+教训很直白：**Compose 组件的可选参数顺序是硬约束**，加参数时 Modifier 必须留在第一个可选位置。
+
+### 5. 边界（如实记录）
+
+- **仍未真机验证新包**：设备上跑的是加第一步修补之前的 canary。落盘是否真的写出文件、
+  重启后按钮是否真的不再出现，只有单测覆盖（含「模拟进程回收」的 reset + reload 用例）。
+- **自动续跑仍只在「会话界面可见」时触发**：判断挂在 Compose 副作用里，切走 / 锁屏 / 回收都不触发。
+- 作用域表进程内不回收：每个会话一个对象、每个对象最多 64 个 id；会话很多时会缓慢增长。
+- 记录里没有「任务属于哪个会话」，所以别的会话起的任务结束仍是候选；
+  只有「续过」这件事按会话分开。
+- 不区分成功 / 失败；没有计费提示；上限 2 仍是硬闸。
+- 跨进程并发（主进程 + 语音）只有「进程级一把锁 + rename」，没有文件锁：
+  两个进程同时写同一作用域时最后一次 rename 胜出，可能丢掉另一个进程刚记的 id。
+- 包体积又一次不可复现：同一份源码，两次打包 33,628,670 与 33,628,697 字节、sha256 不同。
+  与本轮改动无关（改动只碰 Kotlin 源码），原因仍未查明。

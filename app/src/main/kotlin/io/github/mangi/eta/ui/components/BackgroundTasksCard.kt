@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import io.github.mangi.eta.agent.terminal.BackgroundResumeMemory
 import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
@@ -44,6 +46,7 @@ import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.Text
@@ -86,6 +89,8 @@ internal fun BackgroundTasksCard(
     canSend: Boolean,
     onResume: (String) -> Unit,
     modifier: Modifier = Modifier,
+    // Compose 约定 Modifier 必须是第一个可选参数（lint `ModifierParameter`），所以作用域键排在它后面。
+    scopeId: String? = null,
 ) {
     val records = rememberDetachedTasks() ?: return
     val view = remember(records) { summarizeBackgroundTasks(records) }
@@ -114,21 +119,31 @@ internal fun BackgroundTasksCard(
     val autoResumeEnabled = remember(context) {
         localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO)
     }
-    /** 已经续过的任务：进程级记忆（手动点「继续」也算）。
+    /** 这个会话作用域里已经续过哪些任务：进程级 + 落盘（手动点「继续」也算）。
      *  不能用 `remember`：真机实测一轮跑完后它会丢，按钮又出现 —— 两个防线同时失效。 */
-    val resumed = BackgroundResumeMemory.resumed
+    val resumeScope = remember(context, scopeId) {
+        BackgroundResumeMemory.scopeFor(
+            store = if (scopeId.isNullOrBlank()) null else BackgroundResumeStore.forApp(context),
+            scopeId = scopeId.orEmpty(),
+        )
+    }
+    // 先把磁盘记忆读进来再判定：`isLoaded` 之前的集合是空的，拿它判「没续过」会重复续。
+    LaunchedEffect(resumeScope) { resumeScope.loadFromStore() }
+    val uiScope = rememberCoroutineScope()
+    val resumed = resumeScope.resumed
     /** 只认卡片出现之后结束的任务：否则一进旧会话，历史任务会被当成新事件自动续一遍。 */
     val openedAt = remember { System.currentTimeMillis() }
     val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
-    LaunchedEffect(autoResumeEnabled, canSend, records) {
-        if (!autoResumeEnabled || !canSend) return@LaunchedEffect
+    LaunchedEffect(autoResumeEnabled, canSend, records, resumeScope.isLoaded) {
+        if (!autoResumeEnabled || !canSend || !resumeScope.isLoaded) return@LaunchedEffect
         val target = planAutoResume(
             records = records,
             handled = resumed.toSet(),
             finishedAfterMs = openedAt,
-            alreadyResumed = BackgroundResumeMemory.autoResumed,
+            alreadyResumed = resumeScope.autoResumed,
         ).next ?: return@LaunchedEffect
-        BackgroundResumeMemory.markAutoResumed(target.id)
+        resumeScope.markAutoResumed(target.id)
+        uiScope.launch { resumeScope.persist() }
         onResume(resumePrompt(promptTemplate, target))
     }
     val title = stringResource(R.string.background_run_channel)
@@ -187,7 +202,9 @@ internal fun BackgroundTasksCard(
                         resumeLabel = resumeLabel,
                         onResume = if (canResumeThis) {
                             {
-                                BackgroundResumeMemory.markResumed(task.id)
+                                if (resumeScope.markResumed(task.id)) {
+                                    uiScope.launch { resumeScope.persist() }
+                                }
                                 onResume(resumePrompt(promptTemplate, task))
                             }
                         } else {

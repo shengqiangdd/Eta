@@ -1862,6 +1862,9 @@ private fun AgentChatBottomBar(
             BackgroundTasksCard(
                 canSend = !isStreaming,
                 onResume = onSubmit,
+                // 与台账 / 目标 / 待办同一个作用域键：续跑记忆按会话分开，别让 A 会话的点击
+                // 把 B 会话的按钮藏起来。
+                scopeId = goalScopeId,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             pendingAsk?.let { ask ->
