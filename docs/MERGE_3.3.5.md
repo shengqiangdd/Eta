@@ -5399,3 +5399,45 @@ assertFalse(projected.toString().contains("/data/local/tmp/eta"))
 
 收起行原本是 Row 里并排三个 Text（标题 / 已完成 / 运行中）。Row 不换行，前两个占满后第三个被挤成
 零宽**直接看不见**；改成同一个 `Text` 的 `AnnotatedString` 分段着色，换行交给 Text 自己处理。
+
+## §32.54 后台任务上提示：模型隔几轮也知道 daemon 还在跑（2026-11-01）
+
+前四批管的是「派出去的子代理」。`terminal_job` 与 `terminal_daemon` 是另一类：它们**活过一轮对话**，
+但模型只看得到自己最近一次工具结果。隔几轮回来，它不知道「还有个 daemon 在跑」—— 要么重复启动
+同一份服务，要么让用户自己去终端页翻。这一批只做提示，不动任务本身的生命周期。
+
+### 1. 做法
+
+- 新增 `BackgroundTasksSection`：`running()` 取 `completedAt == null` 的记录并按 `startedAt` 升序；
+  `render(tasks, now)` 输出 `<background_tasks>…</background_tasks>`，含未结束条数、job / daemon 各几条、
+  最多 6 个 id（超出写「另有 N 条未列出」）、最早一条的年龄，并写明「没有做存活探测，
+  要读日志 / 确认状态 / 停止请用 terminal_job / terminal_daemon 的 list」。
+- 新增 `DetachedTaskSupervisor.readRecords(file)`：**只读快照**。不探活、不认领、不补结束时间、不清理，
+  坏文件 / 坏条目按「没有」处理、不在读路径改写；超过 256KB 整份跳过。它与 `list()` 的差别就是没有副作用
+  —— 系统提示每轮都构建，不能为此起 shell 或写盘。
+- 注入：`AgentRuntimeRunExecutor` 在 run 开始时读一次，`AgentPromptBuilder` 把它排在子代理台账之后、
+  项目规则之前；条件为 `roleplayContext == null && config.terminalTools && 段非空`。
+  `AgentModelClient` 透传，root 变化重建系统消息时同样带上。
+- **不带命令正文与描述**：记录里的命令可能是用户在终端里手敲的（含路径、令牌），
+  而系统提示会被发到模型服务商；要看内容就让模型显式调 list。
+- 读失败兜底：`runCatching` 包住，按空段处理并 `warnThrottled("agent_background_tasks_prompt_failed")`。
+
+### 2. 验证（本机）
+
+| 项 | 结果 |
+|---|---|
+| 定向 2 类 | 29 例 0 失败（BackgroundTasksSectionTest +10、AgentPromptBuilderTest +3） |
+| `STAGES=test,lint,assemble` | 961 例 0 失败；lint baseline 194；死文案 0；扫描 1330 文件 |
+| `STAGES=test-wide` | 2819 例 0 失败 |
+| 包 | 34,557,382 字节 `7005fe2967038977…`；dex 含 `BackgroundTasksSection`，测试类未进包 |
+
+### 3. 边界
+
+- **真机未验证**：设备上装的仍是旧版本（`files/agent/tasks` 目录都不存在）。
+  「提示里真的出现这一段」「关掉终端工具后不再出现」都只有 JVM 单测。
+- **模型行为未验证**：没有实测过「模型读到这段后不再重复启动同一个 daemon」。段落只提供事实，
+  改变行为是另一回事。
+- 不探活：被系统杀掉但记录里没标结束的任务仍会计入，直到某次 `list()` / 写入触发清理；
+  记录文件涨到 256KB 以上时整段消失，不是只丢几条。
+- 只看得到记录，看不到资源占用（CPU / 内存）。
+- 6 个 id 是固定上限，任务更多时模型必须自己调 list 才能拿到完整清单。

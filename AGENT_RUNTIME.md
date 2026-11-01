@@ -628,6 +628,49 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 - 底部常驻区不可滚动：目标卡 + 清单卡 + 台账卡 + 追问卡同时出现时高度会叠加，小屏没实测。
 - 卡片只有状态与 id，没有开始 ／ 结束时间（台账里有 `startedAt`，界面没显示）。
 
+### 第五批：后台任务上提示（2026-11-01）
+
+前四批管的是「派出去的子代理」。真正活过更多轮的是另一类：`terminal_job` 起的后台命令、
+`terminal_daemon` 起的常驻服务。记录一直在 `files/agent/detached_tasks.json`，但模型只看得到自己
+最近一次工具结果 —— 隔几轮回来，它不知道「还有个 daemon 在跑」，于是要么重复启动同一份服务，
+要么让用户自己去终端页翻。
+
+- 入口：run 开始时由 `AgentRuntimeRunExecutor` 调
+  `BackgroundTasksSection.render(DetachedTaskSupervisor.readRecords(defaultRecordsFile(context)), now)`，
+  把结果作为 `backgroundTasks` 传给 `AgentPromptBuilder`，注入位置在子代理台账之后、项目规则之前。
+- 注入条件三条同时成立：`roleplayContext == null`、`config.terminalTools`、段文本非空。
+  关掉终端工具时不注入（不指向一个调不到的工具）；角色扮演不注入，与台账同一条规矩。
+- 段落只写：有几条未结束记录、job / daemon 各几条、最多 6 个 id（超出写「另有 N 条未列出」）、
+  最早一条始于多久前（分钟 / 小时 / 天）。按 `startedAt` 升序，最久没管的排最前。
+- **不带命令正文，也不带描述**：记录里的命令可能是用户自己在终端里手敲的（含路径、令牌），
+  而系统提示会被发到模型服务商。要看内容，由模型显式调 `terminal_job` / `terminal_daemon` 的 list。
+- **只读快照，刻意不用 `list()`**：`list()` 会探活、认领、补结束时间、清理过期记录，都要起 shell
+  或写盘；系统提示每轮都构建，不能背这个副作用。新增的 `readRecords` 只读文件：坏文件、坏条目按
+  「没有」处理且**不在读路径改写文件**，文件超过 256KB 整份跳过（不是截断读）。
+- 段落里必须写明「没有做存活探测」：进程被系统杀掉时记录不会自己改写，「未结束」只是记账状态。
+  不写这句，模型会把一条死任务当成还在跑。
+- 读失败兜底：`runCatching` 包住，失败按空段处理并 `warnThrottled("agent_background_tasks_prompt_failed")`，
+  不让提示段把整个 run 拖垮。
+
+验证（本机，2026-11-01）：`BackgroundTasksSectionTest` 新增 10 例（空台账与已结束任务都不渲染、
+计数与排序、id 上限与「另有 N 条」、命令正文与描述不进提示、`ageLabel` 边界、未来时间不负数、
+`readRecords` 前后文件字节不变、坏文件 / 缺文件），`AgentPromptBuilderTest` 新增 3 例
+（段落在台账之后、空段不追加消息、终端工具关闭时跳过），原有 roleplay 不注入用例保留。
+定向 2 类 **29／0**；`STAGES=test,lint,assemble` **961／0**、lint baseline 194、死文案 0、扫描 1330 文件；
+包 34,557,382 字节（`7005fe2967038977…`），dex 内确认含 `BackgroundTasksSection`、测试类未进包；
+`STAGES=test-wide` **2819／0**。
+
+未做（如实记录）：
+
+- **真机未验证**：设备上装的仍是旧版本（`files/agent/tasks` 目录都不存在），
+  「提示里真的出现了这一段」只有 JVM 单测。
+- **模型行为未验证**：没有实测过「模型读到这段后不再重复启动同一个 daemon」。段落只提供事实，
+  改变行为是另一回事。
+- **不探活**：被系统杀掉但记录里没标结束的任务仍会计入，直到某次 `list()` / 写入触发清理；
+  记录文件涨到 256KB 以上时整段消失（不是只丢几条）。
+- 只看得到记录，看不到资源占用（CPU / 内存）：那要读 `terminal_daemon` 的 logs 或系统工具。
+- 上限 6 个 id 是固定值：任务多时只给数量，模型得自己调 list 才能拿到完整清单。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

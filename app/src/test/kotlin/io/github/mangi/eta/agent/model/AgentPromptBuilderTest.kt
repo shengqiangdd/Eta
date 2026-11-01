@@ -357,6 +357,75 @@ class AgentPromptBuilderTest {
         assertTrue("同一约定：清单也不注入", messages.none { it.contains("<todo_plan>") })
     }
 
+    @Test
+    fun backgroundTasksSectionSitsRightAfterTheLedger() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            todoPlan = "<todo_plan>\n做这一步\n</todo_plan>",
+            taskLedgerPlan = "<subagent_tasks>\n[completed] 读日志 · sub-1\n</subagent_tasks>",
+            backgroundTasks = "<background_tasks>\n本机还有 1 条未结束的后台任务记录（job 1）：job_a\n</background_tasks>",
+        ).systemContents()
+
+        val todo = messages.indexOfFirst { it.contains("<todo_plan>") }
+        val ledger = messages.indexOfFirst { it.contains("<subagent_tasks>") }
+        val background = messages.indexOfFirst { it.contains("<background_tasks>") }
+        assertTrue("三段都应出现", todo >= 0 && ledger >= 0 && background >= 0)
+        assertEquals("台账紧跟清单", todo + 1, ledger)
+        // 后台任务回答的是「这台机器上还有什么在跑」，与台账同属“未收尾的东西”，紧跟在它后面。
+        assertEquals("后台任务紧跟台账", ledger + 1, background)
+        assertTrue(messages[background].contains("job_a"))
+    }
+
+    @Test
+    fun blankBackgroundTasksProducesNoSection() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+        ).systemContents()
+
+        // 没有未结束的后台任务时不能留空段：它会被理解为“确实有任务在跑”。
+        assertTrue(messages.none { it.contains("<background_tasks>") })
+    }
+
+    @Test
+    fun backgroundTasksSectionIsSkippedWhenTerminalToolsAreOff() {
+        // 终端工具关掉时模型根本调不到 terminal_job，提示里就不该让“去调它”。
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = false, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            backgroundTasks = "<background_tasks>\n本机还有 1 条未结束的后台任务记录（job 1）：job_a\n</background_tasks>",
+        ).systemContents()
+
+        assertTrue(messages.none { it.contains("<background_tasks>") })
+    }
+
+    @Test
+    fun backgroundTasksSectionIsNotInjectedForRoleplayConversations() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            roleplayContext = RoleplayRunContext(
+                "fixture",
+                CharacterCardCodec.create("林舟"),
+                "旅伴",
+                "",
+                contextWindow = 128_000,
+            ),
+            backgroundTasks = "<background_tasks>\n本机还有 1 条未结束的后台任务记录（job 1）：job_a\n</background_tasks>",
+        ).systemContents()
+
+        assertTrue(messages.none { it.contains("<background_tasks>") })
+    }
+
     private fun modelConfig(
         systemPrompt: String,
         terminalTools: Boolean,

@@ -51,6 +51,28 @@ internal class DetachedTaskSupervisor(
         /** AI 工具侧与 UI 侧共用同一份记录文件，路径只能在这里定义一次。 */
         fun defaultRecordsFile(context: Context): File =
             File(context.filesDir, "terminal-daemons.json")
+
+        /** 记录文件再大也不读了：正常只有几十条，超过这个量说明文件被写坏。 */
+        const val MAX_RECORDS_BYTES = 256L * 1024
+
+        /**
+         * 只读快照：从记录文件读出任务，**不探活、不认领、不补结束时间、不清理**。
+         *
+         * 与 [list] 的区别就是「没有副作用」：系统提示每轮都要构建，不能为此起 shell 或写盘。
+         * 代价是状态只代表「记账里还没标结束」，进程被系统杀掉时记录不会自己改写 ——
+         * 调用方必须把这个局限告诉读者（见 [BackgroundTasksSection]）。
+         *
+         * 坏文件 / 坏条目按「没有」处理，**不在读路径改写文件**。
+         */
+        fun readRecords(file: File): List<DetachedTask> {
+            if (!file.isFile || file.length() > MAX_RECORDS_BYTES) return emptyList()
+            return runCatching {
+                val array = JSONArray(file.readText())
+                (0 until array.length()).mapNotNull { index ->
+                    runCatching { array.getJSONObject(index).toDetachedTask() }.getOrNull()
+                }
+            }.getOrDefault(emptyList())
+        }
     }
 
 

@@ -39,6 +39,8 @@ internal object AgentPromptBuilder {
         todoPlan: String = "",
         /** 会话级子代理台账段落；空表示本会话还没派出过子任务。 */
         taskLedgerPlan: String = "",
+        /** 本机后台任务（terminal_job / terminal_daemon）段落；空表示记录里没有未结束的任务。 */
+        backgroundTasks: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         /** 已启用插件声明的 prompt 扩展；为空表示没有插件附加说明。 */
         pluginPrompt: String = "",
@@ -53,6 +55,7 @@ internal object AgentPromptBuilder {
             goalPlan,
             todoPlan,
             taskLedgerPlan,
+            backgroundTasks,
             mode,
             pluginPrompt,
         )
@@ -78,6 +81,7 @@ internal object AgentPromptBuilder {
         goalPlan: String = "",
         todoPlan: String = "",
         taskLedgerPlan: String = "",
+        backgroundTasks: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         pluginPrompt: String = "",
     ): JSONArray {
@@ -238,6 +242,13 @@ internal object AgentPromptBuilder {
         // 放这里只影响它之后的字节，项目规则仍在最末尾。
         if (roleplayContext == null && taskLedgerPlan.isNotBlank()) {
             messages.put(systemMessage(taskLedgerPlan))
+        }
+        // 后台任务紧跟台账：两者都是「现在还没收尾的东西」。它比台账更少见变化（起／停时），
+        // 放在台账之后，项目规则仍在最末尾。
+        // 只在本轮真的能用终端工具时注入：关掉终端工具还提一句「用 terminal_job 的 list」，
+        // 等于指着一个模型根本调不到的工具。
+        if (roleplayContext == null && config.terminalTools && backgroundTasks.isNotBlank()) {
+            messages.put(systemMessage(backgroundTasks))
         }
         projectRulesMessage()?.let(messages::put)
         return messages

@@ -24,6 +24,8 @@ import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
 import io.github.mangi.eta.agent.memory.AgentLearningRecorder
 import io.github.mangi.eta.agent.memory.ConversationMemoryPins
 import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
+import io.github.mangi.eta.agent.terminal.BackgroundTasksSection
+import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.mcp.McpRunSnapshot
 import io.github.mangi.eta.agent.usage.AgentUsageLedger
@@ -143,6 +145,20 @@ internal class AgentRuntimeRunExecutor(
             }.getOrElse { throwable ->
                 AndroidAgentLogger.warnThrottled("agent_task_ledger_prompt_failed") {
                     "Agent task ledger prompt unavailable: type=${throwable.safeLogType()}"
+                }
+                ""
+            }
+            // 后台任务（terminal_job / terminal_daemon）的只读快照：子代理台账回答「派了谁」，
+            // 它回答「这台机器上还有什么在跑」。用 readRecords 而不是 list —— list 会探活、认领、
+            // 补结束时间并清理记录，每轮构建提示都做这些既慢又有副作用。
+            val backgroundTasksPlan = runCatching {
+                BackgroundTasksSection.render(
+                    DetachedTaskSupervisor.readRecords(DetachedTaskSupervisor.defaultRecordsFile(appContext)),
+                    System.currentTimeMillis(),
+                )
+            }.getOrElse { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_background_tasks_prompt_failed") {
+                    "Agent background tasks prompt unavailable: type=${throwable.safeLogType()}"
                 }
                 ""
             }
@@ -465,6 +481,7 @@ internal class AgentRuntimeRunExecutor(
                 goalPlan = goalPlan?.promptSection().orEmpty(),
                 todoPlan = todoPlan?.promptSection().orEmpty(),
                 taskLedgerPlan = taskLedgerPlan,
+                backgroundTasks = backgroundTasksPlan,
                 toolSpill = AgentToolSpill.forApp(appContext),
                 // 摘要分批进度只在这里接真日志：库内类默认静默，否则纯 JVM 单测会撞到未实现的 android.util.Log。
                 compactionLog = { AndroidAgentLogger.info(it) },
