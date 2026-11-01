@@ -13,6 +13,7 @@ import io.github.mangi.eta.ui.components.LocalGuiControlWaiting
 import io.github.mangi.eta.ui.components.LocalRoleplayChat
 import io.github.mangi.eta.ui.components.rememberAgentGoal
 import io.github.mangi.eta.ui.components.rememberTodoPlan
+import io.github.mangi.eta.ui.components.rememberTaskLedger
 import io.github.mangi.eta.ui.model.pendingAskOf
 import io.github.mangi.eta.ui.components.chatConversationCompositionKey
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
@@ -62,6 +63,7 @@ internal fun AgentHomeScreen(
             )
         } else {
         val todoPlan = rememberTodoPlan(conversationKey)
+        val taskLedger = rememberTaskLedger(conversationKey)
         val goal = rememberAgentGoal(conversationKey)
         val pendingAsk = remember(state.messages, state.queuedMessages) {
             pendingAskOf(state.messages, hasQueuedInput = state.queuedMessages.isNotEmpty())
@@ -79,6 +81,7 @@ internal fun AgentHomeScreen(
         AgentChatBody(
             messages = state.messages,
             todoPlan = todoPlan,
+            taskLedger = taskLedger,
             goal = goal,
             goalScopeId = conversationKey,
             pendingAsk = pendingAsk,

@@ -1325,6 +1325,7 @@
   <string name="goal_phase_paused">已暫停</string>
   <string name="goal_phase_blocked">受阻</string>
   <string name="goal_phase_completed">已完成</string>
+  <string name="task_ledger_title">子代理任務</string>
   <string name="todo_plan_title">任務計畫</string>
   <string name="todo_plan_all_done">全部完成</string>
   <string name="todo_plan_current">目前：%1$s</string>

@@ -113,6 +113,7 @@ import io.github.mangi.eta.ui.model.QueuedMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
 import io.github.mangi.eta.agent.model.AgentGoal
+import io.github.mangi.eta.agent.model.AgentTaskLedger
 import io.github.mangi.eta.agent.model.AgentTodoPlan
 import io.github.mangi.eta.agent.model.AgentTranscriptPresentation
 import io.github.mangi.eta.agent.model.AgentTranscriptViewPolicy
@@ -172,6 +173,8 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 internal fun AgentChatBody(
     messages: List<AgentChatMessageUi>,
     todoPlan: AgentTodoPlan? = null,
+    /** 会话级子代理台账；null 或空台账时不显示卡片。 */
+    taskLedger: AgentTaskLedger? = null,
     goal: AgentGoal? = null,
     /** 目标的会话作用域；卡片上的暂停/继续/编辑/清除直接写回它，null 表示当前没有可落盘的会话。 */
     goalScopeId: String? = null,
@@ -405,6 +408,7 @@ internal fun AgentChatBody(
         AgentChatScaffold(
             visibleMessages = displayedMessages,
             todoPlan = todoPlan,
+            taskLedger = taskLedger,
             goal = goal,
             goalScopeId = goalScopeId,
             pendingAsk = pendingAsk,
@@ -649,6 +653,7 @@ private fun ChatSearchBar(
 private fun AgentChatScaffold(
     visibleMessages: List<AgentChatMessageUi>,
     todoPlan: AgentTodoPlan?,
+    taskLedger: AgentTaskLedger?,
     goal: AgentGoal?,
     goalScopeId: String?,
     pendingAsk: AgentAskUi?,
@@ -847,6 +852,7 @@ private fun AgentChatScaffold(
                 )
                 AgentChatBottomBar(
                 todoPlan = todoPlan,
+                taskLedger = taskLedger,
                 goal = goal,
                 goalScopeId = goalScopeId,
                 pendingAsk = pendingAsk,
@@ -1741,6 +1747,7 @@ internal fun resolveFinalResultMessageIds(
 @Composable
 private fun AgentChatBottomBar(
     todoPlan: AgentTodoPlan?,
+    taskLedger: AgentTaskLedger?,
     goal: AgentGoal?,
     goalScopeId: String?,
     pendingAsk: AgentAskUi?,
@@ -1846,6 +1853,9 @@ private fun AgentChatBottomBar(
             }
             todoPlan?.let { plan ->
                 AgentTodoPlanCard(plan = plan, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            taskLedger?.let { ledger ->
+                AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
             }
             pendingAsk?.let { ask ->
                 AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))

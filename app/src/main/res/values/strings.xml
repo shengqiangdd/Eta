@@ -1389,6 +1389,7 @@
   <string name="goal_phase_paused">Paused</string>
   <string name="goal_phase_blocked">Blocked</string>
   <string name="goal_phase_completed">Done</string>
+  <string name="task_ledger_title">Subagent tasks</string>
   <string name="todo_plan_title">Plan</string>
   <string name="todo_plan_all_done">All done</string>
   <string name="todo_plan_current">Now: %1$s</string>

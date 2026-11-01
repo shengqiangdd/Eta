@@ -7,6 +7,10 @@ import io.github.mangi.eta.agent.model.AgentTaskStatus
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 
 /**
@@ -67,10 +71,18 @@ internal class AgentTaskLedgerStore(
 
     fun clear(scopeId: String): Boolean {
         val file = fileFor(scopeId) ?: return false
-        return runCatching { !file.exists() || file.delete() }.getOrDefault(false)
+        val ok = runCatching { !file.exists() || file.delete() }.getOrDefault(false)
+        if (ok) notifyChanged()
+        return ok
     }
 
     private fun write(scopeId: String, ledger: AgentTaskLedger): Boolean {
+        val ok = writeFile(scopeId, ledger)
+        if (ok) notifyChanged()
+        return ok
+    }
+
+    private fun writeFile(scopeId: String, ledger: AgentTaskLedger): Boolean {
         val file = fileFor(scopeId) ?: return false
         val dir = file.parentFile ?: return false
         return runCatching {
@@ -100,6 +112,20 @@ internal class AgentTaskLedgerStore(
          * 子代理执行器与工具执行器各自持有 store 实例，指向同一批文件；按实例加锁等于没加锁。
          */
         private val writeLock = Any()
+
+        private val _changes = MutableStateFlow(0L)
+
+        /**
+         * 每次落盘成功自增。
+         *
+         * 界面靠它刷新：子代理结果写的是同一批文件，消息条数不会变，按消息刷新看不到状态变化。
+         * 与 [AgentTodoStore.changes] 同一约定（计入写入次数，而不是存内容）。
+         */
+        val changes: StateFlow<Long> = _changes.asStateFlow()
+
+        private fun notifyChanged() {
+            _changes.update { it + 1 }
+        }
 
         fun forApp(context: Context): AgentTaskLedgerStore =
             AgentTaskLedgerStore(File(context.applicationContext.filesDir, "agent/tasks"))

@@ -91,6 +91,27 @@ class AgentTaskLedgerStoreTest {
     }
 
     @Test
+    fun successfulWritesBumpTheChangeSignalSoTheCardRefreshes() {
+        val before = AgentTaskLedgerStore.changes.value
+        val store = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+
+        store.recordStarted("c", record("sub-a"))
+
+        assertTrue(
+            "界面靠这个信号刷新，不递增就永远停在派发前的状态",
+            AgentTaskLedgerStore.changes.value > before,
+        )
+    }
+
+    @Test
+    fun failedWritesDoNotBumpTheChangeSignal() {
+        val before = AgentTaskLedgerStore.changes.value
+        // 空作用域写不进去，也就没有新状态可刷新。
+        assertFalse(AgentTaskLedgerStore(temporaryFolder.root, owner = "p").recordStarted("  ", record("sub-a")))
+        assertEquals(before, AgentTaskLedgerStore.changes.value)
+    }
+
+    @Test
     fun recordsStartThenFinish() {
         val store = store()
         assertTrue(store.recordStarted("conversation-1", record("sub-a")))
