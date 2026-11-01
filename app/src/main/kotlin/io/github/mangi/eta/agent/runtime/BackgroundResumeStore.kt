@@ -37,7 +37,24 @@ internal data class BackgroundResumeState(
  * 缺字段一律按默认值读（chain=0、seenUntil=null），**不能因为缺一个键就把整份记忆丢掉** ——
  * 那会让升级后的第一次启动把用户点过的「继续」全忘掉。
  */
-internal class BackgroundResumeStore(private val root: File) {
+internal class BackgroundResumeStore(
+    private val root: File,
+    /**
+     * 把临时文件换到目标位置（第二十批）。
+     *
+     * 生产实现就是 `renameTo`：App 的 `filesDir` 在 Linux 文件系统上，`rename(2)` **会替换
+     * 已存在的目标**，而且要么成功、要么旧文件原样还在 —— 不存在「旧文件已删、新文件还没到位」
+     * 的中间态。
+     *
+     * **不能先删再换**（旧实现：「直接 rename 覆盖在某些文件系统上会失败，先删再换」）。
+     * 那句话的前提在这个平台不成立，代价却是把「这次没写成」升级成「这份记忆没了」：
+     * `resumed` 空 → 同一条任务会被再自动续一次（花额度）、按钮重新出现；
+     * `chain` 归零 → 链上限失效；`seen_until` 重立 → 水位线回退。
+     *
+     * 参数只为测试注入（真机上没法让 `rename` 失败）。
+     */
+    private val moveIntoPlace: (File, File) -> Boolean = { tmp, target -> tmp.renameTo(target) },
+) {
 
     fun fileFor(scopeId: String): File? {
         if (scopeId.isBlank()) return null
@@ -122,12 +139,9 @@ internal class BackgroundResumeStore(private val root: File) {
             if (payload.toByteArray(Charsets.UTF_8).size > MAX_BYTES) return false
             val tmp = File(dir, file.name + ".tmp")
             tmp.writeText(payload, Charsets.UTF_8)
-            // 直接 rename 覆盖在某些文件系统上会失败，先删再换；失败就清掉临时文件。
-            if (file.exists() && !file.delete()) {
-                tmp.delete()
-                return false
-            }
-            if (!tmp.renameTo(file)) {
+            // 换名失败就清掉临时文件，**旧文件保持不动**：写不进去是「这次没记住」，
+            // 不是「把上次记住的也删掉」。
+            if (!moveIntoPlace(tmp, file)) {
                 tmp.delete()
                 return false
             }

@@ -6541,3 +6541,40 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
 - 手动路径不 `.trim()`、也不判空白（自动路径两者都有）。模板是资源常量、内容非空，
   所以空提示词在运行期不可达；这段不对称因此没改。
 - 仍未真机验证：自动续跑默认关闭，打开会真发模型调用、改用户会话。
+
+## §32.69 落盘先删再换：写失败变成了「把上次记住的也删掉」（2026-11-01）
+
+`BackgroundResumeStore.write()` 落盘分三步：写 `.tmp` → `delete()` 旧文件 → `renameTo()`。
+中间那一步的理由写在原注释里：「直接 rename 覆盖在某些文件系统上会失败，先删再换」。
+可 App 的 `filesDir` 就在 Linux 文件系统上，`rename(2)` **本来就替换目标** —— 前提不成立，
+代价却是实的：
+
+- 进程在 `delete()` 与 `renameTo()` 之间被杀 → 这个作用域的记忆文件**不存在了**；
+- `renameTo()` 失败（只读、`ENOSPC`、目标被占用）→ 同一结局，而且已经晚了。
+
+重启后 `resumed` 空、`chain` 0、`seen_until` null：已续过的任务重新变成候选（同一条任务会被
+再自动续一次，花的是用户额度）、卡片按钮重新出现、链上限被重置、水位线回退。
+全程静默 —— 写的那一侧只留一条 warn，读的那一侧什么都不知道。
+
+修法：把「换到目标位置」抽成可注入的 `moveIntoPlace`，生产默认就是 `tmp.renameTo(target)`
+（原子替换），**不再先删**；换名失败只清临时文件，旧文件保持不动。注入点只为测试存在
+（真机上没法让 rename 失败）。
+
+验证：
+
+- **先红**：3 例（新构造参数还不存在时编译失败 `Unresolved reference`）。
+- **反证**（把 `write()` 改回「先删再换」）→ **2 红**：`failedMoveKeepsPreviousMemory`
+  （换名失败后旧记忆被清空）、`moveReplacesWithoutDeletingFirst`（换名那一刻旧文件已经不在了）。
+  恢复后文件 sha256 与反证前一致（`8302358b431250d5…`，`RESTORE=OK`）。
+- 定向 `agent.terminal.*` + `BackgroundResumeStoreTest`：**547 例 0 失败**（Store 19 例）。
+- `STAGES=test,lint,assemble`：1099 例 0 失败；lint 无新增；包 32,187,229 字节 `b22c30f82eb2a520…`。
+- `STAGES=test-wide`：2957 例 0 失败。
+
+**边界（如实记录）**：
+
+- `renameTo` 真失败时仍只有一条 warn（`onPersistFailed`），不重试、不换目录。
+- 同仓库其余几个 store（`AgentTodoStore` / `AgentGoalStore` / `AgentTaskLedgerStore` /
+  `BackgroundEventStore` / `TerminalEnvFile`）本来就是「先换名」，这次是把出格的那一个对齐。
+- `DetachedTaskSupervisor.saveTasksLocked()` 的兜底是 `writeText` 就地覆盖（非原子），本轮未动 ——
+  它只在 rename 失败时才走，而且写的是任务记录（可从探活重建），判为下一步而不是本轮。
+- 没有真机验证。

@@ -1146,6 +1146,22 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 边界：用例守的是函数不是调用点（本机 aarch64 跑不了 Robolectric，卡片要 Compose 运行时）；
 手动路径不 `trim()`、不判空白（模板是资源常量，空串不可达）；没有真机验证。
 
+### 第二十批：续跑记忆落盘「先删再换」（2026-11-01）
+
+`BackgroundResumeStore.write()` 原来是「写 `.tmp` → 删旧文件 → 换名」，注释给的理由是
+「直接 rename 覆盖在某些文件系统上会失败」。App 的 `filesDir` 在 Linux 上，`rename(2)`
+本来就替换目标 —— 前提不成立，代价却是把「这次没写进去」升级成「这份记忆没了」：
+`resumed` / `chain` / `seen_until` 一起归零（同一条任务会被再自动续一次，花额度）。
+
+修法：抽 `moveIntoPlace` 注入点，生产默认 `tmp.renameTo(target)`（原子替换），**不再先删**；
+换名失败只清临时文件，旧文件不动。
+
+验证：先红（编译失败）→ 反证（改回先删再换）**2 红**，恢复后 sha 一致 → 定向 **547 例 0 失败**
+→ `STAGES=test,lint,assemble` **1099 例 0 失败**（lint 无新增，包 32,187,229 字节 `b22c30f82eb2a520…`）
+→ `STAGES=test-wide` **2957 例 0 失败**。
+边界：rename 真失败仍只有一条 warn、不重试；`saveTasksLocked` 的 `writeText` 兜底未动；
+没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

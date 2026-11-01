@@ -179,4 +179,54 @@ class BackgroundResumeStoreTest {
         file.writeText("""{"chain":999999}""", Charsets.UTF_8)
         assertEquals(BackgroundResumeStore.MAX_CHAIN, store.loadState("c").chain)
     }
+
+    /**
+     * 换名失败时不能弄丢已有的记忆（第二十批）。
+     *
+     * 旧实现先 `delete()` 再 `renameTo()`：换名一旦失败（或进程正好在这两步之间被杀），
+     * 磁盘上就没有这份记忆了 —— 重启后 `resumed` 空（同一条任务会被再自动续一次，花额度）、
+     * `chain` 归零（链上限失效）、`seen_until` 重立（水位线回退）。
+     */
+    @Test
+    fun failedMoveKeepsPreviousMemory() {
+        assertTrue(
+            store().saveState("c", BackgroundResumeState(listOf("job_a"), chain = 1, seenUntil = 900L))
+        )
+        val failing = BackgroundResumeStore(temporaryFolder.root) { _, _ -> false }
+        assertFalse(
+            failing.saveState("c", BackgroundResumeState(listOf("job_b"), chain = 2, seenUntil = 1_000L))
+        )
+        val loaded = store().loadState("c")
+        assertEquals(listOf("job_a"), loaded.resumed)
+        assertEquals(1, loaded.chain)
+        assertEquals(900L, loaded.seenUntil)
+    }
+
+    /**
+     * 换名那一步，旧文件必须仍然在。
+     *
+     * `rename(2)` 是原子替换，不需要先删；换名时 `target.exists()` 恒为 true，
+     * 就说明实现没有走「先删再换」那条会丢数据的老路。
+     */
+    @Test
+    fun moveReplacesWithoutDeletingFirst() {
+        val sawTarget = mutableListOf<Boolean>()
+        val store = BackgroundResumeStore(temporaryFolder.root) { tmp, target ->
+            sawTarget += target.exists()
+            tmp.renameTo(target)
+        }
+        assertTrue(store.saveState("c", BackgroundResumeState(listOf("job_a"))))
+        assertTrue(store.saveState("c", BackgroundResumeState(listOf("job_a", "job_b"))))
+        // 第一次没有旧文件；第二次旧文件必须还在 —— 先删再换就做不到这一点。
+        assertEquals(listOf(false, true), sawTarget)
+    }
+
+    /** 写失败不能留下临时文件：`.tmp` 攒在目录里既占空间，也让下一次写入多一个陈旧副本。 */
+    @Test
+    fun failedMoveLeavesNoTempFileBehind() {
+        val store = BackgroundResumeStore(temporaryFolder.root) { _, _ -> false }
+        assertFalse(store.saveState("c", BackgroundResumeState(listOf("job_a"))))
+        val leftovers = temporaryFolder.root.walkTopDown().filter { it.name.endsWith(".tmp") }.toList()
+        assertTrue("不该留下临时文件：$leftovers", leftovers.isEmpty())
+    }
 }
