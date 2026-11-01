@@ -608,14 +608,17 @@ internal object OpenAiResponsesProvider : AgentProviderClient {
 
     private fun parseUsage(usage: JSONObject?): AgentTokenUsage? {
         usage ?: return null
+        val input = usage.intValue("input_tokens", "prompt_tokens")
         return AgentTokenUsage(
             contextTokens = usage.intValue("total_tokens"),
-            inputTokens = usage.intValue("input_tokens", "prompt_tokens"),
+            inputTokens = input,
             outputTokens = usage.intValue("output_tokens", "completion_tokens"),
             cachedTokens = usage.optJSONObject("input_tokens_details")?.intValue("cached_tokens")
                 ?: usage.optJSONObject("prompt_tokens_details")?.intValue("cached_tokens"),
             reasoningTokens = usage.optJSONObject("output_tokens_details")?.intValue("reasoning_tokens")
                 ?: usage.optJSONObject("completion_tokens_details")?.intValue("reasoning_tokens"),
+            // Responses 的 input_tokens 是总输入，input_tokens_details.cached_tokens 是其中子集。
+            promptTokens = input,
         ).takeUnless { it.isEmpty }
     }
 

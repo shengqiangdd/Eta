@@ -100,6 +100,7 @@ class GeminiInteractionsTest {
         assertEquals(1, events.filterIsInstance<ProviderEvent.Usage>().size)
         assertEquals(4, events.filterIsInstance<ProviderEvent.Usage>().single().usage.outputTokens)
         assertEquals(16, events.filterIsInstance<ProviderEvent.Usage>().single().usage.contextTokens)
+        assertEquals(10, events.filterIsInstance<ProviderEvent.Usage>().single().usage.promptTokens)
         assertEquals(10, events.filterIsInstance<ProviderEvent.Usage>().single().contextInputTokens)
     }
 
@@ -121,6 +122,7 @@ class GeminiInteractionsTest {
         assertEquals(20, received.usage.outputTokens)
         assertEquals(5, received.usage.reasoningTokens)
         assertEquals(60, received.usage.cachedTokens)
+        assertEquals(100, received.usage.promptTokens)
         assertTrue(events.indexOf(received) > events.indexOfLast { it is ProviderEvent.BlockEnd })
     }
 

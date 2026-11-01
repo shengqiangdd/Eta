@@ -370,6 +370,7 @@ class OpenAiResponsesProviderTest {
             assertEquals(1, events.filterIsInstance<ProviderEvent.HostedToolFinished>().size)
             val usage = events.filterIsInstance<ProviderEvent.Usage>().single().usage
             assertEquals(18, usage.contextTokens)
+            assertEquals(10, usage.promptTokens)
             assertEquals(3, usage.cachedTokens)
             assertEquals(5, usage.reasoningTokens)
         }

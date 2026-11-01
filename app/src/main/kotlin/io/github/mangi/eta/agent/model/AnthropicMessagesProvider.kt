@@ -568,15 +568,18 @@ internal object AnthropicMessagesProvider : AgentProviderClient {
      */
     private fun parseUsage(usage: JSONObject?): AgentTokenUsage? {
         usage ?: return null
+        val input = usage.firstInt("input_tokens")
+        val cacheRead = usage.firstInt("cache_read_input_tokens")
+        val cacheWrite = usage.firstInt("cache_creation_input_tokens")
+        // Anthropic 的 input_tokens 是未缓存输入，总 prompt 要把缓存读/写都加回来。
+        val prompt = input?.let { it + (cacheRead ?: 0) + (cacheWrite ?: 0) }
         return AgentTokenUsage(
-            contextTokens = usage.firstInt("input_tokens")?.let { input ->
-                input + (usage.firstInt("cache_read_input_tokens") ?: 0) +
-                    (usage.firstInt("cache_creation_input_tokens") ?: 0)
-            },
-            inputTokens = usage.firstInt("input_tokens"),
+            contextTokens = prompt,
+            inputTokens = input,
             outputTokens = usage.firstInt("output_tokens"),
             reasoningTokens = usage.firstInt("thinking_output_tokens"),
-            cachedTokens = usage.firstInt("cache_read_input_tokens")
+            cachedTokens = cacheRead,
+            promptTokens = prompt,
         ).takeUnless { it.isEmpty }
     }
 
@@ -590,6 +593,7 @@ internal object AnthropicMessagesProvider : AgentProviderClient {
         outputTokens = later.outputTokens ?: outputTokens,
         reasoningTokens = later.reasoningTokens ?: reasoningTokens,
         cachedTokens = later.cachedTokens ?: cachedTokens,
+        promptTokens = later.promptTokens ?: promptTokens,
     )
 
     private fun parseJsonObject(raw: String): JSONObject =

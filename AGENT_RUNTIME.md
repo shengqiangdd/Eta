@@ -1213,6 +1213,26 @@ store 的 `sanitize` 同一口径。内容没变时不重建列表（省一次�
 边界：只有「连续且整毫秒都处理过」的段会被压缩；前面压着未处理任务时仍可能重发；
 `resumed` 仍是 64 条；没有真机验证。
 
+### 第二十四批：缓存命中率把「已含缓存」的输入又加了一次（2026-11-02）
+
+`cacheShare` 原来统一用 `cached / (cached + input)`，只在「input 是未缓存输入」时成立。
+Anthropic 的 `input_tokens` 确实未缓存，但 OpenAI Chat 的 `prompt_tokens`、Responses 的
+`input_tokens`、DeepSeek 的 `prompt_tokens`、Gemini 的 `total_input_tokens` 本身已包含缓存命中 ——
+再相加等于把命中 token 算两遍（prompt=1000、cached=800 时旧公式 44%，真实 80%）。
+dsh 的口径是 `cacheRead / (input + cacheRead + cacheWrite)`，三个桶互不重叠。
+
+修法：`AgentTokenUsage` / `AgentRuntimeWire` 新增 `promptTokens`（`usage_prompt`），
+四个 provider 各自给总输入（Anthropic 加回 cache_read + cache_creation；其余直接取输入总量）；
+账本 `Record` / `Totals` 新增 `prompt`，命中率 = `cached / prompt` 并夹到 `[0, 1]`；
+旧账本没有 `prompt` 时回退旧公式。文案改为「缓存命中率」，三语同步。
+
+验证：先红 4 条（旧公式），反证两处（公式改回、Anthropic 置 null 各自红）→ 定向 5 类 84/0 →
+门禁 1103/0（lint 183，包 32,193,681 字节 `533e08ad83cce0fe…`）→ test-wide 2969/0。
+
+边界：旧账本仍按旧公式回退；`totalTokens` 仍是 `input + output`（Anthropic 缓存读写不进总量，
+既有口径未改）；`AgentRuntimeWireTest` 在 Linux/aarch64 跑不了 Robolectric，`usage_prompt`
+的 Bundle 往返未在本机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

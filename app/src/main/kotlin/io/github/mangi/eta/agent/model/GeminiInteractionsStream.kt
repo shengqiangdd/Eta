@@ -303,6 +303,8 @@ internal class GeminiInteractionsStream(
             outputTokens = token("total_output_tokens", usage.outputTokens),
             reasoningTokens = token("total_thought_tokens", usage.reasoningTokens),
             cachedTokens = token("total_cached_tokens", usage.cachedTokens),
+            // Interactions 的 total_input_tokens 是各 hop 输入总量，total_cached_tokens 是其中命中部分。
+            promptTokens = token("total_input_tokens", usage.promptTokens),
         )
     }
 

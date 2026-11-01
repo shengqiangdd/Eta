@@ -1251,6 +1251,7 @@ internal object AgentRuntimeWire {
         usage.outputTokens?.let { putInt("usage_output", it) }
         usage.reasoningTokens?.let { putInt("usage_reasoning", it) }
         usage.cachedTokens?.let { putInt("usage_cache", it) }
+        usage.promptTokens?.let { putInt("usage_prompt", it) }
     }
 
     private fun Bundle.getTokenUsage(): AgentTokenUsage =
@@ -1260,6 +1261,7 @@ internal object AgentRuntimeWire {
             outputTokens = optionalInt("usage_output"),
             reasoningTokens = optionalInt("usage_reasoning"),
             cachedTokens = optionalInt("usage_cache"),
+            promptTokens = optionalInt("usage_prompt"),
         )
 
     private fun decodeCustomHeaders(raw: String?): List<CustomHeader> =

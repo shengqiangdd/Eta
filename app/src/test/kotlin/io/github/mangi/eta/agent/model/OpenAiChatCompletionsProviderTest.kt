@@ -392,6 +392,7 @@ class OpenAiChatCompletionsProviderTest {
             assertEquals(8, parsedUsage.outputTokens)
             assertEquals(5, parsedUsage.reasoningTokens)
             assertEquals(3, parsedUsage.cachedTokens)
+            assertEquals(10, parsedUsage.promptTokens)
 
             val request = JSONObject(requestBody.get())
             assertEquals(false, request.getBoolean("enable_thinking"))

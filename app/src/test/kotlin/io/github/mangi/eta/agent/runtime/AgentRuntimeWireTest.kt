@@ -801,6 +801,7 @@ class AgentRuntimeWireTest {
                     outputTokens = 320,
                     reasoningTokens = 80,
                     cachedTokens = 900,
+                    promptTokens = 1200,
                 ),
             ),
             AgentEvent.ToolStarted(

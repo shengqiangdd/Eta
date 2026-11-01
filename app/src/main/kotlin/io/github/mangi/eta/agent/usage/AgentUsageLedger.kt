@@ -14,8 +14,9 @@ import org.json.JSONObject
  * 只追加 JSONL（每月一个文件），不做数据库迁移：用量是"可丢失的观测数据"，
  * 损坏一行不应影响对话，因此读取时逐行容错、写入失败静默。
  *
- * 口径说明：`cached` 由各服务商返回，有的把缓存命中计入 `input`，有的单列；
- * 因此面板同时给出绝对值，并提供 `cacheShare = cached / (cached + input)` 作为**粗略**参考。
+ * 口径说明：`cached` 由各服务商返回，有的把缓存命中计入 `input`，有的单列。
+ * 写入时同时记录 `prompt`（服务商口径的**总输入**），命中率 = `cached / prompt`；
+ * 旧账本没有 `prompt`，读取时回退到 `cached / (cached + input)`（与旧版行为一致）。
  */
 internal class AgentUsageLedger(
     private val directory: File,
@@ -31,6 +32,8 @@ internal class AgentUsageLedger(
         val output: Int?,
         val cached: Int?,
         val reasoning: Int?,
+        /** 服务商口径的总输入 token；旧调用方不传时为 null（读取时走旧公式回退）。 */
+        val prompt: Int? = null,
     )
 
     /**
@@ -55,6 +58,8 @@ internal class AgentUsageLedger(
         val cached: Long = 0,
         val reasoning: Long = 0,
         val calls: Long = 0,
+        /** 命中率分母：新记录为服务商总输入，旧记录回退为 `input + cached`。 */
+        val prompt: Long = 0,
     ) {
         operator fun plus(other: Totals): Totals = Totals(
             input = input + other.input,
@@ -62,15 +67,16 @@ internal class AgentUsageLedger(
             cached = cached + other.cached,
             reasoning = reasoning + other.reasoning,
             calls = calls + other.calls,
+            prompt = prompt + other.prompt,
         )
 
         val totalTokens: Long get() = input + output
 
-        /** 缓存命中占比，仅作粗略参考；没有输入时返回 0。 */
+        /** 缓存命中占比；分母是总输入，缺少总输入时返回 0。 */
         val cacheShare: Double
             get() {
-                val base = cached + input
-                return if (base <= 0) 0.0 else cached.toDouble() / base
+                if (prompt <= 0) return 0.0
+                return (cached.toDouble() / prompt).coerceIn(0.0, 1.0)
             }
     }
 
@@ -109,7 +115,7 @@ internal class AgentUsageLedger(
                 // 旧月文件仍然可读（见 [coverageOf]），只是不再往里写。
                 val file = File(directory, "usage-$day.jsonl")
                 pruneIfDue(day)
-                val line = JSONObject()
+                val json = JSONObject()
                     .put("ts", record.ts)
                     .put("provider", record.provider.take(120))
                     .put("model", record.model.take(120))
@@ -118,7 +124,9 @@ internal class AgentUsageLedger(
                     .put("out", record.output ?: 0)
                     .put("cached", record.cached ?: 0)
                     .put("reasoning", record.reasoning ?: 0)
-                    .toString()
+                // 只有服务商真的给了总输入才写：缺省表示旧记录，读取时走兼容公式。
+                if (record.prompt != null) json.put("prompt", record.prompt)
+                val line = json.toString()
                 FileOutputStream(file, true).use { stream ->
                     stream.write((line + "\n").toByteArray(Charsets.UTF_8))
                 }
@@ -143,12 +151,19 @@ internal class AgentUsageLedger(
                 val ts = json.optLong("ts", 0)
                 if (ts < cutoffMs) return@readLines
                 val day = LocalDate.ofInstant(Instant.ofEpochMilli(ts), zone).toString()
+                val input = json.optLong("in", 0).coerceAtLeast(0)
+                val cached = json.optLong("cached", 0).coerceAtLeast(0)
+                // 新记录带服务商总输入；旧记录没有该键，回退到旧公式的 `in + cached`。
+                // 总输入为 0 但 cached 有值属于矛盾数据，也回退，避免命中率被算成 0。
+                val prompt = (if (json.has("prompt")) json.optLong("prompt", 0).coerceAtLeast(0) else 0L)
+                    .takeIf { it > 0 } ?: (input + cached)
                 val bucket = Totals(
-                    input = json.optLong("in", 0).coerceAtLeast(0),
+                    input = input,
                     output = json.optLong("out", 0).coerceAtLeast(0),
-                    cached = json.optLong("cached", 0).coerceAtLeast(0),
+                    cached = cached,
                     reasoning = json.optLong("reasoning", 0).coerceAtLeast(0),
                     calls = 1,
+                    prompt = prompt,
                 )
                 totals += bucket
                 byDay[day] = (byDay[day] ?: Totals()) + bucket

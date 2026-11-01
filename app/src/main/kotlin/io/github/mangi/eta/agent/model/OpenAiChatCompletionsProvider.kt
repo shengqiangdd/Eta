@@ -402,9 +402,10 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
 
     private fun parseUsage(chunk: JSONObject): AgentTokenUsage? {
         val usage = chunk.optJSONObject("usage") ?: return null
+        val input = usage.firstInt("prompt_tokens", "input_tokens")
         return AgentTokenUsage(
             contextTokens = usage.firstInt("total_tokens"),
-            inputTokens = usage.firstInt("prompt_tokens", "input_tokens"),
+            inputTokens = input,
             outputTokens = usage.firstInt("completion_tokens", "output_tokens"),
             reasoningTokens = usage.firstNestedInt(
                 "completion_tokens_details",
@@ -416,7 +417,10 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
             cachedTokens = usage.firstNestedInt(
                 "prompt_tokens_details",
                 childKey = "cached_tokens"
-            ) ?: usage.firstInt("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens")
+            ) ?: usage.firstInt("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"),
+            // Chat Completions 的 prompt_tokens 是总输入（已包含 cached_tokens），
+            // 与 Anthropic 的「input_tokens 单列未缓存」不同，不能把 cached 再加一次。
+            promptTokens = input,
         ).takeUnless { it.isEmpty }
     }
 

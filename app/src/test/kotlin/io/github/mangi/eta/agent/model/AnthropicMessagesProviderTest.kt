@@ -198,6 +198,7 @@ class AnthropicMessagesProviderTest {
             assertEquals(1_050, last.usage.contextTokens)
             assertEquals(1_050, last.contextInputTokens)
             assertEquals(100, last.usage.inputTokens)
+            assertEquals(1_050, last.usage.promptTokens)
             assertEquals(900, last.usage.cachedTokens)
             assertEquals(42, last.usage.outputTokens)
         }

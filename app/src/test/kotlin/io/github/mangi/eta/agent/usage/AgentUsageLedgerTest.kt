@@ -24,7 +24,8 @@ class AgentUsageLedgerTest {
         output: Int? = 50,
         cached: Int? = 0,
         reasoning: Int? = 0,
-    ) = AgentUsageLedger.Record(ts, provider, model, "chat", input, output, cached, reasoning)
+        prompt: Int? = null,
+    ) = AgentUsageLedger.Record(ts, provider, model, "chat", input, output, cached, reasoning, prompt)
 
     @Test
     fun `records aggregate by day and by model`() {
@@ -222,6 +223,48 @@ class AgentUsageLedgerTest {
         assertEquals(2L, summary.byPurpose.first().totals.calls)
 
         assertEquals("compact", ledger.recent(limit = 5, nowMs = base).last().purpose)
+    }
+
+    // ── 缓存命中率口径 ─────────────────────────────────
+
+    @Test
+    fun `cache share uses the reported prompt when cached tokens are already inside input`() {
+        val ledger = ledger()
+        // OpenAI 兼容端点：prompt_tokens 已包含 cached_tokens，分母不能再加一次 cached。
+        ledger.record(record(base, input = 1_000, cached = 800, prompt = 1_000))
+        assertEquals(0.8, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
+    }
+
+    @Test
+    fun `cache share uses disjoint prompt when cached tokens are reported separately`() {
+        val ledger = ledger()
+        // Anthropic：input_tokens 未缓存，prompt = input + cache_read + cache_creation。
+        ledger.record(record(base, input = 200, cached = 700, prompt = 1_000))
+        assertEquals(0.7, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
+    }
+
+    @Test
+    fun `cache share falls back to the legacy formula without a prompt total`() {
+        val ledger = ledger()
+        ledger.record(record(base, input = 100, cached = 300))
+        assertEquals(0.75, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
+    }
+
+    @Test
+    fun `cache share is clamped when cached exceeds the prompt total`() {
+        val ledger = ledger()
+        ledger.record(record(base, input = 100, cached = 1_000, prompt = 1_000))
+        assertEquals(1.0, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
+    }
+
+    @Test
+    fun `prompt totals accumulate across mixed records`() {
+        val ledger = ledger()
+        ledger.record(record(base, input = 1_000, cached = 800, prompt = 1_000))
+        ledger.record(record(base + 1, input = 200, cached = 700, prompt = 1_000))
+        ledger.record(record(base + 2, input = 100, cached = 300))
+        // (800 + 700 + 300) / (1000 + 1000 + 400)
+        assertEquals(1_800.0 / 2_400.0, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
     }
 
     @Test

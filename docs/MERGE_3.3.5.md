@@ -6763,3 +6763,54 @@ completedTime - firstTokenTime`，速度 = `decodeTokens / (decodeMs / 1000)`）
   的任务，它被挤出后仍可能重发 —— 下一批再评估要不要把 `resumed` 改成带时间戳的集合。
 - `resumed` 仍是 64 条上限，超出后 UI 也不再记得「更早的续过」（按钮可能重现）。
 - 没有真机验证。
+
+## §32.74 缓存命中率把「已含缓存」的输入又加了一次（2026-11-02）
+
+用量面板的「缓存命中率」一直偏低，和 provider 返回的记录对不上。查下来不是取数错，
+而是**分母口径**错：
+
+`AgentUsageLedger.Totals.cacheShare` 原来统一用 `cached / (cached + input)`。这个公式
+只在「`input` 是未缓存输入」时成立 —— Anthropic 的 `input_tokens` 确实是未缓存输入，
+但 OpenAI Chat 的 `prompt_tokens`、Responses 的 `input_tokens`、DeepSeek 的
+`prompt_tokens`、Gemini 的 `total_input_tokens` **本身就已经包含缓存命中**。
+对它们再加一次 `cached`，等于把命中 token 算了两遍：prompt=1000、cached=800 时
+真实命中率 80%，旧公式给出 800 / 1800 = 44%。
+
+dsh 最新源码（`packages/experimental/client-ui-stats/src/client/stats-usage.ts`）的口径
+可以直接对照：`contextTokens = inputTokens + cacheReadTokens + cacheWriteTokens`，
+`cacheHitRate = cacheReadTokens / contextTokens`；`packages/llm/token-meter/src/turn-usage.ts`
+也把 `uncachedInputTokens`、`cacheReadTokens`、`cacheWriteTokens` 定义为**互不重叠**的三个桶。
+换句话说，命中率的分母必须是「总输入」，而不是「厂商原样的 input 再拼一次 cache」。
+
+修法：
+
+- `AgentTokenUsage` 新增 `promptTokens`（总输入）。四个 provider 各自折算：
+  - OpenAI Chat：`prompt_tokens`（或 `input_tokens`）；
+  - OpenAI Responses：`input_tokens`（或 `prompt_tokens`）；
+  - Anthropic：`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`；
+  - Gemini Interactions：`total_input_tokens`。
+- 账本 `Record` / `Totals` 新增 `prompt`；新记录写 `prompt`，命中率 = `cached / prompt`
+  并夹到 `[0, 1]`；**旧账本没有 `prompt`**，读取时回退到旧公式，行为不变。
+- `AgentRuntimeWire` 新增 `usage_prompt` 键（旧 Runtime 不发送 → 读到 null → 回退）。
+- 文案从「缓存命中」改成「缓存命中率」，三语同步；说明改为「cached ÷ 服务商返回的总输入」。
+
+验证：
+
+- **先红**：新增 5 条账本用例，在旧公式下 4 条红（`uses the reported prompt…`、
+  `uses disjoint prompt…`、`clamped…`、`mixed records…`），旧记录回退那条绿。
+- **反证两处**：① `cacheShare` 改回 `cached / (cached + input)` → 同样 4 条红；
+  ② Anthropic 的 `promptTokens` 置 null → `usageReportsContextOccupancy…` 红。恢复后定向全绿。
+- 定向 5 个类（`AgentUsageLedgerTest` + 四个 provider 测试）：**84 例 0 失败**。
+- `STAGES=test,lint,assemble`：**1103 例 0 失败**（这 5 个类不在 `FAST_TEST_FILTERS`，用例数不变）；
+  lint baseline 183；包 32,193,681 字节 `533e08ad83cce0fe…`。
+- `STAGES=test-wide`：**2969 例 0 失败**（上一批 2964，新增的 5 条账本用例都在里面）。
+
+**边界（如实记录）**：
+
+- 旧账本没有 `prompt`，仍按旧公式回退 —— 它们的命中率继续偏低，直到滚出 180 天窗口；
+  文件里没有 provider 协议标记，无法无歧义地追溯修正。
+- `Totals.totalTokens` 仍是 `input + output`，没有改成 `prompt + output`；Anthropic 的
+  缓存读写仍不进「总 token」。这是既有口径，与本轮命中率修复分开。
+- `AgentRuntimeWireTest` 带 `@Config(sdk = [33, 36])`，在 Linux/aarch64 上必撞 Robolectric
+  native runtime（门禁注释已写明），所以 `usage_prompt` 的 Bundle 往返**没有在本机验证**；
+  provider 解析与账本计算都有定向用例覆盖。
