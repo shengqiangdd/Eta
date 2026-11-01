@@ -114,3 +114,15 @@ internal val DetachedTask.commandStatus: String get() = when {
     exitCode == 0 -> "completed"
     else -> "failed"
 }
+
+/**
+ * 探活结论 → 这条记录该不该补「结束时间」。
+ *
+ * 只对**探活明确说死了**的记录返回 true：探测本身失败（起不了 shell、没权限）时调用方传
+ * false，宁可继续显示「运行中」也不能把活着的进程记成结束——记录一旦写上 `completed_at`
+ * 就只能看到日志、不能再认领。
+ *
+ * 抽成函数是为了能本机测：`list()` 本身要起 shell 探 `/proc/<pid>/environ`，单测跑不了。
+ */
+internal fun shouldMarkCompleted(task: DetachedTask, probeDead: Boolean): Boolean =
+    probeDead && task.completedAt == null

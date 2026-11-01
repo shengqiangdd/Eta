@@ -231,9 +231,18 @@ internal class DetachedTaskSupervisor(
             if (task.completedAt != null) return@map DetachedTaskStatus(task, false)
             var running = aliveById[task.id] ?: true
             if (!task.commandTask && task.identity == "user" && aliveById[task.id] == true && !adoptUserTask(task)) running = false
-            if (task.commandTask && !running) {
-                val exitCode = readCommandExit(task)
-                DetachedTaskStatus(completeCommand(task.id, exitCode, if (exitCode == null) "interrupted" else null) ?: task, false)
+            // 命令任务按 running 判定（它不会走认领分支）；守护任务只在**探活明确说死了**时记账，
+            // 「活着但认领失败」不写 completed_at —— 那是临时接管不了，不是进程没了。
+            val probeDead = if (task.commandTask) !running else aliveById[task.id] == false
+            if (shouldMarkCompleted(task, probeDead)) {
+                if (task.commandTask) {
+                    val exitCode = readCommandExit(task)
+                    DetachedTaskStatus(completeTask(task.id, exitCode, if (exitCode == null) "interrupted" else null) ?: task, false)
+                } else {
+                    // 守护任务没有 .exit 文件，只能记「中断」；不写的话记录永远停在 running，
+                    // 事件、卡片、自动续跑全看不到它已经结束。
+                    DetachedTaskStatus(completeTask(task.id, null, "interrupted") ?: task, false)
+                }
             } else DetachedTaskStatus(task, running)
         }
         if (aliveById.isNotEmpty()) {
@@ -348,7 +357,7 @@ internal class DetachedTaskSupervisor(
             try {
                 val exitCode = process.waitFor()
                 reader.join(500)
-                completeCommand(id, if (running.stopReason == null) exitCode else null, running.stopReason)
+                completeTask(id, if (running.stopReason == null) exitCode else null, running.stopReason)
             } finally {
                 oneShotSupervisor.retireExitedProcess(process)
                 COMMAND_PROCESSES.remove(id, running)
@@ -379,7 +388,7 @@ internal class DetachedTaskSupervisor(
         if (task.identity == "root" && !rootAvailable()) return false
         COMMAND_PROCESSES[id]?.stopReason = reason
         if (!stopTaskProcess(task, removeFiles = false)) return false
-        return completeCommand(id, null, reason) != null
+        return completeTask(id, null, reason) != null
     }
 
     fun markCompletionNotified(id: String): Boolean = synchronized(RECORDS_LOCK) {
@@ -390,7 +399,7 @@ internal class DetachedTaskSupervisor(
         saveTasksLocked(tasks)
     }
 
-    private fun completeCommand(id: String, exitCode: Int?, reason: String?): DetachedTask? = synchronized(RECORDS_LOCK) {
+    private fun completeTask(id: String, exitCode: Int?, reason: String?): DetachedTask? = synchronized(RECORDS_LOCK) {
         val tasks = loadTasksLocked()
         val index = tasks.indexOfFirst { it.id == id }
         if (index < 0) return@synchronized null

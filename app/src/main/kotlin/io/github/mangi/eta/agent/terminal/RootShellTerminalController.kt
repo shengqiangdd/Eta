@@ -295,19 +295,7 @@ internal class RootShellTerminalController(
             ?: return errorJson("DAEMON_UNAVAILABLE", "守护任务宿主不可用")
         val statuses = supervisor.list().filterNot { it.task.commandTask }
         val tasks = JSONArray()
-        statuses.forEach { status ->
-            tasks.put(
-                JSONObject()
-                    .put("task_id", status.task.id)
-                    .put("pid", status.task.pid)
-                    .put("running", status.running)
-                    .put("command", status.task.command)
-                    .put("cwd", status.task.cwd)
-                    .put("identity", status.task.identity)
-                    .put("environment", status.task.environment.wireName)
-                    .put("started_at", status.task.startedAt)
-            )
-        }
+        statuses.forEach { status -> tasks.put(daemonTaskJson(status)) }
         return JSONObject()
             .put("ok", true)
             .put("tool", "terminal_daemon")
@@ -945,3 +933,25 @@ internal class RootShellTerminalController(
     }
 
 }
+
+/**
+ * 守护任务对外的视图。
+ *
+ * 原来这里只输出 `running`，`completed_at` / `end_reason` 全缺 ——
+ * 模型看到 `running=false` 也**不知道它什么时候结束、是不是异常中断**，
+ * 而记录里其实一直有这些值（第十一批之后守护任务才会真的写 `completed_at`）。
+ * 与命令任务的 `taskJson` 用同一套字段名，免得同一个概念两种叫法。
+ *
+ * 抽成顶层函数是为了能本机测（[RootShellTerminalController.daemonList] 需要真实 shell 探活）。
+ */
+internal fun daemonTaskJson(status: DetachedTaskStatus): JSONObject = JSONObject()
+    .put("task_id", status.task.id)
+    .put("pid", status.task.pid)
+    .put("running", status.running)
+    .put("command", status.task.command)
+    .put("cwd", status.task.cwd)
+    .put("identity", status.task.identity)
+    .put("environment", status.task.environment.wireName)
+    .put("started_at", status.task.startedAt)
+    .put("completed_at", status.task.completedAt ?: JSONObject.NULL)
+    .put("end_reason", status.task.endReason ?: JSONObject.NULL)

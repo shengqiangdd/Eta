@@ -934,6 +934,57 @@ lint 抓住一处真错：`scopeId` 放在 `modifier` 前面 → `ModifierParame
 包 32,169,213 字节（`07c4d21e…`，主包）。自动续跑本身仍未真机验证
 （`agent_background_resume_auto` 默认关；打开会真的触发一轮模型调用）。
 
+### 第十一批：守护任务死了也得有人记账（2026-11-01）
+
+问题：`terminal_daemon` **没有完成线程**。`DetachedTaskSupervisor.list()` 里补结束时间的
+只有 `if (task.commandTask && !running)` 一条分支 —— 命令任务自己有完成线程、从不需要它；
+守护任务却只剩「有人主动 `list()`」这一条路。没人问，记录永远停在「运行中」：
+卡片一直转圈、`<background_tasks>` 一直说它还在、自动续跑等不到这次结束（批十的触发链空转）。
+
+改法：
+
+- `shouldMarkCompleted(task, probeDead)`：纯函数，`probeDead && completedAt == null`。
+- `list()` 对守护任务只在 **`aliveById[id] == false`** 时记账；`null`（这次没探到：
+  shell 起不来 \/ 无 root）保守当活着 —— 写上去就再也不能认领。
+- `completeCommand` → `completeTask`（两类任务共用）。
+- `BackgroundTerminalJobs.probe()` = `supervisor.list()`，把巡检暴露给 App 层。
+- `DetachedTaskProbe`：每 5 分钟一次；**先读 JSON**，只有存在未结束的守护任务才起 shell。
+- `EtaApp.onCreate` 起循环，排在 `BackgroundAutoResumeWatcher.start` 之后、`resume()` 之前 ——
+  探活写回的 `completed_at` 会被 watcher 当成「刚结束」，基准必须早于它。
+- 循环里 `runCatching` + warn：后台静默循环一次失败就永久停掉的话，界面上只会表现为
+  「功能没了」而且没有任何报错（§122 的教训）。
+
+与界面的关系：`completeTask` 走 `saveTasksLocked` → `notifyChanged()`，卡片随探活写回刷新，
+不需要另开通道。
+
+同一处的第二层：`terminal_daemon list` 只输出 `running`，没有 `completed_at` \/ `end_reason`。
+记录里有了，模型仍看不见「什么时候停的、是不是异常退出」。抽 `daemonTaskJson(status)` 补齐，
+字段名与命令任务的 `taskJson` 一致；不补 `description`（守护任务启动入口不接受该参数，
+记录里恒为空串）。
+
+验证（本机 2026-11-01）：定向 **12／0**（`DetachedTaskRecordTest` 9 + `DaemonTaskViewTest` 3）；
+`STAGES=test,lint,assemble` **1052／0**；lint baseline 194（183 命中 + 11 条依赖提示未复现）；
+死文案 0；包 32,749,029 字节 `615ca341…`；`STAGES=test-wide` **2910／0**。
+
+真机（本机 PKX110 \/ Android 16，21:56 装机，装的是门禁产物）：起 `sleep 900` 的
+`dm_f92dab77` → 21:57:28 `kill -9` → **全程没有调 `list()`** → 22:01:07.973 记录自己变成
+`completed_at=1793541667973`、`end_reason=interrupted`（kill 后 220 秒，正是启动后第一轮探活）。
+「不空转」：探活只在真去巡检时打一条 debug 日志，没有待巡检任务的那一轮日志不出现
+（`logcat -d -s Eta` 里查 `detached task probe`）。实测：把 `logcat` 缓冲临时调到 8 MiB（默认 256 KiB，实测 3 分钟就被冲干净 ——
+「没有日志」本身根本不算证据），清空后等下一轮：缓冲里 **34,122 行**、Eta 仍在写
+agent 事件，而 `detached task probe` **0 条**；测完恢复 256 KiB。
+
+边界（如实记录）：
+
+- **5 分钟粒度**：最坏晚 5 分钟才发现；App 进程被杀之后不探，要等下次启动。
+- **写的是「发现的时刻」，不是「退出的时刻」**：守护任务没有 `.exit` 文件。
+- **`end_reason` 只会是 `interrupted`**，`exit_code` 恒为 `null`（同样因为没有退出码）。
+- **探测失败不记账**：root 未授权 \/ shell 起不来时保持「运行中」—— 宁可显示旧状态，
+  也不能把活着的服务写死。
+- **只在 App 进程里跑**：与批十同一个前提。
+- 每轮要起一次 root shell（仅当存在未结束的守护任务时）；没有任务时只读一次 JSON，不开进程。
+- `terminal_daemon list` 新增字段是纯新增，但读 `completed_at` 前要允许它是 `null`。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

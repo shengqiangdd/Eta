@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.terminal
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,7 +18,11 @@ import org.junit.Test
  */
 class DetachedTaskRecordTest {
 
-    private fun task(sessionScope: String? = null) = DetachedTask(
+    private fun task(
+        sessionScope: String? = null,
+        commandTask: Boolean = true,
+        completedAt: Long? = null,
+    ) = DetachedTask(
         id = "job_12345678",
         pid = 42,
         token = "token",
@@ -27,8 +32,9 @@ class DetachedTaskRecordTest {
         environment = TerminalEnvironment.ANDROID,
         logPath = "/data/local/tmp/eta/daemon/job_12345678.log",
         startedAt = 1_700_000_000_000,
-        commandTask = true,
+        commandTask = commandTask,
         description = "测试",
+        completedAt = completedAt,
         sessionScope = sessionScope,
     )
 
@@ -75,5 +81,48 @@ class DetachedTaskRecordTest {
     fun unknownKeysAreIgnored() {
         val json: JSONObject = task("conv-xyz").toRecordJson().put("future_field", 7)
         assertEquals("conv-xyz", json.toDetachedTask().sessionScope)
+    }
+
+    /**
+     * 探活确认死亡后必须补 `completed_at`。
+     *
+     * 原来只有命令任务会被补（`list()` 里 `if (task.commandTask && !running)`）；守护任务
+     * 死了只返回 `running=false` 而记录不变 —— 记录文件永远停在「运行中」，任务结束事件、
+     * 卡片、自动续跑都看不到它结束。
+     */
+    @Test
+    fun deadTaskGetsMarkedCompleted() {
+        assertTrue(shouldMarkCompleted(task(commandTask = false), probeDead = true))
+        // 命令任务走同一条判定（保留原有分支的语义，只是把「该不该记」抽出来了）。
+        assertTrue(shouldMarkCompleted(task(commandTask = true), probeDead = true))
+    }
+
+    /** 探活失败 / 进程还活着：不能记结束 —— 写上去就再也不能认领了。 */
+    @Test
+    fun aliveTaskIsNotMarkedCompleted() {
+        assertFalse(shouldMarkCompleted(task(commandTask = false), probeDead = false))
+    }
+
+    /** 已经结束的记录不重写时间：重复 `list()` 不能把 `completed_at` 一直往后推。 */
+    @Test
+    fun finishedTaskIsNotRemarked() {
+        assertFalse(shouldMarkCompleted(task(completedAt = 1_700_000_500_000), probeDead = true))
+    }
+
+    /**
+     * 探活只在「有未结束的守护任务」时才该起 shell。
+     *
+     * 命令任务有完成线程，无需巡检；没任务时更不能隔几分钟就 fork 一个 shell ——
+     * 这台设备的亮屏 CPU 本就敏感。
+     */
+    @Test
+    fun probeOnlyNeededForUnfinishedDaemons() {
+        assertFalse(needsDaemonProbe(emptyList()))
+        // 只有未结束的命令任务：不需要巡检（完成线程会写 completed_at）。
+        assertFalse(needsDaemonProbe(listOf(task(commandTask = true))))
+        // 已结束的守护任务：不需要。
+        assertFalse(needsDaemonProbe(listOf(task(commandTask = false, completedAt = 1_700_000_500_000))))
+        // 有未结束的守护任务：需要。
+        assertTrue(needsDaemonProbe(listOf(task(commandTask = false))))
     }
 }

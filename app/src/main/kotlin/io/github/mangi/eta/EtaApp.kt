@@ -12,6 +12,7 @@ import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.VirtualDisplayImeRestore
 import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
+import io.github.mangi.eta.agent.terminal.DetachedTaskProbe
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
@@ -67,6 +68,21 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         // 后台任务结束后的触发点：进程级，不靠任何界面组合活着（第十批）。
         // 放在 resume() 之前：watcher 的“只续启动之后结束的任务”基准要早于探活写回。
         BackgroundAutoResumeWatcher.start(this)
+        // 守护任务（terminal_daemon）没有完成线程：不探活的话记录永远停在「运行中」，
+        // 卡片、提示、自动续跑都看不到它已经退出。没有未结束的守护任务时只读一次 JSON。
+        applicationScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(DetachedTaskProbe.INTERVAL_MS)
+                // 兜住异常：这里一次失败不能让探活永久停掉（同 §122 的教训 —— 「一次失败即永久停用」
+                // 在界面上表现为「功能没了」，而且没有任何报错）。下一轮照常。
+                runCatching { DetachedTaskProbe.probeOnce(this@EtaApp) }
+                    .onFailure { error ->
+                        AndroidAgentLogger.warn(
+                            "Eta detached task probe failed: type=${error.javaClass.simpleName}"
+                        )
+                    }
+            }
+        }
         RootAccess.initialize(this)
         applicationScope.launch {
             // 若上一次在虚拟屏输入租约期间被系统杀掉，先把默认输入法修回来，避免主屏没有键盘。

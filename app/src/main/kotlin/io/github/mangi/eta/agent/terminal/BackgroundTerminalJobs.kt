@@ -68,6 +68,17 @@ internal class BackgroundTerminalJobs(
         return base("list").put("tasks", JSONArray(tasks.map { taskJson(it.task) })).toString()
     }
 
+    /**
+     * 探活并修正记录（含守护任务）。
+     *
+     * [list] 只把 `commandTask` 回给调用方，但底层 `supervisor.list()` 巡检的是**所有**未完成任务，
+     * 会给确认死亡的那些补 `completed_at`。守护任务没有完成线程，只能靠这个入口发现它已经退出。
+     */
+    fun probe(): Int {
+        // 返回记录条数，只为让调用方能打一行「确实巡检了」的诊断日志（不参与判定）。
+        return supervisor.list().size
+    }
+
     fun read(id: String, maxBytes: Int = 16_000): String {
         refresh()
         val task = supervisor.findTask(id)?.takeIf { it.commandTask }

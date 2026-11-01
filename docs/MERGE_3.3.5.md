@@ -5925,3 +5925,151 @@ val canResumeThis = resumeButtonEnabled && canSend && task.id !in resumed
 
 门禁：`STAGES=test,lint,assemble` **1045／0**（lint 无新增，baseline 194）；
 `STAGES=test-wide` **2903／0**；包 32,169,213 字节 `07c4d21e…`（主包）。
+
+## §32.60 守护任务死了没人记账：补一个进程级探活（2026-11-01）
+
+### 1. 缺陷：命令任务有完成线程，守护任务没有
+
+`DetachedTaskSupervisor.list()` 里给记录补结束时间的只有一条分支：
+
+```kotlin
+if (task.commandTask && !running) { ... completeCommand(...) }
+```
+
+命令任务（`terminal_job`）自己有完成线程，不需要这条分支兜底；守护任务（`terminal_daemon`）
+**没有完成线程**，进程被 kill 之后唯一能发现它死了的地方，就是下一次有人调 `list()` ——
+也就是模型主动问 `terminal_daemon list`。没人问，记录就永远停在「运行中」。
+
+后果不是「显示不好看」，是三件具体的事：
+
+1. 会话卡片一直显示「运行中」，用户以为服务还活着；
+2. `<background_tasks>` 每轮都告诉模型它还在跑，模型据此判断「不用重启」；
+3. 自动续跑永远等不到这次「结束」—— 批十做的触发链对守护任务是空转。
+
+装机前设备上有 32 条记录、其中 31 条 `completed_at` 有值：说明这不是「经常」发生
+（模型常会自己 `list` 一下），但**一旦发生就是永久的** —— 没有任何东西会再来修正它。
+
+### 2. 改法：把「该不该记结束」抽出来，只在探到死时写
+
+- `shouldMarkCompleted(task, probeDead)`：纯函数，`probeDead && completedAt == null`。
+- `list()` 的判定有两条来源：命令任务看 `!running`（原来就是），守护任务看
+  **`aliveById[id] == false`**。区别很重要 —— `aliveById` 里 `null` 表示「这次没探到」
+  （shell 起不来、无 root），`false` 才是「探到了、确实没了」。探测失败也写 `completed_at`，
+  等于把活着的服务记成死亡；记录一旦写上结束时间就再也不能被认领。
+- `completeCommand` 改名 `completeTask`（两类任务共用），三个调用点一起改。
+- 新增 `BackgroundTerminalJobs.probe()`：只是 `supervisor.list()`，把「巡检」这个副作用
+  暴露给 App 层。
+- 新增 `DetachedTaskProbe`：每 5 分钟一次；**先读一次 JSON**，只有存在未结束的守护任务时
+  才起 shell。
+- `EtaApp.onCreate` 起这个循环，排在 `BackgroundAutoResumeWatcher.start` 之后、`resume()`
+  之前 —— 探活写回的 `completed_at` 会被 watcher 当成「刚结束」，基准时间必须早于它（同批十的坑）。
+- 循环里 `runCatching` 兜住异常并记 warn：这类「后台静默循环」一次失败就永久停掉的话，
+  界面上只会表现为「功能没了」，且没有任何报错（§122 的教训）。
+
+### 3. 窗口打开了，字段却没有：`terminal_daemon list` 的第二处
+
+记录里第一次真的会写 `completed_at` 了，但 `terminal_daemon list` 的输出里没有它 —— 原来只输出
+`task_id/pid/running/command/cwd/identity/environment/started_at`。模型看到的是：
+
+```json
+{"task_id":"dm_3208aa76","running":false,...}
+```
+
+「它没在跑，什么时候停的、是不是异常退出，一概不知」。而命令任务的 `taskJson` 一直有
+`completed_at` / `exit_code` / `end_reason` —— 同一件事两套字段名，调用方只能踩一次空。
+
+改法：抽 `daemonTaskJson(status)`（顶层函数，可本机测），补 `completed_at` / `end_reason`，
+字段名与命令任务一致。`DaemonTaskViewTest` 3 例守着（运行中为 null、结束带原因、字段名一致）。
+**没有**补 `description`：守护任务的启动入口根本不接受这个参数（`daemonStart` 不传它，
+记录里恒为空串），输出一个空字段只是噪音。
+
+### 4. 验证（本机 2026-11-01）
+
+定向：`DetachedTaskRecordTest` 9 + `DaemonTaskViewTest` 3 = **12／0**。
+`STAGES=test,lint,assemble` **1052／0**；lint baseline 194（183 命中 + 11 条依赖提示未复现）；
+死文案 0；包 32,749,029 字节 `615ca341…`。`STAGES=test-wide` **2910／0**。
+
+（这个 32,749,029 的包里有 576,132 字节是旧产物留下的无效填充，见第 6 节；内容本身没问题。）
+
+### 5. 真机（本机 PKX110 / Android 16）
+
+**第一次（21:56 装机，中间版本：有探活、没有日志）。** 装的不是「刚构建的」，而是门禁产物：
+`base.apk` 32,748,249 字节 `4e1050e9…` 与 `app/build/outputs/apk/debug/Eta-v3.3.5-debug.apk`
+一致，`firstInstallTime` 仍是 10-03（未重置），21 个 dex 里能搜到 `DetachedTaskProbe` /
+`needsDaemonProbe` / `shouldMarkCompleted`，测试类 0 命中。
+
+做法（**全程没有调 `terminal_daemon list`**，否则就变成「有人问了才更新」）：
+
+| 时刻 | 事件 |
+|---|---|
+| 21:56:04 | 装完启动，`onCreate` 起探活循环（第一次应在 22:01:04） |
+| 21:57:12 | `terminal_daemon start` 起 `sleep 900` → `dm_f92dab77`，pid 9388，记录 `command_task=false`、`completed_at=null` |
+| 21:57:28 | `kill -9 9388`，进程消失；此后没有任何人调 `list()` |
+| 22:01:07.973 | 记录被写回：`completed_at=1793541667973`、`end_reason=interrupted`、`exit_code=null` |
+
+kill 到写回 **220 秒**，正好是「启动 + 5 分钟」那一轮（22:01:04，加一次 shell 巡检约 4 秒）。
+记录文件同时在 22:01 被改写（22,879 → 22,190 字节）：多了一条结束时间，并按 32 条上限
+裁掉最老的一条。
+
+**第二次（22:15 装机，最终门禁包 `615ca341…`，带 debug 日志）。** 同样的造法：
+`dm_3208aa76`（pid 3549，`command_task=false`）→ 22:16:07 `kill -9` → 22:20:16.506 记录写回
+`completed_at` / `end_reason=interrupted`（kill 后 249 秒，正是 22:15:13 启动后的第一轮），
+同一时刻 `logcat` 出现：
+
+```
+11-01 22:20:16.685 D/Eta ( 3168): Agent detached task probe: pending=1 records=33
+```
+
+`terminal_daemon list` 也跟着变了（这是第 3 节那处修复的直接证据）：
+
+```json
+{"task_id":"dm_3208aa76","running":false,...,"completed_at":1793542816506,"end_reason":"interrupted"}
+```
+
+**「不空转」的证据（这条最容易自欺，所以写细一点）。** 探活只在真的去巡检时打一条
+debug 日志；没有未结束的守护任务时提前返回、不打日志。但「日志不出现」本身**不算证据** ——
+默认 `logcat` 的 main 环形缓冲只有 256 KiB，实测 3 分钟就被冲干净（22:20:16 那条日志，
+到 22:23:40 已经查不到了）。所以这次把缓冲临时调到 8 MiB 再测：
+
+- 22:23:54 清空日志、缓冲 8 MiB；
+- 22:25:13 那一轮（此时记录里已没有未结束的守护任务）；
+- 22:25:47 检查：缓冲里 **34,122 行**、Eta 当时还在写 agent 事件（`22:25:51 D/Eta ... tool_started`），
+  而 `detached task probe` **0 条**。
+
+缓冲区健康、应用在写日志、这一轮没有巡检日志 —— 三者同时成立，才说明它真的没起 shell。
+测完把缓冲恢复成 256 KiB。
+
+### 6. 顺带：APK 体积每轮不同，原因找到了
+
+前几轮一直有个没解释的现象：同一份代码打出来的包，体积和 sha 每轮都不一样。这次顺手量了：
+
+| | 体积 | 条目间空隙 |
+|---|---|---|
+| 增量打包（在旧包上重写） | 32,749,029 | 576,132 |
+| 删掉旧包再打 | 32,173,053 | 156 |
+
+差 575,976 字节，正好是空隙差。看空隙内容：开头是 `PK\x03\x04`（一个 local file header），
+后面几十万字节全是 0 —— 是被挪走的旧条目留下的残骸，不在 central directory 里。所以
+`unzip -t`、`zipalign -c -p 4`、`apksigner verify` 全部通过，安装也正常，**只有体积不可比**。
+
+根因：AGP 的增量打包往已有的 APK 文件里写（不是重新拼），旧条目挪位置后原地留下的
+header + 填充没人清理。
+
+处理：`gate.sh` 的 `run_assemble` 在打包前 `rm -f app/build/outputs/apk/debug/*.apk`。
+实测连续两次重打都是 32,173,053 字节 `6bdf363d…`，体积这才成为可比指标（门禁脚本这一处
+单独用 `STAGES=assemble` 验证过）。
+
+### 7. 边界（如实记录）
+
+- **5 分钟粒度**：最坏晚 5 分钟才发现；App 进程被杀之后不探，要等下次启动。
+- **写的是「探活时刻」，不是「真实退出时刻」**：守护任务没有退出时间来源（没有 `.exit` 文件），
+  所以 `completed_at` 只能记「什么时候被发现的」。
+- **`end_reason` 只会是 `interrupted`**：同样因为没有退出码，`exit_code` 恒为 `null`。
+- **探测失败不记账**：root 未授权、shell 起不来时保持「运行中」—— 宁可显示旧状态，
+  也不能把活着的服务写死。
+- **只在 App 进程里跑**：与批十同一个前提，进程不在就不探。
+- 每轮要起一次 root shell（仅当存在未结束的守护任务时）；没有任务时只读一次 JSON，不开进程。
+- `terminal_daemon list` 新增的两个字段是**纯新增**，旧调用方不受影响；但也意味着
+  读 `completed_at` 前要允许它是 `null`。
+- 自动续跑端到端仍未真机验证（auto 开关默认关，打开会真发模型调用、花额度、改用户会话）；
+  本批只保证「守护任务结束」这件事现在能被感知到。
