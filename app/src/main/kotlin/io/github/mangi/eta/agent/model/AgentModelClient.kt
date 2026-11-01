@@ -114,6 +114,8 @@ internal object AgentModelClient {
         assistantScreenContext: String = "",
         goalPlan: String = "",
         todoPlan: String = "",
+        /** 会话级子代理台账段落；由运行时读盘得到，本轮内保持固定。 */
+        taskLedgerPlan: String = "",
         toolSpill: AgentToolSpill? = null,
         /** 摘要分批进度出口；默认静默，由运行时接 AndroidAgentLogger（纯单测不能碰 android.util.Log）。 */
         compactionLog: (String) -> Unit = {},
@@ -158,6 +160,7 @@ internal object AgentModelClient {
             executionContext = executionContext,
             goalPlan = goalPlan,
             todoPlan = todoPlan,
+            taskLedgerPlan = taskLedgerPlan,
             mode = mode,
             pluginPrompt = pluginPrompt,
         )
@@ -178,8 +181,17 @@ internal object AgentModelClient {
         val transcript = JSONArray()
         // 旧 history 中的无效消息可能在组装时被跳过，系统边界不能由 history 条数倒推。
         val systemCount = AgentPromptBuilder.buildSystemMessages(
-            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext,
-            goalPlan, todoPlan, mode, pluginPrompt,
+            config = config,
+            skillContext = skillContext,
+            memoryContext = memoryContext,
+            rootAvailable = initialCapabilities.rootAvailable,
+            roleplayContext = roleplayContext,
+            executionContext = executionContext,
+            goalPlan = goalPlan,
+            todoPlan = todoPlan,
+            taskLedgerPlan = taskLedgerPlan,
+            mode = mode,
+            pluginPrompt = pluginPrompt,
         ).length()
         fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
             if (rewriteReply) return JSONArray()
@@ -219,8 +231,17 @@ internal object AgentModelClient {
             val capabilities = capabilitiesProvider()
             if (capabilities.rootAvailable != promptRootAvailable) {
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
-                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext,
-                    goalPlan, todoPlan, mode, pluginPrompt,
+                    config = config,
+                    skillContext = skillContext,
+                    memoryContext = memoryContext,
+                    rootAvailable = capabilities.rootAvailable,
+                    roleplayContext = roleplayContext,
+                    executionContext = executionContext,
+                    goalPlan = goalPlan,
+                    todoPlan = todoPlan,
+                    taskLedgerPlan = taskLedgerPlan,
+                    mode = mode,
+                    pluginPrompt = pluginPrompt,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))

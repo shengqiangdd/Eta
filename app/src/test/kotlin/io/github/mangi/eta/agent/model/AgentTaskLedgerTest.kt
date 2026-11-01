@@ -27,6 +27,43 @@ class AgentTaskLedgerTest {
     )
 
     @Test
+    fun promptSectionIsEmptyForEmptyLedger() {
+        assertEquals("", AgentTaskLedger().promptSection())
+        // 空台账与 maxLines=0 都不产生段落：调用方据此不追加系统消息。
+        assertEquals("", AgentTaskLedger().upsert(record("a")).promptSection(maxLines = 0))
+    }
+
+    @Test
+    fun promptSectionPutsRunningFirstAndPointsToTasksToolWhenTruncated() {
+        val ledger = AgentTaskLedger()
+            .upsert(record("newer", status = AgentTaskStatus.COMPLETED, startedAt = 300))
+            .upsert(record("older", status = AgentTaskStatus.RUNNING, startedAt = 200))
+
+        val section = ledger.promptSection(maxLines = 1)
+        assertTrue(section.startsWith("<subagent_tasks>"))
+        assertTrue(section.endsWith("</subagent_tasks>"))
+        // 运行中的优先：只列一条时必须是它，而不是开始得更晚但已收尾的那条。
+        assertTrue(section.contains("任务 older"))
+        assertFalse(section.contains("[completed]"))
+        assertTrue(section.contains("另有 1 条更早的任务未列出"))
+        assertTrue(section.contains("subagent(resume="))
+    }
+
+    @Test
+    fun promptSectionListsEverythingWhenUnderTheLineLimit() {
+        val ledger = AgentTaskLedger()
+            .upsert(record("a", status = AgentTaskStatus.COMPLETED, startedAt = 100))
+            .upsert(record("b", status = AgentTaskStatus.FAILED, startedAt = 200))
+
+        val section = ledger.promptSection()
+        assertTrue(section.contains("任务 a") && section.contains("任务 b"))
+        assertFalse("没超上限时不该提「未列出」", section.contains("未列出"))
+        // 汇总行与逐条状态同一口径。
+        assertTrue(section.contains("已完成 1"))
+        assertTrue(section.contains("失败 1"))
+    }
+
+    @Test
     fun upsertReplacesSameIdAndKeepsNewestFirst() {
         val ledger = AgentTaskLedger()
             .upsert(record("a", startedAt = 100))

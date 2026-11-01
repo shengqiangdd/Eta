@@ -5288,6 +5288,41 @@ assertFalse(projected.toString().contains("/data/local/tmp/eta"))
 ### 5. 边界（未验证，别当已完成）
 
 - **真机往返未验证**：没有在设备上让模型实际调 `tasks`、再据其 `resume` 一个子代理；
-- 台账**不进系统提示**（要看得自己调 `tasks`），不跨会话；进程被杀残留的 `running` 不自愈；
+- 台账不跨会话（同一批的第二轮已把它接进系统提示，见 §32.51）；进程被杀残留的 `running` 不自愈；
 - `ToolCatalogUiTest` 是 Robolectric，本机跑不了；「每个工具都有专属图标 / 显示名」这条
   由新增的映射本身保证，本机门禁只覆盖 `ToolIconMappingTest` 钉住的那几条。
+
+## §32.51 台账进系统提示：模型不用调工具也知道派过谁（2026-11-01）
+
+§32.50 把台账写进磁盘、用 `tasks` 读回来，但**读不读由模型决定**。跨轮之后它看不见上一轮的工具结果，
+常见后果是「重新派一个一样的子代理」，或者忘了那个还在跑。
+
+### 1. 做法
+
+- `AgentTaskLedger.promptSection(maxLines = 8)`：`<subagent_tasks>` 段 = 一行汇总 + 逐条
+  `[status] 标题 · id — 摘要首行`；**运行中的先占名额**，超过 8 条只留一句指向 `tasks`。
+- 注入点：`AgentPromptBuilder.buildSystemMessages`，紧跟 `<todo_plan>`、在项目规则之前
+  （台账与清单同属「当前工作状态」；它变勤，放这里只影响它之后的字节）。空台账不注入；
+  剧情会话不注入（与 goal / todo 同一约定）。
+- 取值：`AgentRuntimeRunExecutor` 每次 run 读一次（读失败当没有台账，记
+  `agent_task_ledger_prompt_failed`），同一次 run 内不重读 —— 中途重算会让已发出的前缀失效。
+- 签名：`buildInitialMessages` / `buildSystemMessages` 新增 `taskLedgerPlan`；`AgentModelClient`
+  三处调用改成命名参数。原来是位置传参，插入新参数会让 `mode` 静默落到台账位上。
+
+### 2. 验证（本机）
+
+| 项 | 结果 |
+|---|---|
+| 定向 4 类 | 43 例 0 失败（台账渲染 +3、系统提示注入 +3） |
+| `STAGES=test,lint,assemble` | 934 例 0 失败；lint baseline 194；死文案 0 |
+| `STAGES=test-wide` | 2792 例 0 失败 |
+| 包 | 34,544,806 字节 `05aea3c93e8c84e9…`（大小与 §32.50 相同，sha256 不同） |
+
+### 3. 顺带
+
+`AgentPromptBuilderTest` 此前只在 `test-wide` 名单里。系统提示注入位置是每轮都走的核心路径，
+这次一并加进 `gate.sh` 的 fast 列表，所以 fast 用例数 916 → 934（新增 6 例，另 12 例是补进 fast 的旧例）。
+
+### 4. 仍未验证
+
+真机上没有跑过「模型读到这段后真的去 `resume`，而不是重新派一个」。仍是纯 JVM + 门禁验证。

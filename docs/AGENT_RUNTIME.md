@@ -558,10 +558,39 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 - 作用域：与 `todo_write` / `goal` 同一个会话 scopeId；没有会话（语音等一次性入口）时退回 runId。
 - 计划模式保留 `tasks`：与 `todo_write` 同一判断——只读本机记录，不改设备状态。
 
+### 第二批：台账进系统提示（2026-11-01）
+
+只写进文件还不够：模型跨轮看不见上一轮的工具结果，也不会为此专门调一次 `tasks` ——
+它得**不调工具就知道**派过谁、哪个还在跑、哪个能 `resume`。这一批把台账渲染进系统提示。
+
+- 渲染：`AgentTaskLedger.promptSection(maxLines = 8)` 产出 `<subagent_tasks>` 段，第一行是
+  汇总（`运行中 1 · 已完成 2`），随后逐条 `[status] 标题 · id — 摘要首行`。
+  **运行中的先占名额**再按开始时间补，避免跑着的子代理被一串刚收尾的挤出视野；
+  超过 8 条只留一句「另有 N 条…调用 tasks」，不把整份台账塞进前缀。
+- 位置：紧跟 `<todo_plan>` 之后、项目规则之前。台账与清单同属「当前工作状态」，相邻读起来连贯；
+  它比清单变得勤（每次派发/收尾），放这里只影响它之后的字节，项目规则仍在最末尾。
+- 省略规则：空台账不产生消息（不占字节，也不暗示「派过」）；剧情会话不注入
+  （与 `goal` / `todo_plan` 同一约定）。
+- 读取时机：`AgentRuntimeRunExecutor` 每次 run 读一次，与清单同一会话作用域。
+  读失败按「没有台账」处理并记 `agent_task_ledger_prompt_failed`，不让系统提示少一段
+  把整轮对话拖死。**同一次 run 内不重读**：中途重算会让已发出的前缀全部失效。
+- 参数路径：`buildInitialMessages` / `buildSystemMessages` 新增 `taskLedgerPlan`；
+  `AgentModelClient` 的三处调用（初次组装、`systemCount`、Root 变化后重建）改成**命名参数**。
+  原先按位置传，插入新参数会让 `mode` 静默落到台账位上。
+
+验证（本机，2026-11-01）：`AgentTaskLedgerTest` +3（空台账与 `maxLines=0` 不产段、只列一条时
+运行中优先并指向 `tasks`、未超上限时不提「未列出」），`AgentPromptBuilderTest` +3
+（位置紧跟清单、空串不注入、剧情会话不注入）。定向 4 类 **43/0**；`STAGES=test,lint,assemble`
+**934/0**、lint baseline 194、死文案 0、包 34,544,806 字节（`05aea3c93e8c84e9…`）；
+`STAGES=test-wide` **2792/0**。
+
+边界（如实记录）：`AgentPromptBuilderTest` 原本只在 `test-wide` 名单里，这次一并加进 `gate.sh`
+的 fast 列表（系统提示注入位置是每轮都走的核心路径，不该等到 wide 才跑），所以 fast 用例数
+从 916 涨到 934，而不是新增用例的 922。
+
 未做（如实记录）：
 
-- 台账**不进系统提示**：要看得自己调 `tasks`。本轮先把「写—读—过滤」这条链路做通；
-  注入系统提示要改 `AgentPromptBuilder` 与两条调用路径的参数，留给下一批。
+- 不跨会话：台账按会话作用域存，A 会话看不见 B 会话的子代理。
 - 不跨会话：台账按会话作用域存，A 会话看不见 B 会话的子代理。
 - 进程被杀时残留的 `running` 不会自愈：`tasks` 会照实说它在跑，直到用户 `resume` 拿到
   `SUBAGENT_NOT_FOUND`，或下一次同 id 覆盖。没做「启动时把 stale running 标成失败」，

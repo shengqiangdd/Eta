@@ -37,6 +37,8 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         goalPlan: String = "",
         todoPlan: String = "",
+        /** 会话级子代理台账段落；空表示本会话还没派出过子任务。 */
+        taskLedgerPlan: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         /** 已启用插件声明的 prompt 扩展；为空表示没有插件附加说明。 */
         pluginPrompt: String = "",
@@ -50,6 +52,7 @@ internal object AgentPromptBuilder {
             executionContext,
             goalPlan,
             todoPlan,
+            taskLedgerPlan,
             mode,
             pluginPrompt,
         )
@@ -74,6 +77,7 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         goalPlan: String = "",
         todoPlan: String = "",
+        taskLedgerPlan: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         pluginPrompt: String = "",
     ): JSONArray {
@@ -230,6 +234,11 @@ internal object AgentPromptBuilder {
         }
         if (roleplayContext == null && goalPlan.isNotBlank()) messages.put(systemMessage(goalPlan))
         if (roleplayContext == null && todoPlan.isNotBlank()) messages.put(systemMessage(todoPlan))
+        // 台账紧跟清单：两者都是「当前工作状态」，读起来连贯；它比清单变得勤（每次派发/收尾），
+        // 放这里只影响它之后的字节，项目规则仍在最末尾。
+        if (roleplayContext == null && taskLedgerPlan.isNotBlank()) {
+            messages.put(systemMessage(taskLedgerPlan))
+        }
         projectRulesMessage()?.let(messages::put)
         return messages
     }

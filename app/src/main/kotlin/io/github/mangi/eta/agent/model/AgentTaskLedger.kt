@@ -74,9 +74,44 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
             .joinToString(" · ") { (status, count) -> "${statusLabel(status)} $count" }
     }
 
+    /**
+     * 注入系统提示的段落；空台账返回空串，调用方据此不追加消息。
+     *
+     * 为什么进系统提示而不是每轮调 `tasks`：模型跨轮看不见上一轮的工具结果，只记得"好像派过"，
+     * 于是要么漏接、要么重新派一个重复的子代理。把状态放在前缀里，它每轮都看得见。
+     *
+     * 只列最近 [maxLines] 条，运行中的排在前面：台账上限 32 条，整份注入会在长会话里白占前缀字节；
+     * 条数超出时留一句指向 `tasks`，需要细节时模型自己去取。
+     */
+    fun promptSection(maxLines: Int = DEFAULT_PROMPT_LINES): String {
+        if (entries.isEmpty() || maxLines <= 0) return ""
+        val running = entries.filter { it.status == AgentTaskStatus.RUNNING }
+        val settled = entries.filterNot { it.status == AgentTaskStatus.RUNNING }
+        // entries 已按 startedAt 倒序，两组各自保序；运行中的先占名额，避免被一串刚收尾的任务挤出视野。
+        val shown = (running + settled).take(maxLines)
+        return buildString {
+            appendLine("<subagent_tasks>")
+            appendLine("本会话已派出的子代理及其当前状态（跨轮保留；这是执行痕迹，不是待办清单）：")
+            appendLine(renderSummary())
+            shown.forEach { appendLine(it.renderLine()) }
+            if (shown.size < entries.size) {
+                appendLine("另有 ${entries.size - shown.size} 条更早的任务未列出，需要完整列表时调用 tasks。")
+            }
+            append("需要接着用其中某个子代理的上下文时，调用 subagent(resume=\"<上面那一行末尾的 id>\", ...)，不要从头再派一个。")
+            appendLine()
+            append("</subagent_tasks>")
+        }
+    }
+
     companion object {
         /** 32 条 × 一条几百字节的摘要 ≈ 十几 KB，远小于文件上限；再多也不是"当前状态"了。 */
         const val MAX_ENTRIES = 32
+
+        /**
+         * 注入系统提示的条数上限。8 条 ≈ 1KB：够覆盖"这一轮正在跑的 + 刚收尾的"，
+         * 更早的交给 `tasks` 按状态过滤，不必每轮都塞进前缀。
+         */
+        const val DEFAULT_PROMPT_LINES = 8
         const val VERSION = 1
 
         fun statusLabel(status: AgentTaskStatus): String = when (status) {

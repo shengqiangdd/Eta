@@ -136,6 +136,16 @@ internal class AgentRuntimeRunExecutor(
             val goalPlan = runCatching { goalStore.load(todoScopeId) }
                 .getOrNull()
                 ?.takeIf { it.phase != AgentGoalPhase.COMPLETED }
+            // 子代理台账与清单同一作用域：模型不必每轮先调 tasks，也知道派过谁、哪个还能 resume。
+            // 读失败当「没有台账」处理 —— 系统提示少一段不该让整轮对话起不来。
+            val taskLedgerPlan = runCatching {
+                AgentTaskLedgerStore.forApp(appContext).load(todoScopeId).promptSection()
+            }.getOrElse { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_task_ledger_prompt_failed") {
+                    "Agent task ledger prompt unavailable: type=${throwable.safeLogType()}"
+                }
+                ""
+            }
             val roleplayContext = conversationId?.let { id ->
                 runBlocking { RoleplayRunContext.resolve(appContext, id, contextWindow, memoryEnabled) }
             }
@@ -454,6 +464,7 @@ internal class AgentRuntimeRunExecutor(
                 assistantScreenContext = request.assistantScreenContext,
                 goalPlan = goalPlan?.promptSection().orEmpty(),
                 todoPlan = todoPlan?.promptSection().orEmpty(),
+                taskLedgerPlan = taskLedgerPlan,
                 toolSpill = AgentToolSpill.forApp(appContext),
                 // 摘要分批进度只在这里接真日志：库内类默认静默，否则纯 JVM 单测会撞到未实现的 android.util.Log。
                 compactionLog = { AndroidAgentLogger.info(it) },

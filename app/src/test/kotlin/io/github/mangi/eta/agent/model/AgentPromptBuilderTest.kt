@@ -5,6 +5,8 @@ import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.skill.SkillIndexEntry
+import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
+import io.github.mangi.eta.agent.roleplay.CharacterCardCodec
 import io.github.mangi.eta.agent.device.RootAccessState
 import io.github.mangi.eta.agent.device.RootAccessStatus
 import org.json.JSONArray
@@ -299,6 +301,60 @@ class AgentPromptBuilderTest {
         assertTrue(creator.none { it.contains("<plan_mode>") })
         val standard = prompt(AgentMode.STANDARD)
         assertTrue(standard.none { it.contains("<plan_mode>") || it.contains("<creator_mode>") })
+    }
+
+    @Test
+    fun taskLedgerSectionSitsAfterTheTodoPlanAndBeforeProjectRules() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            todoPlan = "<todo_plan>\n做这一步\n</todo_plan>",
+            taskLedgerPlan = "<subagent_tasks>\n[completed] 读日志 · sub-1\n</subagent_tasks>",
+        ).systemContents()
+
+        val todo = messages.indexOfFirst { it.contains("<todo_plan>") }
+        val ledger = messages.indexOfFirst { it.contains("<subagent_tasks>") }
+        assertTrue("清单与台账都应出现", todo >= 0 && ledger >= 0)
+        assertEquals("台账必须紧跟在清单之后，项目规则仍在末尾", todo + 1, ledger)
+        assertTrue(messages[ledger].contains("sub-1"))
+    }
+
+    @Test
+    fun blankTaskLedgerProducesNoSection() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+        ).systemContents()
+
+        // 没派过子代理时不能在系统提示里留一个空段（既占字节又暗示“派过”）。
+        assertTrue(messages.none { it.contains("<subagent_tasks>") })
+    }
+
+    @Test
+    fun taskLedgerSectionIsNotInjectedForRoleplayConversations() {
+        // 剧情会话不混入执行痕迹：与 goal/todo 同一约定，台账也不能破例。
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            roleplayContext = RoleplayRunContext(
+                "fixture",
+                CharacterCardCodec.create("林舟"),
+                "旅伴",
+                "",
+                contextWindow = 128_000,
+            ),
+            todoPlan = "<todo_plan>\n做这一步\n</todo_plan>",
+            taskLedgerPlan = "<subagent_tasks>\n[completed] 读日志 · sub-1\n</subagent_tasks>",
+        ).systemContents()
+
+        assertTrue(messages.none { it.contains("<subagent_tasks>") })
+        assertTrue("同一约定：清单也不注入", messages.none { it.contains("<todo_plan>") })
     }
 
     private fun modelConfig(
