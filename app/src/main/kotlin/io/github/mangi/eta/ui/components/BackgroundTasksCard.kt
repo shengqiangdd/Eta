@@ -41,13 +41,13 @@ import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.backgroundTaskLine
+import io.github.mangi.eta.agent.terminal.backgroundResumePrompt
 import io.github.mangi.eta.agent.terminal.canOfferManualResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.util.Locale
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -200,7 +200,7 @@ internal fun BackgroundTasksCard(
                                 // 记账同步、落盘进程级（第十八批）：不用 `rememberCoroutineScope()`，
                                 // 用户点完立刻离开会话也不会把这次点击取消掉。
                                 resumeScope.resumeManually(task.id)
-                                onResume(resumePrompt(promptTemplate, task))
+                                onResume(backgroundResumePrompt(promptTemplate, task))
                             }
                         } else {
                             null
@@ -305,12 +305,6 @@ private fun BackgroundTaskRow(
         }
     }
 }
-
-/**
- * 「继续」发出去的提示词：只给 id 与类型，让模型自己去读日志 —— 界面不替它编造输出。
- */
-private fun resumePrompt(template: String, task: DetachedTask): String =
-    String.format(Locale.getDefault(), template, task.id, if (task.commandTask) "job" else "daemon")
 
 /**
  * 读一个本地 Agent 开关。

@@ -6487,3 +6487,57 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
 - `persistSoon` 不返回任务、不重试：失败仍只有一条 warn（第十七批）。界面不会因为写盘失败卡住，
   代价是「这次失败只能从日志看出来」。
 - 没有真机验证（自动续跑默认关闭，打开会真发模型调用、改用户会话）。
+
+## §32.68 手动「继续」与自动续跑各拼一套提示词（2026-11-01）
+
+**症状**：卡片上点「继续」发出去的那句话，括号里是「job」/「daemon」：
+
+> 后台任务 job_ab12（job）已结束。请用 terminal_job / terminal_daemon 的 logs 读取它的输出……
+
+括号里本该是任务名（描述），却是一个类型词。同一份模板、同一个 `%2$s`，自动续跑填的是
+`task.description`，手动按钮填的是 `if (task.commandTask) "job" else "daemon"` —— 占位符的含义
+随入口变。用户在自己的聊天记录里看到这句，模型拿到的也是这句：它认不出这是哪条任务，
+因为「job」对同会话的每条 job 都成立。
+
+**根因**：模板只有一份（`R.string.background_tasks_resume_prompt`），格式化却有两份实现：
+`BackgroundTasksCard.kt` 里的私有 `resumePrompt()`，与 `AgentAppState.kt` 里内联的
+`String.format`。两处都能改模板、都能改参数，第三批人再写第三份也不会有人发现 ——
+这和第六十六批「同一个判据写两遍」是同一类缺陷。
+
+**修法**：
+
+1. `agent/terminal/BackgroundResume.kt` 新增 `internal fun backgroundResumePrompt(template, task)`：
+   `Locale.ROOT`，`%1$s` = `task.id`，`%2$s` = `task.description.ifBlank { task.command }`
+   （没写描述就退回命令本身：宁可长，也不能退成空或类型词）。语义写在注释里。
+2. 卡片删掉私有 `resumePrompt()` 与随之失去用途的 `java.util.Locale` 导入，改调统一函数。
+3. `AgentAppState.resumeConversationAfterBackgroundTask()` 改调同一函数（原先内联格式化）。
+4. `BackgroundResumeStore.save()` 补注释：它是**合并写入**；第十八批起生产侧已无调用方，
+   将来要恢复调用得先判断这次是「整份写」还是「合并写」。
+
+**为什么用 `Locale.ROOT`**：`String.format` 的默认 locale 会带来本地化数字与分隔符。这里参数
+都是字符串，眼下看不出差别，但「用默认 locale 格式化给模型看的文本」是迟早出事的写法 ——
+与第十二批统一 `Locale.ROOT` 的理由相同。
+
+验证：
+
+- **先红**：3 例（描述进括号 / 无描述退回命令 / 括号里不能是类型词），实现前编译失败
+  `Unresolved reference 'backgroundResumePrompt'`。
+- **反证一**（把 `%2$s` 改回 `if (task.id.startsWith("dm_")) "daemon" else "job"`）→ **3 红**：
+  `resumePromptCarriesTaskDescription`、`resumePromptFallsBackToCommandWhenDescriptionBlank`、
+  `resumePromptNeverSubstitutesTaskType`。
+- **反证二**（去掉 `.ifBlank { task.command }`，让空描述原样输出）→ **1 红**：
+  `resumePromptFallsBackToCommandWhenDescriptionBlank`。恢复后文件 sha256 与反证前一致
+  （`29a20f263d93adf5…`），`RESTORE=OK`。
+- 定向 `agent.terminal.*`：**528 例 0 失败**（`BackgroundResumeTest` 26 例）。
+- `STAGES=test,lint,assemble`：**1096 例 0 失败**；lint 无新增（baseline 183 未增加）；
+  包 32,186,873 字节 `af4e4cb3d94876a1…`。
+- `STAGES=test-wide`：**2954 例 0 失败**。
+
+**边界（如实记录）**：
+
+- 用例守的是**函数**，不是**调用点**：卡片要 Compose 运行时（本机 aarch64 跑不了 Robolectric），
+  所以「以后有人再写第四份格式化」只在代码评审里有防线，没有用例防线。能守住的只有
+  「函数只有一份、语义固定」。
+- 手动路径不 `.trim()`、也不判空白（自动路径两者都有）。模板是资源常量、内容非空，
+  所以空提示词在运行期不可达；这段不对称因此没改。
+- 仍未真机验证：自动续跑默认关闭，打开会真发模型调用、改用户会话。

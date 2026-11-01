@@ -165,10 +165,9 @@ internal class AgentAppState(
             if (state.isStreaming || state.messagesDeferred) return false
         }
         if (conversationId.isReadOnlyExternalArchiveConversation()) return false
-        val prompt = appContext.getString(
-            R.string.background_tasks_resume_prompt,
-            task.id,
-            task.description.ifBlank { task.command },
+        val prompt = io.github.mangi.eta.agent.terminal.backgroundResumePrompt(
+            appContext.getString(R.string.background_tasks_resume_prompt),
+            task,
         ).trim()
         if (prompt.isBlank()) return false
         val runId = "run-${java.util.UUID.randomUUID()}"

@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.terminal
 
+import java.util.Locale
+
 /**
  * 「后台任务结束后要不要接着跑」的判定。
  *
@@ -139,6 +141,24 @@ internal fun canOfferManualResume(
 ): Boolean = buttonEnabled && canSend &&
     scopeId.isNotBlank() && task.sessionScope == scopeId &&
     task.id !in handled
+
+/**
+ * 续跑的提示词：**手动「继续」与自动续跑必须用同一份**（第十九批）。
+ *
+ * 两个入口各拼一套的代价已经发生过：卡片那条把 `%2$s` 填成「job」\/「daemon」类型词，
+ * 自动续跑填的是任务描述 —— 同一句话里同一个占位符的含义随入口变，用户在自己的
+ * 聊天记录里看到的就是「后台任务 job_ab12（job）已结束」，模型拿到的也是这句。
+ *
+ * `%2$s` 的语义定在这里：**任务描述，没写描述就用命令本身**。
+ * 用 [Locale.ROOT] 格式化：只换占位符，不引入本地化数字与分隔符。
+ */
+internal fun backgroundResumePrompt(template: String, task: DetachedTask): String =
+    String.format(
+        Locale.ROOT,
+        template,
+        task.id,
+        task.description.ifBlank { task.command },
+    )
 
 /**
  * 一次判定的单行诊断文本（日志用）。

@@ -1097,6 +1097,28 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 边界：「点完立刻离开」这一半没有用例守（aarch64 跑不了 Robolectric）；锁按 scopeId 粒度；
 `persistSoon` 不重试，失败仍只有一条 warn；没有真机验证。
 
+### 第十九批：手动「继续」的提示词和自动续跑各拼一套（2026-11-01）
+
+模板只有一份 `R.string.background_tasks_resume_prompt`，格式化却有两份：卡片的私有
+`resumePrompt()` 把 `%2$s` 填成 `if (task.commandTask) "job" else "daemon"`，
+`AgentAppState.resumeConversationAfterBackgroundTask` 内联的 `String.format` 填的是
+`task.description`。同一个占位符的含义随入口变：用户在自己聊天记录里看到
+「后台任务 job_ab12（job）已结束」，模型拿到的也是这句 —— 括号里对同会话每条 job 都成立，
+等于没告诉它这是哪条任务。
+
+修法：`BackgroundResume.kt` 新增 `backgroundResumePrompt(template, task)`（`Locale.ROOT`，
+`%1$s` = id、`%2$s` = `task.description.ifBlank { task.command }`），卡片删掉私有函数与随之
+失去用途的 `java.util.Locale` 导入，`AgentAppState` 改调同一函数；`BackgroundResumeStore.save`
+补注释（它是合并写入，生产侧已无调用方）。
+
+验证：先红（3 例，实现前 `Unresolved reference 'backgroundResumePrompt'`）→ 反证一（`%2$s`
+改回类型词）**3 红**、反证二（去掉 `.ifBlank { task.command }`）**1 红**，恢复后文件 sha256
+与反证前一致（`29a20f263d93adf5…`）→ 定向 `agent.terminal.*` **528 例 0 失败**
+（`BackgroundResumeTest` 26 例）→ `STAGES=test,lint,assemble` **1096 例 0 失败**（lint 无新增，
+包 32,186,873 字节 `af4e4cb3d94876a1…`）→ `STAGES=test-wide` **2954 例 0 失败**。
+边界：用例守的是函数不是调用点（本机 aarch64 跑不了 Robolectric，卡片要 Compose 运行时）；
+手动路径不 `trim()`、不判空白（模板是资源常量，空串不可达）；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

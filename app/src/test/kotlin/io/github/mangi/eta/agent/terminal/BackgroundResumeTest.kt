@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.terminal
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -17,17 +18,20 @@ class BackgroundResumeTest {
         startedAt: Long,
         completedAt: Long?,
         sessionScope: String? = "conv-a",
+        description: String = "",
+        command: String = "sleep 1",
     ) = DetachedTask(
         id = id,
         pid = 42L,
         token = "token",
-        command = "sleep 1",
+        command = command,
         cwd = "/data/local/tmp",
         identity = "root",
         environment = TerminalEnvironment.ANDROID,
         logPath = "/data/local/tmp/eta/daemon/$id.log",
         startedAt = startedAt,
         completedAt = completedAt,
+        description = description,
         sessionScope = sessionScope,
     )
 
@@ -290,5 +294,43 @@ class BackgroundResumeTest {
         assertEquals(false, canOfferManualResume(mine, "conv-a", true, false, emptyList()))
         // 没有会话键（语音 / 一次性入口）
         assertEquals(false, canOfferManualResume(mine, "", true, true, emptyList()))
+    }
+
+    /**
+     * 续跑提示词只有一份实现（第十九批）。
+     *
+     * 原来手动「继续」在卡片里自己拼：`%2$s` 填的是「job」/「daemon」类型词，自动续跑填的是任务描述。
+     * 同一句话里同一个占位符的含义随入口变，用户在聊天里看到的就是
+     * 「后台任务 job_ab12（job）已结束」—— 括号里本该是任务名，却是一个类型词。
+     */
+    @Test
+    fun resumePromptCarriesTaskDescription() {
+        val prompt = backgroundResumePrompt(
+            "%1\$s / %2\$s",
+            task("job_a", 100L, 600L, description = "下载模型"),
+        )
+        assertEquals("job_a / 下载模型", prompt)
+    }
+
+    /** 没写描述时退回命令：宁可长一点，也不能退成空或类型词。 */
+    @Test
+    fun resumePromptFallsBackToCommandWhenDescriptionBlank() {
+        val prompt = backgroundResumePrompt(
+            "%1\$s / %2\$s",
+            task("dm_a", 100L, 600L, description = "", command = "python3 app.py"),
+        )
+        assertEquals("dm_a / python3 app.py", prompt)
+    }
+
+    /** 类型词不能出现在「任务原名」的位置（两个入口曾经各填一套）。 */
+    @Test
+    fun resumePromptNeverSubstitutesTaskType() {
+        val rendered = listOf(
+            backgroundResumePrompt("%2\$s", task("job_a", 100L, 600L, description = "打包")),
+            backgroundResumePrompt("%2\$s", task("dm_a", 100L, 600L, description = "语音服务")),
+        )
+        rendered.forEach { text ->
+            assertFalse("不能把类型词当任务原名：$text", text == "job" || text == "daemon")
+        }
     }
 }

@@ -77,7 +77,15 @@ internal class BackgroundResumeStore(private val root: File) {
         )
     }
 
-    /** 只覆盖 id，保留 chain / seenUntil —— 卡片手动点「继续」走这条路径。 */
+    /**
+     * 只覆盖 id，保留磁盘上的 chain / seenUntil —— 「合并写入」语义。
+     *
+     * 第十八批之前卡片手动点「继续」走的就是这条路径；现在它改走
+     * [BackgroundResumeScope.resumeManually]（整份状态 + 作用域锁），
+     * 因为同一个作用域有多个写者，逐字段合并不足以防止旧快照盖回去。
+     * 保留这个入口是因为它把「只改 id」的语义写清楚了，并且有用例守着；
+     * **生产侧目前没有调用方** —— 新增调用前先想清楚现场到底该不该整份写。
+     */
     fun save(scopeId: String, ids: List<String>): Boolean {
         val file = fileFor(scopeId) ?: return false
         synchronized(WRITE_LOCK) {
