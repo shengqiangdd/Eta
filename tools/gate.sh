@@ -11,7 +11,8 @@
 #   sh tools/gate.sh                    # 全部三个阶段
 #   STAGES=test sh tools/gate.sh        # 只跑单测
 #   STAGES=lint,assemble sh tools/gate.sh
-#   STAGES=test-all sh tools/gate.sh    # 全量单测（不只终端包），很慢
+#   STAGES=test-all sh tools/gate.sh    # 全量单测（不只终端包），很慢，含跑不了的 Robolectric 用例
+#   STAGES=test-wide sh tools/gate.sh   # 本机能跑的全部用例（名单见 tools/wide-tests.txt）
 # 退出码：0 = 全绿；1 = 有阶段失败。
 set -u
 
@@ -194,6 +195,14 @@ run_test() {
   rm -rf app/build/test-results/testDebugUnitTest
   if has_stage test-all; then
     gw :app:testDebugUnitTest > "$LOGDIR/test.log" 2>&1
+  elif has_stage test-wide; then
+    # 名单 = 本机能跑通的全部测试类（两轮全量跑都通过的那些）。刷新：
+    #   python3 tools/gate_coverage.py --write-wide   （先自己跑一轮全量，见该脚本说明）
+    wide_args=$(grep -v '^$' tools/wide-tests.txt | sed 's/^/--tests /' | tr '\n' ' ')
+    # 并行上原来的白名单：wide 名单排除了「有 skip 的类」，里面有 FAST 已覆盖的用例，
+    # --tests 是并集，重复不会报错。
+    # shellcheck disable=SC2086  # 故意按空格拆成多个 --tests 参数
+    gw :app:testDebugUnitTest $FAST_TEST_FILTERS $wide_args > "$LOGDIR/test.log" 2>&1
   else
     # shellcheck disable=SC2086  # 故意按空格拆成多个 --tests 参数
     gw :app:testDebugUnitTest $FAST_TEST_FILTERS > "$LOGDIR/test.log" 2>&1
@@ -332,7 +341,7 @@ run_dead_strings() {
 run_ui_actions
 run_dead_strings
 
-if has_stage test || has_stage test-all; then run_test; fi
+if has_stage test || has_stage test-all || has_stage test-wide; then run_test; fi
 if has_stage lint; then run_lint; fi
 if has_stage assemble; then run_assemble; fi
 

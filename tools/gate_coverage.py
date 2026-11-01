@@ -9,8 +9,10 @@
 再：
 
     python3 tools/gate_coverage.py
+    python3 tools/gate_coverage.py --write-wide   # 顺便刷新 tools/wide-tests.txt
 
-只读 tools/gate.sh 与 app/build/test-results/testDebugUnitTest/*.xml，不改任何文件。
+只读 tools/gate.sh 与 app/build/test-results/testDebugUnitTest/*.xml；只有加 --write-wide
+时才写 tools/wide-tests.txt（`STAGES=test-wide` 的名单）。
 逐个 testcase 判定（不是按类），所以「同一类里部分用例失败」不会被算成整类没跑。
 """
 from __future__ import annotations
@@ -42,25 +44,28 @@ def main() -> int:
     if not files:
         sys.exit("✗ 没有测试结果文件：先全量跑一次 ./gradlew :app:testDebugUnitTest")
 
-    classes: set[str] = set()
+    per_class: dict[str, dict[str, int]] = {}
     total = failed = skipped = 0
     in_gate = in_gate_failed = 0
     reasons: collections.Counter[str] = collections.Counter()
 
     for path in files:
         root = ET.parse(path).getroot()
-        classes.add(root.get("name") or os.path.basename(path))
         for case in root.iter("testcase"):
             cls = case.get("classname") or ""
+            item = per_class.setdefault(cls, {"tests": 0, "failed": 0, "skipped": 0})
+            item["tests"] += 1
             bad = [c for c in case if c.tag in ("failure", "error")]
             skip = any(c.tag == "skipped" for c in case)
             total += 1
             if bad:
                 failed += 1
+                item["failed"] += 1
                 msg = (bad[0].get("message") or bad[0].get("type") or "无 message").strip()
                 reasons[msg.splitlines()[0][:100]] += 1
             elif skip:
                 skipped += 1
+                item["skipped"] += 1
             hit = any(fnmatch.fnmatchcase(cls, p) for p in pats)
             if hit:
                 in_gate += 1
@@ -72,12 +77,19 @@ def main() -> int:
     pct = 100.0 * in_gate / total if total else 0.0
 
     print(f"过滤规则 {len(pats)} 条")
-    print(f"全量：{len(classes)} 类 / {total} 用例（失败 {failed}、跳过 {skipped}、通过 {passed}）")
+    print(f"全量：{len(per_class)} 类 / {total} 用例（失败 {failed}、跳过 {skipped}、通过 {passed}）")
     print(f"门禁内：{in_gate} 例（其中失败 {in_gate_failed}）→ 覆盖 {pct:.1f}%")
     print(f"门禁外通过：{outside_passed} 例")
     print("失败原因 top5：")
     for msg, count in reasons.most_common(5):
         print(f"  {count:>4} | {msg}")
+
+    if "--write-wide" in sys.argv[1:]:
+        wide = sorted(n for n, v in per_class.items() if v["failed"] == 0 and v["skipped"] == 0)
+        target = os.path.join(ROOT, "tools/wide-tests.txt")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(wide) + "\n")
+        print(f"已写入 {target}：{len(wide)} 个类（本机一次跑通；跨版本/跨机器需重跑确认）")
     return 1 if in_gate_failed else 0
 
 
