@@ -24,6 +24,7 @@ import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
 import io.github.mangi.eta.agent.memory.AgentLearningRecorder
 import io.github.mangi.eta.agent.memory.ConversationMemoryPins
 import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
+import io.github.mangi.eta.agent.terminal.BackgroundEvents
 import io.github.mangi.eta.agent.terminal.BackgroundTasksSection
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
@@ -149,16 +150,36 @@ internal class AgentRuntimeRunExecutor(
                 ""
             }
             // 后台任务（terminal_job / terminal_daemon）的只读快照：子代理台账回答「派了谁」，
-            // 它回答「这台机器上还有什么在跑」。用 readRecords 而不是 list —— list 会探活、认领、
-            // 补结束时间并清理记录，每轮构建提示都做这些既慢又有副作用。
+            // 它回答「这台机器上还有什么在跑」「哪些已经结束」。用 readRecords 而不是 list ——
+            // list 会探活、认领、补结束时间并清理记录，每轮构建提示都做这些既慢又有副作用。
+            val detachedRecords = runCatching {
+                DetachedTaskSupervisor.readRecords(DetachedTaskSupervisor.defaultRecordsFile(appContext))
+            }.getOrElse { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_background_tasks_prompt_failed") {
+                    "Agent background task records unavailable: type=${throwable.safeLogType()}"
+                }
+                emptyList()
+            }
+            val backgroundTasksNow = System.currentTimeMillis()
             val backgroundTasksPlan = runCatching {
-                BackgroundTasksSection.render(
-                    DetachedTaskSupervisor.readRecords(DetachedTaskSupervisor.defaultRecordsFile(appContext)),
-                    System.currentTimeMillis(),
-                )
+                BackgroundTasksSection.render(detachedRecords, backgroundTasksNow)
             }.getOrElse { throwable ->
                 AndroidAgentLogger.warnThrottled("agent_background_tasks_prompt_failed") {
                     "Agent background tasks prompt unavailable: type=${throwable.safeLogType()}"
+                }
+                ""
+            }
+            // 结束事件：水位线记在会话作用域里，避免同一个收尾每轮重报。
+            // 渲染成功才推进水位线；推进失败只会让下一次重报一遍，不会丢事件。
+            val backgroundEventsPlan = runCatching {
+                val store = BackgroundEventStore.forApp(appContext)
+                val events = BackgroundEvents.collect(detachedRecords, store.loadDeliveredUntil(todoScopeId))
+                val section = BackgroundEvents.render(events, backgroundTasksNow)
+                if (events.isNotEmpty()) store.markDeliveredUntil(todoScopeId, events.last().at)
+                section
+            }.getOrElse { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_background_events_prompt_failed") {
+                    "Agent background events prompt unavailable: type=${throwable.safeLogType()}"
                 }
                 ""
             }
@@ -482,6 +503,7 @@ internal class AgentRuntimeRunExecutor(
                 todoPlan = todoPlan?.promptSection().orEmpty(),
                 taskLedgerPlan = taskLedgerPlan,
                 backgroundTasks = backgroundTasksPlan,
+                backgroundEvents = backgroundEventsPlan,
                 toolSpill = AgentToolSpill.forApp(appContext),
                 // 摘要分批进度只在这里接真日志：库内类默认静默，否则纯 JVM 单测会撞到未实现的 android.util.Log。
                 compactionLog = { AndroidAgentLogger.info(it) },

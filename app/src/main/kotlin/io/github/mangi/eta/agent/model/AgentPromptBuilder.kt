@@ -41,6 +41,8 @@ internal object AgentPromptBuilder {
         taskLedgerPlan: String = "",
         /** 本机后台任务（terminal_job / terminal_daemon）段落；空表示记录里没有未结束的任务。 */
         backgroundTasks: String = "",
+        /** 后台任务结束事件段落；空表示没有「还没告知过」的收尾。 */
+        backgroundEvents: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         /** 已启用插件声明的 prompt 扩展；为空表示没有插件附加说明。 */
         pluginPrompt: String = "",
@@ -56,6 +58,7 @@ internal object AgentPromptBuilder {
             todoPlan,
             taskLedgerPlan,
             backgroundTasks,
+            backgroundEvents,
             mode,
             pluginPrompt,
         )
@@ -82,6 +85,8 @@ internal object AgentPromptBuilder {
         todoPlan: String = "",
         taskLedgerPlan: String = "",
         backgroundTasks: String = "",
+        /** 后台任务结束事件段落；空表示没有「还没告知过」的收尾。 */
+        backgroundEvents: String = "",
         mode: AgentMode = AgentMode.DEFAULT,
         pluginPrompt: String = "",
     ): JSONArray {
@@ -249,6 +254,11 @@ internal object AgentPromptBuilder {
         // 等于指着一个模型根本调不到的工具。
         if (roleplayContext == null && config.terminalTools && backgroundTasks.isNotBlank()) {
             messages.put(systemMessage(backgroundTasks))
+        }
+        // 结束事件紧跟任务段：先知道「还有谁在跑」，再看到「哪些已经结束」。
+        // 与任务段同一条规矩：没有终端工具就不提（不提一个调不到的工具），剧情会话不注入。
+        if (roleplayContext == null && config.terminalTools && backgroundEvents.isNotBlank()) {
+            messages.put(systemMessage(backgroundEvents))
         }
         projectRulesMessage()?.let(messages::put)
         return messages

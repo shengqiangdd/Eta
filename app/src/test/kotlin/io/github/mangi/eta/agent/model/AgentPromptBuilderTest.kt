@@ -426,6 +426,52 @@ class AgentPromptBuilderTest {
         assertTrue(messages.none { it.contains("<background_tasks>") })
     }
 
+    @Test
+    fun backgroundEventsSectionSitsRightAfterTheTasks() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            backgroundTasks = "<background_tasks>\n本机还有 1 条未结束的后台任务记录（job 1）：job_a\n</background_tasks>",
+            backgroundEvents = "<background_events>\n以下后台任务已经结束（共 1 条）：job_b\n</background_events>",
+        ).systemContents()
+
+        val tasks = messages.indexOfFirst { it.contains("<background_tasks>") }
+        val events = messages.indexOfFirst { it.contains("<background_events>") }
+        assertTrue("两段都应出现", tasks >= 0 && events >= 0)
+        // 先知道「还有谁在跑」，再看到「哪些已经结束」。
+        assertEquals("事件段紧跟任务段", tasks + 1, events)
+        assertTrue(messages[events].contains("job_b"))
+    }
+
+    @Test
+    fun blankBackgroundEventsProducesNoSection() {
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = true, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+        ).systemContents()
+
+        // 没有结束事件时不能留空段：读起来像「确实有事件但没写」。
+        assertTrue(messages.none { it.contains("<background_events>") })
+    }
+
+    @Test
+    fun backgroundEventsSectionIsSkippedWhenTerminalToolsAreOff() {
+        // 没有 terminal_job 还提「去看 job 的 logs」，等于指向一个调不到的工具。
+        val messages = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = false, browserTools = false),
+            skillContext = SkillContext.EMPTY,
+            memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false,
+            backgroundEvents = "<background_events>\n以下后台任务已经结束（共 1 条）：job_b\n</background_events>",
+        ).systemContents()
+
+        assertTrue(messages.none { it.contains("<background_events>") })
+    }
+
     private fun modelConfig(
         systemPrompt: String,
         terminalTools: Boolean,

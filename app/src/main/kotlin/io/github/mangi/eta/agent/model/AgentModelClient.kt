@@ -118,6 +118,8 @@ internal object AgentModelClient {
         taskLedgerPlan: String = "",
         /** 本机后台任务段落；同样本轮内固定（与台账一起在 run 开始时读一次）。 */
         backgroundTasks: String = "",
+        /** 后台任务结束事件段落；与任务段一起在 run 开始时读一次。 */
+        backgroundEvents: String = "",
         toolSpill: AgentToolSpill? = null,
         /** 摘要分批进度出口；默认静默，由运行时接 AndroidAgentLogger（纯单测不能碰 android.util.Log）。 */
         compactionLog: (String) -> Unit = {},
@@ -164,6 +166,7 @@ internal object AgentModelClient {
             todoPlan = todoPlan,
             taskLedgerPlan = taskLedgerPlan,
             backgroundTasks = backgroundTasks,
+            backgroundEvents = backgroundEvents,
             mode = mode,
             pluginPrompt = pluginPrompt,
         )
@@ -194,6 +197,7 @@ internal object AgentModelClient {
             todoPlan = todoPlan,
             taskLedgerPlan = taskLedgerPlan,
             backgroundTasks = backgroundTasks,
+            backgroundEvents = backgroundEvents,
             mode = mode,
             pluginPrompt = pluginPrompt,
         ).length()
@@ -245,6 +249,7 @@ internal object AgentModelClient {
                     todoPlan = todoPlan,
                     taskLedgerPlan = taskLedgerPlan,
                     backgroundTasks = backgroundTasks,
+                    backgroundEvents = backgroundEvents,
                     mode = mode,
                     pluginPrompt = pluginPrompt,
                 )

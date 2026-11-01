@@ -145,6 +145,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.model.AgentSubmitDedupPolicyTest
   --tests io.github.mangi.eta.agent.runtime.AgentGoalStoreTest
   --tests io.github.mangi.eta.agent.runtime.AgentTaskLedgerStoreTest
+  --tests io.github.mangi.eta.agent.runtime.BackgroundEventStoreTest
   --tests io.github.mangi.eta.agent.model.AgentTaskLedgerTest
   --tests io.github.mangi.eta.ui.components.AgentTaskLedgerSummaryTest
   --tests io.github.mangi.eta.agent.model.AgentTasksToolCatalogTest
