@@ -201,7 +201,7 @@ internal class AgentAppState(
      *
      * 走的是与 watcher 同一个作用域对象，`resetChain()` 内部先读盘再清零 ——
      * 未加载就写盘会把磁盘上的「续过哪些」「水位线」一起抹成空。
-     * 写盘失败只影响下次启动的记忆，不影响这一轮。
+     * 写失败会经 `BackgroundResumeMemory.onPersistFailed` 留一条 warn（第十七批）。
      */
     private fun resetBackgroundResumeChain(conversationId: String) {
         if (conversationId.isBlank()) return
@@ -210,7 +210,11 @@ internal class AgentAppState(
             conversationId,
         )
         scope.launch(Dispatchers.Main.immediate) {
-            runCatching { resumeScope.resetChain() }
+            runCatching {
+                // 与 watcher 的 runOnce 拿同一把锁：不串行的话，两边都可能先读旧水位线、后写盘，
+                // 后写者把新值盖回去，重启后已处理的任务会被重放。
+                BackgroundResumeMemory.mutexFor(conversationId).withLock { resumeScope.resetChain() }
+            }
         }
     }
 

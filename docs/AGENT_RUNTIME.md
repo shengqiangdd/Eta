@@ -1084,6 +1084,27 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 包 32,183,105 字节 `7bc6395a10cf4419…`）；`STAGES=test-wide` **2944 例 0 失败**。
 边界：4 MiB 仍是硬上限（坏文件级别）；裁剪只发生在 `list()`；跨进程写仍无文件锁；没有真机验证。
 
+### 第十七批：续跑状态的写盘失败与双写者（2026-11-01）
+
+`BackgroundResumeScope.persist()` 把 `saveState` 的 Boolean 丢了：写盘失败时内存里一切正常，
+重启后却退回旧值 —— `seenUntil` 回退会重放已处理的任务，`chain` 回退让「一条链最多 2 次」失效，
+花的是用户额度，且没有任何日志。同一作用域还有两个写者：`runOnce`（读内存 → 判定 → 记账 →
+写盘）与 `AgentAppState.resetBackgroundResumeChain` 里另起协程的 `resetChain()`；两者都可能
+先读旧水位线再写盘，后写者覆盖新值，重启后同样重放。
+
+修法：① `persist()` 改为 `suspend fun persist(): Boolean`，失败经
+`BackgroundResumeMemory.onPersistFailed` 上报（`start()` 里接成 warn，成功时静默）；
+② 新增 `mutexFor(scopeId)`（按作用域 `Mutex`，`reset()` 一起清），`runOnce` 的每个作用域桶
+整段 `withLock`，`resetChain()` 拿同一把锁；③ `Dispatch` 分支在 `isCurrent()` 之后再查一次
+`plan.task.id in scope.resumed` —— 用户可能正好在这中间手动点了「继续」，已记过就不发。
+
+验证：先红（4 例，实现前 `Unresolved reference 'onPersistFailed'`）→ 反证三处同时回退得 3 红
+（持锁 / 失败上报 / 判定后续过复查）→ 定向 `agent.terminal.*` **522 例 0 失败**（恢复实现文件后
+复跑同样 522／0，4 例全绿）→ `STAGES=test,lint,assemble` **1090 例 0 失败**（lint 无新增，
+包 32,185,577 字节 `655cc6b1dfe22276…`）→ `STAGES=test-wide` **2948 例 0 失败**。
+边界：锁按 scopeId 粒度（跨会话不阻塞）；`resetChain()` 仍 `runCatching` 吞异常；写盘失败只留
+一条 warn、不重试；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

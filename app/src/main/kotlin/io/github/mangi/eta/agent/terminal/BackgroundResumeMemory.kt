@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import io.github.mangi.eta.agent.runtime.BackgroundResumeState
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
 /**
@@ -125,14 +126,23 @@ internal class BackgroundResumeScope(
         return true
     }
 
-    /** 把当前状态写回磁盘；写失败只影响下次启动的记忆，不影响这次判定。 */
-    suspend fun persist() {
+    /**
+     * 把当前状态写回磁盘；返回是否真的写成功。
+     *
+     * 失败不只是「下次启动记不住」：`seenUntil` 回退会重放已处理的任务，`chain` 回退会
+     * 让上限失效 —— 两者都会花用户的额度。所以失败必须能上报（[BackgroundResumeMemory.onPersistFailed]），
+     * 不能像原来那样把 `saveState` 的 Boolean 丢掉。
+     */
+    suspend fun persist(): Boolean {
+        val target = store ?: return true
         val state = BackgroundResumeState(
             resumed = resumed.toList(),
             chain = autoResumed,
             seenUntil = seenUntil,
         )
-        withContext(Dispatchers.IO) { store?.saveState(scopeId, state) }
+        val saved = withContext(Dispatchers.IO) { target.saveState(scopeId, state) }
+        if (!saved) BackgroundResumeMemory.onPersistFailed?.invoke(scopeId)
+        return saved
     }
 
     private fun remember(id: String) {
@@ -151,15 +161,36 @@ internal class BackgroundResumeScope(
  */
 internal object BackgroundResumeMemory {
 
+    /**
+     * 落盘失败回调（第十七批）。
+     *
+     * 进程级而不是构造参数：失败现场在 [BackgroundResumeScope.persist]，而日志实现
+     * （`AndroidAgentLogger`）在 Android 层。用回调保持这个文件纯 JVM 可测。
+     */
+    @Volatile
+    var onPersistFailed: ((String) -> Unit)? = null
+
     private val scopes = HashMap<String, BackgroundResumeScope>()
+    private val locks = HashMap<String, Mutex>()
 
     fun scopeFor(store: BackgroundResumeStore?, scopeId: String): BackgroundResumeScope =
         synchronized(scopes) {
             scopes.getOrPut(scopeId) { BackgroundResumeScope(store, scopeId) }
         }
 
+    /**
+     * 同一作用域的互斥锁。
+     *
+     * `runOnce` 的「读内存 → 判定 → 记账 → 写盘」与用户发消息时的 `resetChain()` 必须串行：
+     * 两者都可能先读旧水位线、后写盘，后写者会把新值覆盖回去（重启后重放任务）。
+     */
+    fun mutexFor(scopeId: String): Mutex = synchronized(scopes) { locks.getOrPut(scopeId) { Mutex() } }
+
     /** 只给测试用：清掉所有作用域，避免用例之间互相污染。 */
     fun reset() {
-        synchronized(scopes) { scopes.clear() }
+        synchronized(scopes) {
+            scopes.clear()
+            locks.clear()
+        }
     }
 }

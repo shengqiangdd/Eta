@@ -70,6 +70,10 @@ internal object BackgroundAutoResumeWatcher {
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
         val appContext = context.applicationContext
+        // 落盘失败必须留痕：静默丢失的是「续过什么 / 链走到第几次」，重启后会重放已处理的任务。
+        BackgroundResumeMemory.onPersistFailed = { scopeId ->
+            AndroidAgentLogger.warn("Agent auto-resume state not saved: scope=$scopeId")
+        }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope.launch {
             runChangeLoop(changes = DetachedTaskSupervisor.changes, tick = { tick(appContext) })
@@ -193,57 +197,94 @@ internal object BackgroundAutoResumeWatcher {
         // 每个会话各自判定、各自预算：A 会话续过不该消耗 B 会话的次数。
         for ((scopeId, tasks) in owned.groupBy { it.sessionScope.orEmpty() }) {
             if (scopeId.isBlank()) continue
-            val scope = scopeFor(scopeId)
-            // 磁盘记忆没读完之前不能判「没续过」，否则重启后会把同一批任务再续一遍。
-            if (!scope.isLoaded) scope.loadFromStore()
-            if (!scope.isLoaded) continue
-            val plan = planAutomationTick(
-                records = tasks,
-                scopeId = scopeId,
-                handled = scope.resumed.toSet(),
-                seenUntil = scope.seenUntil,
-                chain = scope.autoResumed,
-                nowMs = nowMs,
-            )
-            onPlan(scopeId, plan)
-            when (plan) {
-                is AutomationTick.Idle -> Unit
-                is AutomationTick.Rebaseline -> {
-                    // 时钟回拨：先吸收「未来记录」，再后退水位线。顺序不能反 ——
-                    // 反过来的话，中途失败会停在「水位线已后退、未来记录仍是候选」的状态，
-                    // 下一次 tick 就会把这些回拨前的历史真的发出去。
-                    plan.absorb.forEach { scope.markResumed(it) }
-                    scope.reestablishSeenUntil(plan.at)
-                    scope.persist()
-                }
-                is AutomationTick.Initialize -> {
-                    // 第一次见到这个作用域：只立水位线，不补发历史任务。
-                    scope.markSeenUntil(plan.at)
-                    scope.persist()
-                }
-                is AutomationTick.Discard -> {
-                    // 链满了：明确放弃这一批，水位线推到它们最晚的结束时刻，
-                    // 否则每 30 秒都会把同一批候选重新算一遍。
-                    scope.markSeenUntil(plan.through)
-                    scope.persist()
-                }
-                is AutomationTick.Dispatch -> {
-                    // 分发器已经被换掉（Activity 重建）：这一轮不能发，也不能记账。
-                    if (!isCurrent()) continue
-                    // 先发再记账：发不出去（会话在跑）就不该占掉这次预算，也不该推进水位线。
-                    if (!dispatch(scopeId, plan.task)) continue
-                    scope.markAutoResumed(plan.task.id)
-                    // 水位线停在这条任务的**前一毫秒**，不是它自己的时刻：同一毫秒里结束的
-                    // 其余任务（一轮里派几个短命令很常见）否则永远不满足「严格晚于水位线」，
-                    // 会被静默跳过。链满时走 Discard（推到最晚一条），那里必须保持原值——
-                    // 否则被放弃的同一毫秒任务会反复变回候选，每 30 秒重算一次。
-                    scope.markSeenUntil(((plan.task.completedAt ?: 0L) - 1L).coerceAtLeast(1L))
-                    scope.persist()
-                    sent += 1
-                }
+            // 同一作用域有两个写者：这里的「读内存 → 判定 → 记账 → 写盘」，以及用户发消息时的
+            // `resetChain()`（在 AgentAppState 里另起协程）。不串行的话，后写者会把读到的
+            // 旧水位线写回去 —— 重启后已处理的任务会重放，白花额度。
+            BackgroundResumeMemory.mutexFor(scopeId).withLock {
+                sent += runScopeOnce(
+                    scopeId = scopeId,
+                    tasks = tasks,
+                    scopeFor = scopeFor,
+                    dispatch = dispatch,
+                    nowMs = nowMs,
+                    isCurrent = isCurrent,
+                    onPlan = onPlan,
+                )
             }
         }
         return sent
+    }
+
+    /**
+     * 单个作用域的一次判定与执行。调用方必须已持有
+     * [BackgroundResumeMemory.mutexFor] 返回的锁。
+     *
+     * 返回真正发出的条数（0 或 1）。
+     */
+    private suspend fun runScopeOnce(
+        scopeId: String,
+        tasks: List<DetachedTask>,
+        scopeFor: (String) -> BackgroundResumeScope,
+        dispatch: suspend (String, DetachedTask) -> Boolean,
+        nowMs: Long,
+        isCurrent: () -> Boolean,
+        onPlan: (String, AutomationTick) -> Unit,
+    ): Int {
+        val scope = scopeFor(scopeId)
+        // 磁盘记忆没读完之前不能判「没续过」，否则重启后会把同一批任务再续一遍。
+        if (!scope.isLoaded) scope.loadFromStore()
+        if (!scope.isLoaded) return 0
+        val plan = planAutomationTick(
+            records = tasks,
+            scopeId = scopeId,
+            handled = scope.resumed.toSet(),
+            seenUntil = scope.seenUntil,
+            chain = scope.autoResumed,
+            nowMs = nowMs,
+        )
+        onPlan(scopeId, plan)
+        return when (plan) {
+            is AutomationTick.Idle -> 0
+            is AutomationTick.Rebaseline -> {
+                // 时钟回拨：先吸收「未来记录」，再后退水位线。顺序不能反 ——
+                // 反过来的话，中途失败会停在「水位线已后退、未来记录仍是候选」的状态，
+                // 下一次 tick 就会把这些回拨前的历史真的发出去。
+                plan.absorb.forEach { scope.markResumed(it) }
+                scope.reestablishSeenUntil(plan.at)
+                scope.persist()
+                0
+            }
+            is AutomationTick.Initialize -> {
+                // 第一次见到这个作用域：只立水位线，不补发历史任务。
+                scope.markSeenUntil(plan.at)
+                scope.persist()
+                0
+            }
+            is AutomationTick.Discard -> {
+                // 链满了：明确放弃这一批，水位线推到它们最晚的结束时刻，
+                // 否则每 30 秒都会把同一批候选重新算一遍。
+                scope.markSeenUntil(plan.through)
+                scope.persist()
+                0
+            }
+            is AutomationTick.Dispatch -> {
+                // 分发器已经被换掉（Activity 重建）：这一轮不能发，也不能记账。
+                if (!isCurrent()) return 0
+                // 判定之后、真正发出之前，这条可能已经被记成「续过」（用户手动点了「继续」）。
+                // 已记过就不再发，否则同一个任务会得到两条消息。
+                if (plan.task.id in scope.resumed) return 0
+                // 先发再记账：发不出去（会话在跑）就不该占掉这次预算，也不该推进水位线。
+                if (!dispatch(scopeId, plan.task)) return 0
+                scope.markAutoResumed(plan.task.id)
+                // 水位线停在这条任务的**前一毫秒**，不是它自己的时刻：同一毫秒里结束的
+                // 其余任务（一轮里派几个短命令很常见）否则永远不满足「严格晚于水位线」，
+                // 会被静默跳过。链满时走 Discard（推到最晚一条），那里必须保持原值——
+                // 否则被放弃的同一毫秒任务会反复变回候选，每 30 秒重算一次。
+                scope.markSeenUntil(((plan.task.completedAt ?: 0L) - 1L).coerceAtLeast(1L))
+                scope.persist()
+                1
+            }
+        }
     }
 
     /** 开关必须读**本地** Agent prefs：它不在 `LOCAL_AGENT_KEYS` 里，用 `Prefs.isEnabled` 会永远读到默认值。 */

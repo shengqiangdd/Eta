@@ -6390,3 +6390,51 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
   如果某个进程只读快照、从不调 `list()`，文件不会被裁 —— 但主进程的卡片与 5 分钟探活都会调。
 - 未处理：跨进程写记录没有文件锁（两个进程同时 save 仍可能丢写），与第十二批记录的边界一致。
 - 没有真机验证。
+
+## §32.66 续跑状态写盘失败没人知道，两个写者还会互相覆盖（2026-11-01）
+
+`BackgroundResumeScope.persist()` 原来把 `saveState` 返回的 Boolean 直接丢掉。写盘失败
+（目录建不出来、改名失败、空间不足）时内存里一切正常：这一轮照常判定、照常发消息，
+**重启之后退回旧值** —— `seenUntil` 回退会把已处理的任务再续一遍，`chain` 回退会让
+「一条链最多 2 次」的上限失效。两者都花用户额度，而且没有任何日志。
+
+同一作用域还有两个写者：watcher 的 `runOnce`（读内存 → 判定 → 记账 → 写盘）与用户发消息时
+`AgentAppState.resetBackgroundResumeChain` 里另起协程调用的 `resetChain()`。两者都可能先读到
+旧的 `seenUntil` 再写盘，后写者把新值覆盖回去 —— 同样表现为重启后重放。
+
+修法：
+
+1. `persist()` 改为 `suspend fun persist(): Boolean`，如实返回 `saveState` 的结果；失败时经新增的
+   `BackgroundResumeMemory.onPersistFailed`（进程级回调，保持这个文件纯 JVM 可测）上报，
+   `BackgroundAutoResumeWatcher.start()` 里把它装成
+   `AndroidAgentLogger.warn("Agent auto-resume state not saved: scope=…")`。写成功时不上报，
+   免得正常路径变噪音。
+2. `BackgroundResumeMemory.mutexFor(scopeId)` 新增按作用域的 `Mutex`（`reset()` 一起清），
+   `runOnce` 的每个作用域桶整段 `withLock`，`resetChain()` 拿同一把锁 —— 两个写者串行，
+   「读旧值 → 写盘」不再能交叉。
+3. 顺带堵上判定与执行之间的第二个窗口：`Dispatch` 分支在 `isCurrent()` 之后再查一次
+   `plan.task.id in scope.resumed`（用户可能正好在这中间手动点了「继续」），已记过就不发。
+   与第十三批的 `isCurrent` 同类：判定与执行之间状态会变。
+
+验证：
+
+- **先红**：`BackgroundResumeDurabilityTest` 4 例（失败必上报 / 成功静默 / 分发期间持有锁 /
+  判定后被记成续过就不发），实现前编译失败 `Unresolved reference 'onPersistFailed'`。
+- **反证**（三处同时回退：去掉锁、去掉 `resumed` 复查、去掉失败上报）→ 3 红：
+  `scopeIsLockedWhileDispatching`、`failedPersistIsReported expected:<[conv-a]> but was:<[]>`、
+  `skipsDispatchWhenTaskWasResumedAfterPlanning expected:<0> but was:<1>`。
+- 定向 `agent.terminal.*`：**522 例 0 失败**（新增 4 例）。恢复实现文件后复跑同样 **522 例 0 失败**，
+  4 例全绿。
+- `STAGES=test,lint,assemble`：**1090 例 0 失败**；lint 无新增（baseline 183 命中 + 11 条依赖更新
+  提示未复现）；包 32,185,577 字节 `655cc6b1dfe22276…`。
+- `STAGES=test-wide`：**2948 例 0 失败**。
+
+### 边界（如实记录）
+
+- 锁是**按 scopeId 粒度**：不同会话互不阻塞（本来就该这样，A 会话不该等 B 会话），同一会话的
+  两次 tick 排队；`runOnce` 本来就是 30 秒一次，不会堆积。
+- `resetChain()` 外面仍是 `runCatching`：失败（例如加载失败）只丢这一次重置，不抛到 UI。
+  与第十五批「循环整体异常边界」同思路 —— 用户手动操作不能因为内部状态问题崩掉。
+- 写盘失败只留一条 warn，**不重试**：重试要引入退避与队列，这批只解决「静默」。失败后内存里仍是
+  最新值，同一进程内判定是对的，重启才会回退。
+- 没有真机验证：自动续跑默认关闭，打开会真发模型调用、改用户会话。第十三批起每批都只有单测。
