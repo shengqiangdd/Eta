@@ -1049,6 +1049,8 @@
   <string name="background_tasks_finished">已结束</string>
   <string name="background_tasks_card_hint">只读：读日志或停止任务请用 terminal_job / terminal_daemon</string>
   <string name="background_tasks_resume">继续</string>
+  <string name="background_tasks_auto_resume_used">本链已自动续 %1$d/%2$d</string>
+  <string name="background_tasks_auto_resume_paused">自动续跑已暂停，发一条消息后恢复</string>
   <string name="background_tasks_resume_prompt">后台任务 %1$s（%2$s）已结束。请用 terminal_job / terminal_daemon 的 logs 读取它的输出，然后把还没做完的事接着做完；不需要继续就直接说明原因。</string>
   <string name="setting_background_resume_button_title">后台任务结束后在卡片上提供「继续」</string>
   <string name="setting_background_resume_button_summary">只有你点一下才会发出下一轮，默认开。</string>

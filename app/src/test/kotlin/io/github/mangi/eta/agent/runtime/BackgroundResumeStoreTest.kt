@@ -114,5 +114,69 @@ class BackgroundResumeStoreTest {
         file.parentFile?.mkdirs()
         file.writeText("""{"other":1}""", Charsets.UTF_8)
         assertEquals(emptyList<String>(), store.load("c"))
+        assertEquals(0, store.loadState("c").chain)
+        assertNull(store.loadState("c").seenUntil)
+    }
+
+    @Test
+    fun savesAndReloadsChainAndWatermark() {
+        val store = store()
+        assertTrue(
+            store.saveState(
+                "c",
+                BackgroundResumeState(resumed = listOf("job_a"), chain = 2, seenUntil = 1_700_000_000_000L),
+            )
+        )
+        val loaded = store.loadState("c")
+        assertEquals(listOf("job_a"), loaded.resumed)
+        assertEquals(2, loaded.chain)
+        assertEquals(1_700_000_000_000L, loaded.seenUntil)
+    }
+
+    /** 卡片手动点「继续」只写 id：不能把链长与水位线一起抹成默认值。 */
+    @Test
+    fun savingIdsKeepsChainAndWatermark() {
+        val store = store()
+        store.saveState("c", BackgroundResumeState(resumed = listOf("job_a"), chain = 1, seenUntil = 900L))
+        assertTrue(store.save("c", listOf("job_a", "job_b")))
+        val loaded = store.loadState("c")
+        assertEquals(listOf("job_a", "job_b"), loaded.resumed)
+        assertEquals(1, loaded.chain)
+        assertEquals(900L, loaded.seenUntil)
+    }
+
+    /** 第九～十一批写下的老文件只有 `resumed`：缺字段按默认值读，不能连「续过哪些」一起丢。 */
+    @Test
+    fun legacyFileWithOnlyResumedLoadsOtherFieldsAsDefaults() {
+        val store = store()
+        val file = store.fileFor("c") ?: error("fileFor 不该返回 null")
+        file.parentFile?.mkdirs()
+        file.writeText("""{"resumed":["job_a","job_b"]}""", Charsets.UTF_8)
+        val loaded = store.loadState("c")
+        assertEquals(listOf("job_a", "job_b"), loaded.resumed)
+        assertEquals(0, loaded.chain)
+        assertNull(loaded.seenUntil)
+    }
+
+    /** 坏值不能变成「永久停用」或「把每条都当成新事件」。 */
+    @Test
+    fun illegalChainAndWatermarkFallBackToDefaults() {
+        val store = store()
+        val file = store.fileFor("c") ?: error("fileFor 不该返回 null")
+        file.parentFile?.mkdirs()
+        file.writeText("""{"resumed":["job_a"],"chain":-5,"seen_until":-1}""", Charsets.UTF_8)
+        val loaded = store.loadState("c")
+        assertEquals(0, loaded.chain)
+        assertNull(loaded.seenUntil)
+        assertEquals(listOf("job_a"), loaded.resumed)
+    }
+
+    @Test
+    fun hugeChainIsClamped() {
+        val store = store()
+        val file = store.fileFor("c") ?: error("fileFor 不该返回 null")
+        file.parentFile?.mkdirs()
+        file.writeText("""{"chain":999999}""", Charsets.UTF_8)
+        assertEquals(BackgroundResumeStore.MAX_CHAIN, store.loadState("c").chain)
     }
 }

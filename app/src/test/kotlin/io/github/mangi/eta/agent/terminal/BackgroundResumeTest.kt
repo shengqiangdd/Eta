@@ -1,13 +1,12 @@
 package io.github.mangi.eta.agent.terminal
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 自动续跑的判定。
+ * 事件触发的判定。
  *
- * 这里守的是「不会自己跑飞」：旧任务不自动续、续过的不再续、次数上限到了就停，
+ * 这里守的是「不会自己跑飞」：历史事件不重放、续过的不再续、链长上限到了就明确放弃，
  * 以及**只续本会话派出去的任务**（记录从第十批起带会话归属）。
  * 真正发消息那一步（启动 run + 本地化文案）本机测不了，只能在真机上看。
  */
@@ -32,98 +31,104 @@ class BackgroundResumeTest {
         sessionScope = sessionScope,
     )
 
+    private fun tick(
+        records: List<DetachedTask>,
+        scopeId: String = "conv-a",
+        handled: Set<String> = emptySet(),
+        seenUntil: Long? = 500L,
+        chain: Int = 0,
+        nowMs: Long = 1_000L,
+        maxChain: Int = AutoResumeMaxPerChain,
+    ) = planAutomationTick(
+        records = records,
+        scopeId = scopeId,
+        handled = handled,
+        seenUntil = seenUntil,
+        chain = chain,
+        nowMs = nowMs,
+        maxChain = maxChain,
+    )
+
     @Test
-    fun noRecordsMeansNoResume() {
-        val plan = planAutoResume(emptyList(), "conv-a", emptySet(), 0L, alreadyResumed = 0)
-        assertNull(plan.next)
-        assertEquals(0, plan.skipped)
+    fun noRecordsMeansNothingToDo() {
+        assertEquals(AutomationTick.Idle, tick(emptyList()))
+    }
+
+    /** 作用域第一次出现：只立水位线，不能把此前所有已结束任务当成新事件续一遍。 */
+    @Test
+    fun firstSightInitializesWatermarkWithoutReplay() {
+        val plan = tick(listOf(task("job_old", 100L, 300L)), seenUntil = null, nowMs = 1_000L)
+        assertEquals(AutomationTick.Initialize(1_000L), plan)
+    }
+
+    /** 只有运行中的任务时也要立水位线：随后结束的那条才会严格晚于它。 */
+    @Test
+    fun firstSightWithRunningTaskStillInitializes() {
+        val plan = tick(listOf(task("job_running", 100L, null)), seenUntil = null)
+        assertEquals(AutomationTick.Initialize(1_000L), plan)
     }
 
     @Test
     fun runningTaskIsNotACandidate() {
-        val plan = planAutoResume(listOf(task("job_a", 100L, null)), "conv-a", emptySet(), 0L, 0)
-        assertNull(plan.next)
-        assertEquals(0, plan.skipped)
+        assertEquals(AutomationTick.Idle, tick(listOf(task("job_a", 100L, null))))
     }
 
     @Test
-    fun taskFinishedBeforeCardOpenedIsIgnored() {
-        // 卡片打开的那一刻是 500：这条 499 结束的属于历史，不能被自动续
-        val plan = planAutoResume(listOf(task("job_a", 100L, 499L)), "conv-a", emptySet(), 500L, 0)
-        assertNull(plan.next)
+    fun taskFinishedAtOrBeforeWatermarkIsIgnored() {
+        // 水位线是 500：499 结束的属于历史，不能被自动续
+        assertEquals(AutomationTick.Idle, tick(listOf(task("job_a", 100L, 499L))))
         // 恰好等于边界也不行：判据是「严格晚于」
-        val edge = planAutoResume(listOf(task("job_a", 100L, 500L)), "conv-a", emptySet(), 500L, 0)
-        assertNull(edge.next)
+        assertEquals(AutomationTick.Idle, tick(listOf(task("job_a", 100L, 500L))))
     }
 
     @Test
     fun handledTaskIsNotResumedAgain() {
-        val plan = planAutoResume(
+        val plan = tick(
             records = listOf(task("job_a", 100L, 600L)),
-            scopeId = "conv-a",
             handled = setOf("job_a"),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
         )
-        assertNull(plan.next)
-        assertEquals(0, plan.skipped)
+        assertEquals(AutomationTick.Idle, plan)
     }
 
     @Test
     fun oldestFinishedWins() {
-        val plan = planAutoResume(
+        val plan = tick(
             records = listOf(
                 task("job_late", 100L, 900L),
                 task("job_early", 100L, 600L),
                 task("job_mid", 100L, 700L),
             ),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
         )
-        assertEquals("job_early", plan.next?.id)
-        assertEquals(2, plan.skipped)
+        assertEquals("job_early", (plan as AutomationTick.Dispatch).task.id)
     }
 
+    /** 链满：明确放弃这一批，并给出最晚的结束时刻（调用方据此推进水位线）。 */
     @Test
-    fun budgetExhaustedStops() {
-        val plan = planAutoResume(
+    fun chainExhaustedDiscardsThroughLatestCandidate() {
+        val plan = tick(
             records = listOf(task("job_a", 100L, 600L), task("job_b", 100L, 700L)),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = AutoResumeMaxPerSession,
+            chain = AutoResumeMaxPerChain,
         )
-        assertNull(plan.next)
-        assertEquals(2, plan.skipped)
+        assertEquals(AutomationTick.Discard(through = 700L, skipped = 2), plan)
     }
 
     @Test
-    fun overBudgetDoesNotGoNegative() {
-        val plan = planAutoResume(
+    fun overChainDoesNotGoNegative() {
+        val plan = tick(
             records = listOf(task("job_a", 100L, 600L)),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = AutoResumeMaxPerSession + 5,
+            chain = AutoResumeMaxPerChain + 5,
         )
-        assertNull(plan.next)
-        assertEquals(1, plan.skipped)
+        assertEquals(AutomationTick.Discard(through = 600L, skipped = 1), plan)
     }
 
     @Test
     fun zeroCapNeverSends() {
-        val plan = planAutoResume(
+        val plan = tick(
             records = listOf(task("job_a", 100L, 600L)),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
-            maxCount = 0,
+            chain = 0,
+            maxChain = 0,
         )
-        assertNull(plan.next)
-        assertEquals(1, plan.skipped)
+        assertEquals(AutomationTick.Discard(through = 600L, skipped = 1), plan)
     }
 
     /**
@@ -134,60 +139,38 @@ class BackgroundResumeTest {
      */
     @Test
     fun taskFromAnotherConversationIsIgnored() {
-        val plan = planAutoResume(
-            records = listOf(task("job_b", 100L, 600L, sessionScope = "conv-b")),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
-        )
-        assertNull(plan.next)
-        // 不是候选，也不该计入「因预算没排上」
-        assertEquals(0, plan.skipped)
+        val plan = tick(listOf(task("job_b", 100L, 600L, sessionScope = "conv-b")))
+        assertEquals(AutomationTick.Idle, plan)
     }
 
     @Test
     fun recordsWithoutOwnerAreNeverAutoResumed() {
-        val plan = planAutoResume(
-            records = listOf(task("job_legacy", 100L, 600L, sessionScope = null)),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
-        )
-        assertNull(plan.next)
-        assertEquals(0, plan.skipped)
+        val plan = tick(listOf(task("job_legacy", 100L, 600L, sessionScope = null)))
+        assertEquals(AutomationTick.Idle, plan)
     }
 
-    /** 没有会话键（语音 / 一次性入口的卡片）时，任何任务都不自动续。 */
+    /** 没有会话键（语音 / 一次性入口的卡片）时，连水位线都不该立。 */
     @Test
     fun blankScopeNeverMatches() {
-        val plan = planAutoResume(
+        val plan = tick(
             records = listOf(task("job_a", 100L, 600L, sessionScope = "")),
             scopeId = "",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
+            seenUntil = null,
         )
-        assertNull(plan.next)
+        assertEquals(AutomationTick.Idle, plan)
     }
 
     /** 混合场景：只在本会话的候选里挑最早的一条，别的会话不参与排序也不占位。 */
     @Test
     fun onlyOwnTasksTakePartInOrdering() {
-        val plan = planAutoResume(
+        val plan = tick(
             records = listOf(
                 task("job_other_early", 100L, 550L, sessionScope = "conv-b"),
                 task("job_mine_late", 100L, 800L, sessionScope = "conv-a"),
                 task("job_mine_early", 100L, 650L, sessionScope = "conv-a"),
             ),
-            scopeId = "conv-a",
-            handled = emptySet(),
-            finishedAfterMs = 500L,
-            alreadyResumed = 0,
         )
-        assertEquals("job_mine_early", plan.next?.id)
-        assertEquals(1, plan.skipped)
+        assertEquals("job_mine_early", (plan as AutomationTick.Dispatch).task.id)
     }
 
     /**

@@ -36,13 +36,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
+import io.github.mangi.eta.agent.terminal.AutoResumeMaxPerChain
 import io.github.mangi.eta.agent.terminal.BackgroundResumeMemory
 import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.backgroundTaskLine
 import io.github.mangi.eta.agent.terminal.canOfferManualResume
-import io.github.mangi.eta.agent.terminal.planAutoResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
 import kotlinx.coroutines.Dispatchers
@@ -82,13 +82,12 @@ private fun rememberDetachedTasks(): List<DetachedTask>? {
  * 只读：不提供停止 / 读日志 —— 这些动作要走 `terminal_job` / `terminal_daemon`，
  * 界面直接触发会让「谁在调度」变成两套真相（与台账卡同一条理由）。
  *
- * 「继续」是这个卡片唯一会发消息的入口：默认要用户点一下，自动续跑要单独在设置里打开，
- * 且有次数上限（判定在 [planAutoResume]）。
+ * 「继续」是这个卡片唯一会发消息的入口：要用户点一下。自动续跑由进程级 watcher 负责，
+ * 且默认关、有链长上限（判定在 `planAutomationTick`）。
  *
- * 自动续跑的**主路径已经不在这个组件里**：任务结束由进程级 `BackgroundAutoResumeWatcher`
- * 触发（用户切到别的会话 / 桌面也能续）。这里保留同一套判定，是为了界面正在看着时
- * 能立刻响应，而不是等下一次兜底扫描；两边共用 `BackgroundResumeMemory` 去重与预算，
- * 谁先处理都不会重复发。
+ * 自动续跑**完全不在这个组件里**：任务结束由进程级 `BackgroundAutoResumeWatcher`
+ * 触发（用户切到别的会话 / 桌面也能续）。watcher 用同一份进程级状态去重与预算；卡片只读它，
+ * 让用户知道「为什么不再自动续了」。
  */
 @Composable
 internal fun BackgroundTasksCard(
@@ -137,23 +136,7 @@ internal fun BackgroundTasksCard(
     LaunchedEffect(resumeScope) { resumeScope.loadFromStore() }
     val uiScope = rememberCoroutineScope()
     val resumed = resumeScope.resumed
-    /** 只认卡片出现之后、**归属本会话**的任务：否则一进旧会话，历史任务会被当成新事件续一遍，
-     *  别处会话的任务也会被当前会话替它花掉额度（后者由 `planAutoResume` 的 scopeId 过滤）。 */
-    val openedAt = remember { System.currentTimeMillis() }
     val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
-    LaunchedEffect(autoResumeEnabled, canSend, records, resumeScope.isLoaded) {
-        if (!autoResumeEnabled || !canSend || !resumeScope.isLoaded) return@LaunchedEffect
-        val target = planAutoResume(
-            records = records,
-            scopeId = scopeId.orEmpty(),
-            handled = resumed.toSet(),
-            finishedAfterMs = openedAt,
-            alreadyResumed = resumeScope.autoResumed,
-        ).next ?: return@LaunchedEffect
-        resumeScope.markAutoResumed(target.id)
-        uiScope.launch { resumeScope.persist() }
-        onResume(resumePrompt(promptTemplate, target))
-    }
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
     val finishedLabel = stringResource(R.string.background_tasks_finished)
@@ -226,6 +209,28 @@ internal fun BackgroundTasksCard(
                             null
                         },
                     )
+                }
+                if (autoResumeEnabled) {
+                    // 链长与水位线都落盘在 watcher 那边；这里只读同一份进程级状态，不自己算。
+                    val chain = resumeScope.autoResumed
+                    val autoText = when {
+                        chain <= 0 -> null
+                        chain >= AutoResumeMaxPerChain ->
+                            stringResource(R.string.background_tasks_auto_resume_paused)
+                        else -> stringResource(
+                            R.string.background_tasks_auto_resume_used,
+                            chain,
+                            AutoResumeMaxPerChain,
+                        )
+                    }
+                    if (autoText != null) {
+                        Text(
+                            text = autoText,
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            modifier = Modifier.padding(top = 4.dp, start = 14.dp),
+                        )
+                    }
                 }
                 Text(
                     text = stringResource(R.string.background_tasks_card_hint),

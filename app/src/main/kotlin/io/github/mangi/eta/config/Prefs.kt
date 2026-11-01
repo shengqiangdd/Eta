@@ -97,8 +97,9 @@ internal object Prefs {
          * 后台任务结束后**自动**发起下一轮（默认关）。
          *
          * 它会在没人看着的时候花掉额度，所以默认关，且另有硬上限
-         * （见 `BackgroundResume` 的 `AutoResumeMaxPerSession`）：
-         * 一轮里最多自动续 2 次，超过就只提示不再自动发。
+         * （见 `BackgroundResume` 的 `AutoResumeMaxPerChain`）：
+         * 一条链里最多自动续 2 次，用户发一条消息才开新链。链长落盘，
+         * 进程重启不会把上限清零。
          */
         const val AGENT_BACKGROUND_RESUME_AUTO = "agent_background_resume_auto"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"

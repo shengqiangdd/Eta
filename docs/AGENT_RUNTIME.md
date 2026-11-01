@@ -985,6 +985,34 @@ agent 事件，而 `detached task probe` **0 条**；测完恢复 256 KiB。
 - 每轮要起一次 root shell（仅当存在未结束的守护任务时）；没有任务时只读一次 JSON，不开进程。
 - `terminal_daemon list` 新增字段是纯新增，但读 `completed_at` 前要允许它是 `null`。
 
+### 第十二批：事件触发收尾——水位线与链长都落盘（2026-11-01）
+
+§32.50 的第四层「事件触发（automation）」在批十已经接上（后台任务结束 → 自动续跑），
+但只做成「进程活着、界面打开过」的形态。这一批补的是事件本身的三个性质：
+
+- **不丢**：旧实现拿「进程启动时刻」当水位线。任务刚结束、扫描还没跑，进程被杀 →
+  它比下一次启动早，重启后永远不会被续。
+- **不重放**：升级后第一次启动，记录里可能躺着几个月前结束的任务；没有持久水位线时，
+  它们全都会被当成「新事件」。
+- **不无限**：链长计数只在进程内，杀掉 App 再打开就归零 —— 循环保护的最短绕过路径。
+
+改法：`seen_until` 与 `chain` 都落盘在 `files/agent/background_resume/<sha256(scope)>.json`；
+判定抽成纯函数 `planAutomationTick`（Initialize / Dispatch / Discard / Idle，四态各自可测）；
+卡片里的自动续跑删掉，自动触发点只剩 `BackgroundAutoResumeWatcher`；
+`launchConversationRun(automatic = true)` 是唯一不清零链的入口，其余用户入口都会 `resetChain()`。
+卡片展开区显示「本链已自动续 1/2」或「自动续跑已暂停，发一条消息后恢复」。
+
+`resetChain()` 必须先 `loadFromStore()` 再写盘：未加载就写，会把磁盘上的 `resumed`
+与 `seenUntil` 一起抹成空。两个字段各带一个 `touched` 标记，加载时只填没被改过的。
+
+边界：仍然只有一类事件源（后台任务结束：命令任务由完成线程写盘，守护任务靠 5 分钟探活）；
+只在 App 进程存活时触发；`seen_until` 用墙上时钟，系统时间回拨会让新任务落在水位线之前；
+链满后的候选会被明确放弃（水位线推进到最晚一条），手动「继续」仍可用；
+自动续跑端到端仍未真机验证。
+
+验证：定向 4 类 63／0；`STAGES=test,lint,assemble` 1066／0（lint 无新增、死文案 0）；
+`STAGES=test-wide` 2924／0。包 32,177,405 字节 `e7a45bc96311f24f…`。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

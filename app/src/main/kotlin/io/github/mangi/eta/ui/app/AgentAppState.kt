@@ -19,7 +19,9 @@ import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.AgentFileReferenceGateway
 import io.github.mangi.eta.agent.device.RootAccess
+import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
+import io.github.mangi.eta.agent.terminal.BackgroundResumeMemory
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.media.AgentImageCodec
@@ -188,8 +190,28 @@ internal class AgentAppState(
             // 用户正在看的会话：这就是 primary；否则只变更那个会话的状态，
             // 不能把当前会话的「停止」按钮指向一条它看不到的 run。
             asPrimary = conversationId == selectedConversationId,
+            // 这一轮不是用户发起的：不能把自动续跑链清零，否则上限形同虚设。
+            automatic = true,
         )
         return true
+    }
+
+    /**
+     * 用户在场（发了一条消息）：这条自动续跑链到此为止。
+     *
+     * 走的是与 watcher 同一个作用域对象，`resetChain()` 内部先读盘再清零 ——
+     * 未加载就写盘会把磁盘上的「续过哪些」「水位线」一起抹成空。
+     * 写盘失败只影响下次启动的记忆，不影响这一轮。
+     */
+    private fun resetBackgroundResumeChain(conversationId: String) {
+        if (conversationId.isBlank()) return
+        val resumeScope = BackgroundResumeMemory.scopeFor(
+            BackgroundResumeStore.forApp(appContext),
+            conversationId,
+        )
+        scope.launch(Dispatchers.Main.immediate) {
+            runCatching { resumeScope.resetChain() }
+        }
     }
 
     /** Activity 结束时注销分发器；进程级 watcher 本身继续存活。 */
@@ -2329,7 +2351,15 @@ internal class AgentAppState(
          * 「停止」按钮指向的目标，不能被一条看不见的 run 抢走。
          */
         asPrimary: Boolean = true,
+        /**
+         * 这一轮是不是自动续跑发起的。
+         *
+         * 只有自动续跑允许不清零链长；其余入口（用户发消息、语音、分享、回答提问、
+         * 排队消息的补发）都说明用户在场或在推动对话，应当开始新的一条链。
+         */
+        automatic: Boolean = false,
     ) {
+        if (!automatic) resetBackgroundResumeChain(conversationId)
         runConversationIds[runId] = conversationId
         if (asPrimary) currentRunId = runId
         // 发送即绑定：会话记住本轮实际使用的模型，回落到默认模型时也随之更新。
