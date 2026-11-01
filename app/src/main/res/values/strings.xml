@@ -1063,6 +1063,12 @@
   <string name="background_run_stopped">Background task stopped</string>
   <string name="background_tasks_finished">Finished</string>
   <string name="background_tasks_card_hint">Read-only: use terminal_job / terminal_daemon to read logs or stop tasks</string>
+  <string name="background_tasks_resume">Resume</string>
+  <string name="background_tasks_resume_prompt">Background task %1$s (%2$s) has finished. Read its output with terminal_job / terminal_daemon logs, then finish whatever is still unfinished; if nothing needs continuing, just say why.</string>
+  <string name="setting_background_resume_button_title">Offer “Resume” on the background-task card</string>
+  <string name="setting_background_resume_button_summary">Sends the next turn only when you tap it. Default on.</string>
+  <string name="setting_background_resume_auto_title">Continue automatically when a background task finishes</string>
+  <string name="setting_background_resume_auto_summary">Only while the app is running and the chat is idle; at most 2 automatic continuations per chat (it spends quota).</string>
   <string name="chat_send">Send</string>
   <string name="chat_send_steer">Steer now (interrupt this turn)</string>
   <string name="chat_send_queue">Queue and send after this turn</string>

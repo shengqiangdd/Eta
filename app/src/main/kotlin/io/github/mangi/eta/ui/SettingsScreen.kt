@@ -572,6 +572,28 @@ private fun SettingsPageContent(
                     )
 
                     EtaPreferenceDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.setting_background_resume_button_title),
+                        summary = stringResource(R.string.setting_background_resume_button_summary),
+                        key = Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON,
+                        icon = Icons.Rounded.Checklist,
+                        iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.setting_background_resume_auto_title),
+                        summary = stringResource(R.string.setting_background_resume_auto_summary),
+                        key = Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO,
+                        icon = Icons.Rounded.SystemUpdate,
+                        iconTint = EtaPreferenceColors.Orange,
+                    )
+
+                    EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_linux_tool_environment_314d22),
                         startAction = {

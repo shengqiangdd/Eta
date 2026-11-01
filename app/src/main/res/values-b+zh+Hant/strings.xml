@@ -1033,6 +1033,12 @@
   <string name="background_run_stopped">背景任務已停止</string>
   <string name="background_tasks_finished">已結束</string>
   <string name="background_tasks_card_hint">唯讀：讀取日誌或停止任務請用 terminal_job / terminal_daemon</string>
+  <string name="background_tasks_resume">繼續</string>
+  <string name="background_tasks_resume_prompt">後台任務 %1$s（%2$s）已結束。請用 terminal_job / terminal_daemon 的 logs 讀取它的輸出，然後把還沒做完的事接著做完；不需要繼續就直接說明原因。</string>
+  <string name="setting_background_resume_button_title">後台任務結束後在卡片上提供「繼續」</string>
+  <string name="setting_background_resume_button_summary">只有你點一下才會發出下一輪，預設開。</string>
+  <string name="setting_background_resume_auto_title">後台任務結束後自動繼續</string>
+  <string name="setting_background_resume_auto_summary">僅在應用執行且工作階段閒置時生效，一輪對話最多自動續 2 次（會消耗額度）。</string>
   <string name="chat_send">傳送</string>
   <string name="chat_send_steer">插話傳送（打斷本輪）</string>
   <string name="chat_send_queue">排隊傳送（本輪結束後送出）</string>

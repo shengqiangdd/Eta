@@ -91,6 +91,16 @@ internal object Prefs {
 
         /** 允许主 Agent 派发 Subagent 并发执行（上游 3.3.5）。 */
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
+        /** 后台任务结束后，在聊天页的任务卡上给出「继续」（默认开；点一下才会发出）。 */
+        const val AGENT_BACKGROUND_RESUME_BUTTON = "agent_background_resume_button"
+        /**
+         * 后台任务结束后**自动**发起下一轮（默认关）。
+         *
+         * 它会在没人看着的时候花掉额度，所以默认关，且另有硬上限
+         * （见 `BackgroundResume` 的 `AutoResumeMaxPerSession`）：
+         * 一轮里最多自动续 2 次，超过就只提示不再自动发。
+         */
+        const val AGENT_BACKGROUND_RESUME_AUTO = "agent_background_resume_auto"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
 
         /** 全部布尔开关及其默认值。 */
@@ -116,6 +126,8 @@ internal object Prefs {
             AGENT_OVERLAY_GLOW_ENABLED to true,
             AGENT_PLAN_MODE to false,
             AGENT_SUBAGENT_ENABLED to true,
+            AGENT_BACKGROUND_RESUME_BUTTON to true,
+            AGENT_BACKGROUND_RESUME_AUTO to false,
         )
 
         /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */

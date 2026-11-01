@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.components
 
+import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -17,6 +18,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,10 +40,13 @@ import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.backgroundTaskLine
+import io.github.mangi.eta.agent.terminal.planAutoResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
+import io.github.mangi.eta.config.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -72,9 +78,16 @@ private fun rememberDetachedTasks(): List<DetachedTask>? {
  *
  * 只读：不提供停止 / 读日志 —— 这些动作要走 `terminal_job` / `terminal_daemon`，
  * 界面直接触发会让「谁在调度」变成两套真相（与台账卡同一条理由）。
+ *
+ * 「继续」是这个卡片唯一会发消息的入口：默认要用户点一下，自动续跑要单独在设置里打开，
+ * 且有次数上限（判定在 [planAutoResume]）。
  */
 @Composable
-internal fun BackgroundTasksCard(modifier: Modifier = Modifier) {
+internal fun BackgroundTasksCard(
+    canSend: Boolean,
+    onResume: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val records = rememberDetachedTasks() ?: return
     val view = remember(records) { summarizeBackgroundTasks(records) }
     if (view.isEmpty) return
@@ -90,6 +103,31 @@ internal fun BackgroundTasksCard(modifier: Modifier = Modifier) {
             now = System.currentTimeMillis()
             delay(step)
         }
+    }
+
+    val context = LocalContext.current
+    // 两个开关在设置页里改（写的是**本地** Agent prefs）；这里按组合时读一次，回到本页会重新读。
+    // 注意不能用 `Prefs.isEnabled`：它只对 `LOCAL_AGENT_KEYS` 里的键读本地，其余键一律读 remote，
+    // 而这两个键属于界面行为、不在那份名单里 —— 用错就会永远读成默认值（开关看起来没反应）。
+    val resumeButtonEnabled = remember(context) {
+        localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
+    }
+    val autoResumeEnabled = remember(context) {
+        localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO)
+    }
+    /** 已经续过的任务（手动点「继续」也算）：同一条不会续两次。 */
+    val resumed = remember { mutableStateListOf<String>() }
+    /** 只认卡片出现之后结束的任务：否则一进旧会话，历史任务会被当成新事件自动续一遍。 */
+    val openedAt = remember { System.currentTimeMillis() }
+    var autoResumed by remember { mutableIntStateOf(0) }
+    val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
+    LaunchedEffect(autoResumeEnabled, canSend, records) {
+        if (!autoResumeEnabled || !canSend) return@LaunchedEffect
+        val target = planAutoResume(records, resumed.toSet(), openedAt, autoResumed).next
+            ?: return@LaunchedEffect
+        resumed.add(target.id)
+        autoResumed += 1
+        onResume(resumePrompt(promptTemplate, target))
     }
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
@@ -128,7 +166,7 @@ internal fun BackgroundTasksCard(modifier: Modifier = Modifier) {
         }
         AnimatedVisibility(visible = expanded) {
             Column(modifier = Modifier.padding(top = 6.dp)) {
-                view.running.forEach { task -> BackgroundTaskRow(task, now) }
+                view.running.forEach { task -> BackgroundTaskRow(task, now, onResume = null) }
                 val rest = view.runningTotal - view.running.size
                 if (rest > 0) {
                     Text(
@@ -138,7 +176,23 @@ internal fun BackgroundTasksCard(modifier: Modifier = Modifier) {
                         modifier = Modifier.padding(start = 14.dp, top = 3.dp),
                     )
                 }
-                view.recentFinished.forEach { task -> BackgroundTaskRow(task, now) }
+                val resumeLabel = stringResource(R.string.background_tasks_resume)
+                view.recentFinished.forEach { task ->
+                    val canResumeThis = resumeButtonEnabled && canSend && task.id !in resumed
+                    BackgroundTaskRow(
+                        task = task,
+                        now = now,
+                        resumeLabel = resumeLabel,
+                        onResume = if (canResumeThis) {
+                            {
+                                resumed.add(task.id)
+                                onResume(resumePrompt(promptTemplate, task))
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                }
                 Text(
                     text = stringResource(R.string.background_tasks_card_hint),
                     style = MiuixTheme.textStyles.footnote2,
@@ -151,7 +205,12 @@ internal fun BackgroundTasksCard(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun BackgroundTaskRow(task: DetachedTask, now: Long) {
+private fun BackgroundTaskRow(
+    task: DetachedTask,
+    now: Long,
+    resumeLabel: String = "",
+    onResume: (() -> Unit)? = null,
+) {
     val line = backgroundTaskLine(task, now)
     val runningLabel = stringResource(R.string.tool_status_running)
     val status = if (line.running) runningLabel else daemonStatusText(line.status)
@@ -195,7 +254,38 @@ private fun BackgroundTaskRow(task: DetachedTask, now: Long) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (onResume != null) {
+            Text(
+                text = resumeLabel,
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MiuixTheme.colorScheme.surface)
+                    .clickable(onClick = onResume)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
     }
+}
+
+/**
+ * 「继续」发出去的提示词：只给 id 与类型，让模型自己去读日志 —— 界面不替它编造输出。
+ */
+private fun resumePrompt(template: String, task: DetachedTask): String =
+    String.format(Locale.getDefault(), template, task.id, if (task.commandTask) "job" else "daemon")
+
+/**
+ * 读一个本地 Agent 开关。
+ *
+ * 与设置页 `SwitchPref` 写的是同一份 prefs（`eta_agent_preferences`）；
+ * 这里不用 `Prefs.isEnabled`，因为它只对 `LOCAL_AGENT_KEYS` 里的键读本地，其余一律读 remote。
+ */
+private fun localSwitch(context: Context, key: String): Boolean {
+    val default = Prefs.Keys.BOOLEAN_DEFAULTS[key] ?: true
+    return runCatching { Prefs.localAgentPreferences(context).getBoolean(key, default) }
+        .getOrDefault(default)
 }
 
 /**
