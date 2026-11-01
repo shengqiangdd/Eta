@@ -6321,3 +6321,72 @@ internal suspend fun runFallbackLoop(intervalMs: Long, tick: suspend () -> Unit,
 - `start()` 仍然只启动一次；循环自己现在不会因异常退出，但**进程被杀**后仍要等下次进程启动
   —— 这是既有语义，文档已写。
 - 没有真机验证（与第十三、十四批相同：自动续跑端到端仍未验）。
+
+## §32.65 一条「防坏文件」的上限把整条链锁死了（2026-11-01）
+
+### 1. 两条读取路径，只有一条有天花板
+
+同一份 `detached-tasks.json` 有两个读者：
+
+| 读者 | 用途 | 大小处理 |
+|---|---|---|
+| `loadTasksLocked()`（实例） | API / 探活 / 裁剪 | 读全量，**无上限** |
+| `readRecords()`（companion） | 卡片、`<background_tasks>` 提示、`DetachedTaskProbe`、自动续跑 watcher | 超过 256 KiB → **返回空列表** |
+
+返回空的后果不是「少看几条」：
+
+- `DetachedTaskProbe.probeOnce` → `needsDaemonProbe([]) == false` → **不再巡检** →
+  守护任务的 `completed_at` 永远不会写；
+- `BackgroundAutoResumeWatcher.tick` → `records.isEmpty()` → 直接 return → **自动续跑完全停摆**；
+- 卡片与系统提示看到「没有任何后台任务」。
+
+### 2. 为什么会长到 256 KiB（而且再也缩不回去）
+
+`pruneExitedRecords` 原来只在 `aliveById.isNotEmpty()` 时调用 —— 即「本轮确实探活过某个
+未完成任务」。当所有任务都已结束（最常见：用户派了几个命令，都跑完了），`aliveById` 是空的
+→ 不裁剪 → 记录只增不减。
+
+于是形成**自锁**：文件越大 → `readRecords` 越早返回空 → 探活越不跑 → 越没人裁剪。
+正常记录 32 条约 16 KiB，256 KiB 约 500~800 条；高频使用几个月就会到，到了没有任何提示。
+
+### 3. 修法
+
+1. `MAX_RECORDS_BYTES` 256 KiB → **4 MiB**：只用来挡「文件被写坏」（正常上限 32 条约 16 KiB）。
+2. `list()` **无条件**裁剪，不再要求「本轮有探活结果」。安全性来自已有语义：没有探活结果的
+   未完成任务 `running` 是保守的 `true`，不会被删。
+3. 淘汰规则抽成纯函数 `pickPruneVictims`，并把排序键从 `startedAt` 改成 `completedAt`：
+
+   原排序的后果是「跑得最久的守护任务永远排第一」—— 它一结束就被删，而它的完成事件正是
+   自动续跑要消费的东西，连一次扫描都赶不上。再补 60 秒保护期（兜底扫描 30 秒的两倍），
+   刚完成的记录不淘汰。
+
+```kotlin
+internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskStatus> =
+    statuses
+        .filter { !it.running && (!it.task.commandTask || it.task.completionNotified) }
+        .filter { (it.task.completedAt ?: 0L) <= nowMs - PruneGraceMs }
+        .sortedBy { it.task.completedAt ?: it.task.startedAt }
+        .take(excess)
+```
+
+### 4. 验证（本机）
+
+- **先红**：`DetachedTaskRecordsTest.oversizedRecordsFileIsStillReadable` 造 800 条**合法**记录
+  （实测文件 > 256 KiB），旧实现读出 **0 条**（`expected:<800> but was:<0>`）。
+- **反证**（三处分别回退，一次跑出 3 红）：
+  - 上限回 256 KiB → 同一例红；
+  - 排序回 `startedAt` → `prunesEarliestCompletedFirst` 红（选中了完成得最晚的）；
+  - 去掉 60 秒保护期 → `keepsRecordsCompletedWithinGrace` 红（选中了刚完成的那条）。
+- 定向 `agent.terminal.*`：**518 例 0 失败**（新增 5 例）。
+- `STAGES=test,lint,assemble`：**1086 例 0 失败**；lint 无新增（baseline 183 命中 + 11 条依赖提示未复现）；
+  包 32,183,105 字节 `7bc6395a10cf4419…`。
+- `STAGES=test-wide`：**2944 例 0 失败**。
+
+### 5. 边界（如实记录）
+
+- 4 MiB 仍是硬上限：真到这个量级说明文件坏了，`readRecords` 返回空；坏文件在
+  `loadTasksLocked` 解析失败时会留一条 `records corrupted, resetting` 日志，不是完全无声。
+- `readRecords` 是**只读快照**，不做裁剪；裁剪只发生在 `list()`（卡片刷新 / 探活 / CLI 列表）。
+  如果某个进程只读快照、从不调 `list()`，文件不会被裁 —— 但主进程的卡片与 5 分钟探活都会调。
+- 未处理：跨进程写记录没有文件锁（两个进程同时 save 仍可能丢写），与第十二批记录的边界一致。
+- 没有真机验证。

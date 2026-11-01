@@ -1036,6 +1036,27 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 `0f021a3250473597…`）；`STAGES=test-wide` **2939 例 0 失败**。边界：`resetChain()` 不经过 watcher 的
 `running` 锁，与加载／落盘理论上可并发（窗口极窄，未处理）；没有真机验证。
 
+### 第十六批：一条「防坏文件」的上限把整条链锁死了（2026-11-01）
+
+同一份 `detached-tasks.json` 有两个读者，只有一条有天花板：`loadTasksLocked()` 读全量，
+`readRecords()` 超过 256 KiB 直接返回空。返回空不是「少看几条」：`DetachedTaskProbe`
+读到空就不再巡检（守护任务的 `completed_at` 永远不写），watcher 读到空就 return
+（自动续跑完全停摆），卡片与系统提示看到「没有任何后台任务」。
+
+而它再也不缩回去：`pruneExitedRecords` 原来只在 `aliveById.isNotEmpty()` 时调用 ——
+全部任务都已结束时 `aliveById` 为空，记录只增不减。于是自锁：文件越大 → 读空 → 探活不跑 →
+没人裁剪。正常 32 条约 16 KiB，256 KiB 约 500~800 条，高频使用几个月即到，且无任何提示。
+
+修法：① `MAX_RECORDS_BYTES` 256 KiB → 4 MiB（只挡坏文件）；② `list()` 无条件裁剪
+（无探活结果的未完成任务是保守的 `running = true`，不会误删）；③ 淘汰抽成纯函数
+`pickPruneVictims`，排序键由 `startedAt` 改为 `completedAt` —— 否则跑得最久的守护任务永远
+排第一，一结束就被删，它的完成事件连一次扫描都赶不上；再加 60 秒保护期（兜底扫描的两倍）。
+
+验证：先红（800 条合法记录 > 256 KiB → 旧实现读出 0 条）→ 反证三处分别回退一次跑出 3 红
+→ 定向 `agent.terminal.*` 518／0；`STAGES=test,lint,assemble` **1086 例 0 失败**（lint 无新增，
+包 32,183,105 字节 `7bc6395a10cf4419…`）；`STAGES=test-wide` **2944 例 0 失败**。
+边界：4 MiB 仍是硬上限（坏文件级别）；裁剪只发生在 `list()`；跨进程写仍无文件锁；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

@@ -71,8 +71,15 @@ internal class DetachedTaskSupervisor(
             _changes.update { it + 1 }
         }
 
-        /** 记录文件再大也不读了：正常只有几十条，超过这个量说明文件被写坏。 */
-        const val MAX_RECORDS_BYTES = 256L * 1024
+        /**
+         * 记录文件的**绝对**上限，只用来挡「文件被写坏」这一种情况。
+         *
+         * 原来是 256 KiB，本意也是防坏文件 —— 但**正常增长**同样会命中：`readRecords` 一旦返回空，
+         * 卡片、`<background_tasks>` 提示、`DetachedTaskProbe` 与自动续跑 watcher 会同时
+         * 看到「一条任务都没有」，而探活不跑就再也没人去裁剪那个文件（自锁，见第十六批）。
+         * 正常记录最多 [MAX_RETAINED_RECORDS] 条（约 16 KiB），4 MiB 只可能是坏文件。
+         */
+        const val MAX_RECORDS_BYTES = 4L * 1024 * 1024
 
         /**
          * 只读快照：从记录文件读出任务，**不探活、不认领、不补结束时间、不清理**。
@@ -245,9 +252,10 @@ internal class DetachedTaskSupervisor(
                 }
             } else DetachedTaskStatus(task, running)
         }
-        if (aliveById.isNotEmpty()) {
-            pruneExitedRecords(statuses)
-        }
+        // 不再要求「本轮有探活结果」：全部任务都已完成时 `aliveById` 是空的，原来的条件
+        // 会让记录只增不减，最终撞上 `readRecords` 的上限，把自动续跑整条链路静默停掉。
+        // 淘汰只看 `statuses`：没有探活结果的未完成任务是 `running = true`，不会被删。
+        pruneExitedRecords(statuses)
         return statuses
     }
 
@@ -654,12 +662,7 @@ internal class DetachedTaskSupervisor(
         linuxRootfsPathProvider?.invoke(environment) ?: linuxRootfsPath
 
     private fun pruneExitedRecords(statuses: List<DetachedTaskStatus>) {
-        val excess = statuses.size - MAX_RETAINED_RECORDS
-        if (excess <= 0) return
-        val victims = statuses
-            .filter { !it.running && (!it.task.commandTask || it.task.completionNotified) }
-            .sortedBy { it.task.startedAt }
-            .take(excess)
+        val victims = pickPruneVictims(statuses, MAX_RETAINED_RECORDS, System.currentTimeMillis())
         if (victims.isEmpty()) return
         victims.groupBy { it.task.identity }.forEach { (identity, group) ->
             val removeScript = group.joinToString("\n") {
@@ -714,3 +717,30 @@ internal class DetachedTaskSupervisor(
     }
 
 }
+
+/**
+ * 该淘汰哪些记录。
+ *
+ * 三条约束各自对应一次真问题：
+ * - **只淘汰已确认退出的**：没有探活结果时未完成任务的 `running` 是保守的 `true`，不能删；
+ * - **命令任务要通知过**：卡片还欠用户一条「跑完了」，删了就等于没发生过；
+ * - **刚完成的先留着**（[PruneGraceMs]）：带 `sessionScope` 的记录是自动续跑的**事件源**，
+ *   它可能还没被任何一次扇描看到。原来按 `startedAt` 升序淘汰，长跑的守护任务永远排第一，
+ *   一结束就被删 —— 事件连一次扇描都赶不上。
+ */
+internal fun pickPruneVictims(
+    statuses: List<DetachedTaskStatus>,
+    maxRetained: Int,
+    nowMs: Long,
+): List<DetachedTaskStatus> {
+    val excess = statuses.size - maxRetained
+    if (excess <= 0) return emptyList()
+    return statuses
+        .filter { !it.running && (!it.task.commandTask || it.task.completionNotified) }
+        .filter { (it.task.completedAt ?: 0L) <= nowMs - PruneGraceMs }
+        .sortedBy { it.task.completedAt ?: it.task.startedAt }
+        .take(excess)
+}
+
+/** 记录刚完成后的保护期：自动续跑的兜底扇描是 30 秒，取两倍余量。 */
+internal const val PruneGraceMs = 60_000L
