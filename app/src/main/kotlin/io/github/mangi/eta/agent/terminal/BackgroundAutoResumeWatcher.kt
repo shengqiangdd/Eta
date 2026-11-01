@@ -5,10 +5,12 @@ import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -70,14 +72,64 @@ internal object BackgroundAutoResumeWatcher {
         val appContext = context.applicationContext
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope.launch {
-            DetachedTaskSupervisor.changes.collect { tick(appContext) }
+            runChangeLoop(changes = DetachedTaskSupervisor.changes, tick = { tick(appContext) })
         }
         scope.launch {
-            while (true) {
-                delay(FALLBACK_INTERVAL_MS)
-                tick(appContext)
-            }
+            runFallbackLoop(intervalMs = FALLBACK_INTERVAL_MS, tick = { tick(appContext) })
         }
+    }
+
+    /**
+     * 事件驱动的那一路：记录每落盘一次就扫一遍。
+     *
+     * 单轮失败只报不抛（见 [runGuarded]）。抽成独立函数是为了能本机测「失败之后还活着」：
+     * [start] 要 Android Context，而且 `started` 只允许启动一次 —— 两个循环都死掉之后，
+     * 没有任何入口能把它们救回来。
+     */
+    internal suspend fun runChangeLoop(
+        changes: Flow<Long>,
+        tick: suspend () -> Unit,
+        onFailure: (Throwable) -> Unit = ::logTickFailure,
+    ) {
+        changes.collect { runGuarded(tick, onFailure) }
+    }
+
+    /**
+     * 兜底的那一路：没有任何信号时也每 [intervalMs] 扫一遍。
+     *
+     * [delayBefore] 只为测试注入（真机就是 [delay]），这样不必依赖虚拟时间设施。
+     */
+    internal suspend fun runFallbackLoop(
+        intervalMs: Long,
+        tick: suspend () -> Unit,
+        delayBefore: suspend (Long) -> Unit = { delay(it) },
+        onFailure: (Throwable) -> Unit = ::logTickFailure,
+    ) {
+        while (true) {
+            delayBefore(intervalMs)
+            runGuarded(tick, onFailure)
+        }
+    }
+
+    /**
+     * 跑一轮 `tick`，失败只上报。
+     *
+     * 这里**不能用** `runCatching`：它会把 `CancellationException` 一起吞掉 —— 协程已经被
+     * 取消、循环却继续转，与「异常不能终止循环」正好互为反面。取消必须原样抛出。
+     */
+    private suspend fun runGuarded(tick: suspend () -> Unit, onFailure: (Throwable) -> Unit) {
+        try {
+            tick()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            onFailure(error)
+        }
+    }
+
+    /** 失败必须留痕：自动续跑是「用户不在场时花额度」的路径，静默失效的代价最高。 */
+    private fun logTickFailure(error: Throwable) {
+        AndroidAgentLogger.warn("Agent auto-resume tick failed: type=${error.javaClass.simpleName}")
     }
 
     private suspend fun tick(context: Context) {

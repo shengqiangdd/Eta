@@ -1044,6 +1044,25 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 `STAGES=test-wide` **2936 例 0 失败**。边界：水位线现在停在前一毫秒；同毫秒多条仍受链长限制；
 日志只在 debug 构建；没有真机验证。
 
+### 第十五批：触发循环本身没有任何异常边界（2026-11-01）
+
+第十二批把自动续跑搬到进程级 `BackgroundAutoResumeWatcher.start()`，之后它就是**唯一**的自动触发点。
+它起的两个协程没有异常边界，而 `started` 是 `AtomicBoolean.compareAndSet(false, true)`
+（进程内只启动一次，再调直接返回）：任意一轮 `tick` 抛异常 → 事件触发那一路死掉，只剩 30 秒兜底；
+兜底再死一次 → 自动续跑永久停掉。`SupervisorJob` 让失败不扩散、另一路照常活着，所以既不报错也不弹窗。
+`tick` 里的可抛路径是真实的：`dispatch` → 会话层 `launchConversationRun`、
+`ensureMessagesLoaded` 读会话 JSON、`persist()` 写盘。同一类缺陷 §122 已踩过，
+`EtaApp` 的探活循环当时专门包了 `runCatching`，watcher 这里漏了。
+
+修法：抽 `runChangeLoop` / `runFallbackLoop`，每轮走 `runGuarded` —— 失败只上调 `onFailure`
+（默认 warn 日志），循环继续。**不能用 `runCatching`**：它会吞掉 `CancellationException`
+（协程已取消、循环还在转），必须原样抛出。
+
+验证：先红（未实现时编译失败）→ 反证（`runGuarded` 换成裸 `tick()` 后 2 例红，异常直接穿出循环）
+→ 定向四类 62／0；`STAGES=test,lint,assemble` **1081 例 0 失败**（lint 无新增，包 32,182,569 字节
+`0f021a3250473597…`）；`STAGES=test-wide` **2939 例 0 失败**。边界：`resetChain()` 不经过 watcher 的
+`running` 锁，与加载／落盘理论上可并发（窗口极窄，未处理）；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

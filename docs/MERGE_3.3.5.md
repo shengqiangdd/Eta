@@ -6254,3 +6254,70 @@ Dispatch 分支在发送前复核，换掉了就 `continue`（不发、不记账
 - 同毫秒多条仍受链长限制：一条链最多自动续 2 条，其余被 Discard（现在日志里有 `skipped=N`）。
 - 日志是 `debug`：Release 构建会把整次调用删掉，正式版仍然没有这条线索。
 - 没有真机验证（自动续跑端到端仍未验）。
+
+## §32.64 触发循环本身能活多久（2026-11-01）
+
+§32.62 / §32.63 修的都是**判定**（该不该发、发哪一条）。这一批往下看一层：
+判定结果要靠 `BackgroundAutoResumeWatcher.start()` 起的两个协程去执行，而这两个协程
+**没有任何异常边界**。
+
+```kotlin
+scope.launch { DetachedTaskSupervisor.changes.collect { tick(appContext) } }
+scope.launch { while (true) { delay(FALLBACK_INTERVAL_MS); tick(appContext) } }
+```
+
+### 1. 为什么这是「静默失效」而不是「偶发异常」
+
+- `started` 是 `AtomicBoolean.compareAndSet(false, true)`：进程内**只能启动一次**，
+  再调 `start()` 直接返回。协程死了没有任何重启入口。
+- `SupervisorJob`：一路死了另一路还活着，不会表现为「整体崩了」。
+- 第十二批起卡片里那份自动续跑已删掉，这两个协程就是**唯一**触发点。
+- `tick` 里有真实可抛路径：`dispatch` 进会话层 `launchConversationRun`、
+  `ensureMessagesLoaded` 读会话 JSON、`scope.persist()` 写盘。`loadState` / `write` /
+  `readRecords` 内部各包了一层 `runCatching`，但最长的这条 `dispatch` 路径没有。
+
+结果：一次异常 → 事件触发永久失效（只剩 30 秒兜底）；兜底再失败一次 → 自动续跑**永久停掉**，
+不报错、不弹窗，用户只看到「任务结束之后再没接着跑」。
+
+同一类缺陷 §122 已经踩过（「一次失败即永久停用」），`EtaApp` 的 5 分钟探活循环当时专门包了
+`runCatching`；watcher 这里漏了 —— 说明「知道这个模式」和「每一处都做到」是两件事。
+
+### 2. 修法
+
+把两段循环抽成可测函数，每轮走 `runGuarded`：
+
+```kotlin
+internal suspend fun runChangeLoop(changes: Flow<Long>, tick: suspend () -> Unit,
+                                   onFailure: (Throwable) -> Unit = ::logTickFailure)
+internal suspend fun runFallbackLoop(intervalMs: Long, tick: suspend () -> Unit,
+                                     delayBefore: suspend (Long) -> Unit = { delay(it) },
+                                     onFailure: (Throwable) -> Unit = ::logTickFailure)
+```
+
+- 失败只上调 `onFailure`（默认 `AndroidAgentLogger.warn("… type=SimpleName")`），**循环继续**。
+- **不能**用 `runCatching`：它会把 `CancellationException` 一起吞掉 —— 协程已被取消、循环还在转。
+  `runGuarded` 先 `catch (cancellation: CancellationException) { throw cancellation }`，其余才上调。
+- `delayBefore` 只为测试注入，真机就是 `delay`。
+
+### 3. 验证（本机）
+
+- **先红**：新增 `BackgroundAutoResumeLoopTest`（3 例），未实现时编译失败（`Unresolved reference`）。
+- **反证**：把 `runGuarded` 换成裸 `tick()` →
+  `fallbackLoopKeepsRunningAfterTickFailure` 与 `changeLoopKeepsCollectingAfterTickFailure`
+  **2 例红**，失败信息就是 tick 抛的异常**直接穿出循环**（`IllegalStateException: tick exploded`）；
+  恢复后全绿。第三例 `fallbackLoopPropagatesCancellation` 守「取消不能走 onFailure」。
+- 定向四类 **62 例 0 失败**（`BackgroundResumeTest` 23、`BackgroundAutoResumeWatcherTest` 19、
+  `BackgroundResumeMemoryTest` 17、`BackgroundAutoResumeLoopTest` 3）。
+- `STAGES=test,lint,assemble`：**1081 例 0 失败**；lint 无新增（baseline 183 命中 + 11 条依赖提示未复现）；
+  包 32,182,569 字节 `0f021a3250473597…`。
+- `STAGES=test-wide`：**2939 例 0 失败**。
+
+### 4. 边界（如实记录）
+
+- 修的是「触发链断掉之后能不能自愈」：单轮失败只丢一轮，下一轮照常。**不是** `tick` 内部的幂等。
+- `resetChain()`（用户发消息时清零）走 `scope.launch(Main)`，**不经过** watcher 的 `running` 锁，
+  与 `loadFromStore()` / `persist()` 理论上可并发（窗口极窄；后果是 `resumed` 可能重复、
+  `chain` / `seenUntil` 可能被旧值覆盖一次）。本轮未处理。
+- `start()` 仍然只启动一次；循环自己现在不会因异常退出，但**进程被杀**后仍要等下次进程启动
+  —— 这是既有语义，文档已写。
+- 没有真机验证（与第十三、十四批相同：自动续跑端到端仍未验）。
