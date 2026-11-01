@@ -157,6 +157,12 @@ internal class BackgroundResumeScope(
      */
     suspend fun persist(): Boolean {
         val target = store ?: return true
+        // 整份状态写入前先读一次盘（第二十一批）：作用域可能是刚建出来的（卡片第一帧
+        // 就点了「继续」），这时内存里只有刚记的那一条，整份写下去会把磁盘上的
+        // `resumed` / `chain` / `seen_until` 一起抹成默认值 —— 链长归零（重启后又能
+        // 自动续）、水位线丢失、以前续过的按钮重现。
+        // `resetChain()` 里那句「先加载再清零」是同一条教训，放在这里才拦得住所有写者。
+        if (!isLoaded) loadFromStore()
         val state = BackgroundResumeState(
             resumed = resumed.toList(),
             chain = autoResumed,

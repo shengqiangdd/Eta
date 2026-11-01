@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.terminal
 
+import io.github.mangi.eta.agent.runtime.BackgroundResumeState
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
@@ -211,5 +212,34 @@ class BackgroundResumeDurabilityTest {
         )
         assertEquals(0, sent)
         assertEquals(0, dispatched)
+    }
+
+    /**
+     * 卡片第一帧就点「继续」：不能把磁盘上的记忆整份抹成默认值（第二十一批）。
+     *
+     * `resumeManually()` 不读盘（它必须同步返回），整份状态写入 `persist()` 也不读盘 ——
+     * 于是「内存里只有刚点的这一条」被当成全量写下去：`chain` 归零（重启后又能自动续）、
+     * `seen_until` 丢失、以前续过的 id 全没了（按钮重现）。默认配置下自动续跑是关的，
+     * watcher 的 `tick()` 会提前返回，**没人替卡片先读盘** —— 这条路不是理论。
+     */
+    @Test
+    fun manualResumeBeforeLoadKeepsStoredState() = runBlocking {
+        val resumeStore = store()
+        assertTrue(
+            resumeStore.saveState(
+                "conv-a",
+                BackgroundResumeState(resumed = listOf("job_old"), chain = 2, seenUntil = 900L),
+            )
+        )
+        // 进程刚起来：作用域表是空的，谁都没读过盘。
+        BackgroundResumeMemory.reset()
+        val scope = BackgroundResumeMemory.scopeFor(resumeStore, "conv-a")
+        assertFalse("前提：这个作用域还没读过盘", scope.isLoaded)
+        scope.resumeManually("job_new")
+        assertTrue("这次点击必须落盘", waitForResumed(resumeStore, "conv-a", "job_new"))
+        val stored = resumeStore.loadState("conv-a")
+        assertEquals(setOf("job_old", "job_new"), stored.resumed.toSet())
+        assertEquals(2, stored.chain)
+        assertEquals(900L, stored.seenUntil)
     }
 }

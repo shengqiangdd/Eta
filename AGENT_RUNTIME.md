@@ -1135,6 +1135,23 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 边界：rename 真失败仍只有一条 warn、不重试；`saveTasksLocked` 的 `writeText` 兜底未动；
 没有真机验证。
 
+### 第二十一批：整份状态写入前没读盘（2026-11-01）
+
+卡片第一帧的 `resumed` 还是空的（`loadFromStore()` 在 `LaunchedEffect` 里异步跑），
+所有已结束任务都会先长出「继续」；这一刻点下去，`persist()` 把「内存里只有刚点的这一条」
+当成全量写盘：`chain` 归零（重启后又能自动续两次）、`seen_until` 丢失、旧 id 全没（按钮重现）。
+自动续跑默认关时 watcher 的 `tick()` 提前返回，没有第二个读者先读盘，所以这不是纯理论。
+
+修法：`BackgroundResumeScope.persist()` 在整份写入前 `if (!isLoaded) loadFromStore()` ——
+写者不止一个（卡片、watcher、`resetChain()`、`persistSoon`），拦在最后一道门上才不漏。
+
+验证：先红（`expected:<[job_old, job_new]> but was:<[job_new]>`）→ 反证（删掉守卫）同一例红，
+恢复后 sha 一致 → 定向 Durability + Memory **25/0**、`agent.terminal.*` + Store **548/0**
+→ `STAGES=test,lint,assemble` **1100 例 0 失败**（lint 无新增，包 32,187,341 字节 `6b238fefbb7ef8ae…`）
+→ `STAGES=test-wide` **2958 例 0 失败**。
+边界：`resumeManually()` 仍同步返回（读盘在 IO 线程）；坏文件仍按「没有记录」整份覆盖；
+没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

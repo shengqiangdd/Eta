@@ -6578,3 +6578,50 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
 - `DetachedTaskSupervisor.saveTasksLocked()` 的兜底是 `writeText` 就地覆盖（非原子），本轮未动 ——
   它只在 rename 失败时才走，而且写的是任务记录（可从探活重建），判为下一步而不是本轮。
 - 没有真机验证。
+
+## §32.70 整份状态写入前没读盘：第一帧点「继续」会把记忆抹成默认值（2026-11-01）
+
+用户视角的症状：以前续过的任务又长出「继续」按钮；重启后这条链又能自动续两次；水位线
+莫名回到「还没立过」。三个现象都指向同一个动作 —— 某一次落盘把整份状态写回了默认值。
+
+根因是一条顺序问题：
+
+1. 卡片第一帧渲染时 `resumed` 还是空的 —— `loadFromStore()` 在 `LaunchedEffect` 里异步跑，
+   所以**所有已结束的任务都会先出现「继续」**；
+2. 这一刻点下去 → `markResumed(id)`（同步记账）+ `persistSoon { persist() }`（进程级写入器）；
+3. `persist()` 把内存状态**整份**写盘，而内存里只有刚点的这一条：
+   `resumed=[new]`、`chain=0`、`seenUntil=null`；
+4. 磁盘上的 `resumed` / `chain` / `seen_until` 被覆盖，且没有任何报错。
+
+**为什么不是纯理论**：自动续跑默认关，watcher 的 `tick()` 在 `autoResumeEnabled` 那一步就返回，
+`runScopeOnce` 里的 `loadFromStore()` 根本走不到 —— 默认配置下没有第二个读者替卡片先读盘。
+
+后果：
+
+- `chain` 归零 → 重启后这条链又能自动续两次（花的是用户额度）；
+- `seen_until` 丢失 → 下次启动走 `Initialize`（把启动前结束的任务当历史，不会误发，但水位线语义回退）；
+- 旧 id 丢失 → 已经续过的任务重新给按钮，再点一次就是重复发言。
+
+修法：`BackgroundResumeScope.persist()` 在整份写入前 `if (!isLoaded) loadFromStore()`。
+放在 `persist()` 而不是 `resumeManually()`，是因为写者不止一个（卡片点击、watcher、
+`resetChain()`、`persistSoon`），拦在最后一道门上才不会漏掉下一个。
+
+验证：
+
+- **先红**：`manualResumeBeforeLoadKeepsStoredState` →
+  `expected:<[job_old, job_new]> but was:<[job_new]>` —— 磁盘上真的只剩新记的那一条。
+- **反证**（删掉守卫）→ 同一例红；恢复后文件 sha256 与反证前一致（`29305c64754dd901…`，
+  `RESTORE=OK`）。
+- 定向 `BackgroundResumeDurabilityTest` + `BackgroundResumeMemoryTest`：**25 例 0 失败**。
+- 定向 `agent.terminal.*` + `BackgroundResumeStoreTest`：**548 例 0 失败**。
+- `STAGES=test,lint,assemble`：1100 例 0 失败；lint 无新增；包 32,187,341 字节 `6b238fefbb7ef8ae…`。
+- `STAGES=test-wide`：2958 例 0 失败。
+
+**边界（如实记录）**：
+
+- `resumeManually()` 仍然同步返回：读盘发生在写入器的 IO 线程上，界面不用等；代价是这次点击
+  落盘的时机比点击晚几毫秒。
+- 读盘失败（坏文件）仍按「没有记录」处理，于是仍会整份覆盖 —— 这是 store 层既有的取舍
+  （§32.69 之后至少不会把旧文件删掉）。
+- 这条路径多一次读盘（仅限作用域还没加载时），不影响已加载的常规 tick。
+- 没有真机验证。
