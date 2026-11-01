@@ -5741,8 +5741,8 @@ BackgroundTasksCard.kt:92: Error: Modifier parameter should be the first optiona
 
 ### 5. 边界（如实记录）
 
-- **仍未真机验证新包**：设备上跑的是加第一步修补之前的 canary。落盘是否真的写出文件、
-  重启后按钮是否真的不再出现，只有单测覆盖（含「模拟进程回收」的 reset + reload 用例）。
+- **已真机验证（2026-11-01 19:48~19:53，canary 覆盖安装）**，见第 6 节；但设置页两个开关
+  的**可视化**仍未真机确认 —— 会话页「更多选项」里没有设置入口，本轮没有再往下找。
 - **自动续跑仍只在「会话界面可见」时触发**：判断挂在 Compose 副作用里，切走 / 锁屏 / 回收都不触发。
 - 作用域表进程内不回收：每个会话一个对象、每个对象最多 64 个 id；会话很多时会缓慢增长。
 - 记录里没有「任务属于哪个会话」，所以别的会话起的任务结束仍是候选；
@@ -5752,3 +5752,28 @@ BackgroundTasksCard.kt:92: Error: Modifier parameter should be the first optiona
   两个进程同时写同一作用域时最后一次 rename 胜出，可能丢掉另一个进程刚记的 id。
 - 包体积又一次不可复现：同一份源码，两次打包 33,628,670 与 33,628,697 字节、sha256 不同。
   与本轮改动无关（改动只碰 Kotlin 源码），原因仍未查明。
+
+### 6. 真机验证（2026-11-01 19:48~19:53，canary，虚拟屏 display 3）
+
+装机：`Eta-v3.3.5-debug.apk` 32,159,217 字节 `d3c326b4…` → `pm install -r -d --user 0`。
+`firstInstallTime` 仍是 2026-10-29 16:35:18（覆盖安装，没重置），`lastUpdateTime` 变 19:48:42；
+设备侧 `base.apk` 的 sha256 与构建产物一致；21 个 dex 分卷里能搜到 `BackgroundResumeStore` /
+`BackgroundResumeScope`，`BackgroundResumeStoreTest` 0 命中（测试类没进包）。
+
+| 动作 | 观察 |
+|---|---|
+| 展开卡片，点 `job_d8947cdd` 的「继续」 | 消息流出现「后台任务 job_d8947cdd（job）已结束…」；模型回「没有要接着做的事」 |
+| 同一时刻看磁盘 | `files/agent/background_resume/f12875e4….json` = `{"resumed":["job_d8947cdd"]}` |
+| 轮次结束后看卡片 | `job_d8947cdd` 的「继续」消失，`job_410a1ca3` / `job_ab0c5232` 仍有（不是 `isStreaming` 的连带效果） |
+| `am force-stop` 后冷启动到虚拟屏 | 新 pid、内存表为空；展开卡片后 `job_d8947cdd` 仍无「继续」，另两条仍有 |
+
+最后一行才是持久化真正要证明的东西：进程重建后这个状态只能来自磁盘。
+
+**踩到的坑（方法学）**：一开始查 `/data/user/0/io.github.mangi.eta.canary/files/agent/background_resume`
+得到「No such file or directory」，差点判成「没落盘」的真缺陷。实际是**这台设备的 root shell
+在受限挂载命名空间里** —— `/data/user/0` 只有 2 个条目，连微信目录都看不见。
+用 `nsenter -t 1 -m` 进 init 的命名空间后，目录和文件都在。
+教训：**用 root 读应用私有目录前，先确认自己看的不是被隔离的视图**；
+「目录不存在」与「没有权限」都可能是命名空间造成的假象。
+
+顺带确认：主包 `io.github.mangi.eta` 的 `lastUpdateTime` 仍是 2026-10-31 22:09:21，全程未被触碰。
