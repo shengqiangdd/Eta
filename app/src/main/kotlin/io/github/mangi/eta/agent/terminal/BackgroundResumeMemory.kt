@@ -66,10 +66,27 @@ internal class BackgroundResumeScope(
     suspend fun loadFromStore() {
         if (isLoaded) return
         val state = withContext(Dispatchers.IO) { store?.loadState(scopeId) } ?: BackgroundResumeState()
-        state.resumed.forEach { remember(it) }
+        mergeStored(state.resumed)
         if (!chainTouched) autoResumed = state.chain
         if (!seenUntilTouched) seenUntil = state.seenUntil
         isLoaded = true
+    }
+
+    /**
+     * 把磁盘上的 id 合进内存：**磁盘在前、内存在后**（第二十二批）。
+     *
+     * 内存里此刻还留着的 id 都是「这个进程里刚记、还没落盘的」，比磁盘上的新。原实现
+     * 用 `state.resumed.forEach { remember(it) }` 追加，刚点的那条于是排到了最旧的一端，
+     * 撞上 [BackgroundResumeStore.MAX_IDS] 时被 `removeAt(0)` 第一个挤掉 —— 点击当场丢失：
+     * 按钮重现、再点一次就是重复发言，自动续跑打开时它还会重新变成候选再花一次额度。
+     * 顺序反过来才是「最近的在末尾」，与 [remember] 和 store 的 `sanitize` 同一口径。
+     */
+    private fun mergeStored(stored: List<String>) {
+        if (stored.isEmpty()) return
+        val keep = (stored + resumed).distinct().takeLast(BackgroundResumeStore.MAX_IDS)
+        if (keep == resumed.toList()) return
+        resumed.clear()
+        resumed.addAll(keep)
     }
 
     /** 记下「这条续过了」；返回 true 表示状态真的变了（调用方据此决定要不要落盘）。 */

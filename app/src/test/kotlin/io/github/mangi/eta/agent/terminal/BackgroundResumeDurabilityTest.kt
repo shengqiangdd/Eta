@@ -242,4 +242,36 @@ class BackgroundResumeDurabilityTest {
         assertEquals(2, stored.chain)
         assertEquals(900L, stored.seenUntil)
     }
+
+    /**
+     * 磁盘已经满额（[BackgroundResumeStore.MAX_IDS] 条）时点「继续」：刚点的那条不能被挤掉（第二十二批）。
+     *
+     * `persist()` 会先读盘（第二十一批），而 `loadFromStore()` 把磁盘 id **追加**在内存 id 之后 ——
+     * 内存里刚记的一条反而成了「最旧的一条」，撞上 64 条上限时第一个被 `removeAt(0)` 挤掉。
+     * 于是这次点击当场丢失：按钮立刻重现，再点一次就是重复发言；自动续跑打开时它还会
+     * 重新变成候选，再花一次额度。
+     */
+    @Test
+    fun manualResumeAtFullCapacityKeepsTheClick() = runBlocking {
+        val resumeStore = store()
+        val full = (0 until BackgroundResumeStore.MAX_IDS).map { "job_$it" }
+        assertTrue(
+            resumeStore.saveState(
+                "conv-a",
+                BackgroundResumeState(resumed = full, chain = 1, seenUntil = 500L),
+            )
+        )
+        // 进程刚起来：作用域表是空的，谁都没读过盘。
+        BackgroundResumeMemory.reset()
+        val scope = BackgroundResumeMemory.scopeFor(resumeStore, "conv-a")
+        assertFalse("前提：这个作用域还没读过盘", scope.isLoaded)
+        scope.resumeManually("job_new")
+        assertTrue("满额时这次点击也必须落盘", waitForResumed(resumeStore, "conv-a", "job_new"))
+        val stored = resumeStore.loadState("conv-a")
+        assertEquals(BackgroundResumeStore.MAX_IDS, stored.resumed.size)
+        assertTrue("刚点的那条必须留下", stored.resumed.contains("job_new"))
+        assertFalse("被挤掉的应该是最旧的一条", stored.resumed.contains("job_0"))
+        assertEquals(1, stored.chain)
+        assertEquals(500L, stored.seenUntil)
+    }
 }

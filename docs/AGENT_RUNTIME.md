@@ -1179,6 +1179,24 @@ discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug
 边界：`resumeManually()` 仍同步返回（读盘在 IO 线程）；坏文件仍按「没有记录」整份覆盖；
 没有真机验证。
 
+### 第二十二批：读盘把磁盘 id 排在内存之后，满额时第一个挤掉刚点的「继续」（2026-11-01）
+
+第二十一批让 `persist()` 先读盘，这里立刻暴露出下一个问题：`loadFromStore()` 用
+`state.resumed.forEach { remember(it) }` 把磁盘 id **追加**在内存 id 之后。`remember` 把末尾
+当「最近」，撞上 `MAX_IDS=64` 时从头部挤 —— 内存里刚记的那条反而成了最旧的一条，第一个
+被删。于是「第一帧点继续 + 磁盘已有 64 条」时点击当场丢失：按钮立刻重现，再点一次就是
+重复发言；自动续跑打开时它还会重新变成候选，再花一次额度。
+
+修法：抽出 `mergeStored()`，磁盘在前、内存在后，`takeLast(MAX_IDS)`；顺序与 `remember` 和
+store 的 `sanitize` 同一口径。内容没变时不重建列表（省一次无谓重组）。
+
+验证：先红（`满额时这次点击也必须落盘` → AssertionError，`waitForResumed` 超时）→
+反证（换回旧的一行）同一例红，恢复后 sha 一致 → 定向 Durability + Memory **26/0**、
+`agent.terminal.*` + Store **549/0** → `STAGES=test,lint,assemble` **1101 例 0 失败**
+（lint 无新增，包 32,187,277 字节 `986e32a82474b968…`）→ `STAGES=test-wide` **2959 例 0 失败**。
+边界：64 条上限本身仍会挤掉最旧的一条；若那条的 `completed_at` 还在水位线之后（手动续跑
+不推水位线），它仍可能重新变成候选 —— 下一批的事，本批没改。没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

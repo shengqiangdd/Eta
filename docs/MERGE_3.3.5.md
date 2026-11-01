@@ -6625,3 +6625,48 @@ internal fun pickPruneVictims(statuses, maxRetained, nowMs): List<DetachedTaskSt
   （§32.69 之后至少不会把旧文件删掉）。
 - 这条路径多一次读盘（仅限作用域还没加载时），不影响已加载的常规 tick。
 - 没有真机验证。
+
+## §32.71 满额读盘把「刚点的继续」挤掉：磁盘 id 排在了内存 id 之后（2026-11-01）
+
+用户视角的症状：点了「继续」，按钮**立刻又出现**；再点一次，同一条任务被续了两遍。
+不是每次都有 —— 只有磁盘上已经攒满 64 条记忆、且这次点击赶在卡片读盘之前时才会发生。
+
+顺序：
+
+1. 卡片第一帧 `resumed` 为空，`loadFromStore()` 还在 `LaunchedEffect` 里排队；
+2. 点击 → `markResumed(id)` 记进内存（此时列表里只有它）→ `persistSoon { persist() }`；
+3. `persist()` 先读盘（第二十一批）→ `loadFromStore()` 把磁盘的 64 条**追加**在内存那条之后；
+4. `remember()` 见 65 条 → `removeAt(0)` → **删掉的正是刚点的那一条**；
+5. 整份写盘，磁盘上与之前完全一样：这次点击从未存在过。
+
+为什么点不中的是「刚点的」：`resumed` 的约定是**末尾最新**（`remember` 从尾部加、从头部挤，
+store 的 `sanitize` 也是保留尾部）。`loadFromStore` 的追加破坏了这条约定 —— 磁盘上的旧 id
+反而排到了内存新 id 的后面。
+
+后果：按钮立刻重现（同一屏里就能看到）；再点一次 → 同一条任务两条续跑消息；自动续跑开着
+且水位线在那条之前 → 它重新成为候选，再花一次额度。
+
+修法：`mergeStored(stored)` —— `(stored + resumed).distinct().takeLast(MAX_IDS)`，磁盘在前、
+内存在后；与 `remember`、`sanitize` 同一口径。内容没变时直接返回，不重建列表。
+
+可达性依赖第二十一批：`persist()` 不读盘时，这条路径表现为「整份覆盖」而不是「挤掉一条」，
+两种症状都指向同一个「内存只有一条却当作全量」。
+
+验证：
+
+- **先红**：`manualResumeAtFullCapacityKeepsTheClick` → 「满额时这次点击也必须落盘」
+  AssertionError（`waitForResumed` 2 秒超时，磁盘上根本没有这条）。
+- **反证**：把 `mergeStored(...)` 换回 `state.resumed.forEach { remember(it) }` → 同一例红；
+  恢复后主文件 sha256 `f1afa88f…`，`RESTORE=OK`。
+- 定向 Durability + Memory：**26 例 0 失败**；`agent.terminal.*` + Store：**549 例 0 失败**。
+- `STAGES=test,lint,assemble`：1101 例 0 失败；lint 无新增（baseline 183，11 条依赖更新提示
+  未复现）；包 32,187,277 字节 `986e32a82474b968…`。
+- `STAGES=test-wide`：2959 例 0 失败。
+
+**边界（如实记录）**：
+
+- 64 条上限本身仍会挤掉最旧的一条。手动续跑不推水位线，所以那条若 `completed_at` 仍晚于
+  `seen_until`，自动续跑还可能把它当候选再发一次 —— 本批没改，下一批处理。
+- 合并顺序假设「内存里的 id 都比磁盘新」（第二十一批的读盘时序）。同一进程 `persist()`
+  之后不再读盘，现有写者下成立；两个进程同时写同一作用域时这个假设不保证。
+- 没有真机验证。
