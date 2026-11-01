@@ -22,9 +22,12 @@ TAG=${ETA_BUILD_METADATA:-fix2}
 GRADLE_ARGS="-Peta.buildMetadata=$TAG"
 fail=0
 
+# §32.48：`AgentToolRequirementsTest` 守「无 root 投影不得带 root 路径」，长期不在任何门禁里，
+# 一条真断言失败藏了很久才被全量跑发现 —— 装前必须查。
 echo "==== 1/4 工具目录一致性 + 启动/插件页/链接安装纯逻辑测试 ===="
 ./gradlew --offline $GRADLE_ARGS :app:testDebugUnitTest \
   --tests "*AgentToolCatalogRequirementTest" \
+  --tests "*AgentToolRequirementsTest" \
   --tests "*AppearanceSnapshotTest" \
   --tests "*PluginItemUiTest" \
   --tests "*PluginLinkSourceTest" \

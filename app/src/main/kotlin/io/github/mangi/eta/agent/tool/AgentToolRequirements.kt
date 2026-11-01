@@ -177,6 +177,13 @@ internal object AgentToolRequirements {
             }
             "search_personal_orders" -> function.put("description",
                 "从用户已授权保存的通知历史检索外卖、购物、快递、票券和出行订单。")
+            // 该工具在无 root 时保留（PARTIAL：堆压力与权限缺口仍可查），但默认源码路径是 root 侧概念，
+            // 不该出现在无 root 的 schema 里。§32.48：这条契约原本就在测试里守着，只是没人跑。
+            "eta_self_audit" -> properties?.getJSONObject("source_root")?.put(
+                "description",
+                "可选。Eta 源码目录，用于 code 域；省略时自动探测。" +
+                    "真机发布包通常没有源码，此时 code 域会记为 unavailable。",
+            )
         }
     }
 }

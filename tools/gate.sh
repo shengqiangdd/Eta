@@ -114,6 +114,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.WorkspaceExportNameTest
   --tests io.github.mangi.eta.ui.app.WorkspaceDirectoryBrowserTest
   --tests io.github.mangi.eta.ui.app.WorkspacePickerHistoryTest
+  --tests io.github.mangi.eta.agent.tool.AgentToolRequirementsTest
   --tests io.github.mangi.eta.agent.device.UiNodeWireTest
   --tests io.github.mangi.eta.agent.device.VirtualDisplayFallbackPolicyTest
   --tests io.github.mangi.eta.agent.device.VirtualDisplayOwnershipTest
@@ -185,6 +186,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
 # 2026-11-01（§32.45）反过来补上一条：`ToolCatalogUiTest` 原本用 Robolectric 只为拿 Context 读文案，
 # 改成可注入文案来源后是纯 JVM，把它的 6 个用例加进了下面的列表 —— 加之前它从没在门禁里跑过，
 # 一跑就发现 14 个工具图标落到了默认 Build。
+# 2026-11-01（§32.48）同一条坑的第二次实证：`AgentToolRequirementsTest` 也不在列表里，
+# 而它守的「无 root 投影不许带 root 路径」早被 `eta_self_audit` 的描述破了 —— 全量跑是红的，
+# 门禁一直绿。加进来前 8 例里 1 例失败，修好后 8/0。别再用「门禁绿」代指「测试通过」。
 run_test() {
   echo "==== [1/3] 单测 ===="
   rm -rf app/build/test-results/testDebugUnitTest

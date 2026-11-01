@@ -5043,3 +5043,148 @@ internal fun buildToolsState(text: (Int) -> String): AgentToolsUiState = ...
 - 剩下的 2 条 `UnusedResources` 是 lint 误报（manifest 按属性名引用），理由留在报告里；
 - 仍未装机：删的是资源，引用已由全仓 grep 与 lint 双向确认，但图标与主题的**实际渲染没看**；
 - 新用例只守 `values-night`；将来若出现 `values-v*`，按同样规则加（默认目录必须有同名键）。
+
+## §32.47 OOM 修复的定量评估，以及几处被数据推翻的判断（2026-11-01 凌晨）
+
+> 本节原误编为 §32.45，与「救活 ToolCatalogUiTest」那节撞号；已改为 §32.47（§32.46 在本节之前）。
+
+### 1. 起因：想验证「OOM 已修」，先量一次分配
+
+§32.39 的复用修复只有「装包后 1 小时没崩、没被杀」这一条证据，文档里也写明**这不等于 OOM 已修**
+（崩溃发生在 8,435 条消息的会话上）。这次用一个临时 JVM 探针（跑完即删）量了同量级下的分配量：
+
+- 方法：`com.sun.management.ThreadMXBean.getThreadAllocatedBytes(当前线程)`，测量
+  `List<AgentChatMessageUi>.toTimelineEntries(previous)` 单次调用的分配字节；
+- 规模：8,435 条消息（与崩溃会话同量级），冷构建一次 + 连续追加 100 步取平均；
+- 构成：全部普通消息 / 全部过程消息（Thinking，形成一个工作过程块）/ 5000 普通 + 3435 过程。
+
+| 构成 | 冷构建 | 条目数 | 单步追加 |
+|---|---|---|---|
+| 全部普通消息 | 252,568 B | 8,435 | **34,462 B** |
+| 全部过程消息 | 582,904 B | 1 | **578,062 B** |
+| 混合 | 393,624 B | 5,001 | 84,396 B |
+
+### 2. 结论：map 那条路没了，但「复制整块」还在
+
+- 普通消息：单步 34 KB —— 游标复用生效，只新建最后一条 + 输出列表本身；
+- **过程消息：单步 578 KB，是普通消息的 17 倍**。原因不是 map（旧实现里对每个 id 建 Pair +
+  HashMap 节点，正是 `HashMap.resize` 崩溃点），而是 `workMessages.toList()` 每帧复制整块 8,435 条
+  引用，加上 `ArrayList` 扩容的累计复制；
+- 混合：84 KB —— 与过程消息占比成正比。
+
+即：**修复把「每帧建 8,435 个 map 节点」换成了「每帧复制 8,435 个引用」**，分配量降了约 2 倍
+（旧实现按当时的测量约 1 MB+/帧），但**工作过程块仍然是 O(n)**。这解释了为什么它能避开
+`HashMap.resize` 的崩溃点，却不足以声称「长会话不会再 OOM」——短命对象会推高 GC 频率，
+而 Compose 快照可能让上一版列表多活一帧。
+
+**没有改实现**：要真正消掉这 578 KB，需要让 `WorkProcess.messages` 共享前缀（持久化列表或
+两级拼接视图），或让 UI 只渲染块的尾部——前者引入新依赖/新结构，后者改变可见语义，两者都必须
+在真机上验证重组与滚动锚点。本轮只做测量，不做没有验证手段的改动。
+
+### 3. 顺带核实：那句「门禁盲区」在改动之前是对的
+
+我先按记忆把它写成「这是错的」，查完 git 又反过来 —— **错的是这句更正本身**：
+
+| 时点 | 证据 | 它当时是什么 |
+|---|---|---|
+| `35a1408^`（改动前） | `git show 35a1408^:tools/gate.sh` 里 grep `ToolCatalog` **零命中**；文件带 `@Config(sdk = [36])` | 本机起不了 Robolectric 运行时 + 不在白名单 → 从没跑过 |
+| `35a1408`（改动后） | 该提交在 `FAST_TEST_FILTERS` 新增第 111 行；文件删掉 Robolectric 后 99 行纯 JUnit | 能跑，全量看 `tests="6" skipped="0" failures="0"` |
+
+所以「它是盲区」描述的是 `35a1408` **之前**的状态，不是把某个类记混了。真正的错法是：
+**拿改完之后的文件去否定改之前的判断**（事后视角），再顺手把这句责备成「记混了另一个
+`@Config(sdk = [36])` 的类」。后者不算全错 —— 仓里确实还有 20 个类带 `@Config(sdk = [36])`，
+且它们全都不在 `FAST_TEST_FILTERS` 里（本轮实测）—— 但那不是这条结论的原因。
+
+该记的教训：**纠正一条旧结论前，先确认那条结论当时的前提是否还成立**。同一句话在改动前后
+可以一会儿真、一会儿假；用新状态去否证旧判断，等于把「已经修好了」记成「当初看错了」。
+
+### 4. 真正的门禁覆盖：891 / 3248（27.4%）
+
+既然跑了一次全量，就顺手量了真实覆盖率。统计口径写进 `tools/gate_coverage.py`（只读、可复算）：
+
+| | 数量 |
+|---|---|
+| 全量用例（468 个类） | 3,248 |
+| 失败 | 442（全部是 Robolectric native runtime） |
+| 跳过 | 9 |
+| 通过 | 2,797 |
+| 门禁实际执行 | **891（27.4%，失败 0）** |
+| 门禁外通过 | 1,906 |
+
+这两个数是修完 §32.48 之后重跑的。修复前本节初版写的是「876 / 门禁外 1,929 / 78 个类」，
+三处都要纠：
+
+- 876 是 `35a1408` 之前的口径（少 6 例 `ToolCatalogUiTest`、1 例 §32.46 新用例、8 例
+  `AgentToolRequirementsTest`）；
+- 1,929 把 9 个 `skipped` 算成了通过（3248 − 443 − 876 = 1929）；
+- 78 是数类时的口径问题，按 XML 的 `testsuite` 实测 **76** 个类有失败。
+
+更要紧的是原因也不「统一」：修复前 443 条失败里 442 条是
+`The Robolectric native runtime is not supported on Linux (aarch64)`，剩下 1 条是
+`AgentToolRequirementsTest` 的真实断言失败 —— **门禁只覆盖四分之一，已经在丢缺陷**（§32.48）。
+
+这不是本轮能解决的（要消除 Robolectric 依赖或换 x86_64 环境），但必须写下来：
+**「门禁 891/0」不等于「全部测试通过」**。
+
+### 5. 边界
+
+- 分配量是 JVM（HotSpot）上的线程分配计数，不等于真机堆占用；真机还受 Compose 快照、OkHttp
+  缓冲、GC 策略影响；
+- 没有真机长会话，所以仍然**不能**说 OOM 已修；
+- 探针是临时文件，已删除；方法可复现（`ThreadMXBean.getThreadAllocatedBytes` + 8435 条消息 + 100 步追加）。
+
+## §32.48 「门禁只覆盖 27%」不是统计数字，它已经藏了一个真 RED（2026-11-01，承接上节）
+
+### 1. 怎么撞见的：给失败分类时多看了一眼
+
+上节要写「443 条失败原因统一是 Robolectric」，落笔前按 `failure@message` 分组数了一遍 ——
+442 条确实是 `The Robolectric native runtime is not supported on Linux (aarch64)`，
+**剩下 1 条是裸的 `java.lang.AssertionError`，没有 message**。
+
+如果直接照抄「统一」，这条就被抹掉了 —— 它恰好不是环境噪声。
+
+### 2. 定位：一条断言，一个 root 路径
+
+`AgentToolRequirementsTest.rootlessProjectionRemovesPrivilegedToolsAndNarrowsMixedSchemasWithoutMutatingSource`
+第 50 行：
+
+```kotlin
+assertFalse(projected.toString().contains("/data/local/tmp/eta"))
+```
+
+单独跑复现：`8 tests completed, 1 failed`，就是这一行。
+
+根因在 `AgentSelfAuditToolCatalog.kt`：`eta_self_audit` 的 `source_root` 描述里写死了
+「不传则自动探测 `/data/local/tmp/eta/eta-v2`」。这个工具是 `RootRequirement.PARTIAL`
+（无 root 时仍保留，用来查堆压力与权限缺口），而 `projectUnprivileged` 只对
+`read_image` / `press_key` / `search_personal_orders` 三个工具做了无 root 改写，没管它 ——
+于是无 root 的 schema 里带着 root 侧路径，正好踩中测试守的契约。
+
+引入这一行的提交是 `d9e3b2a`（§32.39 加 `eta_self_audit`）：**新工具进了目录，但没人给它补
+无 root 版本**；守它的测试当时也不在门禁里，所以两边都不知道。
+
+### 3. 改法
+
+- `projectUnprivileged` 加一条 `eta_self_audit` 分支：无 root 时把 `source_root` 的描述换成
+  不含路径的版本（与已有的三条改写同一机制）；
+- 把 `AgentToolRequirementsTest` 加进 `FAST_TEST_FILTERS`（纯 JVM，8 例，跑得动）；
+- `tools/preinstall-gate.sh` 的第 1 段也加上它 —— 装前门禁是另一条独立路径，两边都要覆盖。
+
+### 4. 结果
+
+- 单类：`8/0`；
+- 全量：失败 443 → **442**（剩下的全是 Robolectric 环境噪声，没有真失败）；
+- 门禁 `STAGES=test,lint,assemble` 全绿：**891 / 0**｜lint 无新增、baseline 194 命中｜
+  包 `Eta-v3.3.5-debug.apk` `33,588,875` 字节 sha256 `85d726a48fab01ec…`；
+- 包大小与 §32.46 那轮**完全相同**，但 dex 里能搜到新描述、sha256 也不同 —— 只记数字，
+  不拿大小当「没改动」的证据；
+- 顺手把覆盖率统计固化成 `tools/gate_coverage.py`（只读，逐 testcase 判定）。
+
+### 5. 教训
+
+1. **「统一原因」这类措辞要先分组数一遍**。443 条里 442 条一样，就差一条 —— 而这一条是唯一
+   有价值的。写「全部是环境噪声」比写错一个数字的危害更大：它会把真缺陷一起归档成噪声。
+2. **「门禁绿」的代价是可量化的**：891 例绿、2357 例没在本机执行（442 跑不了 + 9 跳过 +
+   1906 能跑但没被选中）。被漏掉的缺陷不会因为没跑就消失。
+3. **新工具加进目录时，要顺口问一句「无 root 版本长什么样」**，并且**同时**把它加进门禁 ——
+   两件事只要落一件，另一件就会在别处以「门禁绿 + 全量红」的形式出现。
