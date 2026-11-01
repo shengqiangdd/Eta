@@ -6670,3 +6670,57 @@ store 的 `sanitize` 也是保留尾部）。`loadFromStore` 的追加破坏了�
 - 合并顺序假设「内存里的 id 都比磁盘新」（第二十一批的读盘时序）。同一进程 `persist()`
   之后不再读盘，现有写者下成立；两个进程同时写同一作用域时这个假设不保证。
 - 没有真机验证。
+
+## §32.72 运行详情 tok/s 偏低：把工具耗时算成了模型时间、还把 TTFT 摊进速度（2026-11-02）
+
+用户视角：同一次运行，运行详情里的「速度」比实际低一大截，工具越多的运行越难看。
+一次 438 轮、59 分钟的运行报 **76.6 tok/s**，输出 233,356 token —— 看起来像模型很慢，
+实际是分母算错了。
+
+两个缺陷叠在一起：
+
+1. **边界取错了时刻**：`modelEndMs` 拿该轮第一条 `tool` 记录当「生成结束」，而 `recordTool`
+   写在工具**执行完**才落盘（`at` = 结束时刻、`ms` = 执行耗时）。于是整段工具墙钟被算成
+   「模型在生成」：这次运行里 **1,439,216ms（47%）** 是工具。
+2. **分母起点太早**：从 `request`（请求发出）起算，把 TTFT（首字延迟）与网络等待也摊进
+   解码速度。旧 trace 上实测 11.1 tok/s 的一段，按「首字 → 结束」应是 66.7。
+
+改成 dsh 的口径（`ui-chat/src/client/contract/turn-metrics.ts`：`decodeMs =
+completedTime - firstTokenTime`，速度 = `decodeTokens / (decodeMs / 1000)`）：
+
+- 追踪新增 `KIND_FIRST`：每个请求的**第一个内容块开始**时刻，每个请求只记一条
+  （`AssistantBlockStart` 会来很多次，`awaitingFirstToken` 保证只写第一条）；
+- 速度窗口 = `first` → 段内最后一条内容记录（`response/first/thinking/text/usage`），
+  工具执行与首字等待都不在分母里；
+- 旧 trace 没有 `first`，退回 `response`（响应头）—— 仍比「请求发出」接近解码；
+- 分子只取该请求自己的 usage，但**扫描到下一次请求为止**：有供应商把 usage 放在工具调用
+  之后，跟着生成边界截断会静默丢掉这段 token（速度虚高）；
+- `modelMs` 保留（「模型耗时」展示），边界改 `tool.at - tool.ms`；它的 getter 与
+  `AgentRunTrajectory.modelMsOf` 合并为同一个函数，避免两处规则漂移。
+
+验证：
+
+- **先红**：`model time ends where the tool starts not where its record was written`
+  （断言 6,000，实测 7,000）；`decode speed excludes the wait before the first byte`
+  （断言 66.67，实测 11.11）。
+- **反证三处**：① 工具边界改回 `boundary.at` → 前一个用例红；② 速度改回 `tokens/modelMs`
+  → decode 用例红；③ usage 扫描收回段内 → `usage reported after the tool still counts
+  for that request` 红。恢复后主文件 sha256 均为 `c7edd27b…`。
+- 定向 `AgentRunTrajectoryTest`（11）+ `AgentRunTraceStoreTest`（9）：**20 例 0 失败**。
+- `STAGES=test,lint,assemble`：**1101 例 0 失败**；lint 无新增（baseline 183）；
+  包 32,190,505 字节 `837b3e49729b4443…`。
+- `STAGES=test-wide`：**2962 例 0 失败**（上一批 2959，新增的 3 条都在里面）。
+- 真实数据（本机旧 trace，无 `first`，按 `response` 回退，故最后一列是下界）：
+
+  | 运行 | 请求 | 输出 token | 旧口径 | 边界修正 | 纯解码 |
+  |---|---|---|---|---|---|
+  | `run-8edd17cc` | 438 | 233,356 | 76.6 tok/s | 145.2 tok/s | 172.7 tok/s |
+  | `run-16fc8652` | 18 | 12,615 | 123.6 tok/s | 138.6 tok/s | 159.5 tok/s |
+
+**边界（如实记录）**：
+
+- 旧 trace 没有 `first`，回退 `response` 后仍含「响应头 → 首字」一小段等待，数字略低于
+  真实解码速度；新 trace 不再有这个问题。
+- 样本 trace 由上一版本写出，上表「纯解码」是下界而非最终值。
+- 没有真机核对界面：数字来自磁盘 trace 与单测。
+- `formatSpeed` 仍是 ≥100 取整、否则一位小数，与 dsh 的 ≥10 取整不同，未改。

@@ -508,6 +508,32 @@ AOSP `AccessibilityManagerService.isValidDisplay()` 才会跟踪它的窗口；
 
 未做：时间轴缩放与区间框选（手机横向空间小，点按切轮已够）、按关键词搜索轨迹。
 
+### 输出速度（tok/s）：从首字起算，工具与 TTFT 都不进分母（2026-11-02）
+
+运行详情的「速度」偏低不是显示问题，是分母错了，两处叠在一起：
+
+1. `modelEndMs` 把该轮第一条 `tool` 记录当作「生成结束」，而 `recordTool` 写在工具**执行完**
+   时（`at` = 结束、`ms` = 耗时）→ 整段工具墙钟被算进模型时间。438 轮的一次运行里
+   1,439,216ms（**47%**）是工具。
+2. 分母从 `request`（请求发出）起算 → TTFT 与网络等待被摊进解码速度。
+
+改为 dsh 的 decode 口径（`decodeMs = completedTime - firstTokenTime`）：新增 `KIND_FIRST`
+（每个请求的第一个内容块开始，只记一条），窗口 = `first` → 段内最后一条内容记录；旧 trace
+没有 `first` 时退回 `response`，两者都没有则该请求不进分母（界面显示「—」）。`modelMs`
+保留但边界改 `tool.at - tool.ms`，getter 与单轮共用 `modelMsOf`。usage 扫描到下一次请求
+为止 —— 有供应商把它放在工具之后，跟着边界截断会静默丢 token。
+
+实测（旧 trace，无 `first`，按 `response` 回退，故「纯解码」是下界）：`run-8edd17cc`
+438 请求 / 233,356 token：76.6 → 145.2 → **172.7** tok/s；`run-16fc8652` 18 / 12,615：
+123.6 → 138.6 → **159.5**。
+
+验证：先红两例（7,000≠6,000；11.11≠66.67）→ 反证三处（工具边界 / decode 窗口 / usage 截断）
+各自红，恢复后 sha `c7edd27b…` → 定向 20/0 → `STAGES=test,lint,assemble` **1101/0**
+（lint baseline 183，包 32,190,505 字节 `837b3e49729b4443…`）→ `STAGES=test-wide` **2962/0**。
+
+边界：旧 trace 无 `first`；未做真机界面核对；`formatSpeed` 阈值（≥100 取整）与 dsh 的 ≥10
+不同，未改。
+
 ## 长期目标 `goal`（2026-10-20）
 
 参考 DeepSeek Harness 的 `goal` / `tool-goal` / `goal-round-driver`。dsh 的做法是「单会话单目标 +

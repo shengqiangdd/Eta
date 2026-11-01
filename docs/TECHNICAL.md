@@ -2554,6 +2554,20 @@ startup first-frame       +1236ms     ← 首帧被拖到 1.2 秒
 真实数据核对（`run-6534a1c6`，61 轮）：输出 25,888 token / 模型时间 308s → **84.0 tok/s**
 （含工具墙钟为 79.5）。canary 真机界面：总览 **103 tok/s**、单轮 **62.4 tok/s**。
 
+**2026-11-02 修订：上面的口径已被取代，速度改为纯解码（不含 TTFT、不含工具）**
+
+- 缺陷一：`recordTool` 写在工具**执行完**时（`at` = 结束、`ms` = 耗时），旧口径直接拿它当
+  「生成结束」→ 整段工具墙钟算进模型时间。`run-8edd17cc`（438 轮）里 1,439,216ms（**47%**）
+  是工具；边界改用 `at - ms` 后 3,046,548 → 1,607,332ms（76.6 → 145.2 tok/s）。
+- 缺陷二：分母从 `request`（请求发出）起算，把 TTFT 与网络等待摊进速度；旧 trace 实测
+  11.1 tok/s 的一段按「首字 → 结束」应为 66.7。
+- 现口径与 dsh 的 `decodeMs` 一致（`firstTokenTime` → `completedTime`）：`KIND_FIRST` 记每个
+  请求的第一个内容块，窗口取它到段内最后一条内容记录；旧 trace 无 `first` 时退回 `response`。
+  `run-8edd17cc` 按此算是 **172.7 tok/s**（旧 trace 回退，故为下界）。
+- `modelMs` 仍保留做「模型耗时」展示，但不再是速度分母；单轮与总览共用 `speedOf`，
+  单测新增「各轮 decodeMs / decodeTokens 之和 == 总览」。
+- 细节与验证见 `MERGE_3.3.5.md` §32.72。
+
 ### 排版缺陷一：长值压在标题上
 
 `DetailLine` 原来是「标题 —— Spacer(weight 1f) —— 值」三段式，值没有宽度约束。

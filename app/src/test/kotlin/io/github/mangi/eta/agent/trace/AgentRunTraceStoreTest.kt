@@ -66,6 +66,25 @@ class AgentRunTraceStoreTest {
     }
 
     @Test
+    fun `records one first token per request even when blocks keep starting`() {
+        beginTrace()
+        val store = store()
+        store.record(runId, AgentEvent.ProviderRequestStarted(1))
+        // 一次请求里思考、正文、工具调用各会来一个「块开始」，但首字只有一个。
+        store.record(runId, AgentEvent.AssistantBlockStart(1, AgentEvent.AssistantBlockKind.THINKING, 0))
+        store.record(runId, AgentEvent.AssistantBlockStart(1, AgentEvent.AssistantBlockKind.TEXT, 1))
+        store.record(runId, AgentEvent.AssistantBlockStart(1, AgentEvent.AssistantBlockKind.TOOL_CALL, 2, name = "grep"))
+        // 重试是另一次请求：它的首字要单独记，否则速度按请求配对时会漏掉这一段。
+        store.record(runId, AgentEvent.ProviderRequestStarted(2))
+        store.record(runId, AgentEvent.AssistantBlockStart(2, AgentEvent.AssistantBlockKind.TEXT, 0))
+        store.finish(runId, ok = true)
+
+        val firsts = store.read(runId)!!.entries.filter { it.kind == AgentRunTraceStore.KIND_FIRST }
+        assertEquals(2, firsts.size)
+        assertEquals(listOf(1, 2), firsts.map { it.round })
+    }
+
+    @Test
     fun `compaction keeps char counts and does not fake zero tokens`() {
         beginTrace()
         val store = store()

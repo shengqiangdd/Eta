@@ -48,13 +48,17 @@ internal object AgentRunTrajectory {
         val outputTokens: Int = 0,
         /** 本轮模型生成耗时；口径见 [AgentRunTraceStore.Trace.modelMs]。 */
         val modelMs: Long = 0,
+        /** 本轮纯解码耗时：首字 → 生成结束（口径见 [AgentRunTraceStore.speedOf]）。 */
+        val decodeMs: Long = 0,
+        /** 与 [decodeMs] 配对的输出 token。 */
+        val decodeTokens: Int = 0,
     ) {
         val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0)
 
-        /** 本轮输出速度；数据不足时为 null，界面显示「—」。 */
+        /** 本轮输出速度（纯解码，不含 TTFT）；数据不足时为 null，界面显示「—」。 */
         val tokensPerSecond: Double?
-            get() = if (outputTokens > 0 && modelMs > 0) {
-                outputTokens * 1000.0 / modelMs
+            get() = if (decodeTokens > 0 && decodeMs > 0) {
+                decodeTokens * 1000.0 / decodeMs
             } else {
                 null
             }
@@ -109,6 +113,8 @@ internal object AgentRunTrajectory {
             }
             val startMs = refs.minOfOrNull { it.offsetMs } ?: 0
             val endMs = refs.maxOfOrNull { it.offsetMs + it.durationMs } ?: startMs
+            // 总览与单轮共用同一套口径：解码窗口按请求配对，工具与首字等待都不进分母。
+            val speed = AgentRunTraceStore.speedOf(entries, slice)
             Turn(
                 index = turnIndex,
                 startMs = startMs,
@@ -147,6 +153,8 @@ internal object AgentRunTrajectory {
                     }
                 },
                 modelMs = modelMsOf(entries, slice, trace.finishedAt ?: entries.last().at),
+                decodeMs = speed.decodeMs,
+                decodeTokens = speed.tokens,
             )
         }
 
@@ -170,18 +178,7 @@ internal object AgentRunTrajectory {
         indices: List<Int>,
         endOfRun: Long,
     ): Long {
-        var sum = 0L
-        indices.forEach { index ->
-            val entry = entries[index]
-            if (entry.kind != AgentRunTraceStore.KIND_REQUEST) return@forEach
-            val boundary = entries.subList(index + 1, entries.size).firstOrNull {
-                it.kind == AgentRunTraceStore.KIND_TOOL ||
-                    it.kind == AgentRunTraceStore.KIND_REQUEST ||
-                    it.kind == AgentRunTraceStore.KIND_DONE
-            }?.at ?: endOfRun
-            sum += (boundary - entry.at).coerceAtLeast(0)
-        }
-        return sum
+        return AgentRunTraceStore.modelMsOf(entries, indices, endOfRun)
     }
 
     /** 时间条与卡片共用的一套标签，避免两处口径漂移。 */

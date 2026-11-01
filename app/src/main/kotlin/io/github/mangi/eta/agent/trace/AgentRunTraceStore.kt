@@ -87,38 +87,30 @@ internal object AgentRunTraceStore {
          * 口径：每个请求从发出到「这一轮的产物结束」。结束点取该轮**第一条工具记录**、
          * 下一次请求、运行结束三者中最早的那个 ——
          * 工具耗时不属于模型速度，把它算进去会让 tok/s 变成"这轮一共跑了多久"的倒数，
-         * 工具越慢数字越假。
+         * 工具越慢数字越假；而工具记录写在**执行结束**时，边界必须用 `at - elapsedMs`
+         * 还原成它开始的那一刻（2026-11-02 实测：438 轮的一次运行里有 47% 被算成"模型时间"）。
          *
-         * 因此这个值包含首字延迟（TTFT），是"端到端生成速度"，不是纯解码速度。
+         * 速度本身不直接用这个值：见 [speedOf]，从首字起算、不含 TTFT（与 dsh 的 decodeMs 同口径）。
+         *
+         * 因此这个值仍包含首字等待，只用做「模型耗时」展示；tok/s 另按 [speedOf] 算。
          */
         val modelMs: Long
             get() {
                 if (entries.isEmpty()) return 0
-                val endOfRun = finishedAt ?: entries.last().at
-                var sum = 0L
-                entries.forEachIndexed { index, entry ->
-                    if (entry.kind != KIND_REQUEST) return@forEachIndexed
-                    val boundary = entries.subList(index + 1, entries.size).firstOrNull {
-                        it.kind == KIND_TOOL || it.kind == KIND_REQUEST || it.kind == KIND_DONE
-                    }?.at ?: endOfRun
-                    sum += (boundary - entry.at).coerceAtLeast(0)
-                }
-                return sum
+                return modelMsOf(entries, entries.indices, finishedAt ?: entries.last().at)
             }
 
         /**
          * 输出速度（token/秒）。
          *
-         * 没有 usage（部分供应商不回传）或没有耗时数据时返回 null ——
-         * 界面显示「—」，而不是拿 0 或猜测值糊上去。
+         * 口径与 dsh 的 decode 速度一致：分母只算「首字 → 生成结束」，不含请求发出到首字的
+         * 等待，也不含工具耗时；分子只取同一批请求自己的 output token。
+         * 没有可配对的用量/时刻时返回 null —— 界面显示「—」，而不是拿 0 或猜测值糊上去。
          */
-        val outputTokensPerSecond: Double?
-            get() {
-                val tokens = outputTokens
-                val ms = modelMs
-                if (tokens <= 0 || ms <= 0) return null
-                return tokens * 1000.0 / ms
-            }
+        val outputTokensPerSecond: Double? get() = speed.tokensPerSecond
+
+        /** 纯解码速度的分子分母（口径见 [speedOf]）。 */
+        val speed: SpeedRead get() = speedOf(entries, entries.indices)
 
         /** 每一步相对开始的毫秒数，供时间线展示；缺失时回退 0。 */
         fun offsetOf(entry: Entry): Long = (entry.at - startedAt).coerceAtLeast(0)
@@ -145,6 +137,14 @@ internal object AgentRunTraceStore {
     }
 
     private val lock = Any()
+
+    /**
+     * 哪些 run 的**当前请求**还没记到第一个内容块（2026-11-02）。
+     *
+     * 只活在内存：用途只有「每次请求只写一条 `first`」。进程重启后旧追踪里的 `first`
+     * 已经落盘，新请求走到 [markAwaitingFirstToken] 会重新标记。
+     */
+    private val awaitingFirstToken = HashSet<String>()
 
     @Volatile
     private var directory: File? = null
@@ -180,6 +180,8 @@ internal object AgentRunTraceStore {
         val target = dirOrNull() ?: return
         val safeId = safeRunId(runId) ?: return
         synchronized(lock) {
+            // 新的一份追踪必须从「还没看到首字」开始：同名 run 被复用时不能沿用上一份的标记。
+            awaitingFirstToken.remove(runId)
             runCatching {
                 target.mkdirs()
                 prune(target)
@@ -216,16 +218,19 @@ internal object AgentRunTraceStore {
                     .put("r", event.round)
                     .put("msgs", event.messageCount),
             )
-            is AgentEvent.ProviderRequestStarted -> append(
-                runId,
-                JSONObject()
-                    .put("k", KIND_REQUEST)
-                    .put("r", event.round)
-                    .put("try", event.attempt)
-                    .put("model", event.model.take(120))
-                    .put("provider", event.provider.take(120))
-                    .put("effort", event.effort.take(24)),
-            )
+            is AgentEvent.ProviderRequestStarted -> {
+                markAwaitingFirstToken(runId)
+                append(
+                    runId,
+                    JSONObject()
+                        .put("k", KIND_REQUEST)
+                        .put("r", event.round)
+                        .put("try", event.attempt)
+                        .put("model", event.model.take(120))
+                        .put("provider", event.provider.take(120))
+                        .put("effort", event.effort.take(24)),
+                )
+            }
             is AgentEvent.ProviderResponseStarted -> append(
                 runId,
                 JSONObject()
@@ -233,6 +238,8 @@ internal object AgentRunTraceStore {
                     .put("r", event.round)
                     .put("http", event.httpCode),
             )
+            // 每个内容块（思考 / 正文 / 工具调用）开始都会来一次；只记本次请求的第一次。
+            is AgentEvent.AssistantBlockStart -> noteFirstToken(runId, event.round)
             is AgentEvent.AssistantBlockEnd -> {
                 val kind = when (event.kind) {
                     AgentEvent.AssistantBlockKind.THINKING -> KIND_THINKING
@@ -294,6 +301,7 @@ internal object AgentRunTraceStore {
     }
 
     fun finish(runId: String, ok: Boolean, error: String = "", contentChars: Int = 0) {
+        synchronized(lock) { awaitingFirstToken.remove(runId) }
         append(
             runId,
             JSONObject()
@@ -424,6 +432,23 @@ internal object AgentRunTraceStore {
                 }
             }
         }
+    }
+
+    /** 标记：下一次内容块开始就是这次请求的首字（每个请求只记一次）。 */
+    private fun markAwaitingFirstToken(runId: String) {
+        synchronized(lock) { awaitingFirstToken.add(runId) }
+    }
+
+    /**
+     * 记下本次请求的第一个内容块到达时刻 —— 首字延迟（TTFT）的分界点。
+     *
+     * 内容块（思考 / 正文 / 工具调用）开始都会来一次；这里只认本次请求的第一次，
+     * 因为速度的分母从首字起算（见 [speedOf]），再往后记只是白占追踪体积。
+     */
+    private fun noteFirstToken(runId: String, round: Int) {
+        val first = synchronized(lock) { awaitingFirstToken.remove(runId) }
+        if (!first) return
+        append(runId, JSONObject().put("k", KIND_FIRST).put("r", round))
     }
 
     private fun prune(target: File) {
@@ -600,6 +625,9 @@ internal object AgentRunTraceStore {
     const val KIND_ROUND = "round"
     const val KIND_REQUEST = "request"
     const val KIND_RESPONSE = "response"
+
+    /** 本次请求的第一个内容块（首字时刻）：速度的分母从这里开始，不含 TTFT。 */
+    const val KIND_FIRST = "first"
     const val KIND_THINKING = "thinking"
     const val KIND_TEXT = "text"
     const val KIND_TOOL = "tool"
@@ -619,4 +647,82 @@ internal object AgentRunTraceStore {
     private const val MAX_ARGUMENT_CHARS = 4_000
     private const val MAX_RESULT_CHARS = 12_000
     private const val MAX_ERROR_CHARS = 2_000
+
+    /**
+     * 一次请求的「生成结束」时刻。
+     *
+     * 边界仍是工具 / 下一次请求 / 运行结束三者最早者，但工具记录写在**执行结束**时，
+     * 所以取 `at - elapsedMs`（开始执行的那一刻）。直接用 `at` 会把整段工具墙钟算成
+     * "模型生成耗时" —— 2026-11-02 实测：438 轮的一次运行里 3,046,548ms 的 47% 是工具。
+     */
+    internal fun modelEndMs(entries: List<Entry>, requestIndex: Int, endOfRun: Long): Long {
+        val index = boundaryIndex(entries, requestIndex + 1)
+        if (index >= entries.size) return endOfRun
+        val boundary = entries[index]
+        return if (boundary.kind == KIND_TOOL) {
+            (boundary.at - (boundary.elapsedMs ?: 0L)).coerceAtLeast(entries[requestIndex].at)
+        } else {
+            boundary.at
+        }
+    }
+
+    /** 从 [from] 起第一条切断本次请求的记录（工具 / 下一次请求 / 运行结束）；没有则返回 size。 */
+    private fun boundaryIndex(entries: List<Entry>, from: Int): Int =
+        (from until entries.size).firstOrNull { index ->
+            val kind = entries[index].kind
+            kind == KIND_TOOL || kind == KIND_REQUEST || kind == KIND_DONE
+        } ?: entries.size
+
+    /** 一组记录里「模型在生成」的耗时合计；总览与单轮共用同一套规则。 */
+    internal fun modelMsOf(entries: List<Entry>, indices: Iterable<Int>, endOfRun: Long): Long {
+        var sum = 0L
+        indices.forEach { index ->
+            if (entries[index].kind != KIND_REQUEST) return@forEach
+            sum += (modelEndMs(entries, index, endOfRun) - entries[index].at).coerceAtLeast(0)
+        }
+        return sum
+    }
+
+    /**
+     * 纯解码窗口：分子是 output token，分母是「首字 → 生成结束」，按请求逐个配对。
+     *
+     * 口径对齐 dsh（`ui-chat/src/client/contract/turn-metrics.ts` 的 `decodeMs`）：
+     * 不含请求发出到首字之间的等待（TTFT），也不含工具耗时；只有**既有首字、又有用量**
+     * 的请求才进分母 —— 失败重试不会把速度摊薄。
+     * 旧追踪没有 `first` 记录，退回响应头时刻（`response`），仍比「请求发出」更接近解码。
+     */
+    internal fun speedOf(entries: List<Entry>, indices: Iterable<Int>): SpeedRead {
+        var ms = 0L
+        var tokens = 0
+        indices.forEach { index ->
+            if (entries[index].kind != KIND_REQUEST) return@forEach
+            val segment = entries.subList(index + 1, boundaryIndex(entries, index + 1))
+            val start = segment.firstOrNull { it.kind == KIND_FIRST }?.at
+                ?: segment.firstOrNull { it.kind == KIND_RESPONSE }?.at
+                ?: return@forEach
+            val finish = segment.lastOrNull { it.kind in CONTENT_KINDS }?.at ?: return@forEach
+            // 用量可能被供应商放在工具调用之后（同一请求内）：扫描到下一次请求为止，
+            // 不跟着「生成结束」的边界截断 —— 否则这段 token 会被悄悄丢掉，速度就会虚高。
+            val output = entries.subList(index + 1, nextRequestIndex(entries, index + 1))
+                .filter { it.kind == KIND_USAGE }
+                .sumOf { it.outputTokens ?: 0 }
+            if (output <= 0 || finish <= start) return@forEach
+            ms += finish - start
+            tokens += output
+        }
+        return SpeedRead(ms, tokens)
+    }
+
+    /** 从 [from] 起下一次请求的位置；没有则返回 size。 */
+    private fun nextRequestIndex(entries: List<Entry>, from: Int): Int =
+        (from until entries.size).firstOrNull { entries[it].kind == KIND_REQUEST } ?: entries.size
+
+    /** 生成过程中会出现的记录类型：取最后一条当作「生成结束」。 */
+    private val CONTENT_KINDS = setOf(KIND_RESPONSE, KIND_FIRST, KIND_THINKING, KIND_TEXT, KIND_USAGE)
+}
+
+/** 纯解码速度的分子与分母；[tokensPerSecond] 在数据不足时为 null（界面显示「—」）。 */
+internal data class SpeedRead(val decodeMs: Long, val tokens: Int) {
+    val tokensPerSecond: Double?
+        get() = if (tokens > 0 && decodeMs > 0) tokens * 1000.0 / decodeMs else null
 }

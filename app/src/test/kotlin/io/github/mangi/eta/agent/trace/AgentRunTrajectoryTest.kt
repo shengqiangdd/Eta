@@ -121,6 +121,8 @@ class AgentRunTrajectoryTest {
     private fun speedTrace(): AgentRunTraceStore.Trace = trace(
         entry(AgentRunTraceStore.KIND_ROUND, 1_000, round = 1),
         entry(AgentRunTraceStore.KIND_REQUEST, 1_000, round = 1),
+        // 首字 1200：解码窗口从这里起算，请求发出到首字的等待不算速度。
+        entry(AgentRunTraceStore.KIND_FIRST, 1_200, round = 1),
         entry(
             AgentRunTraceStore.KIND_USAGE,
             3_000,
@@ -139,6 +141,7 @@ class AgentRunTrajectoryTest {
         ),
         entry(AgentRunTraceStore.KIND_ROUND, 6_000, round = 2),
         entry(AgentRunTraceStore.KIND_REQUEST, 6_000, round = 2),
+        entry(AgentRunTraceStore.KIND_FIRST, 6_200, round = 2),
         entry(
             AgentRunTraceStore.KIND_USAGE,
             7_500,
@@ -150,12 +153,41 @@ class AgentRunTrajectoryTest {
     )
 
     @Test
-    fun `speed counts output tokens only and skips tool time`() {
+    fun `model time ends where the tool starts not where its record was written`() {
         val t = speedTrace()
         assertEquals(150, t.outputTokens)
-        // 第 1 轮 1000→4000（工具记录是边界）=3000；第 2 轮 6000→10000=4000。
-        assertEquals(7_000, t.modelMs)
-        assertEquals(150 * 1000.0 / 7_000, t.outputTokensPerSecond!!, 1e-9)
+        // 第 1 轮 1000→3000（工具**开始**执行）=2000；第 2 轮 6000→10000=4000。
+        // 工具记录写在执行结束时（at=4000, ms=1000），把它直接当边界会把整段工具墙钟算进来。
+        assertEquals(6_000, t.modelMs)
+    }
+
+    @Test
+    fun `decode speed excludes the wait before the first byte`() {
+        // 请求 1000 发出、1500 才等到响应头、3000 生成完：真正的解码只有 1500ms。
+        // 拿"请求→结束"当分母，等于把网络与首字延迟摊进速度，数字会明显偏低。
+        val t = trace(
+            entry(AgentRunTraceStore.KIND_REQUEST, 1_000, round = 1),
+            entry(AgentRunTraceStore.KIND_RESPONSE, 1_500, round = 1),
+            entry(AgentRunTraceStore.KIND_USAGE, 3_000, round = 1, outputTokens = 100),
+        )
+        assertEquals(100 * 1000.0 / 1_500, t.outputTokensPerSecond!!, 1e-9)
+    }
+
+    @Test
+    fun `usage reported after the tool still counts for that request`() {
+        // 有些供应商把 usage 放在工具调用之后（同一请求内）。
+        // 若按「生成结束」的边界一并截断，这 100 token 会被静静丢掉，速度就虚高了。
+        val t = trace(
+            entry(AgentRunTraceStore.KIND_REQUEST, 1_000, round = 1),
+            entry(AgentRunTraceStore.KIND_FIRST, 1_200, round = 1),
+            entry(AgentRunTraceStore.KIND_TEXT, 2_800, round = 1),
+            entry(AgentRunTraceStore.KIND_TOOL, 3_300, round = 1, name = "terminal", ok = true, elapsedMs = 500),
+            entry(AgentRunTraceStore.KIND_USAGE, 3_400, round = 1, outputTokens = 100),
+            entry(AgentRunTraceStore.KIND_REQUEST, 4_000, round = 2),
+            entry(AgentRunTraceStore.KIND_DONE, 5_000),
+        )
+        // 分母仍是 1200→2800（不含工具），但 token 必须算进来。
+        assertEquals(100 * 1000.0 / 1_600, t.outputTokensPerSecond!!, 1e-9)
     }
 
     @Test
@@ -187,16 +219,19 @@ class AgentRunTrajectoryTest {
 
         val first = trajectory.turns[0]
         assertEquals(100, first.outputTokens)
-        assertEquals(3_000, first.modelMs)
-        assertEquals(100 * 1000.0 / 3_000, first.tokensPerSecond!!, 1e-9)
+        assertEquals(2_000, first.modelMs)
+        // 解码 1200→3000：既不含 1000→1200 的首字等待，也不含后面的工具耗时。
+        assertEquals(100 * 1000.0 / 1_800, first.tokensPerSecond!!, 1e-9)
 
         val second = trajectory.turns[1]
         assertEquals(50, second.outputTokens)
         assertEquals(4_000, second.modelMs)
-        assertEquals(50 * 1000.0 / 4_000, second.tokensPerSecond!!, 1e-9)
+        assertEquals(50 * 1000.0 / 1_300, second.tokensPerSecond!!, 1e-9)
 
         // 单轮之和必须等于总览，否则两处会给出互相矛盾的速度。
         assertEquals(t.modelMs, trajectory.turns.sumOf { it.modelMs })
         assertEquals(t.outputTokens, trajectory.turns.sumOf { it.outputTokens })
+        assertEquals(t.speed.decodeMs, trajectory.turns.sumOf { it.decodeMs })
+        assertEquals(t.speed.tokens, trajectory.turns.sumOf { it.decodeTokens })
     }
 }
