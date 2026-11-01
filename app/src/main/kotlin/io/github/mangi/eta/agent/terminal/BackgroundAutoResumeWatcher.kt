@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.terminal
 import android.content.Context
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
 import io.github.mangi.eta.config.Prefs
+import io.github.mangi.eta.core.AndroidAgentLogger
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +95,11 @@ internal object BackgroundAutoResumeWatcher {
                 },
                 dispatch = { scopeId, task -> current.dispatch(scopeId, task) },
                 isCurrent = { dispatcher === current },
+                onPlan = { scopeId, plan ->
+                    // 只在 debug 构建保留：自动续跑会在用户不在场时花额度。
+                    // 真机上必须能回答「这一轮为什么发 / 为什么没发」，否则只能怀疑模块坏了。
+                    AndroidAgentLogger.debug { "Agent auto-resume plan: ${plan.logLine(scopeId)}" }
+                },
             )
         }
     }
@@ -118,6 +124,13 @@ internal object BackgroundAutoResumeWatcher {
          * 返回 false 表示这一轮不发，下个 tick 用新分发器再来。
          */
         isCurrent: () -> Boolean = { true },
+        /**
+         * 每个作用域判定完回调一次（含什么都没做的 Idle）。
+         *
+         * 只给日志 / 诊断用，判定本身不依赖它。抽成回调而不是直接写日志：`runOnce`
+         * 是纯 JVM 可测的，而 `android.util.Log` 在单测里会抛「not mocked」。
+         */
+        onPlan: (String, AutomationTick) -> Unit = { _, _ -> },
     ): Int {
         if (records.isEmpty()) return 0
         // 运行中的任务也要参与：作用域第一次出现时，水位线要立在「现在」，
@@ -132,16 +145,16 @@ internal object BackgroundAutoResumeWatcher {
             // 磁盘记忆没读完之前不能判「没续过」，否则重启后会把同一批任务再续一遍。
             if (!scope.isLoaded) scope.loadFromStore()
             if (!scope.isLoaded) continue
-            when (
-                val plan = planAutomationTick(
-                    records = tasks,
-                    scopeId = scopeId,
-                    handled = scope.resumed.toSet(),
-                    seenUntil = scope.seenUntil,
-                    chain = scope.autoResumed,
-                    nowMs = nowMs,
-                )
-            ) {
+            val plan = planAutomationTick(
+                records = tasks,
+                scopeId = scopeId,
+                handled = scope.resumed.toSet(),
+                seenUntil = scope.seenUntil,
+                chain = scope.autoResumed,
+                nowMs = nowMs,
+            )
+            onPlan(scopeId, plan)
+            when (plan) {
                 is AutomationTick.Idle -> Unit
                 is AutomationTick.Rebaseline -> {
                     // 时钟回拨：先吸收「未来记录」，再后退水位线。顺序不能反 ——
@@ -168,7 +181,11 @@ internal object BackgroundAutoResumeWatcher {
                     // 先发再记账：发不出去（会话在跑）就不该占掉这次预算，也不该推进水位线。
                     if (!dispatch(scopeId, plan.task)) continue
                     scope.markAutoResumed(plan.task.id)
-                    scope.markSeenUntil(plan.task.completedAt ?: 0L)
+                    // 水位线停在这条任务的**前一毫秒**，不是它自己的时刻：同一毫秒里结束的
+                    // 其余任务（一轮里派几个短命令很常见）否则永远不满足「严格晚于水位线」，
+                    // 会被静默跳过。链满时走 Discard（推到最晚一条），那里必须保持原值——
+                    // 否则被放弃的同一毫秒任务会反复变回候选，每 30 秒重算一次。
+                    scope.markSeenUntil(((plan.task.completedAt ?: 0L) - 1L).coerceAtLeast(1L))
                     scope.persist()
                     sent += 1
                 }

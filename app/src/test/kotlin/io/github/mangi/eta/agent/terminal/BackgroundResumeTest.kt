@@ -160,6 +160,28 @@ class BackgroundResumeTest {
         assertEquals(AutomationTick.Idle, plan)
     }
 
+    /** 判定的诊断文本：真机日志就靠它回答「这一轮为什么发 / 为什么没发」。 */
+    @Test
+    fun planLogLineMentionsDecisionAndScope() {
+        assertEquals("idle scope=conv-a", AutomationTick.Idle.logLine("conv-a"))
+        assertEquals(
+            "initialize scope=conv-a at=1000",
+            AutomationTick.Initialize(1_000L).logLine("conv-a"),
+        )
+        assertEquals(
+            "dispatch scope=conv-a task=job_a",
+            AutomationTick.Dispatch(task("job_a", 100L, 600L)).logLine("conv-a"),
+        )
+        assertEquals(
+            "discard scope=conv-a skipped=2 through=700",
+            AutomationTick.Discard(through = 700L, skipped = 2).logLine("conv-a"),
+        )
+        assertEquals(
+            "rebaseline scope=conv-a absorbed=2",
+            AutomationTick.Rebaseline(at = 1_000L, absorb = listOf("a", "b")).logLine("conv-a"),
+        )
+    }
+
     /** 混合场景：只在本会话的候选里挑最早的一条，别的会话不参与排序也不占位。 */
     @Test
     fun onlyOwnTasksTakePartInOrdering() {

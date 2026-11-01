@@ -1001,6 +1001,22 @@ agent 事件，而 `detached task probe` **0 条**；测完恢复 256 KiB。
 验证：新增 8 例，三类共 55／0；反证实验（关掉回拨分支）4 例失败，证明用例真的在守行为；
 `STAGES=test,lint,assemble` **1074 例 0 失败**（lint 无新增）；`STAGES=test-wide` **2932 例 0 失败**。两条都没有真机验证。
 
+### 第十四批：同一毫秒的批量任务 + 判定日志（2026-11-01）
+
+第十三批修的是「时间轴断了」，这一批修同一张水位线的精度：Dispatch 记账原来把水位线推进到
+该任务的 `completed_at`，同一毫秒结束的其余任务永远不满足「严格晚于水位线」，被静默跳过
+（一轮派几个短命令时很常见）。改成 `completedAt - 1`；Discard 保持原值（否则被放弃的
+同毫秒任务会每 30 秒变回候选、反复放弃）。
+
+可观测性：`runOnce` 新增 `onPlan` 回调（纯 JVM 可测，不直接依赖 `android.util.Log`），
+`AutomationTick.logLine()` 把每个判定压成一行（idle / initialize / dispatch /
+discard skipped=N through=… / rebaseline absorbed=N），`tick()` 里打 debug 日志。
+真机第一次能回答「这一轮为什么发 / 为什么没发」。
+
+验证：先红（同毫秒用例旧实现失败）→ 实现后三类 59／0；`STAGES=test,lint,assemble` **1078 例 0 失败**（lint 无新增）；
+`STAGES=test-wide` **2936 例 0 失败**。边界：水位线现在停在前一毫秒；同毫秒多条仍受链长限制；
+日志只在 debug 构建；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

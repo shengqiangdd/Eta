@@ -139,7 +139,8 @@ class BackgroundAutoResumeWatcherTest {
         assertTrue("job_a" in scope.resumed)
         assertEquals(1, scope.autoResumed)
         // 发完就推进水位线，同一条不会被下一次兜底扫描再选中。
-        assertEquals(600L, scope.seenUntil)
+        // 停在「前一毫秒」，好让同一毫秒结束的其余任务仍能被看到（见同毫秒用例）。
+        assertEquals(599L, scope.seenUntil)
     }
 
     /** 分发失败（会话正在跑 / 会话不存在）不能记账，否则这一轮额度被白白吃掉，事件也丢了。 */
@@ -337,6 +338,82 @@ class BackgroundAutoResumeWatcherTest {
         assertFalse("job_a" in scope.resumed)
         assertEquals(0, scope.autoResumed)
         assertEquals(500L, scope.seenUntil)
+    }
+
+    /**
+     * 两条任务在同一毫秒结束（模型一轮派几个短命令时很常见）。
+     *
+     * 旧实现只把水位线推进到 `completed_at`，等于把同一毫秒的其余任务一起压住：
+     * 第一条发出去之后，剩下的永远不满足「严格晚于水位线」，被静默跳过。
+     */
+    @Test
+    fun tasksFinishedInSameMillisecondAreDispatchedOneAfterAnother() = runBlocking {
+        scopeFor("conv-a").markSeenUntil(500L)
+        val records = listOf(task("job_a", 600L), task("job_b", 600L))
+        var sent = 0
+        val first = BackgroundAutoResumeWatcher.runOnce(
+            records = records,
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                sent += 1
+                true
+            },
+        )
+        val second = BackgroundAutoResumeWatcher.runOnce(
+            records = records,
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                sent += 1
+                true
+            },
+        )
+        assertEquals(1, first)
+        assertEquals(1, second)
+        assertEquals(2, sent)
+    }
+
+    /** 反过来的保护：链满时明确放弃的同一毫秒任务，不能因为水位线微调而反复变成候选。 */
+    @Test
+    fun discardedSameMillisecondTasksDoNotComeBack() = runBlocking {
+        scopeFor("conv-a").markSeenUntil(500L)
+        repeat(AutoResumeMaxPerChain) { index -> scopeFor("conv-a").markAutoResumed("job_old_$index") }
+        val records = listOf(task("job_a", 600L), task("job_b", 600L))
+        var sent = 0
+        val first = BackgroundAutoResumeWatcher.runOnce(
+            records = records,
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                sent += 1
+                true
+            },
+        )
+        val second = BackgroundAutoResumeWatcher.runOnce(
+            records = records,
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                sent += 1
+                true
+            },
+        )
+        assertEquals(0, first)
+        assertEquals(0, second)
+        assertEquals(0, sent)
+        assertEquals(600L, scopeFor("conv-a").seenUntil)
+    }
+
+    /** 判定回调：日志就挂在这上面，必须能看到决定本身（而不是只看「发了几个」）。 */
+    @Test
+    fun planObserverReportsEveryDecision() = runBlocking {
+        scopeFor("conv-a").markSeenUntil(500L)
+        val seen = mutableListOf<String>()
+        val sent = BackgroundAutoResumeWatcher.runOnce(
+            records = listOf(task("job_a", 600L)),
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ -> true },
+            onPlan = { scopeId, plan -> seen += plan.logLine(scopeId) },
+        )
+        assertEquals(1, sent)
+        assertEquals(listOf("dispatch scope=conv-a task=job_a"), seen)
     }
 
     @Test

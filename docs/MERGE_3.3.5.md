@@ -6203,3 +6203,54 @@ Dispatch 分支在发送前复核，换掉了就 `continue`（不发、不记账
   `launchConversationRun` 内部仍可能「记了 run 但立刻被取消」—— 这一层没有额外防护。
 - 两条修复都**没有真机验证**：时钟回拨要在设备上改系统时间（可能影响其他应用、也会被自动校时
   拉回），分发器替换需要 Activity 重建的时序配合。都是有单测、无真机。
+
+## §32.63 同一毫秒结束的任务不再被水位线吞掉（2026-11-01）
+
+### 1. 动机：时间轴没断，精度不够
+
+§32.62 修的是「时间轴断了」（时钟回拨）。这一批是同一张水位线的另一个方向：
+水位线是毫秒时间戳，Dispatch 记账时直接推进到该任务的 `completed_at`。
+于是**同一毫秒里结束的其余任务**从此永远不满足「严格晚于水位线」，被静默跳过 ——
+不报错、不发消息、日志里也看不出来。
+
+不是理论问题：模型一轮里派几个短命令（`echo`、`true`、`cat`）时，完成线程写
+`completed_at` 落在同一毫秒很常见。
+
+### 2. 改法
+
+- Dispatch 记账：`markSeenUntil(completedAt - 1)`，水位线停在这条任务的**前一毫秒**。
+  下一轮扫描时，同一毫秒的其余任务 `done > seenUntil` 成立，仍能被看到（一次一条）。
+- Discard **不动**：它推到最晚一条，语义是「这一批明确放弃」。如果那里也减 1，
+  被放弃的同一毫秒任务会每 30 秒变回候选、再被放弃一次 —— 不发钱，但永远重算。
+
+### 3. 顺带补的可观测性
+
+自动续跑会在用户不在场时花额度，而在此之前真机日志里**没有任何**关于它的记录 ——
+用户问「为什么它自己发了一条」，只能靠猜。
+
+- `runOnce` 新增 `onPlan: (String, AutomationTick) -> Unit`（默认空）：每个作用域判定完回调一次。
+  抽成回调而不是直接写日志，是因为 `runOnce` 是纯 JVM 可测的，`android.util.Log` 在单测里会抛
+  「not mocked」。
+- `AutomationTick.logLine(scopeId)` 是纯函数：`idle` / `initialize` / `dispatch` /
+  `discard skipped=N through=…` / `rebaseline absorbed=N`。日志文本本身可断言。
+- `tick()` 里每个判定打一条 `AndroidAgentLogger.debug`（Release 会删掉整次调用）。
+
+### 4. 验证（本机）
+
+- **先红**：`tasksFinishedInSameMillisecondAreDispatchedOneAfterAnother` 在旧实现下失败
+  （第一轮 1、第二轮 0）；同时加的 `discardedSameMillisecondTasksDoNotComeBack` 保持通过。
+- 实现后三类 **59 例 0 失败**（`BackgroundResumeTest` 23、`BackgroundAutoResumeWatcherTest` 19、
+  `BackgroundResumeMemoryTest` 17）。顺带修正一条旧断言：`finishedTaskOfThisConversationIsDispatchedAndRecorded`
+  里 `seenUntil` 由 600 变 599 —— 这是行为变更，不是测试让步。
+- `STAGES=test,lint,assemble`：**1078 例 0 失败**；lint 无新增（baseline 183 命中 + 11 条依赖提示未复现）；包 32,180,441 字节 `af791200b9a6a7c2…`。
+- `STAGES=test-wide`：**2936 例 0 失败**。
+
+### 5. 边界（如实记录）
+
+- 水位线语义从「已处理到某刻」变成「已处理到某刻之前 1ms」。它只在内部比较，不展示给用户；
+  但以后若有人把 `seen_until` 当审计时间读，要知道这 1ms。
+- `completedAt = 1` 时 `coerceAtLeast(1)` 后水位线不前进：此时靠 `resumed` 集合挡住重复，
+  不会重发；真实时钟不会出现这个值（毫秒时间戳量级）。
+- 同毫秒多条仍受链长限制：一条链最多自动续 2 条，其余被 Discard（现在日志里有 `skipped=N`）。
+- 日志是 `debug`：Release 构建会把整次调用删掉，正式版仍然没有这条线索。
+- 没有真机验证（自动续跑端到端仍未验）。

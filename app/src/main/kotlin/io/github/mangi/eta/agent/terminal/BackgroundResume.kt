@@ -139,3 +139,17 @@ internal fun canOfferManualResume(
 ): Boolean = buttonEnabled && canSend &&
     scopeId.isNotBlank() && task.sessionScope == scopeId &&
     task.id !in handled
+
+/**
+ * 一次判定的单行诊断文本（日志用）。
+ *
+ * 抽成纯函数是为了能单测：日志只知道「有一行」，测试要能断言行里的内容，
+ * 否则「日志加了」和「日志里写了什么」就只能靠眼睛。作用域是会话 id，不是内容。
+ */
+internal fun AutomationTick.logLine(scopeId: String): String = when (this) {
+    is AutomationTick.Idle -> "idle scope=$scopeId"
+    is AutomationTick.Initialize -> "initialize scope=$scopeId at=$at"
+    is AutomationTick.Dispatch -> "dispatch scope=$scopeId task=${task.id}"
+    is AutomationTick.Discard -> "discard scope=$scopeId skipped=$skipped through=$through"
+    is AutomationTick.Rebaseline -> "rebaseline scope=$scopeId absorbed=${absorb.size}"
+}
