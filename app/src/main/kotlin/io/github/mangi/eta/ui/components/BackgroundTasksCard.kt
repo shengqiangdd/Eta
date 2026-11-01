@@ -18,8 +18,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.terminal.BackgroundResumeMemory
 import io.github.mangi.eta.agent.terminal.BackgroundTaskLine
 import io.github.mangi.eta.agent.terminal.DetachedTask
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
@@ -115,18 +114,21 @@ internal fun BackgroundTasksCard(
     val autoResumeEnabled = remember(context) {
         localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO)
     }
-    /** 已经续过的任务（手动点「继续」也算）：同一条不会续两次。 */
-    val resumed = remember { mutableStateListOf<String>() }
+    /** 已经续过的任务：进程级记忆（手动点「继续」也算）。
+     *  不能用 `remember`：真机实测一轮跑完后它会丢，按钮又出现 —— 两个防线同时失效。 */
+    val resumed = BackgroundResumeMemory.resumed
     /** 只认卡片出现之后结束的任务：否则一进旧会话，历史任务会被当成新事件自动续一遍。 */
     val openedAt = remember { System.currentTimeMillis() }
-    var autoResumed by remember { mutableIntStateOf(0) }
     val promptTemplate = stringResource(R.string.background_tasks_resume_prompt)
     LaunchedEffect(autoResumeEnabled, canSend, records) {
         if (!autoResumeEnabled || !canSend) return@LaunchedEffect
-        val target = planAutoResume(records, resumed.toSet(), openedAt, autoResumed).next
-            ?: return@LaunchedEffect
-        resumed.add(target.id)
-        autoResumed += 1
+        val target = planAutoResume(
+            records = records,
+            handled = resumed.toSet(),
+            finishedAfterMs = openedAt,
+            alreadyResumed = BackgroundResumeMemory.autoResumed,
+        ).next ?: return@LaunchedEffect
+        BackgroundResumeMemory.markAutoResumed(target.id)
         onResume(resumePrompt(promptTemplate, target))
     }
     val title = stringResource(R.string.background_run_channel)
@@ -185,7 +187,7 @@ internal fun BackgroundTasksCard(
                         resumeLabel = resumeLabel,
                         onResume = if (canResumeThis) {
                             {
-                                resumed.add(task.id)
+                                BackgroundResumeMemory.markResumed(task.id)
                                 onResume(resumePrompt(promptTemplate, task))
                             }
                         } else {
