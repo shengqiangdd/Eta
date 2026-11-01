@@ -174,6 +174,66 @@ class BackgroundResumeTest {
     }
 
     /**
+     * 系统时间被往回拨：水位线比「现在」还晚。
+     *
+     * 这是第十二批留下的静默失效点：回拨之后结束的任务 `completed_at` 都落在水位线之前，
+     * 按时间比较永远不会被选中 —— 外观上就是「自动续跑再也不工作了」，没有任何报错，
+     * 直到真实时间重新追上旧水位线（可能是几小时、几天）。
+     */
+    @Test
+    fun clockRolledBackRebaselinesTimeline() {
+        val now = 1_700_000_000_000L
+        val plan = tick(
+            records = listOf(task("job_future", 100L, now + 3_000_000L)),
+            seenUntil = now + 3_600_000L,
+            nowMs = now,
+        )
+        // 回拨前的旧记录比「现在」还晚：不吸收就会变成未来事件被重放。
+        assertEquals(AutomationTick.Rebaseline(at = now, absorb = listOf("job_future")), plan)
+    }
+
+    /** 秒级抖动（NTP 校正、手动校准）不该触发重建：否则每次校准都可能重放一批记录。 */
+    @Test
+    fun smallClockDriftDoesNotRebaseline() {
+        val now = 1_700_000_000_000L
+        val plan = tick(
+            records = emptyList(),
+            seenUntil = now + 30_000L,
+            nowMs = now,
+        )
+        assertEquals(AutomationTick.Idle, plan)
+    }
+
+    /** 只吸收「比现在还晚」的记录：回拨之后结束的任务本来就该是历史，不能记成已续。 */
+    @Test
+    fun rebaselineAbsorbsOnlyFutureRecordsOfThisScope() {
+        val now = 1_700_000_000_000L
+        val plan = tick(
+            records = listOf(
+                task("job_future_mine", 100L, now + 3_000_000L),
+                task("job_past_mine", 100L, now - 5_000L),
+                task("job_future_other", 100L, now + 3_000_000L, sessionScope = "conv-b"),
+                task("job_running_mine", 100L, null),
+            ),
+            seenUntil = now + 3_600_000L,
+            nowMs = now,
+        )
+        assertEquals(AutomationTick.Rebaseline(at = now, absorb = listOf("job_future_mine")), plan)
+    }
+
+    /** 回拨时即使「未来记录」看起来像候选，也必须先重建时间轴，不能直接发。 */
+    @Test
+    fun rebaselineTakesPrecedenceOverCandidates() {
+        val now = 1_700_000_000_000L
+        val plan = tick(
+            records = listOf(task("job_future", 100L, now + 4_000_000L)),
+            seenUntil = now + 3_600_000L,
+            nowMs = now,
+        )
+        assertEquals(true, plan is AutomationTick.Rebaseline)
+    }
+
+    /**
      * 手动「继续」的显示条件。真机 2026-11-01 抓到的缺陷就是这里：
      * 自动路径已经按 `sessionScope` 过滤，卡片却只判「没续过」，于是别的会话
      * （和第九批之前没有归属的旧记录）会在当前会话里长出「继续」。

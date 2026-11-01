@@ -21,6 +21,16 @@ package io.github.mangi.eta.agent.terminal
  */
 internal const val AutoResumeMaxPerChain = 2
 
+/**
+ * 时钟回拨的容忍值。
+ *
+ * 系统时间小幅跳动（NTP 校正、手动校准几秒）不该触发重建，否则每次校准都可能
+ * 把一批已经结束的任务重新当成事件。超过这个量级才认为「时间轴断了」：
+ * 水位线比现在还晚，之后结束的任务全部落在水位线之前 —— 那是静默失效，
+ * 不报错、也不自愈，直到真实时间重新追上旧水位线。
+ */
+internal const val ClockSkewToleranceMs = 60_000L
+
 /** 一次扫描里，单个会话作用域该做什么。 */
 internal sealed interface AutomationTick {
     /**
@@ -39,6 +49,18 @@ internal sealed interface AutomationTick {
      * [skipped] 是这次放弃的条数，界面可以据此说明「还有 N 条没自动续」。
      */
     data class Discard(val through: Long, val skipped: Int) : AutomationTick
+
+    /**
+     * 系统时间被往回拨了：水位线比「现在」还晚出 [ClockSkewToleranceMs]。
+     *
+     * 处理办法是把时间轴重新立到 [at]（现在），并把 [absorb] 里那些
+     * **`completed_at` 比现在还晚**的已完成任务记成「已处理」—— 它们是回拨前的历史，
+     * 不吸收就会被当成「未来事件」反复选中（发两次、链满、水位线推到更远的未来，再次卡死）。
+     *
+     * 代价说清楚：回拨期间结束、还没被处理的任务，时间上已经无法与历史区分，
+     * 会被当成历史（漏一次自动续跑）；手动「继续」照常可用。
+     */
+    data class Rebaseline(val at: Long, val absorb: List<String>) : AutomationTick
 
     /** 没有该做的事。 */
     data object Idle : AutomationTick
@@ -68,6 +90,17 @@ internal fun planAutomationTick(
 ): AutomationTick {
     if (scopeId.isBlank()) return AutomationTick.Idle
     if (seenUntil == null) return AutomationTick.Initialize(nowMs.coerceAtLeast(1L))
+    // 时间轴断了：水位线在「现在」之后一个容忍值以上。此时按时间比较，之后结束的任务
+    // 全都落在水位线之前，永远不会被选中 —— 必须重建，否则自动续跑会一直哑着。
+    if (seenUntil > nowMs + ClockSkewToleranceMs) {
+        val at = nowMs.coerceAtLeast(1L)
+        return AutomationTick.Rebaseline(
+            at = at,
+            absorb = records
+                .filter { it.sessionScope == scopeId && (it.completedAt ?: 0L) > at }
+                .map { it.id },
+        )
+    }
     val candidates = records
         .filter { task ->
             val done = task.completedAt

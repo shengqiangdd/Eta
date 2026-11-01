@@ -93,6 +93,7 @@ internal object BackgroundAutoResumeWatcher {
                     BackgroundResumeMemory.scopeFor(BackgroundResumeStore.forApp(context), scopeId)
                 },
                 dispatch = { scopeId, task -> current.dispatch(scopeId, task) },
+                isCurrent = { dispatcher === current },
             )
         }
     }
@@ -108,6 +109,15 @@ internal object BackgroundAutoResumeWatcher {
         scopeFor: (String) -> BackgroundResumeScope,
         dispatch: suspend (String, DetachedTask) -> Boolean,
         nowMs: Long = System.currentTimeMillis(),
+        /**
+         * 分发前再确认一次「手里的分发器还是当前那个」。
+         *
+         * Activity 重建会先后 install / uninstall：tick 读到记录后、真正分发前，
+         * 旧实例可能已经被销毁。这时把 run 发过去，`launchConversationRun` 照样返回成功，
+         * 于是 watcher 记成「已续」—— 用户看不到那一轮，这条任务也不会再被自动续。
+         * 返回 false 表示这一轮不发，下个 tick 用新分发器再来。
+         */
+        isCurrent: () -> Boolean = { true },
     ): Int {
         if (records.isEmpty()) return 0
         // 运行中的任务也要参与：作用域第一次出现时，水位线要立在「现在」，
@@ -133,6 +143,14 @@ internal object BackgroundAutoResumeWatcher {
                 )
             ) {
                 is AutomationTick.Idle -> Unit
+                is AutomationTick.Rebaseline -> {
+                    // 时钟回拨：先吸收「未来记录」，再后退水位线。顺序不能反 ——
+                    // 反过来的话，中途失败会停在「水位线已后退、未来记录仍是候选」的状态，
+                    // 下一次 tick 就会把这些回拨前的历史真的发出去。
+                    plan.absorb.forEach { scope.markResumed(it) }
+                    scope.reestablishSeenUntil(plan.at)
+                    scope.persist()
+                }
                 is AutomationTick.Initialize -> {
                     // 第一次见到这个作用域：只立水位线，不补发历史任务。
                     scope.markSeenUntil(plan.at)
@@ -145,6 +163,8 @@ internal object BackgroundAutoResumeWatcher {
                     scope.persist()
                 }
                 is AutomationTick.Dispatch -> {
+                    // 分发器已经被换掉（Activity 重建）：这一轮不能发，也不能记账。
+                    if (!isCurrent()) continue
                     // 先发再记账：发不出去（会话在跑）就不该占掉这次预算，也不该推进水位线。
                     if (!dispatch(scopeId, plan.task)) continue
                     scope.markAutoResumed(plan.task.id)

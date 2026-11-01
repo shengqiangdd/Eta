@@ -279,6 +279,66 @@ class BackgroundAutoResumeWatcherTest {
         assertEquals(1, scopeFor("conv-a").autoResumed)
     }
 
+    /**
+     * 系统时间被回拨：水位线比现在晚一小时。
+     *
+     * 不重建的话，回拨之后结束的任务都落在水位线之前，自动续跑会静默失效。
+     * 重建时把「比现在还晚」的旧记录吸收成已处理，否则它们会被当成未来事件反复重放
+     * （每次 tick 都选它，发两次、链满，水位线再被推到更远的未来 —— 再次卡死）。
+     */
+    @Test
+    fun clockRollbackRebuildsTimelineAndDoesNotReplayFutureRecords() = runBlocking {
+        val now = 1_700_000_000_000L
+        store().saveState("conv-a", BackgroundResumeState(seenUntil = now + 3_600_000L))
+        var dispatched = 0
+        val sent = BackgroundAutoResumeWatcher.runOnce(
+            records = listOf(
+                task("job_future", now + 3_000_000L),
+                task("job_after_rollback", now - 1_000L),
+            ),
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                dispatched += 1
+                true
+            },
+            nowMs = now,
+        )
+        assertEquals(0, sent)
+        assertEquals(0, dispatched)
+        val scope = scopeFor("conv-a")
+        assertEquals(now, scope.seenUntil)
+        assertTrue("job_future" in scope.resumed)
+        assertFalse("job_after_rollback" in scope.resumed)
+        // 重建也要落盘，否则重启后又是旧水位线，等于没修。
+        assertEquals(now, store().loadState("conv-a").seenUntil)
+    }
+
+    /**
+     * Activity 重建会先后 install / uninstall 分发器。tick 读到记录后、真正发之前
+     * 手里那个实例可能已经销毁：这一轮不能再发，否则 run 发到一个没人看的实例，
+     * 返回成功还会把事件记成「已续」（用户既看不到那一轮，这条任务也不会再被续）。
+     */
+    @Test
+    fun dispatchIsSkippedWhenDispatcherWasReplaced() = runBlocking {
+        scopeFor("conv-a").markSeenUntil(500L)
+        var dispatched = false
+        val sent = BackgroundAutoResumeWatcher.runOnce(
+            records = listOf(task("job_a", 600L)),
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                dispatched = true
+                true
+            },
+            isCurrent = { false },
+        )
+        assertEquals(0, sent)
+        assertFalse(dispatched)
+        val scope = scopeFor("conv-a")
+        assertFalse("job_a" in scope.resumed)
+        assertEquals(0, scope.autoResumed)
+        assertEquals(500L, scope.seenUntil)
+    }
+
     @Test
     fun emptyRecordsDoNothing() = runBlocking {
         var called = false

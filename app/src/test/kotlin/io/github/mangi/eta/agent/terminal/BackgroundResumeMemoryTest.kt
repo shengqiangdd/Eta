@@ -146,6 +146,32 @@ class BackgroundResumeMemoryTest {
         assertEquals(600L, store().loadState("conversation-1").seenUntil)
     }
 
+    /**
+     * 时钟回拨专用：水位线允许后退。
+     *
+     * `markSeenUntil` 只前进是为了「事件不重放」；但回拨之后前进的方向本身就是错的，
+     * 拒绝后退会让自动续跑永久停在失效状态（第十三批）。
+     */
+    @Test
+    fun reestablishSeenUntilAllowsBackwards() = runBlocking {
+        val scope = scope()
+        assertTrue(scope.markSeenUntil(2_000L))
+        assertTrue(scope.reestablishSeenUntil(1_100L))
+        assertEquals(1_100L, scope.seenUntil)
+        scope.persist()
+        assertEquals(1_100L, store().loadState("conversation-1").seenUntil)
+    }
+
+    @Test
+    fun reestablishSeenUntilIgnoresNonPositiveAndUnchanged() = runBlocking {
+        val scope = scope()
+        assertTrue(scope.markSeenUntil(2_000L))
+        assertFalse(scope.reestablishSeenUntil(0L))
+        assertFalse(scope.reestablishSeenUntil(-5L))
+        assertFalse(scope.reestablishSeenUntil(2_000L))
+        assertEquals(2_000L, scope.seenUntil)
+    }
+
     /** 未加载就重置：内部必须先读盘，否则写回去会把 resumed 与 seenUntil 一起清空。 */
     @Test
     fun resetChainBeforeLoadDoesNotWipeDiskMemory() = runBlocking {

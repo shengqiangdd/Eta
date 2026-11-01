@@ -108,6 +108,23 @@ internal class BackgroundResumeScope(
         return true
     }
 
+    /**
+     * 重建水位线：**允许后退**，只给「时钟回拨」用（第十三批）。
+     *
+     * [markSeenUntil] 只前进，它守的是「事件不重放」；但时钟回拨之后，「前进」的方向
+     * 本身就是错的 —— 拒绝后退会让自动续跑永久停在失效状态。
+     * 调用方必须先吸收「比现在还晚」的记录，否则水位线后退会让它们变成候选。
+     *
+     * 返回 true 表示水位线变了（调用方据此决定要不要落盘）。
+     */
+    fun reestablishSeenUntil(at: Long): Boolean {
+        if (at <= 0) return false
+        if (seenUntil == at) return false
+        seenUntil = at
+        seenUntilTouched = true
+        return true
+    }
+
     /** 把当前状态写回磁盘；写失败只影响下次启动的记忆，不影响这次判定。 */
     suspend fun persist() {
         val state = BackgroundResumeState(
