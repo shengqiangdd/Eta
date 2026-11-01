@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -429,5 +430,81 @@ class BackgroundAutoResumeWatcherTest {
         )
         assertEquals(0, sent)
         assertFalse(called)
+    }
+
+    /**
+     * 手动「继续」只记 id、不推水位线（第二十二批留下的边界）。id 被 64 条上限挤出后，
+     * 它会重新变成候选再发一遍 —— 这里要求水位线自己记住「这条处理过」。
+     */
+    @Test
+    fun manualResumeIsCoveredByWatermarkBeforeTheIdLimitCanDropIt() = runBlocking {
+        val scope = scopeFor("conv-a")
+        scope.markSeenUntil(500L)
+        // 用户手动点了「继续」：只记账，不动水位线（动了会跳过更早的未处理任务）。
+        scope.markResumed("job_a")
+
+        var dispatched = 0
+        val first = BackgroundAutoResumeWatcher.runOnce(
+            records = listOf(task("job_a", 600L)),
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                dispatched += 1
+                true
+            },
+        )
+        assertEquals(0, first)
+        assertEquals(0, dispatched)
+        // 已经续过的任务必须被水位线覆盖，否则它只是「暂时被 id 集合挡住」。
+        assertEquals(600L, scope.seenUntil)
+
+        // 模拟 64 条上限把这条 id 挤掉：水位线是唯一还记得「它处理过」的东西。
+        scope.resumed.remove("job_a")
+        val second = BackgroundAutoResumeWatcher.runOnce(
+            records = listOf(task("job_a", 600L)),
+            scopeFor = ::scopeFor,
+            dispatch = { _, _ ->
+                dispatched += 1
+                true
+            },
+        )
+        assertEquals(0, second)
+        assertEquals(0, dispatched)
+    }
+
+    @Test
+    fun watermarkStopsAtTheFirstUnhandledTask() {
+        val a = task("job_a", 600L)
+        val b = task("job_b", 700L)
+        val c = task("job_c", 800L)
+        // 中间那条没处理过：水位线只能停到它前面，不能越过去（越过去就是静默丢任务）。
+        assertEquals(
+            600L,
+            advanceSeenUntilOverHandled(listOf(a, b, c), "conv-a", setOf("job_a", "job_c"), 500L),
+        )
+        // 连续都处理过 → 推到最后一条自己的时刻（它已经处理完，不能留下当候选）。
+        assertEquals(
+            800L,
+            advanceSeenUntilOverHandled(listOf(a, b, c), "conv-a", setOf("job_a", "job_b", "job_c"), 500L),
+        )
+        // 水位线已经更晚：只前进，不后退。
+        assertNull(advanceSeenUntilOverHandled(listOf(a, b, c), "conv-a", setOf("job_a"), 5_000L))
+        // 别的会话的任务不参与本会话的水位线。
+        assertNull(
+            advanceSeenUntilOverHandled(
+                listOf(task("job_x", 600L, sessionScope = "conv-b")),
+                "conv-a",
+                setOf("job_x"),
+                500L,
+            ),
+        )
+        // 同一毫秒的两条只处理了一条：整组不能越过，否则另一条永远没机会。
+        assertNull(
+            advanceSeenUntilOverHandled(
+                listOf(task("job_d", 900L), task("job_e", 900L)),
+                "conv-a",
+                setOf("job_d"),
+                800L,
+            ),
+        )
     }
 }

@@ -234,6 +234,16 @@ internal object BackgroundAutoResumeWatcher {
         // 磁盘记忆没读完之前不能判「没续过」，否则重启后会把同一批任务再续一遍。
         if (!scope.isLoaded) scope.loadFromStore()
         if (!scope.isLoaded) return 0
+        // 手动「继续」只记 id、不推水位线（推了会跳过更早的未处理任务）。代价是 id 被
+        // MAX_IDS 挤掉后会重新变成候选、再发一遍。这里先做一次安全压缩：只推过
+        // 「从最早开始连续都处理过」的那一段，遇到没处理过的立刻停。
+        val compressed = advanceSeenUntilOverHandled(
+            records = tasks,
+            scopeId = scopeId,
+            handled = scope.resumed.toSet(),
+            seenUntil = scope.seenUntil ?: 0L,
+        )
+        if (compressed != null) scope.markSeenUntil(compressed)
         val plan = planAutomationTick(
             records = tasks,
             scopeId = scopeId,
@@ -244,7 +254,11 @@ internal object BackgroundAutoResumeWatcher {
         )
         onPlan(scopeId, plan)
         return when (plan) {
-            is AutomationTick.Idle -> 0
+            is AutomationTick.Idle -> {
+                // 压缩可能落在「没有候选」的情形里；不落盘的话重启后水位线退回，这次压缩白做。
+                if (compressed != null) scope.persist()
+                0
+            }
             is AutomationTick.Rebaseline -> {
                 // 时钟回拨：先吸收「未来记录」，再后退水位线。顺序不能反 ——
                 // 反过来的话，中途失败会停在「水位线已后退、未来记录仍是候选」的状态，

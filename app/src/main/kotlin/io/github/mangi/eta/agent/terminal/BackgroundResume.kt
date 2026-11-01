@@ -121,6 +121,36 @@ internal fun planAutomationTick(
 }
 
 /**
+ * 把水位线推过「从最早开始、连续都已经处理过」的那一段。
+ *
+ * 手动「继续」只记 id、不推水位线 —— 推了会跳过更早的未处理任务（静默丢任务比重复更糟）。
+ * 代价是：id 被 `MAX_IDS` 挤掉之后，它就重新变成候选，再发一遍。这里补一个只做安全部分的
+ * 压缩：遇到第一条没处理过的任务立刻停，因此不会越过任何尚未处理的事件。
+ *
+ * @return 新的水位线；不需要推进（或没有连续已处理段）时返回 null。
+ */
+internal fun advanceSeenUntilOverHandled(
+    records: List<DetachedTask>,
+    scopeId: String,
+    handled: Set<String>,
+    seenUntil: Long,
+): Long? {
+    if (scopeId.isBlank()) return null
+    val pending = records
+        .filter { it.sessionScope == scopeId && (it.completedAt ?: 0L) > seenUntil }
+        .sortedBy { it.completedAt ?: 0L }
+    var through: Long? = null
+    // 按结束时刻分组：**同一毫秒的必须全部处理过**才能越过 —— Dispatch 用 `-1ms` 是为了
+    // 让同毫秒的其余任务仍是候选；这里是批量宣告，越过就没机会了，所以整组一起看。
+    for ((at, group) in pending.groupBy { it.completedAt ?: 0L }.toSortedMap()) {
+        if (group.any { it.id !in handled }) break
+        through = at
+    }
+    val at = through ?: return null
+    return at.takeIf { it > seenUntil }
+}
+
+/**
  * 卡片里那条手动「继续」该不该出现。
  *
  * 与 [planAutomationTick] 共用同一条归属规则：**任务必须属于本会话**。抽成函数是因为
