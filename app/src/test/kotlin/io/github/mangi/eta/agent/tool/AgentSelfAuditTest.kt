@@ -130,18 +130,18 @@ class AgentSelfAuditTest {
     @Test
     fun crashOlderThanTheCurrentBuildIsMarkedAsOld() {
         // 真机踩过：07:17 的 OOM 早于 §32.37 的修复（20:12），却被当成现存缺陷去追。
+        // 2026-11-03 起：这类崩溃**不再作为 finding 报**，改为一条线索 ——
+        // 它是旧版本的历史，但「旧」不等于「已修」，所以也不能默默丢掉。
         val report = AgentSelfAudit.audit(
             input(
                 crashFiles = listOf(crash("data_app_crash@15.txt", 3, oomCrash)),
                 installUpdatedMillis = now - 60 * 60_000L,
             ),
         )
-        val evidence = report.findings.single().evidence
-        assertTrue(
-            "早于当前安装包的崩溃必须自己说清楚：$evidence",
-            evidence.any { it.startsWith("早于当前安装包") },
-        )
-        assertTrue(report.notes.any { it.contains("只能证明旧版本的问题") })
+        assertTrue("旧版本的崩溃不该进 findings：${report.findings}", report.findings.isEmpty())
+        val clue = report.clues.single { it.title.contains("当前安装包") }
+        assertTrue(clue.title, clue.title.contains("1 次"))
+        assertTrue(clue.evidence, clue.evidence.contains("15.txt"))
     }
 
     @Test
@@ -260,7 +260,10 @@ class AgentSelfAuditTest {
             "两次崩溃都在装包之前，循环是装包造成的假象",
             report.findings.any { it.id == "restart-loop" },
         )
-        assertTrue(report.clues.any { it.title.contains("不能据此判定崩溃循环") })
+        // 不再报循环，但也不能当没发生：两次崩溃降级为一条历史线索。
+        assertTrue(
+            report.clues.any { it.title.contains("当前安装包") && it.title.contains("2 次") },
+        )
     }
 
     @Test
@@ -348,5 +351,47 @@ class AgentSelfAuditTest {
         // 所以排除规则必须按文件名后缀匹配，不能拿完整路径比。
         assertEquals(0, countTodoFiles("/completely/different/root/AgentSelfAuditTool.kt"))
         assertEquals(1, countTodoFiles("/completely/different/root/Feature.kt"))
+    }
+
+    @Test
+    fun crashBeforeInstallBecomesClueNotFinding() {
+        // 真机原样（2026-11-03，PKX110）：两条 P0 都早于当前安装包，
+        // 其中 OOM 那条早在 §32.37 就修掉了，却照样被报成
+        // 「进程直接中止：用户看到闪退，本轮未保存的结果可能丢失」。
+        val beforeInstall = crash("data_app_crash@old.txt", ageHours = 30, text = oomCrash)
+        val afterInstall = crash("data_app_crash@new.txt", ageHours = 2, text = oomCrash)
+        val report = AgentSelfAudit.audit(
+            input(
+                domains = setOf(AgentSelfAudit.Domain.CRASH),
+                crashFiles = listOf(beforeInstall, afterInstall),
+                installUpdatedMillis = now - 24 * 3_600_000L,
+            ),
+        )
+        assertEquals(1, report.findings.size)
+        assertTrue(report.findings.single().evidence.none { it.contains("old.txt") })
+        // 旧的那条不能默默丢掉：「已修」和「没再发生」是两件事。
+        val clue = report.clues.single { it.title.contains("当前安装包") }
+        assertTrue(clue.title.contains("1 次"))
+        assertTrue(clue.evidence.contains("old.txt"))
+    }
+
+    @Test
+    fun crashSplitTreatsUnknownInstallTimeAsCurrent() {
+        // 读不到安装时间不等于「崩溃都旧了」：把崩溃藏进历史组，
+        // 等于替用户假定它们已经修好了。
+        val c = crash("a.txt", ageHours = 1, text = oomCrash)
+        assertEquals(listOf(c), AgentSelfAudit.splitCrashesByInstall(listOf(c), null).current)
+        assertEquals(listOf(c), AgentSelfAudit.splitCrashesByInstall(listOf(c), 0L).current)
+        assertTrue(AgentSelfAudit.splitCrashesByInstall(listOf(c), 0L).historical.isEmpty())
+    }
+
+    @Test
+    fun crashSplitCountsExactInstallTimeAsCurrent() {
+        val install = now - 3_600_000L
+        val atInstall = AgentSelfAudit.CrashFile("at.txt", install, "")
+        val before = AgentSelfAudit.CrashFile("before.txt", install - 1, "")
+        val split = AgentSelfAudit.splitCrashesByInstall(listOf(atInstall, before), install)
+        assertEquals(listOf(atInstall), split.current)
+        assertEquals(listOf(before), split.historical)
     }
 }

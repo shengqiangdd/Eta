@@ -30,6 +30,34 @@ internal object AgentSelfAudit {
     internal data class CrashFile(val name: String, val timeMillis: Long, val text: String)
 
     /**
+     * 崩溃按「是否发生在当前安装包之后」分组。
+     *
+     * 为什么必须分组：旧版本的崩溃和当前版本并列、都标 P0 时，用户会以为现在还在崩。
+     * 真机取证（2026-11-03，PKX110）：两条 P0 都早于当前安装包 —— 其中 OOM 那条
+     * 早在 §32.37 就修掉了，却照样被报成「进程直接中止，用户看到闪退」。
+     */
+    internal data class CrashSplit(
+        val current: List<CrashFile>,
+        val historical: List<CrashFile>,
+    )
+
+    /**
+     * @param installUpdatedMillis 当前安装包的 lastUpdateTime；null / ≤0 表示读不到
+     *
+     * 读不到安装时间时**全部算当前**：那不是「都旧了」，而是「不知道新旧」，
+     * 把崩溃藏进历史组等于替用户假定它们已经修好了。
+     */
+    internal fun splitCrashesByInstall(
+        crashes: List<CrashFile>,
+        installUpdatedMillis: Long?,
+    ): CrashSplit {
+        val install = installUpdatedMillis?.takeIf { it > 0L }
+            ?: return CrashSplit(current = crashes, historical = emptyList())
+        val (historical, current) = crashes.partition { it.timeMillis < install }
+        return CrashSplit(current = current, historical = historical)
+    }
+
+    /**
      * 计数为 -1 表示「读不到」。真机上常常没有 git，这时绝不能报成「工作区干净」。
      */
     internal data class CodeClues(
@@ -158,49 +186,42 @@ internal object AgentSelfAudit {
         if (mine.isEmpty()) {
             notes += "窗口内没有本应用的崩溃文件；仓库只保留最近若干条，「没有」不等于「没发生过」"
         }
-        mine.sortedByDescending { it.timeMillis }.forEach { file ->
+        val split = splitCrashesByInstall(
+            mine.sortedByDescending { it.timeMillis },
+            input.installUpdatedMillis,
+        )
+        // 只把「当前安装包之后」的崩溃当缺陷：旧版本的崩溃证明不了现在还在崩。
+        split.current.forEach { file ->
             findings += classifyFailure(input.packageName, file, input.installUpdatedMillis)
         }
-        // 崩溃早于当前安装包时，它证明的是**旧版本**的问题。不把这件事说清楚，
-        // 就会去修一个当前版本里已经不存在的崩溃（我自己就差点这么干：
-        // 那份 07:17 的 OOM 发生在 §32.37 修复（20:12）之前，却被我当成了现存缺陷）。
-        val installedAt = input.installUpdatedMillis?.takeIf { it > 0L }
-        if (installedAt != null) {
-            val stale = mine.count { it.timeMillis < installedAt }
-            if (stale > 0) {
-                notes += "其中 $stale 份崩溃早于当前安装包（${stamp(installedAt)}）：那些只能证明旧版本的问题；" +
-                    "当前版本是否已修，要看这之后有没有新的崩溃文件"
-            }
+        // 历史崩溃不当缺陷，但也不能默默丢掉：「已修」和「没再发生」是两件事，
+        // 用户需要知道旧版本里崩过什么，只是不该为此紧张。
+        if (split.historical.isNotEmpty()) {
+            val install = input.installUpdatedMillis?.takeIf { it > 0L }
+            clues += Clue(
+                title = "另有 ${split.historical.size} 次崩溃发生在当前安装包" +
+                    (install?.let { "（安装于 ${stamp(it)}）" } ?: "") +
+                    "之前：只能证明旧版本的问题，但不能据此认为已修",
+                evidence = split.historical.take(MAX_EVIDENCE_LINES)
+                    .joinToString("、") { "${it.name}（${stamp(it.timeMillis)}）" },
+            )
         }
-        if (mine.size >= 2) {
+        if (split.current.size >= 2) {
             val uptime = input.processStartedMillis?.let { input.nowMillis - it }
             if (uptime != null && uptime in 0 until 30 * 60_000L) {
                 // 「进程刚起」有两个原因：崩了重启，或者刚装包/更新把进程换掉了。
                 // 真机上踩过第二种：装完包进程刚起 217 秒，而窗口内两次崩溃都发生在装包之前，
-                // 却被报成 P0「崩溃循环」。只把**本次更新之后**的崩溃当成循环证据。
-                val install = input.installUpdatedMillis?.takeIf { it > 0L }
-                val afterInstall = if (install == null) mine else mine.filter { it.timeMillis >= install }
-                if (afterInstall.size >= 2) {
-                    findings += Finding(
-                        id = "restart-loop",
-                        severity = Severity.P0,
-                        confidence = Confidence.INFERRED,
-                        title = "疑似崩溃循环：${input.windowHours} 小时内 ${afterInstall.size} 次崩溃，当前进程只跑了 ${uptime / 1000} 秒",
-                        evidence = afterInstall.sortedByDescending { it.timeMillis }.take(MAX_EVIDENCE_LINES)
-                            .map { it.name },
-                        impact = "用户会反复看到闪退或白屏，进行中的任务无法完成",
-                        fix = "先修最新一次崩溃（它最可能仍在复现），修完观察一个完整会话周期；只修旧的会被新的掩盖",
-                        verify = "连续运行 ≥ 1 小时且窗口内崩溃计数不再增加",
-                    )
-                } else if (install != null) {
-                    clues += Clue(
-                        title = "进程刚起（${uptime / 1000} 秒）与最近一次装包/更新（${stamp(install)}）重合：" +
-                            "窗口内 ${mine.size} 次崩溃都早于本次更新，不能据此判定崩溃循环",
-                        evidence = "lastUpdateTime=${stamp(install)}；崩溃：" +
-                            mine.sortedByDescending { it.timeMillis }.take(MAX_EVIDENCE_LINES)
-                                .joinToString("、") { it.name },
-                    )
-                }
+                // 却被报成 P0「崩溃循环」。分组之后这里只剩本次更新之后的崩溃。
+                findings += Finding(
+                    id = "restart-loop",
+                    severity = Severity.P0,
+                    confidence = Confidence.INFERRED,
+                    title = "疑似崩溃循环：${input.windowHours} 小时内 ${split.current.size} 次崩溃，当前进程只跑了 ${uptime / 1000} 秒",
+                    evidence = split.current.take(MAX_EVIDENCE_LINES).map { it.name },
+                    impact = "用户会反复看到闪退或白屏，进行中的任务无法完成",
+                    fix = "先修最新一次崩溃（它最可能仍在复现），修完观察一个完整会话周期；只修旧的会被新的掩盖",
+                    verify = "连续运行 ≥ 1 小时且窗口内崩溃计数不再增加",
+                )
             }
         }
     }
