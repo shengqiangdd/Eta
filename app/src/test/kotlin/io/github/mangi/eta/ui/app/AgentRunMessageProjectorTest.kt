@@ -72,6 +72,46 @@ class AgentRunMessageProjectorTest {
     }
 
     @Test
+    fun usageCarriesProviderPromptTotalIntoTheMessage() {
+        val projector = AgentRunMessageProjector { 1_000L }
+        val streaming = projector.appendTextDelta("run", 1, 0, "回答", emptyList())
+        val finished = projector.finalizeTextBlock("run", 1, 0, null, streaming)
+        val event = AgentEvent.UsageReceived(
+            1,
+            AgentTokenUsage(
+                contextTokens = 1_000,
+                inputTokens = 450,
+                outputTokens = 800,
+                cachedTokens = 200,
+                promptTokens = 1_250,
+            ),
+        )
+
+        val message = projector.applyEvent("run", event, finished)
+            .filterIsInstance<AgentMessageUi>().single()
+
+        // 总输入必须跟着事件进到消息里：否则历史重载 / 导出只能拿到 input，Anthropic 下会少掉缓存。
+        assertEquals(1_250, message.usage?.promptTokens)
+        assertEquals(450, message.usage?.inputTokens)
+    }
+
+    @Test
+    fun legacyUsageWithoutPromptTotalStaysMissing() {
+        val projector = AgentRunMessageProjector { 1_000L }
+        val streaming = projector.appendTextDelta("run", 1, 0, "回答", emptyList())
+        val finished = projector.finalizeTextBlock("run", 1, 0, null, streaming)
+        val event = AgentEvent.UsageReceived(
+            1,
+            AgentTokenUsage(contextTokens = 100, inputTokens = 80, outputTokens = 20),
+        )
+
+        val message = projector.applyEvent("run", event, finished)
+            .filterIsInstance<AgentMessageUi>().single()
+
+        assertEquals(null, message.usage?.promptTokens)
+    }
+
+    @Test
     fun applyResultFillsSingleBlockKeepsMultiBlockAndReplacesWithNotice() {
         val projector = AgentRunMessageProjector { 1_000L }
         val single = projector.appendTextDelta("run", 1, 0, "流式半截", emptyList())

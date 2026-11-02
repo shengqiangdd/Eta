@@ -3,6 +3,7 @@ package io.github.mangi.eta.data.db
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,5 +50,27 @@ class EtaDatabaseMigrationChainTest {
             "schema 里的实体表数量异常：${database.getJSONArray("entities").length()}",
             database.getJSONArray("entities").length() >= 10,
         )
+    }
+
+    @Test
+    fun messageRowsStoreTheProviderPromptTotalAsANullableColumn() {
+        val schema = File("schemas/io.github.mangi.eta.data.db.EtaDatabase/$ETA_DATABASE_VERSION.json")
+        assertTrue("缺少导出的 schema：${schema.absolutePath}", schema.isFile)
+        val entities = JSONObject(schema.readText()).getJSONObject("database").getJSONArray("entities")
+        val messages = (0 until entities.length())
+            .map { entities.getJSONObject(it) }
+            .first { it.getString("tableName") == "conversation_messages" }
+        val fields = messages.getJSONArray("fields")
+        val prompt = (0 until fields.length())
+            .map { fields.getJSONObject(it) }
+            .firstOrNull { it.getString("columnName") == "prompt_tokens" }
+
+        assertTrue(
+            "实体里没有 prompt_tokens：迁移加了列但实体没声明（下次构建会把它删掉）",
+            prompt != null,
+        )
+        assertEquals("INTEGER", prompt!!.getString("affinity"))
+        // 旧行是 NULL：列不能是 NOT NULL，否则迁移直接失败。
+        assertFalse("旧行没有总输入，这一列必须是可空的", prompt.optBoolean("notNull", false))
     }
 }

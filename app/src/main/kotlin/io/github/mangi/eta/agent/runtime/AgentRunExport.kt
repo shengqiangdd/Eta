@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.runtime
 
 import io.github.mangi.eta.agent.trace.AgentRunTraceStore
 import io.github.mangi.eta.agent.trace.AgentRunTrajectory
+import io.github.mangi.eta.agent.usage.formatTokenCount
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -223,9 +224,5 @@ internal object AgentRunExport {
         }
     }
 
-    private fun count(value: Int): String = when {
-        value >= 1_000_000 -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
-        value >= 10_000 -> String.format(Locale.US, "%.1fk", value / 1000.0)
-        else -> value.toString()
-    }
+    private fun count(value: Int): String = formatTokenCount(value)
 }

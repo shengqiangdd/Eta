@@ -234,6 +234,8 @@
   <string name="conversation_export_tool_arguments">Arguments: %1$s</string>
   <string name="conversation_export_tool_result">Result: %1$s</string>
   <string name="conversation_export_images">Images: %1$d</string>
+  <string name="conversation_export_usage">Usage: context %1$s · prompt %2$s · output %3$s · cached %4$s</string>
+  <string name="conversation_export_usage_legacy">Usage: context %1$s · input %2$s · output %3$s · cached %4$s</string>
   <string name="conversation_export_default_name">Conversation</string>
   <string name="time_yesterday">Yesterday</string>
   <string name="time_recent">Recent</string>

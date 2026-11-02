@@ -7,6 +7,7 @@ import io.github.mangi.eta.data.db.EtaDatabase
 import io.github.mangi.eta.ui.model.AgentChatHomeUiState
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
+import io.github.mangi.eta.ui.model.TokenUsageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -195,6 +196,53 @@ class AgentConversationPersistenceTest {
         assertEquals(0, events("conversation_messages", "active-user"))
         assertEquals(0, events("conversation_messages", "active-thinking"))
         assertEquals("改过的标题", dao.conversations().first { it.id == "active" }.title)
+    }
+
+    @Test
+    fun providerPromptTotalSurvivesSaveAndReload() = runBlocking {
+        val usage = TokenUsageUi(
+            contextTokens = 1_000,
+            inputTokens = 450,
+            outputTokens = 800,
+            cachedTokens = 200,
+            promptTokens = 1_250,
+        )
+        val initial = snapshot(mapOf("active" to state("active").copy(messages = listOf(
+            UserMessageUi("active-user", "请求"),
+            AgentMessageUi(id = "active-answer", content = "回答", usage = usage),
+        ))))
+        AgentConversationPersistence().save(context, initial)
+
+        val reloaded = AgentConversationStore.load(context).conversationsById.getValue("active")
+        val message = reloaded.messages.filterIsInstance<AgentMessageUi>().single()
+
+        // 不落盘的话，历史会话重载后只剩 input：Anthropic 下导出会少掉整块缓存读写。
+        assertEquals(1_250, message.usage?.promptTokens)
+        assertEquals(450, message.usage?.inputTokens)
+        assertEquals(800, message.usage?.outputTokens)
+    }
+
+    @Test
+    fun legacyRowsWithoutPromptTotalReloadAsMissingInsteadOfZero() = runBlocking {
+        // 迁移给旧行留的是 NULL。读成 0 会让「总输入」显示成 0，比不显示更糟。
+        val initial = snapshot(mapOf("active" to state("active").copy(messages = listOf(
+            UserMessageUi("active-user", "请求"),
+            AgentMessageUi(
+                id = "active-answer",
+                content = "回答",
+                usage = TokenUsageUi(inputTokens = 450, outputTokens = 800),
+            ),
+        ))))
+        AgentConversationPersistence().save(context, initial)
+        EtaDatabase.get(context).openHelper.writableDatabase.execSQL(
+            "UPDATE conversation_messages SET prompt_tokens = NULL WHERE id = 'active-answer'",
+        )
+
+        val reloaded = AgentConversationStore.load(context).conversationsById.getValue("active")
+        val message = reloaded.messages.filterIsInstance<AgentMessageUi>().single()
+
+        assertEquals(null, message.usage?.promptTokens)
+        assertEquals(450, message.usage?.inputTokens)
     }
 
     private fun state(id: String): AgentChatHomeUiState {

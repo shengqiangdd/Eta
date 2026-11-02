@@ -819,4 +819,5 @@ internal fun AgentTokenUsage.toUi(): TokenUsageUi =
         outputTokens = outputTokens,
         reasoningTokens = reasoningTokens,
         cachedTokens = cachedTokens,
+        promptTokens = promptTokens,
     )

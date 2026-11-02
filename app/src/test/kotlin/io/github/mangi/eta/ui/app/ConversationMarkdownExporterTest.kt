@@ -8,6 +8,7 @@ import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
+import io.github.mangi.eta.ui.model.TokenUsageUi
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityStatusUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
@@ -28,6 +29,8 @@ class ConversationMarkdownExporterTest {
         argumentsFormat = "Arguments: %1\$s",
         resultFormat = "Result: %1\$s",
         imagesFormat = "Images: %1\$d",
+        usageLineFormat = "Usage: context %1\$s · prompt %2\$s · output %3\$s · cached %4\$s",
+        usageLineFormatLegacy = "Usage: context %1\$s · input %2\$s · output %3\$s · cached %4\$s",
         toolStatusRunning = "Running",
         toolStatusSuccess = "Completed",
         toolStatusFailed = "Failed",
@@ -168,6 +171,66 @@ class ConversationMarkdownExporterTest {
         assertTrue(result.contains("> Tool: observe_screen (Failed)"))
         assertTrue(result.contains("> Tool: tap_element (Result unknown)"))
         assertTrue(result.contains("> Arguments: 确定"))
+    }
+
+    @Test
+    fun exportShowsProviderPromptTotalWhenPresent() {
+        val message = AgentMessageUi(
+            id = "a",
+            content = "回答",
+            usage = TokenUsageUi(
+                contextTokens = 1_000,
+                inputTokens = 450,
+                outputTokens = 800,
+                cachedTokens = 200,
+                promptTokens = 1_250,
+            ),
+        )
+
+        val result = ConversationMarkdownExporter.export("t", listOf(message), labels)
+
+        // 与「运行详情 / 运行导出」同一口径：写了总输入就不再写 input，
+        // 否则两个数并排放着又会让人以为算错。
+        assertTrue(result.contains("Usage: context 1000 · prompt 1250 · output 800 · cached 200"))
+        assertFalse(result.contains("input 450"))
+    }
+
+    @Test
+    fun exportFallsBackToInputWhenPromptTotalIsMissing() {
+        val message = AgentMessageUi(
+            id = "a",
+            content = "回答",
+            usage = TokenUsageUi(contextTokens = 1_000, inputTokens = 450, outputTokens = 800, cachedTokens = 200),
+        )
+
+        val result = ConversationMarkdownExporter.export("t", listOf(message), labels)
+
+        assertTrue(result.contains("Usage: context 1000 · input 450 · output 800 · cached 200"))
+        assertFalse(result.contains("prompt"))
+    }
+
+    @Test
+    fun exportOmitsUsageLineWhenMessageHasNone() {
+        val result = ConversationMarkdownExporter.export(
+            "t",
+            listOf(AgentMessageUi(id = "a", content = "回答")),
+            labels,
+        )
+
+        assertFalse(result.contains("Usage:"))
+    }
+
+    @Test
+    fun exportFormatsLargeCountsLikeTheRunInspector() {
+        val message = AgentMessageUi(
+            id = "a",
+            content = "回答",
+            usage = TokenUsageUi(promptTokens = 12_500, outputTokens = 3_000),
+        )
+
+        val result = ConversationMarkdownExporter.export("t", listOf(message), labels)
+
+        assertTrue(result.contains("prompt 12.5k · output 3000"))
     }
 
     @Test

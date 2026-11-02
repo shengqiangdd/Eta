@@ -1274,6 +1274,32 @@ Anthropic 的输入不含缓存，「输入 200 · 缓存 800」与头部「toke
 定向 3 类 21/0 → 门禁 1103/0（lint 183，包 32,196,469 字节 `31e9b9ac0379b861…`）→
 test-wide 2980/0（上批 2977）。
 
+### 第二十七批：会话气泡与历史导出拿不到总输入（2026-11-02）
+
+第二十六批的边界里写着「对话消息里持久化的 `TokenUsageUi` 没有 prompt 字段」，本轮补上。真实后果
+不只是面板：气泡的用量读的是 `conversation_messages` 表的列，而写入端在落库时就把 `prompt` 丢了 ——
+同一轮对话在运行详情是 1100、在会话页重载后只剩 300（Anthropic 的输入不含缓存）；会话 Markdown
+导出此前则完全没有用量行，存档里核对不了任何 token 数字。
+
+- `TokenUsageUi.promptTokens: Int? = null` 并计入 `isEmpty`；`conversation_messages.prompt_tokens`
+  为可空列，库版本 25→26（迁移只 `ALTER TABLE ... ADD COLUMN`，旧行保持 NULL）。
+- `toEntityOrNull` / `toMessageOrNull` 搬 prompt（改 `internal` 才能纯 JVM 直测），
+  `AgentTokenUsage.toUi()` 透传；读端 `prompt ?: input` 回退，不补 0、不用合成值。
+- 会话导出给助手消息追加斜体用量行：有总输入写「总输入」，旧数据写「输入」
+  （`usageLineFormat` / `usageLineFormatLegacy`，三语）。
+- token 紧凑格式收敛到 `agent/usage/TokenCountFormat.formatTokenCount()`：运行导出、运行详情、
+  会话导出三处委托同一份（此前两处各写一遍，第三处再抄迟早分叉）。
+
+验证：定向 5 类 47/0（映射 5、迁移 2、迁移链 3、导出 13、投影 24）；新用例守「旧行 NULL 读回仍是
+null」「迁移重复执行必须失败」「只有 prompt 也算有用量」；反证五处（`toUi` 不传 / 读端不搬 /
+写端不写 / 导出永用 legacy / 旧数据也写总输入）各自变红后恢复，`sha256sum -c` 三次一致。
+门禁 1105/0（lint baseline 183，APK 32,199,481 字节 `8a1a6dfd2c6abd12…`）→ test-wide **2994/0**
+（407 个类；另 2 条既有 skip 属环境相关，不是本轮新增）。
+
+边界：旧行继续 `prompt ?: input` 回退；导出的数字是紧凑格式（0.1k 精度），精确值看运行详情或账本；
+只改会话导出，轨迹 JSONL 全量导出未带 token 元数据；`AgentConversationPersistenceTest` 的
+Robolectric 整库往返在本机 arm64 跑不了（含本轮新增 2 例），留给 x86；没有真机验证。
+
 ## 运行级文件变更（deliverables，2026-10-20）
 
 dsh 的 `deliverables/workspace-changes` 在 git 工作树上取前后快照，回答「这一轮到底改了什么」。

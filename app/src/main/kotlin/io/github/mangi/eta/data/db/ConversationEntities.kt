@@ -134,6 +134,10 @@ internal data class ConversationMessageEntity(
     @ColumnInfo(name = "output_tokens") val outputTokens: Int? = null,
     @ColumnInfo(name = "reasoning_tokens") val reasoningTokens: Int? = null,
     @ColumnInfo(name = "cached_tokens") val cachedTokens: Int? = null,
+    /**
+     * 服务商总输入。旧行是 NULL（25 及以前没有这一列），读取端必须回退到 input_tokens。
+     */
+    @ColumnInfo(name = "prompt_tokens") val promptTokens: Int? = null,
     @ColumnInfo(name = "elapsed_seconds") val elapsedSeconds: Int? = null,
     @ColumnInfo(name = "tool_name") val toolName: String? = null,
     @ColumnInfo(name = "tool_status") val toolStatus: String? = null,

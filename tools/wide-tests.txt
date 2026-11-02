@@ -270,6 +270,7 @@ io.github.mangi.eta.core.ModuleConfigEntryPackagesTest
 io.github.mangi.eta.data.db.ChunkedTextDaoAccessTest
 io.github.mangi.eta.data.db.ChunkedTextDaoStoreTextTest
 io.github.mangi.eta.data.db.ChunkedTextLayoutTest
+io.github.mangi.eta.data.db.ConversationPromptTokensMigrationTest
 io.github.mangi.eta.data.db.ConversationSearchSqlContractTest
 io.github.mangi.eta.data.db.EtaDatabaseMigrationChainTest
 io.github.mangi.eta.data.db.McpEntitiesTest
@@ -307,6 +308,7 @@ io.github.mangi.eta.systemizer.GoogleAppSystemizerInstallerTest
 io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
 io.github.mangi.eta.ui.app.AgentBackgroundReleasePolicyTest
 io.github.mangi.eta.ui.app.AgentConversationJournalPolicyTest
+io.github.mangi.eta.ui.app.AgentConversationMessageMappingTest
 io.github.mangi.eta.ui.app.AgentConversationReleasePolicyTest
 io.github.mangi.eta.ui.app.AgentConversationRevisionReducerTest
 io.github.mangi.eta.ui.app.AgentKeepScreenOnPolicyTest

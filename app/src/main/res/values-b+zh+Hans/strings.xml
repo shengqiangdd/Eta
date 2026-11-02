@@ -231,6 +231,8 @@
   <string name="conversation_export_tool_arguments">参数：%1$s</string>
   <string name="conversation_export_tool_result">结果：%1$s</string>
   <string name="conversation_export_images">图片：%1$d 张</string>
+  <string name="conversation_export_usage">用量：上下文 %1$s · 总输入 %2$s · 输出 %3$s · 缓存 %4$s</string>
+  <string name="conversation_export_usage_legacy">用量：上下文 %1$s · 输入 %2$s · 输出 %3$s · 缓存 %4$s</string>
   <string name="conversation_export_default_name">对话</string>
   <string name="time_yesterday">昨天</string>
   <string name="time_recent">最近</string>

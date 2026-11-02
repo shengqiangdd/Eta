@@ -1554,6 +1554,8 @@
   <string name="conversation_export_tool_result">結果：%1$s</string>
   <string name="conversation_export_tools_line">工具：%1$s</string>
   <string name="conversation_export_user">使用者</string>
+  <string name="conversation_export_usage">用量：上下文 %1$s · 總輸入 %2$s · 輸出 %3$s · 快取 %4$s</string>
+  <string name="conversation_export_usage_legacy">用量：上下文 %1$s · 輸入 %2$s · 輸出 %3$s · 快取 %4$s</string>
   <string name="conversation_exported">已匯出</string>
   <string name="tool_edit_file">精確編輯檔案</string>
   <string name="tool_edit_file_description">使用舊文字定位片段，檢查符合與版本後取代。</string>

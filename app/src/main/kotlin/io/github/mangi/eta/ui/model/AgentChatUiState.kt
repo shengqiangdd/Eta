@@ -143,13 +143,19 @@ data class TokenUsageUi(
     val outputTokens: Int? = null,
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
+    /**
+     * 服务商返回的总输入（缓存读写已折算进去）。旧消息没有这个值，界面必须回退到「输入」——
+     * 把原样 input 当成总输入，Anthropic 下会少算掉全部缓存读写。
+     */
+    val promptTokens: Int? = null,
 ) {
     val isEmpty: Boolean
         get() = contextTokens == null &&
             inputTokens == null &&
             outputTokens == null &&
             reasoningTokens == null &&
-            cachedTokens == null
+            cachedTokens == null &&
+            promptTokens == null
 }
 
 @Immutable

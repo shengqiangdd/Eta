@@ -685,7 +685,7 @@ internal object AgentConversationStore {
     private val ConversationMetadata.reasoningEffortValue: ReasoningEffort
         get() = ReasoningEffort.fromWireValue(reasoningEffort) ?: ReasoningEffort.DEFAULT
 
-    private fun AgentChatMessageUi.toEntityOrNull(
+    internal fun AgentChatMessageUi.toEntityOrNull(
         conversationId: String,
         sortIndex: Int,
     ): ConversationMessageEntity? =
@@ -716,6 +716,7 @@ internal object AgentConversationStore {
                         outputTokens = usage?.outputTokens,
                         reasoningTokens = usage?.reasoningTokens,
                         cachedTokens = usage?.cachedTokens,
+                        promptTokens = usage?.promptTokens,
                     )
                 }
             }
@@ -768,7 +769,7 @@ internal object AgentConversationStore {
             else -> null
         }
 
-    private fun ConversationMessageEntity.toMessageOrNull(
+    internal fun ConversationMessageEntity.toMessageOrNull(
         activeRunIds: Set<String> = emptySet(),
     ): AgentChatMessageUi? =
         when (type) {
@@ -790,6 +791,7 @@ internal object AgentConversationStore {
                     outputTokens = outputTokens,
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
+                    promptTokens = promptTokens,
                 ).takeUnless { it.isEmpty },
             )
 

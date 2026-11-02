@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 数据库版本号：实体改动必须同步 +1 并补一条 MIGRATION，单测会卡住不一致的情况。 */
-internal const val ETA_DATABASE_VERSION = 25
+internal const val ETA_DATABASE_VERSION = 26
 
 @Database(
     entities = [
@@ -126,6 +126,18 @@ internal abstract class EtaDatabase : RoomDatabase() {
          */
         internal val MIGRATION_24_25 = Migration(24, 25) { database ->
             database.execSQL("ALTER TABLE model_providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'api_key'")
+        }
+
+        /**
+         * 消息级总输入：会话历史重载后，对话框与导出仍能按「总输入」展示。
+         *
+         * 旧行是 NULL —— 读取端必须回退到 input_tokens，不能当 0，也不能当成总输入。
+         */
+        internal const val SQL_V25_ADD_PROMPT_TOKENS =
+            "ALTER TABLE conversation_messages ADD COLUMN prompt_tokens INTEGER"
+
+        internal val MIGRATION_25_26 = Migration(25, 26) { database ->
+            database.execSQL(SQL_V25_ADD_PROMPT_TOKENS)
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -335,6 +347,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
             MIGRATION_22_23,
             MIGRATION_23_24,
             MIGRATION_24_25,
+            MIGRATION_25_26,
         )
     }
 }

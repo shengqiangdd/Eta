@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
+import io.github.mangi.eta.agent.usage.formatTokenCount
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
@@ -29,6 +30,10 @@ internal object ConversationMarkdownExporter {
         val argumentsFormat: String,
         val resultFormat: String,
         val imagesFormat: String,
+        /** 有新追踪的总输入：上下文 / 总输入 / 输出 / 缓存。 */
+        val usageLineFormat: String,
+        /** 旧数据没有总输入：只能写「输入」，不能冒充总输入。 */
+        val usageLineFormatLegacy: String,
         val toolStatusRunning: String,
         val toolStatusSuccess: String,
         val toolStatusFailed: String,
@@ -103,8 +108,21 @@ internal object ConversationMarkdownExporter {
             }
         }
 
-        is AgentMessageUi -> content.takeIf { it.isNotBlank() }
-            ?.let { "## ${labels.assistant}\n\n$it" }
+        is AgentMessageUi -> content.takeIf { it.isNotBlank() }?.let { text ->
+            val detail = usage?.takeUnless { it.isEmpty }?.let { value ->
+                val prompt = value.promptTokens
+                val line = (if (prompt != null) labels.usageLineFormat else labels.usageLineFormatLegacy).format(
+                    count(value.contextTokens ?: 0),
+                    // 旧消息没有总输入：只能写 input，不能把原样 input 冒充成总输入。
+                    count(prompt ?: value.inputTokens ?: 0),
+                    count(value.outputTokens ?: 0),
+                    count(value.cachedTokens ?: 0),
+                )
+                // 单独一段斜体：不混进正文的 Markdown 结构（正文自带标题/列表）。
+                "\n\n_${line}_"
+            }.orEmpty()
+            "## ${labels.assistant}\n\n$text$detail"
+        }
 
         is ThinkingMessageUi -> content.takeIf { it.isNotBlank() }
             ?.let { "<details>\n<summary>${labels.thinking}</summary>\n\n$it\n\n</details>" }
@@ -133,6 +151,8 @@ internal object ConversationMarkdownExporter {
         joinToString(separator = "\n\n")
             .lines()
             .joinToString(separator = "\n") { line -> if (line.isEmpty()) ">" else "> $line" }
+
+    private fun count(value: Int): String = formatTokenCount(value)
 
     private fun String.format(vararg args: Any): String = String.format(Locale.ROOT, this, *args)
 

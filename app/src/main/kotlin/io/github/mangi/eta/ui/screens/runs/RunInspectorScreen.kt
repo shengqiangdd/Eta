@@ -45,6 +45,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunExport
 import io.github.mangi.eta.agent.runtime.AgentRunFileChanges
 import io.github.mangi.eta.agent.trace.AgentRunTraceStore
 import io.github.mangi.eta.agent.trace.AgentRunTrajectory
+import io.github.mangi.eta.agent.usage.formatTokenCount
 import androidx.core.content.FileProvider
 import io.github.mangi.eta.ui.components.EtaCard
 import java.io.File
@@ -893,11 +894,7 @@ private fun formatDuration(ms: Long): String = when {
     }
 }
 
-private fun formatCount(value: Int): String = when {
-    value >= 1_000_000 -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
-    value >= 10_000 -> String.format(Locale.US, "%.1fk", value / 1000.0)
-    else -> value.toString()
-}
+private fun formatCount(value: Int): String = formatTokenCount(value)
 
 @Suppress("unused")
 private fun formatBytes(size: Long): String = when {

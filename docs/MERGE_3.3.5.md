@@ -6894,3 +6894,67 @@ dsh 最新源码（`packages/experimental/client-ui-stats/src/client/stats-usage
   将来若要在气泡上显示总 token，需要一起补上并做旧数据回退。
 - 运行详情与导出的新文案只在 JVM 单测里验证（导出是纯 Kotlin；Compose 文案没有截图验证）。
 - 没有真机验证。
+
+## §32.77 会话气泡与历史导出拿不到总输入：消息级补 prompt 并让导出写用量行（2026-11-02）
+
+§32.76 的边界里写过：「对话消息里持久化的 `TokenUsageUi` 仍没有 prompt 字段：它目前不参与任何
+总量展示，这轮不动；将来若要在气泡上显示总 token，需要一起补上并做旧数据回退。」本轮补的就是这条。
+
+真实动机比「面板好看」更具体：
+
+- 气泡的用量来自 `conversation_messages` 表。`AgentConversationStore` 写库与读库两侧都只搬
+  input / output / cached / reasoning / context，`prompt` 在落库时就被丢掉 —— 同一轮对话，
+  运行详情显示 1100，会话页重载后只剩 300（Anthropic 的输入不含缓存读写）。
+- 会话 Markdown 导出此前完全没有用量行：导出的存档无法核对任何 token 数字。
+
+改动五层（口径与 §32.75 / §32.76 完全一致，不新造第二套算法）：
+
+| 层 | 改动 |
+|---|---|
+| UI 模型 | `TokenUsageUi` 新增 `promptTokens: Int? = null`，并计入 `isEmpty`（只有 prompt 时不算「无用量」） |
+| 数据库 | `conversation_messages` 新增可空列 `prompt_tokens`；版本 25→26，`MIGRATION_25_26` 只做 `ALTER TABLE ... ADD COLUMN`（不填默认值，旧行保持 NULL） |
+| 读写 | `toEntityOrNull` / `toMessageOrNull` 搬 `promptTokens`（改 `internal` 才能被纯 JVM 单测直接调用，不必为两个映射函数起 Room） |
+| 投影 | `AgentTokenUsage.toUi()` 透传 `promptTokens` |
+| 导出 | 助手消息末尾追加一段斜体用量行：有总输入写「总输入」，旧数据写「输入」；`Labels` 新增 `usageLineFormat` / `usageLineFormatLegacy`，三语同步 |
+
+顺手把 token 数字格式收敛到一处：`agent/usage/TokenCountFormat.formatTokenCount()`（≥1M 一位小数 M、
+≥10k 一位小数 k、其余原样）。运行导出与运行详情此前各写一份同样的分支，会话导出再抄第三份，
+三处迟早分叉（§32.74 那类「同一个数三种写法」）。三个调用点现在都委托它。
+
+验证（定向 5 类 47/0）：
+
+- `AgentConversationMessageMappingTest`（新，5 例，纯 JVM）：写入带 prompt、读回带 prompt、
+  旧行 NULL 读回仍是 null（不补 0、不补 input）、只有 prompt、无用量。
+- `ConversationPromptTokensMigrationTest`（新，2 例，JDBC 内存 SQLite）：25 版建表后跑迁移能加出
+  可空列且旧行读回 NULL；同一迁移重复执行必须失败（守住「不幂等」，防止有人加 `IF NOT EXISTS`
+  把迁移写成永远成功）。
+- `EtaDatabaseMigrationChainTest` +1（共 3）：schema 断言新增 `prompt_tokens` —— 迁移加了列、实体没
+  声明的话，下次构建会把列删掉，这条用例正是守这个。
+- `ConversationMarkdownExporterTest` +4（共 13）：带 prompt 写「总输入」、旧数据写「输入」、
+  没有用量不写空行、只有 prompt 也算有内容。
+- `AgentRunMessageProjectorTest` +2（共 24）：`toUi` 透传 prompt；prompt 为 null 时仍是 null。
+- `AgentConversationPersistenceTest` +2（Robolectric 整库往返）：本机 arm64 跑不了 Robolectric
+  原生运行时，**未验证**，留给 x86 CI。
+
+反证（每处单独退回、红后恢复，`sha256sum -c` 三次全 OK）：
+
+| 退回点 | 结果 |
+|---|---|
+| A：`toUi` 不传 prompt | 投影用例 1/24 红 |
+| B：读端不搬 prompt | 映射用例 2/5 红 |
+| C：写端不写 prompt | 映射用例 1/5 红 |
+| D1：导出永远用 legacy 文案 | 导出用例 2/13 红 |
+| D2：旧数据也写「总输入」 | 导出用例 1/13 红 |
+
+门禁与产物：`STAGES=test,lint,assemble` → **1105/0**（lint baseline 183 无新增，
+APK 32,199,481 字节 `8a1a6dfd2c6abd12…`）；`STAGES=test-wide` → **2994/0**（407 个类；上批 2980，
+新增 14 条都在里面；另 2 条既有 skip 是终端测试的环境相关跳过，不是本轮新增）。
+
+边界（如实记录）：
+
+- 旧消息（库版本 ≤25 写入的行）没有总输入，气泡与导出继续按「输入」展示；回退是 `prompt ?: input`，
+  不是 0，也不是 `input + cached` 合成值。
+- 导出的数字是紧凑格式（0.1k 精度），与运行详情一致；要精确值看运行详情或账本。
+- 只改了会话 Markdown 导出；运行轨迹 JSONL 的全量历史导出仍未带 token 元数据（那是原始事件转储，
+  加派生字段会改变「原样」语义），要做得单独一轮。
+- `AgentConversationPersistenceTest` 的两条新用例在本机跑不了；本轮没有任何真机验证。

@@ -1641,6 +1641,8 @@ internal class AgentAppState(
                 argumentsFormat = appContext.getString(R.string.conversation_export_tool_arguments),
                 resultFormat = appContext.getString(R.string.conversation_export_tool_result),
                 imagesFormat = appContext.getString(R.string.conversation_export_images),
+                usageLineFormat = appContext.getString(R.string.conversation_export_usage),
+                usageLineFormatLegacy = appContext.getString(R.string.conversation_export_usage_legacy),
                 toolStatusRunning = appContext.getString(R.string.tool_status_running),
                 toolStatusSuccess = appContext.getString(R.string.tool_status_success),
                 toolStatusFailed = appContext.getString(R.string.tool_status_failed),
