@@ -2934,3 +2934,56 @@ codex 0.164 的 provider 配置里只有 `http_headers` 这类字段，没有「
   - 1216×2640 @560dpi（347dp）：全屏聊天、三横线打开抽屉、返回键收起 —— 原行为未变。
 - 未验证：折叠屏真机（铰链姿态 / 半折叠）、宽屏下按返回键的实际表现（逻辑上 docked
   不注册 back handler，但没有单独按一次核对）。
+
+## 虚拟屏并行：操作权按屏分发，等待有上限（fix121 的工程口径）
+
+### 用户报的现象
+
+「另一个会话用虚拟屏，点击经常卡住，一卡就是几百秒以上。」
+
+### 先排除的假设：不是虚拟屏归属问题
+
+虚拟屏从一开始就按会话隔离：建屏时记 `ownerRunId`，`VirtualDisplayOwnership` 用它判
+`SELF` / `OTHER`，别的 run 去操作会被明确拒绝。**没有任何「多会话共用同一块虚拟屏」的逻辑**，
+所以这不是「允许多会话共用一块屏」造成的。
+
+### 真正把两个会话串起来的，是「手机操作权」
+
+`GuiControlCoordinator` 是全局单锁：一个 `owner`、一条队列，**不区分是哪块屏**。
+一个 run 从第一次 `withAction` 起一直持有，直到 `release_gui` 或整个 run 结束；
+别的 run 的每次点击都停在 `changed.await()` 上，**无限期**（没有超时）。
+
+于是：会话 A 在虚拟屏上做一长串动作（中间还夹着模型推理、等用户确认），
+会话 B 无论在主屏还是另一块虚拟屏，点一下都可能等几分钟 —— 屏幕不同，队列是同一条。
+
+第二个冻结源：`userPauseRequested` 是全局布尔。用户在任一 run 上点「暂停 / 接管」，
+**所有** run 的 GUI 动作都会停住直到 `resumeForUser()`，同样表现为「卡很久」。
+
+### 改法
+
+1. **按屏分发**：scope 取 `main` 或 `display:<id>`。同屏仍然互斥（两个 run 同时点一块屏本来就会打架），
+   跨屏不再互相阻塞。`State.owners` 暴露每块屏的持有者；`ownerRunId` 保留为主屏持有者（界面在用）。
+2. **等待有上限**：`DEFAULT_WAIT_TIMEOUT_MS = 25s`。单个动作通常 1~2 秒，25 秒足够分辨
+   「慢」和「卡死」；超时抛 `GuiWaitTimeoutException`，`AgentLocalTools.execute` 把它翻成
+   `GUI_WAIT_TIMEOUT` 错误返回给模型，而不是让整轮对话挂在那里。
+3. **「用户接管」按 run 记**：`pausedRuns: Map<runId, RunControl>` 取代全局布尔，
+   `resumeForUser(runId)` 只放开自己 —— 暂停会话 A 不再冻住会话 B。
+
+### 三个自己踩出来的坑
+
+1. **空队列不能拿来和 `this` 比**：判断「轮到自己」写成 `queue.peekFirst() === this`，
+   队列为空时 `peekFirst()` 是 `null`，永远不成立 —— 每个动作都先「排队 25 秒」，并发用例全超时。
+   正确判据是「队列为空 **或** 队首是自己」。
+2. **登记和 `await` 不能塞在同一个 lock 块**：`Condition.await` 会一直持有这把锁，
+   于是「排队中（Waiting）」的通知永远发不出去 —— 界面看不到等待态，单测等回调也全超时。
+   拆成两段：先试拿，拿不到**出锁**通知，再进锁等。
+3. **`inner class` 里不能嵌套 `class`**：`Grant` 先写在 `RunControl`（inner）里，
+   编译器直接 `NESTED_CLASS_NOT_ALLOWED`。挪到外层类即可。
+
+### 验证
+
+- JVM：`GuiControlCoordinatorTest` 11 例（6 个既有 + 5 个新增：不同屏互不阻塞、同屏仍排队、
+  忙屏超时不挂死不卡队首、`release()` 交还全部屏、用户接管覆盖虚拟屏所有权）。
+- 全量门禁（canary）：用例 1117 通过 / 0 失败 / 白名单 0；lint 无新增。
+- 未验证：真机「两个会话各用一块虚拟屏并行」的端到端表现 —— 本轮只到单测与门禁，
+  不把「代码看起来对」当成「真机验过」。

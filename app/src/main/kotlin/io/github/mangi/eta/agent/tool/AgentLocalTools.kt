@@ -392,11 +392,37 @@ internal class AgentLocalTools(
     override fun execute(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
         val control = guiControl
         val result = if (control != null && AgentToolRequirements.requiresGuiControl(toolCall.name)) {
-            control.withAction { generation -> executeLocal(toolCall, generation) }
+            try {
+                control.withAction(guiScopeFor(toolCall)) { generation -> executeLocal(toolCall, generation) }
+            } catch (timeout: GuiControlCoordinator.GuiWaitTimeoutException) {
+                textResult(
+                    errorResult(
+                        "GUI_WAIT_TIMEOUT",
+                        "等待手机操作权超时（${timeout.scope}，${timeout.timeoutMs}ms）：另一个会话正在操作这块屏。" +
+                            "稍后重试；如果两边用的是不同的屏，请显式传 display_id，让两个会话各用各的。",
+                    ),
+                )
+            }
         } else {
             executeLocal(toolCall, null)
         }
         return tagToolResult(toolCall.name, result)
+    }
+
+    /**
+     * 这次动作要动哪块屏。
+     *
+     * 显式的 `display_id` 优先；没传时沿用最近一次观察所在的屏（[ImplicitDisplayPolicy]）。
+     * 解析结果同时决定 GUI 操作权的 scope —— 不同屏的动作可以并行，同一块屏仍然排队。
+     */
+    private fun guiScopeFor(toolCall: AgentModelClient.ToolCall): String {
+        val arguments = runCatching {
+            JSONObject(toolCall.argumentsJson.ifBlank { "{}" })
+        }.getOrDefault(JSONObject())
+        return resolveGuiScope(
+            explicitDisplayId = arguments.optInt("display_id", 0),
+            publishedDisplayId = publishedObservation.get().displayId,
+        )
     }
 
     /**
@@ -4101,3 +4127,20 @@ private const val LAUNCH_OBSERVE_READY_NODES = 5
 
 /** 归一化坐标上界：0–999，与主流 GUI 模型的输出习惯一致。 */
 private const val NORMALIZED_MAX = 999
+
+/**
+ * 这次动作要动哪块屏的 scope —— 纯函数，便于单测。
+ *
+ * 规则：显式 `display_id` 优先；没传（0）时沿用最近一次观察所在的屏；都没有就是主屏。
+ * 两块不同的虚拟屏会得到两个不同的 scope —— 这正是「两个会话各用一块屏时不再互相等待」的前提。
+ * 如果这里退化成永远返回主屏，协调器再怎么按屏分发也没有意义，所以它值得单独有测试。
+ */
+internal fun resolveGuiScope(explicitDisplayId: Int, publishedDisplayId: Int?): String {
+    val displayId = explicitDisplayId.takeIf { it != 0 }
+        ?: ImplicitDisplayPolicy.inherit(publishedDisplayId)
+    return if (displayId != null) {
+        GuiControlCoordinator.displayScope(displayId)
+    } else {
+        GuiControlCoordinator.MainScope
+    }
+}

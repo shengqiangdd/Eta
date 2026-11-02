@@ -1327,7 +1327,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             AndroidAgentLogger.info("Agent run resume ignored: id=${runId.take(8)} reason=terminal")
             return
         }
-        val guiLocked = guiControl.resumeForUser()
+        val guiLocked = guiControl.resumeForUser(runId)
         if (!guiLocked) session.controller.resume()
         AndroidAgentLogger.info(
             "Agent run resumed: id=${runId.take(8)} gui_lock=$guiLocked primary=${primaryRunId == runId}",

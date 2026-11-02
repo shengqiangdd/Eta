@@ -117,7 +117,7 @@ class GuiControlCoordinatorTest {
             assertNull(coordinator.state.value.ownerRunId)
             assertTrue(coordinator.state.value.userPaused)
             assertFalse(bResult.isDone)
-            assertTrue(coordinator.resumeForUser())
+            assertTrue(coordinator.resumeForUser("a"))
             assertTrue(bResult.get(2, TimeUnit.SECONDS) > initialGeneration)
             assertFalse(coordinator.state.value.userPaused)
         } finally {
@@ -137,7 +137,7 @@ class GuiControlCoordinatorTest {
             assertTrue(controller.isPaused)
             assertTrue(coordinator.state.value.userPaused)
             assertNull(coordinator.state.value.ownerRunId)
-            coordinator.resumeForUser()
+            coordinator.resumeForUser("a")
             assertFalse(controller.isPaused)
             assertFalse(coordinator.state.value.userPaused)
         }
@@ -158,12 +158,140 @@ class GuiControlCoordinatorTest {
             drain.countDown()
             val oldGeneration = result.get(2, TimeUnit.SECONDS)
             assertTrue(coordinator.state.value.userPaused)
-            assertTrue(coordinator.resumeForUser())
+            assertTrue(coordinator.resumeForUser("a"))
             assertTrue(a.withAction { it } > oldGeneration)
         } finally {
             drain.countDown()
             a.close()
             pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun differentDisplaysDoNotBlockEachOther() {
+        val coordinator = GuiControlCoordinator()
+        val a = coordinator.openRun("a", AgentRunController())
+        val entered = CountDownLatch(1)
+        val drain = CountDownLatch(1)
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            // a 在主屏上一直不放手。
+            val aResult = pool.submit {
+                a.withAction(GuiControlCoordinator.MainScope) { entered.countDown(); await(drain) }
+            }
+            await(entered)
+            val b = coordinator.openRun("b", AgentRunController())
+            try {
+                // b 在另一块虚拟屏上应该立刻进入，而不是排 a 的队。
+                b.withAction(GuiControlCoordinator.displayScope(16)) {
+                    assertEquals(
+                        "b",
+                        coordinator.state.value.owners[GuiControlCoordinator.displayScope(16)],
+                    )
+                }
+                assertEquals("a", coordinator.state.value.ownerRunId)
+                assertEquals("a", coordinator.state.value.owners[GuiControlCoordinator.MainScope])
+            } finally {
+                b.close()
+            }
+            drain.countDown()
+            aResult.get(2, TimeUnit.SECONDS)
+        } finally {
+            drain.countDown()
+            a.close()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun sameDisplayStillQueuesAcrossRuns() {
+        val coordinator = GuiControlCoordinator()
+        val a = coordinator.openRun("a", AgentRunController())
+        val entered = CountDownLatch(1)
+        val drain = CountDownLatch(1)
+        val bQueued = CountDownLatch(1)
+        val b = coordinator.openRun("b", AgentRunController()) {
+            if (it == GuiControlStatus.Waiting) bQueued.countDown()
+        }
+        val pool = Executors.newFixedThreadPool(2)
+        val scope = GuiControlCoordinator.displayScope(16)
+        try {
+            val aResult = pool.submit {
+                a.withAction(scope) { entered.countDown(); await(drain) }
+                // 交还之后 B 才可能进来 —— 这个用例验的是「同一块屏排队」，不是「超时」。
+                a.release()
+            }
+            await(entered)
+            val bEntered = CountDownLatch(1)
+            val bResult = pool.submit { b.withAction(scope) { bEntered.countDown() } }
+            await(bQueued)
+            assertFalse("同一块屏上不该并行进入", bResult.isDone)
+            drain.countDown()
+            aResult.get(2, TimeUnit.SECONDS)
+            bResult.get(2, TimeUnit.SECONDS)
+            assertEquals(0L, bEntered.count)
+        } finally {
+            drain.countDown()
+            a.close(); b.close()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun waitingForABusyDisplayTimesOutInsteadOfHanging() {
+        val coordinator = GuiControlCoordinator(waitTimeoutMs = 120L)
+        val a = coordinator.openRun("a", AgentRunController())
+        val scope = GuiControlCoordinator.MainScope
+        a.withAction(scope) { }
+        val b = coordinator.openRun("b", AgentRunController())
+        val started = System.nanoTime()
+        try {
+            try {
+                b.withAction(scope) { error("持锁期间不该进入") }
+                error("应当超时")
+            } catch (timeout: GuiControlCoordinator.GuiWaitTimeoutException) {
+                assertEquals(scope, timeout.scope)
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+                assertTrue("超时过短，可能没真的等过：${elapsedMs}ms", elapsedMs >= 100L)
+            }
+            // 超时的等待者不能卡在队首：下一次自己拿锁要能立刻成功。
+            a.release()
+            b.withAction(scope) { }
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
+    fun releaseDropsEveryDisplayTheRunHeld() {
+        val coordinator = GuiControlCoordinator()
+        val a = coordinator.openRun("a", AgentRunController())
+        try {
+            a.withAction(GuiControlCoordinator.MainScope) { }
+            a.withAction(GuiControlCoordinator.displayScope(16)) { }
+            assertEquals(2, coordinator.state.value.owners.size)
+            a.release()
+            assertTrue("交还操作权后不该还占着任何屏", coordinator.state.value.owners.isEmpty())
+            assertNull(coordinator.state.value.ownerRunId)
+        } finally {
+            a.close()
+        }
+    }
+
+    @Test
+    fun userPauseCoversVirtualDisplayOwnershipToo() {
+        val coordinator = GuiControlCoordinator()
+        val controller = AgentRunController()
+        val a = coordinator.openRun("a", controller)
+        try {
+            a.withAction(GuiControlCoordinator.displayScope(16)) { }
+            assertTrue(coordinator.pauseForUser("a"))
+            assertTrue(coordinator.state.value.userPaused)
+            assertTrue(controller.isPaused)
+            assertTrue(coordinator.resumeForUser("a"))
+            assertFalse(controller.isPaused)
+        } finally {
+            a.close()
         }
     }
 
