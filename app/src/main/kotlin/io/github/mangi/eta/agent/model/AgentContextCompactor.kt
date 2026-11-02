@@ -16,7 +16,45 @@ internal data class CompactionResult(
     val summaryChars: Int,
     val batches: Int,
     val omittedChars: Long,
+    /** 压缩后仍保留的近期原文字符数。没有这个数字，「压得太狠」只能从结果反推。 */
+    val retainedTailChars: Long,
 )
+
+/**
+ * 选缩的切分点：在「可安全切分」的边界里挑一个，并尽量保留最近一段原文。
+ *
+ * 原先直接取最大可切分点（能压多少压多少），尾部几乎总是空的 —— 真机一次压缩
+ * 499,495 → 4,923 字符，模型下一轮只能重新读文件。保留多少由
+ * [AgentContextBudget.retainTailChars] 决定；0 表示沿用旧行为。
+ */
+internal object CompactionSplit {
+    /** 从 [from] 起到末尾的字符数。 */
+    fun tailChars(history: List<JSONObject>, from: Int): Long {
+        var total = 0L
+        for (index in from.coerceAtLeast(0) until history.size) {
+            total += AgentContextBudget.messageChars(history[index])
+        }
+        return total
+    }
+
+    /**
+     * @param retainChars 希望保留的近期原文量；0 表示不设下限（能压多少压多少）
+     * @return 切分点；没有可安全切分的位置时返回 null
+     */
+    fun choose(history: List<JSONObject>, retainChars: Long): Int? {
+        val max = (history.size downTo 1).firstOrNull { AgentContextCompactor.canSplit(history, it) }
+            ?: return null
+        if (retainChars <= 0L) return max
+        var end = max
+        while (end > 1 && tailChars(history, end) < retainChars) {
+            var candidate = end - 1
+            while (candidate > 0 && !AgentContextCompactor.canSplit(history, candidate)) candidate--
+            if (candidate <= 0) break
+            end = candidate
+        }
+        return end
+    }
+}
 
 /** 只在完整工具交换之间生成候选摘要；全部验证通过后由会话一次性提交。 */
 internal class AgentContextCompactor(
@@ -43,7 +81,12 @@ internal class AgentContextCompactor(
             it.optString("role") == "user" && !it.has("_eta_observation")
         }
         // 最新用户请求及其后尚在进行的工具链必须可以继续；长任务允许压缩该请求之后的已完成批次。
-        val end = (history.size downTo 1).firstOrNull { canSplit(history, it) }
+        val historyChars = history.fold(0L) { sum, message ->
+            sum + AgentContextBudget.messageChars(message)
+        }
+        // 窗口未知（null / ≤0）时不按窗口限制保留量：那会退化成不保留尾部。
+        val retainChars = AgentContextBudget.retainTailChars(historyChars, config.contextWindow ?: 0)
+        val end = CompactionSplit.choose(history, retainChars)
             ?: throw failure("CONTEXT_NOT_COMPACTABLE", "没有可安全压缩的完整历史批次。")
         val protectedUser = history.getOrNull(latestUser)?.takeIf { latestUser < end }
         val source = JSONArray(history.take(end).filterNot { it === protectedUser })
@@ -92,6 +135,7 @@ internal class AgentContextCompactor(
             summaryChars = summary.text.length,
             batches = summary.batches,
             omittedChars = summary.omittedChars,
+            retainedTailChars = CompactionSplit.tailChars(history, end),
         )
     }
 

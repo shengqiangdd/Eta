@@ -208,6 +208,7 @@ internal class AgentContextSession(
             append("摘要 ${result.summaryChars} 字符")
             if (result.batches > 1) append("（${result.batches} 批合并）")
             if (result.omittedChars > 0) append("，更早约 ${result.omittedChars} 字符未纳入")
+            if (result.retainedTailChars > 0) append("，保留近期原文 ${result.retainedTailChars} 字符")
             append("；上下文 $beforeChars → $afterChars 字符")
         }
 

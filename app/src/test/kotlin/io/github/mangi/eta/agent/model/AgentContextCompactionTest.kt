@@ -147,7 +147,22 @@ class AgentContextCompactionTest {
         assertEquals(listOf("完成最新请求"), result.transcript.map { it.content })
         val snapshot = checkNotNull(result.contextSnapshot)
         assertTrue(snapshot.messages.any { it.contextSummary })
-        assertEquals("最新请求必须保留", snapshot.messages.last().content)
+        // 最新请求不能被摘要吃掉：它不一定在末尾（本轮助手回复追加在它之后），
+        // 但必须原样保留，且排在摘要之后。
+        val requestIndex = snapshot.messages.indexOfFirst { it.content == "最新请求必须保留" }
+        assertTrue("最新请求必须原样保留", requestIndex >= 0)
+        assertTrue(
+            "最新请求必须排在摘要之后",
+            requestIndex > snapshot.messages.indexOfFirst { it.contextSummary },
+        )
+        // 本轮修复的核心：压缩后不再只剩「摘要 + 最新请求」。
+        // 旧行为下非摘要消息只有 1 条（最新请求），模型下一轮只能重读文件；
+        // 现在按 AgentContextBudget.retainTailChars 保留一段近期原文。
+        val inherited = snapshot.messages.filterNot { it.contextSummary }
+        assertTrue(
+            "压缩后应保留一段近期原文（旧行为只剩摘要 + 最新请求），实际 ${inherited.size} 条",
+            inherited.size >= 3,
+        )
         assertEquals(9, snapshot.consumedUserTurns)
         val completed = events.filterIsInstance<AgentEvent.ContextCompaction>().single { it.phase == "completed" }
         // 真机缺陷回归：completed 只带 detail 文本时，追踪里 before/after 全是 0。

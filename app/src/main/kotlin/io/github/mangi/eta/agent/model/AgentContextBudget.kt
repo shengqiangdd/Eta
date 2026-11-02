@@ -73,6 +73,46 @@ internal object AgentContextBudget {
         return "上下文只有 $chars 字符，已经足够小，无需压缩。"
     }
 
+    /**
+     * 压缩时应该**保留多少字符的近期原文**。
+     *
+     * 为什么需要它：压缩的切分点原先取「最大可安全切分点」——能压多少压多少，尾部几乎总是空的。
+     * 真机一次自动压缩把 499,495 字符压到 4,923，只剩摘要 + 最新请求；
+     * 模型因此不知道刚才看过什么、改过什么，下一轮又去重读同一批文件，省下的 token 原样花回去。
+     * 文档里写的「摘要 + 最新用户请求 + 尾部」当时从未成立。
+     *
+     * 取「最多 1/5、最多 80,000 字符」，并留出 [MIN_COMPACT_GAIN_CHARS] 的收益空间：
+     * 太小的历史保留尾部会把压缩本身变得没有意义，那就不保留。
+     */
+    const val RETAIN_TAIL_MAX_CHARS = 80_000L
+
+    /** 低于这个历史体量时不保留尾部：压缩本来就没多少可省，留一截反而白跑一次摘要。 */
+    const val MIN_COMPACT_GAIN_CHARS = 20_000L
+
+    /**
+     * 保留尾部最多占窗口的比例。
+     *
+     * 80,000 字符（约 20,000 token）在 200k 窗口里占 10%，没问题；但在 32k 窗口里占 62%
+     * ——压缩完仍然是满的，下一轮立刻再触发一次压缩，白花一次摘要请求。
+     * 所以保留量必须同时受窗口限制，而不只看历史比例。
+     */
+    const val RETAIN_TAIL_WINDOW_RATIO = 0.15
+
+    /**
+     * @param contextWindowTokens 模型窗口（token）；≤ 0 表示未知，此时不按窗口限制。
+     */
+    fun retainTailChars(historyChars: Long, contextWindowTokens: Int): Long {
+        if (historyChars <= 0L) return 0L
+        val byRatio = historyChars / 5
+        val byWindow = if (contextWindowTokens <= 0) {
+            Long.MAX_VALUE
+        } else {
+            (contextWindowTokens.toLong() * CHARS_PER_TOKEN_ESTIMATE * RETAIN_TAIL_WINDOW_RATIO).toLong()
+        }
+        val gainRoom = (historyChars - MIN_COMPACT_GAIN_CHARS).coerceAtLeast(0L)
+        return minOf(byRatio, RETAIN_TAIL_MAX_CHARS, byWindow, gainRoom)
+    }
+
     fun estimateTokens(chars: Long): Long = if (chars <= 0L) 0L else chars / CHARS_PER_TOKEN_ESTIMATE
 
     /**
