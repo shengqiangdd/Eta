@@ -320,4 +320,33 @@ class AgentSelfAuditTest {
         assertEquals(AgentSelfAudit.Severity.P0, report.findings.first().severity)
         assertEquals(AgentSelfAudit.Severity.P1, report.findings.last().severity)
     }
+
+    @Test
+    fun todoScanExcludesTheScannerItself() {
+        // 真机实测（PKX110 / Android 16，2026-11-03）的原样输出：4 个文件，
+        // 无一例外都是自审计自己的检测代码 —— 错误码字面量和它自己的 grep 命令行。
+        // 不排除的话这条线索永远报「有几个文件标了待办」。
+        val stdout = """
+            /root/kotlin/agent/model/AgentSelfAuditToolCatalog.kt
+            /root/kotlin/agent/feature/RealTodo.kt
+            /root/kotlin/agent/tool/AgentSelfAudit.kt
+            /root/kotlin/agent/tool/AgentSelfAuditTool.kt
+        """.trimIndent()
+        assertEquals(1, countTodoFiles(stdout))
+    }
+
+    @Test
+    fun todoScanIgnoresBlankLines() {
+        assertEquals(0, countTodoFiles(""))
+        assertEquals(0, countTodoFiles("\n\n  \n"))
+        assertEquals(2, countTodoFiles("/a/One.kt\n\n/b/Two.kt\n"))
+    }
+
+    @Test
+    fun todoScanMatchesByFileNameNotFullPath() {
+        // 源码目录在不同机器上不同（工作区 / 设备 / CI），只有文件名稳定，
+        // 所以排除规则必须按文件名后缀匹配，不能拿完整路径比。
+        assertEquals(0, countTodoFiles("/completely/different/root/AgentSelfAuditTool.kt"))
+        assertEquals(1, countTodoFiles("/completely/different/root/Feature.kt"))
+    }
 }

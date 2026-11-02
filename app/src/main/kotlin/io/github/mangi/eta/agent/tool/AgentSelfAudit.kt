@@ -351,7 +351,7 @@ internal object AgentSelfAudit {
         }
         if (todoKnown && code.todoCount > 0) {
             clues += Clue(
-                title = "源码里有 ${code.todoCount} 个文件标了 TODO/FIXME/XXX",
+                title = "源码里有 ${code.todoCount} 个文件的注释标了 TODO/FIXME",
                 evidence = code.sourceRoot,
             )
         }

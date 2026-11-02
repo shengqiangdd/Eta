@@ -178,14 +178,25 @@ internal class AgentSelfAuditTool(
                 rootExecutor.execute("test -d $candidate && echo yes").stdout.trim() == "yes"
             } ?: return null
         }
+        // 只统计**注释里**的待办。旧命令 `-e TODO` 匹配的是任意出现位置：
+        // 真机实测（PKX110 / Android 16，2026-11-03）4 个文件全部命中，无一例外都是
+        // 本工具自己的检测代码 —— `"TODO_SCOPE_UNAVAILABLE"` 这类错误码、它自己的 grep 命令行。
+        // 于是这条线索永远都会报「有几个文件标了 TODO」，纯噪声，还会掩盖真正的待办。
+        // 改为注释判据后，同一棵源码树为 0 命中；用两个探针文件验证过：
+        // 只有字符串的文件不命中（exit 1），写成行内注释待办的文件命中（exit 0）。
+        // 块注释由 `[[:space:]]\*` 覆盖。自身文件必须排除（见 [countTodoFiles]）：
+        // 下面这串模式文本本身就满足「斜杠 + 待办标记」，不排除就永远把自己算进去。
         val files = rootExecutor.execute(
-            "grep -rIl -e TODO -e FIXME --include=*.kt $root",
+            "grep -rIl --include=*.kt " +
+                "-e '//.*TODO' -e '//.*FIXME' " +
+                "-e '[[:space:]]\\*.*TODO' -e '[[:space:]]\\*.*FIXME' " +
+                "$root",
             timeoutMillis = CODE_SCAN_TIMEOUT_MS,
             maxOutputBytes = CODE_SCAN_MAX_BYTES,
         )
         // 0 = 有匹配，1 = 无匹配；其余（含超时的 -2）都算「读不到」，不能当成 0 条。
         val todoFiles = if (files.exitCode == 0 || files.exitCode == 1) {
-            files.stdout.lineSequence().count { it.isNotBlank() }
+            countTodoFiles(files.stdout)
         } else {
             -1
         }
@@ -261,3 +272,26 @@ internal class AgentSelfAuditTool(
         val DEFAULT_SOURCE_ROOTS = listOf("/data/local/tmp/eta/eta-v2")
     }
 }
+
+/**
+ * 统计「待办注释」命中的文件数，**排除本工具自身的文件**。
+ *
+ * 为什么必须排除：命令行里写着 `-e '//.*TODO'`，这串模式文本本身就满足
+ * 「斜杠之后出现待办标记」，不排除的话工具永远把自己算成待办文件 ——
+ * 那正是这条线索原来「永远报有几个文件标了待办」的同一个毛病，只是换了个位置。
+ *
+ * 用文件名后缀匹配而不是完整路径：工作区、设备上的源码目录、CI 路径各不相同，
+ * 只有文件名是稳定的。
+ */
+internal fun countTodoFiles(stdout: String, selfFiles: List<String> = SELF_SCAN_FILE_NAMES): Int =
+    stdout.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .count { path -> selfFiles.none { name -> path.endsWith("/$name") } }
+
+/** 自审计自身的实现文件（含检测命令与说明文本），不参与待办统计。 */
+internal val SELF_SCAN_FILE_NAMES = listOf(
+    "AgentSelfAuditTool.kt",
+    "AgentSelfAuditToolCatalog.kt",
+    "AgentSelfAudit.kt",
+)

@@ -26,7 +26,7 @@ internal object AgentSelfAuditToolCatalog {
                                     .put(
                                         "description",
                                         "要检查的域，默认 all。crash=崩溃与 ANR（需 root）；resource=堆压力与进程存活；" +
-                                            "capability=无障碍/通知使用权/使用情况访问；code=源码里的 TODO 与未提交改动（仅开发机）。",
+                                            "capability=无障碍/通知使用权/使用情况访问；code=源码注释里的 TODO 与未提交改动（仅开发机）。",
                                     ),
                             )
                             .put(
