@@ -697,15 +697,12 @@ internal class AgentRuntimeRunExecutor(
         if (usage.isEmpty || config == null) return
         runCatching {
             AgentUsageLedger.get().record(
-                AgentUsageLedger.Record(
+                AgentUsageLedger.Record.fromUsage(
                     ts = System.currentTimeMillis(),
                     provider = config.providerId.ifBlank { config.providerName },
                     model = config.model.ifBlank { config.modelDisplayName },
                     purpose = operation,
-                    input = usage.inputTokens,
-                    output = usage.outputTokens,
-                    cached = usage.cachedTokens,
-                    reasoning = usage.reasoningTokens,
+                    usage = usage,
                 ),
             )
         }.onFailure { throwable ->

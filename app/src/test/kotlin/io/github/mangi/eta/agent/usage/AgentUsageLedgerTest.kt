@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.usage
 
+import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -265,6 +266,56 @@ class AgentUsageLedgerTest {
         ledger.record(record(base + 2, input = 100, cached = 300))
         // (800 + 700 + 300) / (1000 + 1000 + 400)
         assertEquals(1_800.0 / 2_400.0, ledger.summarize(days = 1, nowMs = base).totals.cacheShare, 0.0001)
+    }
+
+    // ── 总 token 口径 ─────────────────────────────────
+
+    @Test
+    fun `total tokens count cache reads for providers that report them separately`() {
+        val ledger = ledger()
+        // Anthropic：缓存读写在 input_tokens 之外，总量必须是 prompt + output，
+        // 否则缓存命中越多，面板上的「总 token」反而越像没用过 token。
+        ledger.record(record(base, input = 200, output = 100, cached = 800, prompt = 1_000))
+        assertEquals(1_100L, ledger.summarize(days = 1, nowMs = base).totals.totalTokens)
+    }
+
+    @Test
+    fun `legacy records without prompt keep input plus output`() {
+        val ledger = ledger()
+        // 旧账本的 prompt 是**读时合成**的（input + cached），不能拿它当总量：那会把缓存算两遍。
+        ledger.record(record(base, input = 100, output = 50, cached = 300))
+        assertEquals(150L, ledger.summarize(days = 1, nowMs = base).totals.totalTokens)
+    }
+
+    @Test
+    fun `total tokens accumulate per record across mixed eras`() {
+        val ledger = ledger()
+        ledger.record(record(base, input = 200, output = 100, cached = 800, prompt = 1_000))
+        ledger.record(record(base + 1, input = 100, output = 50, cached = 300))
+        val totals = ledger.summarize(days = 1, nowMs = base).totals
+        assertEquals(1_250L, totals.totalTokens)
+        assertEquals(625.0, totals.totalTokens.toDouble() / totals.calls, 0.0001)
+    }
+
+    @Test
+    fun `runtime records carry the provider prompt total`() {
+        // 唯一写入方必须把 prompt 落盘：漏掉这一项，读取端的命中率与总 token 都会退回旧公式。
+        val record = AgentUsageLedger.Record.fromUsage(
+            ts = base,
+            provider = "anthropic",
+            model = "claude",
+            purpose = "chat",
+            usage = AgentTokenUsage(
+                inputTokens = 200,
+                outputTokens = 100,
+                cachedTokens = 800,
+                promptTokens = 1_000,
+            ),
+        )
+        assertEquals(1_000, record.prompt)
+        assertEquals(200, record.input)
+        assertEquals(800, record.cached)
+        assertEquals(100, record.output)
     }
 
     @Test

@@ -66,6 +66,49 @@ class AgentRunTraceStoreTest {
     }
 
     @Test
+    fun `usage lines keep the provider prompt total`() {
+        beginTrace()
+        val store = store()
+        store.record(
+            runId,
+            AgentEvent.UsageReceived(
+                1,
+                AgentTokenUsage(
+                    contextTokens = 1_000,
+                    inputTokens = 200,
+                    outputTokens = 200,
+                    cachedTokens = 800,
+                    promptTokens = 1_000,
+                ),
+            ),
+        )
+        store.finish(runId, ok = true)
+
+        val trace = store.read(runId)!!
+        assertEquals(1_200, trace.totalTokens)
+        assertEquals(1_000, trace.entries.first { it.kind == AgentRunTraceStore.KIND_USAGE }.promptTokens)
+        // 列表页走的是另一条路径（直接扫 JSONL），两边必须给同一个数字。
+        assertEquals(1_200, store.list(10).single().totalTokens)
+    }
+
+    @Test
+    fun `legacy usage lines without prompt fall back to input plus output`() {
+        // 加 prompt 之前的追踪没有这个键：总量按旧口径 input + output，
+        // 不能把 cache 加进去 —— 旧记录里 cached 是单列的，不属于 input 的子集。
+        File(temporary.root, "run-legacy.jsonl").writeText(
+            """
+            {"k":"meta","id":"run-legacy","at":1000,"model":"m","provider":"p","purpose":"chat"}
+            {"k":"usage","at":1500,"r":1,"ctx":1000,"in":100,"out":50,"cache":300}
+            {"k":"done","at":2000,"ok":true}
+            """.trimIndent() + "\n",
+        )
+        store()
+        val trace = AgentRunTraceStore.read("run-legacy")!!
+        assertEquals(150, trace.totalTokens)
+        assertEquals(150, AgentRunTraceStore.list(10).single().totalTokens)
+    }
+
+    @Test
     fun `records one first token per request even when blocks keep starting`() {
         beginTrace()
         val store = store()

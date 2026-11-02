@@ -6810,7 +6810,52 @@ dsh 最新源码（`packages/experimental/client-ui-stats/src/client/stats-usage
 - 旧账本没有 `prompt`，仍按旧公式回退 —— 它们的命中率继续偏低，直到滚出 180 天窗口；
   文件里没有 provider 协议标记，无法无歧义地追溯修正。
 - `Totals.totalTokens` 仍是 `input + output`，没有改成 `prompt + output`；Anthropic 的
-  缓存读写仍不进「总 token」。这是既有口径，与本轮命中率修复分开。
+  缓存读写仍不进「总 token」。这是既有口径，与本轮命中率修复分开。（§32.75 已改为 `prompt + output`。）
 - `AgentRuntimeWireTest` 带 `@Config(sdk = [33, 36])`，在 Linux/aarch64 上必撞 Robolectric
   native runtime（门禁注释已写明），所以 `usage_prompt` 的 Bundle 往返**没有在本机验证**；
   provider 解析与账本计算都有定向用例覆盖。
+
+## §32.75 总 token 改成服务商口径，并补上从未接线的 prompt 写入（2026-11-02）
+
+§32.74 把命中率的分母改成了「服务商总输入」，但**写入端没接上**：`AgentRuntimeRunExecutor.recordUsage`
+构造 `AgentUsageLedger.Record` 时只填了 `input / output / cached / reasoning`，没有传 `prompt`。
+读取端的旧公式回退因此永远生效 —— 线上新记录也拿不到总输入，§32.74 想修的两件事（命中率分母、
+本轮的总量口径）都不会真正生效。读取端有键、写入端不写，日志与自检全绿也看不出来。
+
+本轮做两件事：
+
+1. **补接线**：`Record` 增加唯一构造入口 `fromUsage(...)`，运行时只经它记账，`prompt` 与其它
+   四个字段一起落盘；用例直接守这个入口（不传 prompt 就红）。
+2. **总 token 改口径**：`input + output` → **`prompt + output`**。
+   - Anthropic 的 `input_tokens` 不含缓存读写，旧口径下「缓存命中越多、总 token 越少」，
+     与 OpenAI 系（`prompt_tokens` 已含缓存）不可比：同一段上下文，Anthropic 报 200 + 100 = 300，
+     OpenAI 报 1000 + 100 = 1100，差的正是缓存那一截。
+   - 旧账本 / 旧追踪没有 `prompt`，读取时按当时的 `input + output` 回退 —— 不能拿命中率那个
+     **合成**的 prompt（`input + cached`）当总量，否则旧记录会把缓存算两遍。
+
+落点三处，口径必须一致：
+
+| 位置 | 改动 |
+|---|---|
+| 账本 | `Totals` 新增逐条累加的 `tokens`；`summarize` 按 `(prompt ?: input) + output` 累加 |
+| 运行追踪 | `KIND_USAGE` 行新增 `prompt` 键；`Entry.promptTokens`、`Trace.totalTokens`、列表页 `Summary.totalTokens`（另一条直接扫 JSONL 的路径） |
+| 轨迹投影 | 每轮 `Turn.tokens` 同口径 |
+
+验证：
+
+- **先红 4 条**（旧值 → 期望）：账本 `cache reads…` 300→1100、`mixed eras…` 450→1250、
+  追踪 `usage lines…` 400→1200、轨迹 `turn tokens…` 300→1100；两条旧记录回退用例本来就绿（守住回退）。
+- **反证三轮**：① 三处总量改回 `input + output` → 同 4 条红；② 只把列表页 Summary 的读取改回
+  `in` → 追踪用例在第 91 行（`store.list()` 那条断言）红，说明 `Trace` 与 `Summary` 两条读取路径
+  各自被守住；③ `fromUsage` 不传 `prompt` → 接线用例红。恢复后三个主文件 sha256 与改前一致。
+- 定向 6 类 **63/0** → 门禁 `STAGES=test,lint,assemble` **1103/0**（lint baseline 183，
+  包 32,194,885 字节 `18e10deee47543f2…`）→ `STAGES=test-wide` **2977/0**（上批 2969，新增 8 条都在里面）。
+
+**边界（如实记录）**：
+
+- 面板上「输入」仍按厂商原样显示：Anthropic 不含缓存，所以新口径下「总 token」会大于
+  「输入 + 输出」。用量说明补了一句「总 token = 总输入 + 输出」，三语同步。
+- 旧账本 / 旧追踪没有 `prompt`，继续按旧口径回退，直到滚出窗口（180 天 / 保留条数）。
+- 本轮没改线协议（`usage_prompt` 上一批已有），不涉及新的 Bundle 往返；
+  `AgentRuntimeWireTest` 在 Linux/aarch64 上仍跑不了 Robolectric，这一点没变。
+- 没有真机验证：门禁只跑 JVM 单测，账本与追踪的落盘路径由 `TemporaryFolder` 用例覆盖。

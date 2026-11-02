@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.usage
 
 import android.content.Context
+import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
@@ -34,7 +35,34 @@ internal class AgentUsageLedger(
         val reasoning: Int?,
         /** 服务商口径的总输入 token；旧调用方不传时为 null（读取时走旧公式回退）。 */
         val prompt: Int? = null,
-    )
+    ) {
+        companion object {
+            /**
+             * 运行时记账入口：把一次模型调用折算成账本记录。
+             *
+             * `prompt` 必须原样带上 —— 只写 input 的话，服务商口径的总输入就丢了，
+             * 命中率与总 token 都会退回旧公式。2026-11-01 就漏在这里：读取端已经支持
+             * prompt，唯一的写入方却没传，线上全部记录仍是旧口径。
+             */
+            fun fromUsage(
+                ts: Long,
+                provider: String,
+                model: String,
+                purpose: String,
+                usage: AgentTokenUsage,
+            ): Record = Record(
+                ts = ts,
+                provider = provider,
+                model = model,
+                purpose = purpose,
+                input = usage.inputTokens,
+                output = usage.outputTokens,
+                cached = usage.cachedTokens,
+                reasoning = usage.reasoningTokens,
+                prompt = usage.promptTokens,
+            )
+        }
+    }
 
     /**
      * 一条真实的模型调用明细，供「最近调用」列表展示。
@@ -60,6 +88,8 @@ internal class AgentUsageLedger(
         val calls: Long = 0,
         /** 命中率分母：新记录为服务商总输入，旧记录回退为 `input + cached`。 */
         val prompt: Long = 0,
+        /** 逐条累加的总量（口径见 [totalTokens]）；只有 `summarize` 会填它。 */
+        val tokens: Long = 0,
     ) {
         operator fun plus(other: Totals): Totals = Totals(
             input = input + other.input,
@@ -68,9 +98,17 @@ internal class AgentUsageLedger(
             reasoning = reasoning + other.reasoning,
             calls = calls + other.calls,
             prompt = prompt + other.prompt,
+            tokens = tokens + other.tokens,
         )
 
-        val totalTokens: Long get() = input + output
+        /**
+         * 总 token：服务商口径的**总输入 + 输出**。
+         *
+         * 新记录直接用 `prompt`：Anthropic 的缓存读写、OpenAI 系与 Gemini 的缓存命中都在里面，
+         * 跨协议可比；旧记录没有 prompt，按当时的 `input + output` 记
+         * （那时 cached 只是单列观测值，加进去会把缓存算两遍）。
+         */
+        val totalTokens: Long get() = tokens
 
         /** 缓存命中占比；分母是总输入，缺少总输入时返回 0。 */
         val cacheShare: Double
@@ -153,17 +191,22 @@ internal class AgentUsageLedger(
                 val day = LocalDate.ofInstant(Instant.ofEpochMilli(ts), zone).toString()
                 val input = json.optLong("in", 0).coerceAtLeast(0)
                 val cached = json.optLong("cached", 0).coerceAtLeast(0)
+                val output = json.optLong("out", 0).coerceAtLeast(0)
                 // 新记录带服务商总输入；旧记录没有该键，回退到旧公式的 `in + cached`。
                 // 总输入为 0 但 cached 有值属于矛盾数据，也回退，避免命中率被算成 0。
-                val prompt = (if (json.has("prompt")) json.optLong("prompt", 0).coerceAtLeast(0) else 0L)
-                    .takeIf { it > 0 } ?: (input + cached)
+                val reported = (if (json.has("prompt")) json.optLong("prompt", 0).coerceAtLeast(0) else 0L)
+                    .takeIf { it > 0 }
+                val prompt = reported ?: (input + cached)
                 val bucket = Totals(
                     input = input,
-                    output = json.optLong("out", 0).coerceAtLeast(0),
+                    output = output,
                     cached = cached,
                     reasoning = json.optLong("reasoning", 0).coerceAtLeast(0),
                     calls = 1,
                     prompt = prompt,
+                    // 总量逐条算：新记录 prompt + output，旧记录 input + output。
+                    // 不能拿上面合成后的 prompt 当总量 —— 那是命中率的分母，不是总量口径。
+                    tokens = (reported ?: input) + output,
                 )
                 totals += bucket
                 byDay[day] = (byDay[day] ?: Totals()) + bucket

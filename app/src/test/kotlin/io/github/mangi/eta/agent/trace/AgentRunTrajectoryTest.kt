@@ -16,6 +16,7 @@ class AgentRunTrajectoryTest {
         elapsedMs: Long? = null,
         inputTokens: Int? = null,
         outputTokens: Int? = null,
+        promptTokens: Int? = null,
         messageCount: Int? = null,
     ) = AgentRunTraceStore.Entry(
         kind = kind,
@@ -27,6 +28,7 @@ class AgentRunTrajectoryTest {
         elapsedMs = elapsedMs,
         inputTokens = inputTokens,
         outputTokens = outputTokens,
+        promptTokens = promptTokens,
     )
 
     private fun trace(vararg entries: AgentRunTraceStore.Entry) = AgentRunTraceStore.Trace(
@@ -92,6 +94,35 @@ class AgentRunTrajectoryTest {
         )
         assertEquals(140, trajectory.turns[0].tokens)
         assertEquals(260, trajectory.turns[1].tokens)
+    }
+
+    @Test
+    fun `turn tokens include the reported prompt total`() {
+        val trajectory = AgentRunTrajectory.build(
+            trace(
+                entry(AgentRunTraceStore.KIND_ROUND, 1_000, round = 1),
+                entry(
+                    AgentRunTraceStore.KIND_USAGE,
+                    1_500,
+                    round = 1,
+                    inputTokens = 200,
+                    outputTokens = 100,
+                    promptTokens = 1_000,
+                ),
+            ),
+        )
+        assertEquals(1_100, trajectory.turns[0].tokens)
+    }
+
+    @Test
+    fun `turn tokens fall back to input plus output without a prompt total`() {
+        val trajectory = AgentRunTrajectory.build(
+            trace(
+                entry(AgentRunTraceStore.KIND_ROUND, 1_000, round = 1),
+                entry(AgentRunTraceStore.KIND_USAGE, 1_500, round = 1, inputTokens = 100, outputTokens = 50),
+            ),
+        )
+        assertEquals(150, trajectory.turns[0].tokens)
     }
 
     @Test

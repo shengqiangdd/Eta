@@ -140,7 +140,9 @@ internal object AgentRunTrajectory {
                 retries = refs.count { it.entry.kind == AgentRunTraceStore.KIND_RETRY },
                 tokens = refs.sumOf { ref ->
                     if (ref.entry.kind == AgentRunTraceStore.KIND_USAGE) {
-                        (ref.entry.inputTokens ?: 0) + (ref.entry.outputTokens ?: 0)
+                        // 与 Trace.totalTokens 同一口径：优先服务商总输入，旧记录退回输入。
+                        (ref.entry.promptTokens ?: ref.entry.inputTokens ?: 0) +
+                            (ref.entry.outputTokens ?: 0)
                     } else {
                         0
                     }

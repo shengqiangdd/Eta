@@ -1232,6 +1232,29 @@ dsh 的口径是 `cacheRead / (input + cacheRead + cacheWrite)`，三个桶互�
 边界：旧账本仍按旧公式回退；`totalTokens` 仍是 `input + output`（Anthropic 缓存读写不进总量，
 既有口径未改）；`AgentRuntimeWireTest` 在 Linux/aarch64 跑不了 Robolectric，`usage_prompt`
 的 Bundle 往返未在本机验证。
+（第二十五批已改：总 token 改成 `prompt + output`，并补上了从未接线的写入端。）
+
+### 第二十五批：总 token 改成服务商口径，并补上从未接线的 prompt 写入（2026-11-02）
+
+上一批把命中率的分母换成「服务商总输入」，但**写入端没接**：`AgentRuntimeRunExecutor.recordUsage`
+构造 `AgentUsageLedger.Record` 时没传 `prompt`，读取端的旧公式回退永远生效 —— 线上新记录同样
+拿不到总输入，命中率那条修复等于没上线。这轮先把接线补上（`Record.fromUsage` 成为唯一构造入口，
+用例守着「不传 prompt 就红」），再把总 token 从 `input + output` 改成 `prompt + output`。
+
+口径：总 token = 服务商口径的总输入 + 输出。Anthropic 的缓存读写、OpenAI 系与 Gemini 的缓存命中
+都在总输入里，跨协议可比；旧记录没有 `prompt`，读取时按当时的 `input + output` 回退（旧账本的
+cached 是单列观测值，拿命中率那个合成 prompt 当总量会把缓存算两遍）。三处同口径：账本
+`Totals.tokens`（逐条 `(prompt ?: input) + output`）、追踪 `KIND_USAGE.prompt` 与
+`Trace.totalTokens` / `Summary.totalTokens` / `Entry.promptTokens`、轨迹 `Turn.tokens`。
+
+验证：先红 4 条（300→1100、450→1250、400→1200、300→1100），两条旧记录回退用例保持绿；
+反证三轮（三处总量改回旧式 → 同 4 条红；只改回列表页 Summary → 追踪用例在 `list` 那条断言红；
+`fromUsage` 不传 prompt → 接线用例红），恢复后主文件 sha 一致。定向 6 类 63/0 → 门禁 1103/0
+（lint 183，包 32,194,885 字节 `18e10deee47543f2…`）→ test-wide 2977/0（上批 2969）。
+
+边界：面板「输入」仍按厂商原样（Anthropic 不含缓存），所以总 token 会大于「输入 + 输出」，
+用量说明补了「总 token = 总输入 + 输出」（三语）；旧账本/旧追踪继续按旧口径回退；
+线协议本轮没动，`AgentRuntimeWireTest` 在 Linux/aarch64 仍跑不了 Robolectric。
 
 ## 运行级文件变更（deliverables，2026-10-20）
 

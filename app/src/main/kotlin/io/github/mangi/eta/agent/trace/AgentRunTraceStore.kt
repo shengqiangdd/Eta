@@ -44,6 +44,8 @@ internal object AgentRunTraceStore {
         val inputTokens: Int? = null,
         val outputTokens: Int? = null,
         val cachedTokens: Int? = null,
+        /** 服务商口径的总输入（含缓存读写）；旧追踪没有这个键时为 null。 */
+        val promptTokens: Int? = null,
         val reasoningTokens: Int? = null,
         val before: Int? = null,
         val after: Int? = null,
@@ -74,7 +76,7 @@ internal object AgentRunTraceStore {
         val retries: Int get() = entries.count { it.kind == KIND_RETRY }
         val totalTokens: Int
             get() = entries.filter { it.kind == KIND_USAGE }
-                .sumOf { (it.inputTokens ?: 0) + (it.outputTokens ?: 0) }
+                .sumOf { (it.promptTokens ?: it.inputTokens ?: 0) + (it.outputTokens ?: 0) }
         val durationMs: Long get() = (finishedAt ?: entries.lastOrNull()?.at ?: startedAt) - startedAt
 
         /** 本次运行的**输出** token 合计（输入不计入速度）。 */
@@ -256,17 +258,20 @@ internal object AgentRunTraceStore {
                     )
                 }
             }
-            is AgentEvent.UsageReceived -> append(
-                runId,
-                JSONObject()
+            is AgentEvent.UsageReceived -> {
+                val usage = event.usage
+                val json = JSONObject()
                     .put("k", KIND_USAGE)
                     .put("r", event.round)
-                    .put("ctx", event.usage.contextTokens ?: 0)
-                    .put("in", event.usage.inputTokens ?: 0)
-                    .put("out", event.usage.outputTokens ?: 0)
-                    .put("cache", event.usage.cachedTokens ?: 0)
-                    .put("reason", event.usage.reasoningTokens ?: 0),
-            )
+                    .put("ctx", usage.contextTokens ?: 0)
+                    .put("in", usage.inputTokens ?: 0)
+                    .put("out", usage.outputTokens ?: 0)
+                    .put("cache", usage.cachedTokens ?: 0)
+                    .put("reason", usage.reasoningTokens ?: 0)
+                // 只有服务商真的给了总输入才写：缺省表示旧记录，读取时回退到 in + out。
+                usage.promptTokens?.let { json.put("prompt", it) }
+                append(runId, json)
+            }
             is AgentEvent.ModelRetryScheduled -> append(
                 runId,
                 JSONObject()
@@ -485,7 +490,11 @@ internal object AgentRunTraceStore {
                     if (!json.optBoolean("ok", true)) failures += 1
                 }
                 KIND_RETRY -> retries += 1
-                KIND_USAGE -> tokens += json.optInt("in", 0) + json.optInt("out", 0)
+                KIND_USAGE -> {
+                    // 新追踪用服务商口径的总输入；旧追踪没有 prompt 键，回退到 in + out。
+                    val prompt = if (json.has("prompt")) json.optInt("prompt", 0) else json.optInt("in", 0)
+                    tokens += prompt + json.optInt("out", 0)
+                }
                 KIND_DONE -> {
                     finishedAt = json.optLong("at", 0).takeIf { it > 0 }
                     ok = json.optBoolean("ok", false)
@@ -578,6 +587,7 @@ internal object AgentRunTraceStore {
         inputTokens = optIntOrNull("in"),
         outputTokens = optIntOrNull("out"),
         cachedTokens = optIntOrNull("cache"),
+        promptTokens = optIntOrNull("prompt"),
         reasoningTokens = optIntOrNull("reason"),
         before = optIntOrNull("before"),
         after = optIntOrNull("after"),

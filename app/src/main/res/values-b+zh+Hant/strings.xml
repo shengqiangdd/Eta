@@ -1585,7 +1585,7 @@
   <string name="usage_metric_reasoning">推理</string>
   <string name="usage_metric_average_per_call">平均每次</string>
   <string name="usage_metric_cache_hit_rate">快取命中率</string>
-  <string name="usage_cache_note">快取命中率 = 快取命中 ÷ 服務商傳回的總輸入 token（Anthropic 含快取讀寫；OpenAI 相容與 Gemini 取輸入總量）。舊紀錄按 cached ÷ (cached + 輸入) 回退。</string>
+  <string name="usage_cache_note">快取命中率 = 快取命中 ÷ 服務商傳回的總輸入 token（Anthropic 含快取讀寫；OpenAI 相容與 Gemini 取輸入總量）。舊紀錄按 cached ÷ (cached + 輸入) 回退。總 token = 總輸入 + 輸出。</string>
   <string name="usage_daily_title">按天</string>
   <string name="usage_purpose_title">按用途</string>
   <plurals name="usage_purpose_calls">
