@@ -1589,7 +1589,41 @@ internal class AgentAppState(
         persistConversations()
     }
 
+    /**
+     * 删除会话。
+     *
+     * 运行中的会话不能直接删：run 还在跑，删了只会让它继续在后台烧 token，而界面上
+     * 再也找不到它去停止。先请求停止，等运行态真的落下（stop 是异步的，要等当前这一步
+     * 返回）再删；停不下来就保留会话并明确提示，不假装已经删掉。
+     */
     fun deleteConversation(conversationId: String) {
+        if (conversationsById[conversationId]?.isStreaming == true) {
+            requestStop(conversationId)
+            deleteConversationWhenSettled(conversationId)
+            return
+        }
+        deleteSettledConversation(conversationId)
+    }
+
+    /** 等运行态落下再删；[attempts] 用完仍没停住就保留会话。 */
+    private fun deleteConversationWhenSettled(conversationId: String, attempts: Int = 40) {
+        scope.launch {
+            repeat(attempts) { index ->
+                delay(if (index == 0) 200L else 500L)
+                // 两个信号一起看：UI 的运行态可能因为报错提前落下，而 run 表里还挂着；
+                // 只要任一边还在，就继续等——删太早会让 run 在后台裸跑。
+                val stillRunning = runIdForConversation(conversationId) != null ||
+                    conversationsById[conversationId]?.isStreaming == true
+                if (!stillRunning) {
+                    deleteSettledConversation(conversationId)
+                    return@launch
+                }
+            }
+            toastNotice(R.string.conversation_delete_kept)
+        }
+    }
+
+    private fun deleteSettledConversation(conversationId: String) {
         val wasSelected = selectedConversationId == conversationId
         pendingAskAnswers.remove(conversationId)
         conversationsById = conversationsById - conversationId

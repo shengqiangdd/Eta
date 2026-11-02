@@ -215,6 +215,9 @@
   <string name="conversation_no_results">找不到相符的對話</string>
   <string name="conversation_rename_title">重新命名對話</string>
   <string name="conversation_rename_hint">對話名稱</string>
+  <string name="conversation_stop_and_delete">停止任務並刪除</string>
+  <string name="conversation_stop_and_delete_message">此對話的任務將先停止，結果儲存後刪除對話。</string>
+  <string name="conversation_delete_kept">任務沒有停下來，對話已保留</string>
   <string name="conversation_delete_title">要刪除對話嗎？</string>
   <string name="conversation_delete_message">此對話及其中的訊息將永久刪除。</string>
   <string name="conversation_delete_message_title">要刪除訊息嗎？</string>

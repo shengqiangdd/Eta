@@ -216,6 +216,9 @@
   <string name="conversation_no_results">No matching conversations</string>
   <string name="conversation_rename_title">Rename conversation</string>
   <string name="conversation_rename_hint">Conversation name</string>
+  <string name="conversation_stop_and_delete">Stop task and delete</string>
+  <string name="conversation_stop_and_delete_message">The task in this conversation will stop first. The conversation will be deleted after its results are saved.</string>
+  <string name="conversation_delete_kept">Couldn\'t stop the task, so the conversation was kept</string>
   <string name="conversation_delete_title">Delete conversation?</string>
   <string name="conversation_delete_message">This conversation and its messages will be permanently deleted.</string>
   <string name="conversation_delete_message_title">Delete message?</string>

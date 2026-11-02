@@ -1075,11 +1075,23 @@ fun AgentAppRoot(
             show = true,
             cornerRadius = DialogDefaults.CornerRadius,
             title = stringResource(R.string.conversation_delete_title),
-            summary = stringResource(R.string.conversation_delete_message),
+            summary = stringResource(
+                if (conversation.isActiveRun) {
+                    R.string.conversation_stop_and_delete_message
+                } else {
+                    R.string.conversation_delete_message
+                },
+            ),
             onDismissRequest = { conversationDeleteTarget = null },
         ) {
             MiuixDialogActions(
-                confirmText = stringResource(R.string.action_delete),
+                confirmText = stringResource(
+                    if (conversation.isActiveRun) {
+                        R.string.conversation_stop_and_delete
+                    } else {
+                        R.string.action_delete
+                    },
+                ),
                 destructive = true,
                 onCancel = { conversationDeleteTarget = null },
                 onConfirm = {
