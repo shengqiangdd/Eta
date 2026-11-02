@@ -284,7 +284,7 @@ private fun RunDetailScreen(runId: String, onBack: () -> Unit) {
     }
     // 轨迹投影只依赖这次读取的记录：切换 runId / 刷新时重建，不做额外 IO。
     val trajectory = remember(trace) { trace?.let { AgentRunTrajectory.build(it) } }
-    var selectedTurn by rememberSaveable(runId) { mutableStateOf(-1) }
+    var selectedTurn by rememberSaveable(runId) { mutableIntStateOf(-1) }
     val selected = selectedTurn.takeIf { it >= 0 }
     val context = LocalContext.current
     val resources = LocalResources.current

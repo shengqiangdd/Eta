@@ -52,6 +52,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -1078,7 +1079,7 @@ internal fun AgentConversationMessages(
      * 上滑阅读历史时被拉回底部，比被遮一行更让人恼火。
      */
     val bottomInsetPx = with(LocalDensity.current) { bottomInset.toPx() }
-    var previousBottomInsetPx by remember { mutableStateOf(bottomInsetPx) }
+    var previousBottomInsetPx by remember { mutableFloatStateOf(bottomInsetPx) }
     LaunchedEffect(bottomInsetPx) {
         val grew = bottomInsetPx > previousBottomInsetPx + 0.5f
         previousBottomInsetPx = bottomInsetPx
@@ -1318,6 +1319,10 @@ internal fun AgentConversationMessages(
             onLoadEarlier = onLoadEarlierMessages,
             onViewportChanged = onHistoryViewportChanged,
         )
+        // 回合导航浮在列表右侧，不参与布局。同一份判据同时决定「画不画导航条」和
+        // 「列表右侧留多少槽位」：两处各写一遍，早晚会出现「没画导航但每行都窄一截」
+        // 或「画了却压住正文」——后者是真机上实际发生过的截断。
+        val showTurnNavigator = turnNavigationEnabled && turnCount > 1
         LazyColumn(
             state = scrollState,
             verticalArrangement = Arrangement.Top,
@@ -1333,6 +1338,7 @@ internal fun AgentConversationMessages(
             contentPadding = PaddingValues(
                 top = 16.dp,
                 bottom = bottomInset + 16.dp,
+                end = chatTurnNavigatorGutter(showTurnNavigator),
             ),
             overscrollEffect = null,
         ) {
@@ -1473,7 +1479,7 @@ internal fun AgentConversationMessages(
             }
         }
 
-        if (turnNavigationEnabled && turnCount > 1) {
+        if (showTurnNavigator) {
             // currentTurn 来自上一帧的滚动状态，turnCount 来自当前帧的消息列表。编辑消息会把
             // 后续消息截掉（visibleMessagesForEdit），回合数可能从 21 掉到 5，而 currentTurn
             // 还是上一帧的 19 —— 直接拿它算目标会整体越界，「上一个 / 下一个」变成哑按钮，
@@ -1494,7 +1500,7 @@ internal fun AgentConversationMessages(
                 },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 4.dp),
+                    .padding(end = ChatTurnNavigatorMetrics.EndGap),
             )
         }
 

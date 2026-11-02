@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
@@ -102,10 +103,49 @@ internal fun moveTurnIndex(currentIndex: Int?, total: Int, step: Int): Int? {
 }
 
 /**
+ * 回合导航的尺寸事实源。
+ *
+ * 导航条浮在消息区右侧，**不参与列表布局**。如果内容区不主动留出同样宽的槽位，
+ * 正文就会画到它下面：真机截图里行尾被不透明背景切掉，那几行读不全。
+ * 所以「导航条实际占多宽」只在这里定义一次，列表按 [ContentGutter] 留白，
+ * 改按钮尺寸或边距时两边不会单边漂移。
+ */
+internal object ChatTurnNavigatorMetrics {
+    /** 上下箭头的点击区（与 [TurnStepButton] 一致）。 */
+    val StepButtonSize = 32.dp
+
+    /** 导航条内边距（上下左右同值）。 */
+    val ColumnPadding = 2.dp
+
+    /** 导航条最小宽度：`7/7` 这类短标签也要撑住，不能比按钮还窄。 */
+    val ColumnMinWidth = 40.dp
+
+    /** 导航条与屏幕右缘的间距（调用方 `padding(end = ...)`）。 */
+    val EndGap = 4.dp
+
+    /** 导航条自身宽度（与 [ChatTurnNavigator] 的 `widthIn` + `padding` 一致）。 */
+    val Width: Dp = maxOf(ColumnMinWidth, StepButtonSize + ColumnPadding * 2)
+
+    /** 内容区要为它让出的总宽度：导航条 + 贴边间距。 */
+    val ContentGutter: Dp = Width + EndGap
+}
+
+/**
+ * 消息列表右侧要让出的宽度；导航条不显示时返回 0。
+ *
+ * 给不可见的控件留白，会让每一行都白窄一截 —— 所以判据必须与绘制处完全一致
+ * （同一份 `turnNavigationEnabled && turnCount > 1`）。
+ */
+internal fun chatTurnNavigatorGutter(visible: Boolean): Dp =
+    if (visible) ChatTurnNavigatorMetrics.ContentGutter else 0.dp
+
+/**
  * 贴在消息区右侧的回合导航条。
  *
  * 位置刻意避开右下角的「回到底部」：那个按钮属于「我在跟最新内容」，这个是「我要去别处」，
  * 两者语义相反，挤在一起容易点错。
+ *
+ * 宽度由 [ChatTurnNavigatorMetrics] 统一管理 —— 消息列表按同一份数值留出右侧槽位。
  */
 @Composable
 internal fun ChatTurnNavigator(
@@ -120,12 +160,15 @@ internal fun ChatTurnNavigator(
     val current = currentTurn?.coerceIn(0, total - 1)
     Column(
         modifier = modifier
-            .widthIn(min = 40.dp)
+            .widthIn(min = ChatTurnNavigatorMetrics.ColumnMinWidth)
             .background(
                 color = MiuixTheme.colorScheme.surfaceContainerHigh,
                 shape = RoundedCornerShape(20.dp),
             )
-            .padding(horizontal = 2.dp, vertical = 2.dp),
+            .padding(
+                horizontal = ChatTurnNavigatorMetrics.ColumnPadding,
+                vertical = ChatTurnNavigatorMetrics.ColumnPadding,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         TurnStepButton(
@@ -167,8 +210,8 @@ private fun TurnStepButton(
     }
     Box(
         modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .size(ChatTurnNavigatorMetrics.StepButtonSize)
+            .clip(RoundedCornerShape(ChatTurnNavigatorMetrics.StepButtonSize / 2))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

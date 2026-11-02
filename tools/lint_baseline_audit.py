@@ -104,14 +104,20 @@ def main() -> int:
     for issue in root.iter("issue"):
         if issue.get("id") == "LintBaseline":
             hint = issue.get("message") or ""
-    match = re.search(r"(\d+) errors and (\d+) hints were filtered", hint or "")
+    # lint 的措辞会随版本与统计内容变：同一条统计既有
+    #   「176 errors and 7 hints were filtered out because they are listed in the baseline file」
+    #   也有
+    #   「155 errors were filtered out because they are listed in the baseline file」
+    #   （2026-11-02 清掉 hint 类条目后实测；lint 在无 hint 时整段省略）
+    # 只认第一种会在后者把门禁误判成「解析失败」，而实际账目是平的。
+    match = re.search(r"(\d+) errors(?: and (\d+) hints)? (?:were )?filtered", hint or "")
     if hint is None:
         print("  ! lint 没有报告 baseline 过滤统计，跳过陈旧条目核对（baseline 可能是空的）")
     elif not match:
         print("  ✗ 无法解析 baseline 过滤统计（lint 消息格式可能变了）：%r" % hint)
         return 2
     else:
-        filtered = int(match.group(1)) + int(match.group(2))
+        filtered = int(match.group(1)) + int(match.group(2) or 0)
         if filtered != base_count - relaxed:
             print(
                 "  ✗ baseline 账目不平：lint 只过滤了 %d 条，baseline 记着 %d 条（已放过 %d 条依赖更新提示，差 %d）"

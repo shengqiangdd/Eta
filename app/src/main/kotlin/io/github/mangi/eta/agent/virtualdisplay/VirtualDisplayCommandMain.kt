@@ -157,6 +157,10 @@ internal object VirtualDisplayCommandMain {
         exitProcess(0)
     }
 
+    // 以 root / system 身份通过 IActivityManager 拿系统 ContentProvider：
+    // 这是 Surface 从 App 进程交给特权子进程的唯一合法通道；任一环节失败都返回 null，
+    // 调用方会把 SURFACE_UNAVAILABLE 报给上层，不会假装成功。
+    @android.annotation.SuppressLint("PrivateApi")
     private fun acquireSurfaceFromApp(userId: Int, surfaceToken: String): Surface? {
         val activityManager = Class.forName("android.app.ActivityManager")
             .getMethod("getService")
@@ -216,7 +220,10 @@ internal object VirtualDisplayCommandMain {
         }
     }
 
-    @android.annotation.SuppressLint("WrongConstant")
+    // ActivityThread / DisplayManagerGlobal 属于系统内部实现：公开 API 无法在非前台身份下
+    // 创建 TRUSTED 且可交互的 VirtualDisplay，这里用反射并按系统版本选参数。全过程 runCatching，
+    // 失败即为 null，上层退回普通路径。
+    @android.annotation.SuppressLint("WrongConstant", "PrivateApi")
     private fun createTrustedVirtualDisplay(
         surface: Surface,
         width: Int,
@@ -267,6 +274,9 @@ internal object VirtualDisplayCommandMain {
         }
     }.getOrNull()
 
+    // 收银台 / 二维码等结果页需要把任务从画布交还主屏；公开 API 没有跨 display 移动任务的能力，
+    // 只能反射 ActivityTaskManager。失败返回 TASK_NOT_FOUND / MOVE_METHOD_NOT_FOUND，由上层提示。
+    @android.annotation.SuppressLint("PrivateApi")
     private fun moveTaskToMainDisplay(request: JSONObject): JSONObject {
         val displayId = request.optInt("display_id", Display.INVALID_DISPLAY)
         val targetPackage = request.optString("package_name").trim()

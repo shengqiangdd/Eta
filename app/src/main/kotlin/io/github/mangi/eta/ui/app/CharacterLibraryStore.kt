@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -56,7 +57,7 @@ internal class CharacterLibraryStore(
     var personaDraft by mutableStateOf(UserPersona())
         private set
     var usePersona by mutableStateOf(true)
-    var greetingIndex by mutableStateOf(0)
+    var greetingIndex by mutableIntStateOf(0)
     var memoryDraft by mutableStateOf("")
         private set
     var busy by mutableStateOf(false)

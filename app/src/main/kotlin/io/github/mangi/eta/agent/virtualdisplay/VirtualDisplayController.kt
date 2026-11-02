@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.view.Display
 import android.view.WindowManager
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
@@ -588,11 +589,12 @@ internal object VirtualDisplayController {
         val paddedWidth = width + rowPadding / pixelStride
         if (paddedWidth < width) return null
 
-        val rawBitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+        val rawBitmap = createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
         rawBitmap.copyPixelsFromBuffer(buffer)
         return if (paddedWidth == width) {
             rawBitmap
         } else {
+            // 裁剪重载没有 KTX 版本（androidx.core 只提供新建与缩放），保留平台 API。
             val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, width, height)
             rawBitmap.recycle()
             cropped
@@ -618,9 +620,8 @@ internal object VirtualDisplayController {
         height: Int,
         densityDpi: Int,
     ): VirtualDisplay? = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { HiddenApiBypass.addHiddenApiExemptions("Landroid/hardware/display/") }
-        }
+        // minSdk 33（≥ P）：版本判断恒真，直接执行；lint 的 ObsoleteSdkInt 也这么判。
+        runCatching { HiddenApiBypass.addHiddenApiExemptions("Landroid/hardware/display/") }
         val dm = appContext.getSystemService(DisplayManager::class.java) ?: return@runCatching null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val config = VirtualDisplayConfig.Builder(
@@ -724,6 +725,9 @@ internal object VirtualDisplayController {
         return id
     }
 
+    // 反射访问 ActivityTaskManager 是「把画布里的任务交还主屏」的唯一通道：
+    // 公开 API 没有跨 display 移动任务的能力，失败会走下面的 root CLI 兜底，不会静默成功。
+    @android.annotation.SuppressLint("PrivateApi")
     private fun moveVirtualTaskToMainDisplay(
         context: Context,
         displayId: Int,
@@ -732,9 +736,8 @@ internal object VirtualDisplayController {
     ): Boolean {
         // 1. 尝试进程内通过 system_server Hook 放行的 moveRootTaskToDisplay 迁移
         val movedInProcess = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                HiddenApiBypass.addHiddenApiExemptions("Landroid/app/ActivityTaskManager", "Landroid/app/IActivityTaskManager")
-            }
+            // minSdk 33（≥ P）：版本判断恒真，直接执行。
+            HiddenApiBypass.addHiddenApiExemptions("Landroid/app/ActivityTaskManager", "Landroid/app/IActivityTaskManager")
             val atmClass = Class.forName("android.app.ActivityTaskManager")
             val service = atmClass.getMethod("getService").invoke(null) ?: return@runCatching false
             val getTasks = service.javaClass.methods.firstOrNull { it.name == "getTasks" && it.parameterCount >= 1 }

@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowInsetsControllerCompat
@@ -51,7 +52,7 @@ class MainActivity : ComponentActivity() {
      * 但 lazy 值早就算过（null），Compose 侧 `LaunchedEffect(openRoute)` 看不到变化，
      * 界面停在原地。实测过一次，dump 出来还是对话页，就是踩了这个坑。
      */
-    private var debugOpenRouteTick by mutableStateOf(0)
+    private var debugOpenRouteTick by mutableIntStateOf(0)
 
     /**
      * 调试直达路由：`am start -n io.github.mangi.eta/.ui.MainActivity --es eta.route plugins`。

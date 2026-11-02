@@ -932,6 +932,34 @@ ASCII 大小写不敏感、**内存侧匹配的每一个列在 SQL 里都必须�
   走完 58 回合 3 ms，不是瓶颈）；但手机上的滚动动画体感仍无真机数据 —— 库副本会被
   `fallbackToDestructiveMigration` 静默清库，真机复现路线尚未打通。
 
+### 导航条不压正文：留白契约（2026-11-02）
+
+**现象**：回合导航条贴在消息区右侧，正文却按整宽排版 —— 长段落最右一两个字被导航条压住。
+真机截图可见：`7/7` 那条正盖在「虚拟屏 vdmvxt8j3b（display_id=5，purpose=跨会话验证-D1）」的尾部，
+用户读到一半发现句子断了，且没有任何手势能把它挪开。
+
+**契约**：`ChatTurnNavigatorMetrics` 是唯一事实源，绘制与留白都读它。
+
+| 量 | 值 | 用途 |
+|---|---|---|
+| `StepButtonSize` | 32.dp | 上下箭头的点击区 |
+| `ColumnPadding` | 2.dp | 导航条内边距（上下左右同值） |
+| `ColumnMinWidth` | 40.dp | 导航条最小宽度（`7/7` 这类短标签也要撑住） |
+| `EndGap` | 4.dp | 导航条与屏幕右缘的间距 |
+| `Width` | `maxOf(ColumnMinWidth, StepButtonSize + ColumnPadding * 2)` | 导航条实际占宽 |
+| `ContentGutter` | `Width + EndGap` | 列表右侧要让出的宽度 |
+
+- 列表：`contentPadding = PaddingValues(top, bottom, end = chatTurnNavigatorGutter(showTurnNavigator))`；
+- 导航条自身：`padding(end = EndGap)`，不再额外叠加左边距；
+- **隐藏时必须回到 0.dp**：`showTurnNavigator = turnNavigationEnabled && turnCount > 1`
+  与绘制处是同一个表达式，只有一次提问的会话若也留白，每一行都会白窄一截。
+
+**单测**：`ChatTurnNavigatorGutterTest`（纯 JVM，5 条）：可见时等于 `ContentGutter`、隐藏时 0、
+`Width` 与 `ColumnMinWidth + 2 × ColumnPadding` 一致、`ContentGutter` 大于 `Width`、数值单调。
+
+**未验证**：真机上的实际换行位置（截图核对）在本轮收尾时补；纯 JVM 只能保证「取值正确」，
+不能保证「Compose 真的按这个值留白」。
+
 ## 长会话性能实测（2026-10-20）
 
 用正式库的最大会话 `conv-2fbc91d6`（8,435 条消息 / 58 次提问，折叠后 4,083 个时间线条目）

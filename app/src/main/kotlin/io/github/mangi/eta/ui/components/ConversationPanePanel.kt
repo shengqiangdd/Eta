@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SportsBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -349,7 +350,7 @@ private fun ConversationTextRow(
     val hapticFeedback = LocalHapticFeedback.current
     // 菜单要按锚点位置选展开方向：固定在屏幕下半部分的项，向下展开会把
     // 置顶/重命名/导出挤出屏幕，只剩「删除」可点（实测过的可用性问题）。
-    var anchorCenterY by remember { mutableStateOf(0f) }
+    var anchorCenterY by remember { mutableFloatStateOf(0f) }
     val windowHeight = LocalWindowInfo.current.containerSize.height
     val expandUpward = anchorCenterY > windowHeight / 2f
 

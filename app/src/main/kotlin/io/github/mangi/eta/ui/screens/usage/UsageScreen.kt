@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -54,7 +55,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 internal fun UsageScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    var days by rememberSaveable { mutableStateOf(7) }
+    var days by rememberSaveable { mutableIntStateOf(7) }
     val summary by produceState<AgentUsageLedger.Summary?>(initialValue = null, days) {
         value = withContext(Dispatchers.IO) { AgentUsageLedger.get().summarize(days) }
     }

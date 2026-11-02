@@ -518,16 +518,6 @@
             column="5"/>
     </issue>
 
-    <issue
-        id="MutableCollectionMutableState"
-        message="Creating a MutableState object with a mutable collection type"
-        errorLine1="    var selectedIds by rememberSaveable(catalogId) { mutableStateOf(arrayListOf&lt;String>()) }"
-        errorLine2="                                                     ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/pages/providers/CommunityCatalogScreens.kt"
-            line="224"
-            column="54"/>
-    </issue>
 
     <issue
         id="SwitchIntDef"
@@ -965,82 +955,12 @@
             column="25"/>
     </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    var previousBottomInsetPx by remember { mutableStateOf(bottomInsetPx) }"
-        errorLine2="                                            ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/components/AgentChatBody.kt"
-            line="1048"
-            column="45"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    var runningUnpaused by mutableStateOf(0)"
-        errorLine2="                           ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentKeepScreenStatus.kt"
-            line="18"
-            column="28"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    var greetingIndex by mutableStateOf(0)"
-        errorLine2="                         ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/CharacterLibraryStore.kt"
-            line="59"
-            column="26"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    var anchorCenterY by remember { mutableStateOf(0f) }"
-        errorLine2="                                    ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/components/ConversationPanePanel.kt"
-            line="352"
-            column="37"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    private var debugOpenRouteTick by mutableStateOf(0)"
-        errorLine2="                                      ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/MainActivity.kt"
-            line="54"
-            column="39"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    var selectedTurn by rememberSaveable(runId) { mutableStateOf(-1) }"
-        errorLine2="                                                  ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/screens/runs/RunInspectorScreen.kt"
-            line="286"
-            column="51"/>
-    </issue>
 
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    var days by rememberSaveable { mutableStateOf(7) }"
-        errorLine2="                                   ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/screens/usage/UsageScreen.kt"
-            line="57"
-            column="36"/>
-    </issue>
 
     <issue
         id="UnusedResources"
@@ -1141,225 +1061,25 @@
             column="47"/>
     </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_listening&quot;>聆聽中...&lt;/string>"
-        errorLine2="                                 ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="286"
-            column="34"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_listening&quot;>聆听中...&lt;/string>"
-        errorLine2="                                 ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="301"
-            column="34"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_listening&quot;>Listening...&lt;/string>"
-        errorLine2="                                 ~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="342"
-            column="34"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_saving_d70d42&quot;>儲存中...&lt;/string>"
-        errorLine2="                                    ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="610"
-            column="37"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_deleting_6f941d&quot;>刪除中...&lt;/string>"
-        errorLine2="                                      ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="617"
-            column="39"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_saving_d70d42&quot;>保存中...&lt;/string>"
-        errorLine2="                                    ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="625"
-            column="37"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_deleting_6f941d&quot;>删除中...&lt;/string>"
-        errorLine2="                                      ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="632"
-            column="39"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_retrieving_a880c9&quot;>拉取中...&lt;/string>"
-        errorLine2="                                        ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="641"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_saving_d70d42&quot;>Saving...&lt;/string>"
-        errorLine2="                                    ~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="644"
-            column="37"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_deleting_6f941d&quot;>Deleting...&lt;/string>"
-        errorLine2="                                      ~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="651"
-            column="39"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_retrieving_a880c9&quot;>拉取中...&lt;/string>"
-        errorLine2="                                        ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="656"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_retrieving_a880c9&quot;>Retrieving...&lt;/string>"
-        errorLine2="                                        ~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="675"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_processing_dde1db&quot;>處理中...&lt;/string>"
-        errorLine2="                                        ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="709"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_processing_dde1db&quot;>处理中...&lt;/string>"
-        errorLine2="                                        ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="724"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_resetting_616090&quot;>重置中...&lt;/string>"
-        errorLine2="                                       ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="729"
-            column="40"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_processing_dde1db&quot;>Processing...&lt;/string>"
-        errorLine2="                                        ~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="743"
-            column="41"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;page_resetting_616090&quot;>Resetting...&lt;/string>"
-        errorLine2="                                       ~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="748"
-            column="40"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_recognizing&quot;>識別中...&lt;/string>"
-        errorLine2="                                   ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hant/strings.xml"
-            line="1284"
-            column="36"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_recognizing&quot;>识别中...&lt;/string>"
-        errorLine2="                                   ~~~~~~">
-        <location
-            file="src/main/res/values-b+zh+Hans/strings.xml"
-            line="1299"
-            column="36"/>
-    </issue>
 
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="  &lt;string name=&quot;voice_recognizing&quot;>Recognizing...&lt;/string>"
-        errorLine2="                                   ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1325"
-            column="36"/>
-    </issue>
 
     <issue
         id="ViewConstructor"

@@ -283,7 +283,7 @@
   <string name="conversation_persistence_failed">無法儲存對話，請重試</string>
   <string name="system_notice_interrupted">任務已中斷。已保留部分輸出，未自動重試尚未完成的操作。</string>
   <string name="tool_status_unknown">結果未知</string>
-  <string name="voice_listening">聆聽中...</string>
+  <string name="voice_listening">聆聽中…</string>
   <string name="voice_tap_to_speak">點按以說話</string>
   <string name="overlay_supplement">補充</string>
   <string name="overlay_capsule_toggle">%1$s，點擊展開控制</string>
@@ -565,16 +565,16 @@
   <string name="page_context_unknown_b6ae7b">內容長度未知</string>
   <string name="page_automatically_pull_from_remote_f883d0">從遠端自動拉取</string>
   <string name="page_save_fadf24">儲存</string>
-  <string name="page_saving_d70d42">儲存中...</string>
+  <string name="page_saving_d70d42">儲存中…</string>
   <string name="page_save_failed_40525a">儲存失敗</string>
   <string name="page_select_none_ba20eb">全不選</string>
   <string name="page_select_all_3e44b2">全選</string>
   <string name="page_delete_3755f5">刪除</string>
-  <string name="page_deleting_6f941d">刪除中...</string>
+  <string name="page_deleting_6f941d">刪除中…</string>
   <string name="page_fail_3e3c80">失敗</string>
   <string name="page_covered_model_automatic_capabilities_3fa7d4">已覆蓋模型自動能力</string>
   <string name="page_current_model_a0af8f">預設模型</string>
-  <string name="page_retrieving_a880c9">拉取中...</string>
+  <string name="page_retrieving_a880c9">拉取中…</string>
   <string name="page_support_thinking_5b9e4c">支援思考</string>
   <string name="page_there_is_no_model_yet_please_pull_it_from_the_remote_ced865">暫無模型，請從遠端拉取或手動新增</string>
   <string name="page_no_matching_model_found_ae7e96">未找到匹配的模型</string>
@@ -599,7 +599,7 @@
   <string name="page_save_configuration_817af1">儲存設定</string>
   <string name="page_saved_provider_not_enabled_7afa54">已儲存，Provider 未啟用</string>
   <string name="page_show_71b677">顯示</string>
-  <string name="page_testing_f43705">測試中...</string>
+  <string name="page_testing_f43705">測試中…</string>
   <string name="page_use_standard_chat_completions_ee4b1a">使用 Chat Completions API；委派 Codex 時固定使用 Responses API</string>
   <string name="page_using_typed_items_with_semantic_streaming_events_f9c906">使用 Responses API、typed Items 與語意化串流事件；委派 Codex 同樣走 Responses API</string>
   <string name="voice_input_hint">傳訊息給 Eta…</string>
@@ -1111,7 +1111,7 @@
   <string name="voice_audio_permission">请在 Eta 应用权限中允许麦克风，然后重新唤醒；点击麦克风可打开设置</string>
   <string name="voice_use_keyboard">切换键盘输入</string>
   <string name="voice_finish_speech">结束录音并发送</string>
-  <string name="voice_recognizing">識別中...</string>
+  <string name="voice_recognizing">識別中…</string>
   <string name="speech_settings_title">語音</string>
   <string name="speech_recognition_title">語音識別</string>
   <string name="speech_synthesis_title">語音播報</string>

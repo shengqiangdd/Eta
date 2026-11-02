@@ -82,15 +82,39 @@
 | 项 | 结果 |
 | --- | --- |
 | 契约（minSdk） | ✓ 33 |
+| 测试类归属 | ✓ 491 个测试类（快速子集 128 + 基线 363），没有静默不跑的 |
 | UI 动作接线 | ✓ 7 个动作接口 / 65 个动作，每个都有发出点 |
 | 死文案 | ✓ 0 条（基线 0） |
-| 单测（白名单内） | ✓ 1106 通过 / 0 失败 |
-| 打包 | ✓ `Eta-v3.4.0-debug.apk`，32,268,625 字节，sha256 `f648940213fc3940…` |
+| 单测（白名单内） | ✓ 1111 通过 / 0 失败 |
+| lint | ✓ 报告无新增问题；baseline 155 条命中（共 166 条，另 11 条依赖更新类未复现、按规则放过） |
+| 打包 | ✓ `Eta-v3.4.0-debug.apk`，32,272,553 字节，sha256 `13494e4d3b509cf8…` |
 
 全量 `:app:testDebugUnitTest` 另有 445 条失败，全部是 Robolectric 原生运行库在 Linux aarch64 上不可用（`The Robolectric native runtime is not supported on Linux (aarch64)`），属本机环境限制，不是合并引入；这些用例只能在上游 CI 或 x86 环境跑。
+
+### 4.1 lint 从「内部崩溃」到「能拦住新增」
+
+合并后第一次跑 lint 时，`:app:lintAnalyzeDebug` 在 `AsyncExecutionService.getService must not return null` 处内部崩溃，
+而那一次 ConcurrentModification 的时间点与“正在改同一个文件”重合，当时只能记为「疑竞态，不算绿」。
+本轮在干净工作树上重跑，**崩溃不复现**；lint 完整跑完，并报出 10 条真错误：
+
+| 类型 | 处数 | 处置 |
+|---|---|---|
+| `PrivateApi`（反射 `IActivityManager` / `ActivityThread` / `DisplayManagerGlobal` / `ActivityTaskManager`） | 6 | 保留：虚拟屏的 root 桥接与「交还主屏」没有公开 API 可替代；改为在具体函数上 `@SuppressLint("PrivateApi")` 并写清失败降级路径 |
+| `ObsoleteSdkInt`（`SDK_INT >= P`，minSdk 33） | 2 | 删除恒真判断 |
+| `UseKtx`（`Bitmap.createBitmap`） | 1 | 改用 `androidx.core.graphics.createBitmap`；裁剪重载没有 KTX 版，保留平台 API 并注明 |
+| `SdCardPath`（上下文说明文本里的 `/sdcard`） | 1 | 不是路径拼接，`@SuppressLint("SdCardPath")` + 注释说明真实访问走 workspace |
+
+同时清掉 28 条存量（baseline 195 → 166）：`AutoboxingStateCreation` 8 条（`mutableIntStateOf` / `mutableFloatStateOf`，
+Compose 官方建议，避开每次写入的装箱）、`MutableCollectionMutableState` 1 条（State 里改存只读 List）、
+`TypographyEllipsis` 20 条（三语进度文案的 `...` 改 U+2026，Material 排版惯例）。
+清理时还发现门禁自身一个缺陷：`tools/lint_baseline_audit.py` 只认「N errors and M hints were filtered」，
+而本次报告只剩「N errors were filtered」——账目实际是平的，却被判成解析失败。已改为两种句式都接受，
+并用「注入一条假 baseline」验证它仍会报红。
 
 ## 5. 遗留
 
 1. **两套虚拟屏仍然同名**。现在靠 import 别名区分，可读性够用但不够干净；若要改名，必须一次改完所有调用点，不能只改一半。
-2. **上游 11 条文案本仓库未接线**，例如「删除运行中的会话」会提示「停止并删除」、备份文件打开失败的提示。这些是上游 3.4.0 的界面改进，本地对应界面还是旧版；要不要跟进需要单独排期，本轮不顺手改，避免在合并提交里混入行为变更。
-3. **真机验证**：安装包与冒烟结果见本轮提交说明。
+2. **上游 11 条文案本仓库未接线**，其中「删除运行中的会话」已在 `52defca` 接线（先停任务、等运行态落下再删）；
+   其余 10 条（如备份文件打开失败的提示）仍是上游 3.4.0 的界面改进，本地对应界面还是旧版，
+   要不要跟进需要单独排期 —— 不在合并提交里混行为变更。
+3. **真机验证**：canary 包安装与冒烟结果见提交说明；本轮另补了「回合导航条压正文」的留白修复与截图核对。

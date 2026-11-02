@@ -221,7 +221,10 @@ internal fun CommunityCatalogProviderScreen(
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var query by rememberSaveable(catalogId) { mutableStateOf("") }
-    var selectedIds by rememberSaveable(catalogId) { mutableStateOf(arrayListOf<String>()) }
+    // 声明类型用只读 List：Compose 的 MutableCollectionMutableState 要求 State 里不放可变集合；
+    // 实际存的是 ArrayList，因为 rememberSaveable 只能把 Bundle 认识的类型写进 saved state。
+    // 每次修改都赋新实例（下面的 + / filterNot），不会绕过快照通知。
+    var selectedIds by rememberSaveable(catalogId) { mutableStateOf<List<String>>(ArrayList()) }
     var importError by remember { mutableStateOf<String?>(null) }
     var importInFlight by remember { mutableStateOf(false) }
     var selection by remember(catalogId) { mutableStateOf<CommunityCatalogProvider?>(null) }

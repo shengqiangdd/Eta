@@ -42,6 +42,10 @@ internal data class TerminalExecutionContext(
     fun identityFor(environment: TerminalEnvironment, rootAvailable: Boolean): String =
         if (environment.isLinux) linuxIdentity else if (rootAvailable) "root" else "user"
 
+    // 下面整段是「给模型看的执行上下文说明」，里面写 /sdcard 是在描述宿主路径映射，
+    // 不是拿它做文件读写（真实访问一律走 workspacePath / bind mount）。lint 的 SdCardPath
+    // 只看字面量，所以在这里显式豁免，避免以后有人把它当成真的路径拼接。
+    @android.annotation.SuppressLint("SdCardPath")
     fun description(rootAvailable: Boolean): String = buildString {
         append("本次运行的命令和文件工具共用默认执行上下文：environment=android，identity=")
         append(identityFor(TerminalEnvironment.ANDROID, rootAvailable))

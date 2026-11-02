@@ -105,6 +105,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.tool.AgentSelfAuditTest
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
+  --tests io.github.mangi.eta.ui.components.ChatTurnNavigatorGutterTest
   --tests io.github.mangi.eta.ui.components.ToolIconMappingTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
   --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
@@ -328,6 +329,9 @@ run_contract() {
     return
   fi
   echo "  ✓ minSdk=$min_sdk（≥ 33：API 30 接口不需要版本判断）"
+  # 测试类必须有归属：门禁只跑 FAST_TEST_FILTERS，漏加的类**一例都不会跑**而门禁仍然全绿
+  # （仓库里已经踩过六次，注释里逐条记着）。基线只许减少，维护用 --write-baseline。
+  python3 tools/check_test_subset.py || fail=1
 }
 
 run_contract
