@@ -147,9 +147,19 @@ internal object AgentRunExport {
             }
             AgentRunTraceStore.KIND_RETRY -> "$at 重试 ${entry.attempt ?: 0}/${entry.maxAttempts ?: 0}" +
                 " · 等待 ${duration(entry.delayMs ?: 0)} · ${entry.code.orEmpty()}"
-            AgentRunTraceStore.KIND_USAGE -> "$at token 用量 · 上下文 ${count(entry.contextTokens ?: 0)}" +
-                " · 输入 ${count(entry.inputTokens ?: 0)} · 输出 ${count(entry.outputTokens ?: 0)}" +
-                " · 缓存 ${count(entry.cachedTokens ?: 0)}"
+            AgentRunTraceStore.KIND_USAGE -> buildString {
+                append(at).append(" token 用量 · 上下文 ").append(count(entry.contextTokens ?: 0))
+                // 新追踪有服务商总输入：先写「总输入」，与头部的 totalTokens = prompt + output 对得上。
+                // 旧追踪没有该字段，不能把原样 input 冒充成总输入，继续写「输入」。
+                val prompt = entry.promptTokens
+                if (prompt != null) {
+                    append(" · 总输入 ").append(count(prompt))
+                } else {
+                    append(" · 输入 ").append(count(entry.inputTokens ?: 0))
+                }
+                append(" · 输出 ").append(count(entry.outputTokens ?: 0))
+                append(" · 缓存 ").append(count(entry.cachedTokens ?: 0))
+            }
             AgentRunTraceStore.KIND_COMPACT -> buildString {
                 append(at).append(' ')
                 append(if (entry.phase == "completed") "上下文已压缩" else "正在压缩上下文")

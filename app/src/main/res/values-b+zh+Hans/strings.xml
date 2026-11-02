@@ -1585,7 +1585,7 @@
   <string name="usage_metric_reasoning">推理</string>
   <string name="usage_metric_average_per_call">平均每次</string>
   <string name="usage_metric_cache_hit_rate">缓存命中率</string>
-  <string name="usage_cache_note">缓存命中率 = 缓存命中 ÷ 服务商返回的总输入 token（Anthropic 含缓存读写；OpenAI 兼容与 Gemini 取输入总量）。旧记录按 cached ÷ (cached + 输入) 回退。总 token = 总输入 + 输出。</string>
+  <string name="usage_cache_note">缓存命中率 = 缓存命中 ÷ 服务商返回的总输入 token（Anthropic 含缓存读写；OpenAI 兼容与 Gemini 取输入总量）。旧记录按 cached ÷ (cached + 输入) 回退。Anthropic 的「输入」不含缓存（总输入 = 输入 + 缓存）；总 token = 总输入 + 输出。</string>
   <string name="usage_daily_title">按天</string>
   <string name="usage_purpose_title">按用途</string>
   <plurals name="usage_purpose_calls">
@@ -1675,6 +1675,7 @@
   <string name="runs_entry_text_detail">%1$s 字符</string>
   <string name="runs_entry_usage">token 用量</string>
   <string name="runs_entry_usage_detail">上下文 %1$s · 输入 %2$s · 输出 %3$s · 缓存 %4$s</string>
+  <string name="runs_entry_usage_detail_prompt">上下文 %1$s · 总输入 %2$s · 输出 %3$s · 缓存 %4$s</string>
   <string name="runs_entry_retry">重试 %1$d/%2$d</string>
   <string name="runs_entry_retry_detail">等待 %1$s · %2$s</string>
   <string name="runs_entry_compact_done">上下文已压缩</string>

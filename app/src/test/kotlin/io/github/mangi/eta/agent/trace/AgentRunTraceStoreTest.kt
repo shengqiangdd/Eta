@@ -109,6 +109,34 @@ class AgentRunTraceStoreTest {
     }
 
     @Test
+    fun `total tokens agree across trace summary and trajectory`() {
+        beginTrace()
+        val store = store()
+        store.record(runId, AgentEvent.RoundStarted(1, 2))
+        store.record(
+            runId,
+            AgentEvent.UsageReceived(
+                1,
+                AgentTokenUsage(inputTokens = 200, outputTokens = 100, cachedTokens = 800, promptTokens = 1_000),
+            ),
+        )
+        store.record(runId, AgentEvent.RoundStarted(2, 3))
+        store.record(
+            runId,
+            AgentEvent.UsageReceived(2, AgentTokenUsage(inputTokens = 100, outputTokens = 50, cachedTokens = 0)),
+        )
+        store.finish(runId, ok = true)
+
+        val trace = store.read(runId)!!
+        val summary = store.list(10).single()
+        val trajectory = AgentRunTrajectory.build(trace)
+        // 详情、列表、轨迹三条路径各算一遍：同一份记录必须给同一个数。
+        assertEquals(1_250, trace.totalTokens)
+        assertEquals(trace.totalTokens, summary.totalTokens)
+        assertEquals(trace.totalTokens, trajectory.turns.sumOf { it.tokens })
+    }
+
+    @Test
     fun `records one first token per request even when blocks keep starting`() {
         beginTrace()
         val store = store()

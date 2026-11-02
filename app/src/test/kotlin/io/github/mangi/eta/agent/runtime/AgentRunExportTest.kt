@@ -72,6 +72,52 @@ class AgentRunExportTest {
     }
 
     @Test
+    fun usageLineShowsThePromptTotalWhenReported() {
+        val markdown = AgentRunExport.markdown(
+            trace(
+                entries = listOf(
+                    round(1, 1_000L),
+                    AgentRunTraceStore.Entry(
+                        kind = AgentRunTraceStore.KIND_USAGE,
+                        at = 1_200L,
+                        round = 1,
+                        contextTokens = 1_000,
+                        inputTokens = 200,
+                        outputTokens = 100,
+                        cachedTokens = 800,
+                        promptTokens = 1_000,
+                    ),
+                ),
+            ),
+        )
+        // 有服务商总输入时写「总输入」，与运行头部的 totalTokens = prompt + output 对得上。
+        assertTrue(markdown.contains("· 总输入 1000 · 输出 100 · 缓存 800"))
+        assertFalse(markdown.contains("· 输入 200"))
+    }
+
+    @Test
+    fun usageLineKeepsRawInputForLegacyTraces() {
+        // 旧追踪没有 prompt：不能把原样 input 冒充成「总输入」，继续写「输入」。
+        val markdown = AgentRunExport.markdown(
+            trace(
+                entries = listOf(
+                    round(1, 1_000L),
+                    AgentRunTraceStore.Entry(
+                        kind = AgentRunTraceStore.KIND_USAGE,
+                        at = 1_200L,
+                        round = 1,
+                        contextTokens = 1_000,
+                        inputTokens = 200,
+                        outputTokens = 100,
+                        cachedTokens = 800,
+                    ),
+                ),
+            ),
+        )
+        assertTrue(markdown.contains("· 输入 200 · 输出 100 · 缓存 800"))
+    }
+
+    @Test
     fun failureAndTruncationAreVisible() {
         val markdown = AgentRunExport.markdown(
             trace(

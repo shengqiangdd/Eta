@@ -1611,7 +1611,7 @@
   <string name="usage_metric_reasoning">Reasoning</string>
   <string name="usage_metric_average_per_call">Average per call</string>
   <string name="usage_metric_cache_hit_rate">Cache hit rate</string>
-  <string name="usage_cache_note">Cache hit rate = cached ÷ the provider-reported prompt total (Anthropic includes cache reads/writes; OpenAI-compatible endpoints and Gemini use input totals). Older records fall back to cached ÷ (cached + input). Total tokens = prompt total + output.</string>
+  <string name="usage_cache_note">Cache hit rate = cached ÷ the provider-reported prompt total (Anthropic includes cache reads/writes; OpenAI-compatible endpoints and Gemini use input totals). Older records fall back to cached ÷ (cached + input). For Anthropic the input figure excludes cache (prompt total = input + cached); total tokens = prompt total + output.</string>
   <string name="usage_daily_title">By day</string>
   <string name="usage_purpose_title">By purpose</string>
   <plurals name="usage_purpose_calls">
@@ -1710,6 +1710,7 @@
   <string name="runs_entry_text_detail">%1$s characters</string>
   <string name="runs_entry_usage">Token usage</string>
   <string name="runs_entry_usage_detail">Context %1$s · Input %2$s · Output %3$s · Cached %4$s</string>
+  <string name="runs_entry_usage_detail_prompt">Context %1$s · Prompt %2$s · Output %3$s · Cached %4$s</string>
   <string name="runs_entry_retry">Retry %1$d/%2$d</string>
   <string name="runs_entry_retry_detail">Waited %1$s · %2$s</string>
   <string name="runs_entry_compact_done">Context compacted</string>

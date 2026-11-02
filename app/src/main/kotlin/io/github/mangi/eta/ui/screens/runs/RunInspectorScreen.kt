@@ -610,13 +610,25 @@ private fun TraceEntryCard(
             )
             AgentRunTraceStore.KIND_USAGE -> DetailLine(
                 title = stringResource(R.string.runs_entry_usage),
-                detail = stringResource(
-                    R.string.runs_entry_usage_detail,
-                    formatCount(entry.contextTokens ?: 0),
-                    formatCount(entry.inputTokens ?: 0),
-                    formatCount(entry.outputTokens ?: 0),
-                    formatCount(entry.cachedTokens ?: 0),
-                ),
+                // 有服务商总输入时按新口径展示（总输入 + 输出 = 总 token）；
+                // 旧追踪没有该字段，继续展示原样输入，不冒充总输入。
+                detail = if (entry.promptTokens != null) {
+                    stringResource(
+                        R.string.runs_entry_usage_detail_prompt,
+                        formatCount(entry.contextTokens ?: 0),
+                        formatCount(entry.promptTokens),
+                        formatCount(entry.outputTokens ?: 0),
+                        formatCount(entry.cachedTokens ?: 0),
+                    )
+                } else {
+                    stringResource(
+                        R.string.runs_entry_usage_detail,
+                        formatCount(entry.contextTokens ?: 0),
+                        formatCount(entry.inputTokens ?: 0),
+                        formatCount(entry.outputTokens ?: 0),
+                        formatCount(entry.cachedTokens ?: 0),
+                    )
+                },
             )
             AgentRunTraceStore.KIND_RETRY -> DetailLine(
                 title = stringResource(R.string.runs_entry_retry, entry.attempt ?: 0, entry.maxAttempts ?: 0),

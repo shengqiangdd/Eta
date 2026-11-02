@@ -218,7 +218,7 @@ internal sealed interface AgentEvent {
         val usage: AgentTokenUsage
     ) : AgentEvent {
         override fun toLogLine(): String =
-            "usage_received round=$round, ctx=${usage.contextTokens}, in=${usage.inputTokens}, out=${usage.outputTokens}, reasoning=${usage.reasoningTokens}, cache=${usage.cachedTokens}"
+            "usage_received round=$round, ctx=${usage.contextTokens}, in=${usage.inputTokens}, out=${usage.outputTokens}, reasoning=${usage.reasoningTokens}, cache=${usage.cachedTokens}, prompt=${usage.promptTokens}"
     }
 
     data class UserSupplementReceived(
