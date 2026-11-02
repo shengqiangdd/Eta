@@ -4,6 +4,8 @@ import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.agent.media.AgentImageCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.terminal.ShellProcessSupervisor
+import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
+import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController as CanvasVirtualDisplay
 import io.github.mangi.eta.core.AgentLogger
 
 import android.content.ClipData
@@ -12,6 +14,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
+import android.view.Display
 import java.io.IOException
 import java.io.StringReader
 import java.util.Locale
@@ -97,7 +100,7 @@ internal class RootShellDeviceController(
 
     data class ScreenPoint(val x: Int, val y: Int)
 
-    fun screenDimensions(): Pair<Int, Int> = screenSize()
+    fun screenDimensions(displayId: Int = Display.DEFAULT_DISPLAY): Pair<Int, Int> = screenSize(displayId)
 
     /**
      * 某块屏自己的尺寸；虚拟屏取会话记录，拿不到就返回 null。
@@ -155,6 +158,9 @@ internal class RootShellDeviceController(
         }
         val nodeLimit = maxNodes.coerceIn(1, 120)
         val virtual = resolveVirtualSession(displayId)
+        // 上游按 displayId 贯穿的那几处需要一个非空屏 id：
+        // 这套 API 里 null 就是主屏（Display.DEFAULT_DISPLAY = 0）。
+        val targetDisplayId = virtual?.displayId ?: displayId ?: Display.DEFAULT_DISPLAY
         // 虚拟屏的"前台包"只能靠任务栈查（无障碍服务只跟踪默认屏）。
         // 不查就会退化成"报主屏的包"——观测结果会说假话，模型据此判断应用起没起来。
         val virtualForeground = if (virtual != null) {
@@ -205,7 +211,7 @@ internal class RootShellDeviceController(
             // 拿不到时 captureNodeSnapshot 返回 null，调用方回退到截图路径。
             val accessibilitySnapshot = accessibility?.captureNodeSnapshot(
                 nodeLimit,
-                displayId = virtual?.displayId,
+                displayId = targetDisplayId,
             )
             if (accessibilitySnapshot != null) {
                 ElementObservation(
@@ -269,6 +275,8 @@ internal class RootShellDeviceController(
         val json = JSONObject()
             .put("ok", true)
             .put("tool", "observe_screen")
+            .put("canvas", if (CanvasRoutingPolicy.isVirtualDisplay(targetDisplayId)) CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY.wireName else CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName)
+            .put("display_id", targetDisplayId)
             .put("screen", JSONObject().put("width", display.first).put("height", display.second))
             .put(
                 "display",
@@ -536,7 +544,7 @@ internal class RootShellDeviceController(
         AgentAccessibilityService.current()?.let { service ->
             // 虚拟屏也有无障碍树了：优先用节点滚动动作；拿不到根/滚动容器，
             // 或节点只支持手势（手势只作用于默认屏）时才退回 input -d 坐标滑动。
-            val result = service.scrollCurrent(parsed, parsedAmount, displayId)
+            val result = service.scrollCurrent(parsed, parsedAmount, displayId ?: Display.DEFAULT_DISPLAY)
             // 虚拟屏上「无障碍这条路走不通」的任何理由都该退到 input -d。
             // 以前只认两个错误码（NO_ACTIVE_WINDOW / GESTURE_UNSUPPORTED），其余原样报错；
             // 实测同一调用时好时坏：失败那次 7ms 就返回了，说明压根没滑，
@@ -655,7 +663,7 @@ internal class RootShellDeviceController(
         return json.toString()
     }
 
-    fun inputText(text: String): String {
+    fun inputText(text: String, displayId: Int = Display.DEFAULT_DISPLAY): String {
         if (text.isEmpty()) return errorJson("INVALID_ARGUMENT", "text 不能为空")
         if (text.length > MAX_INPUT_TEXT_CHARS) {
             return errorJson("TEXT_TOO_LONG", "input_text 最多支持 $MAX_INPUT_TEXT_CHARS 个字符")
@@ -997,13 +1005,14 @@ internal class RootShellDeviceController(
         text: String,
         index: Int?,
         observation: ElementObservation?,
+        displayId: Int = Display.DEFAULT_DISPLAY,
     ): String {
         if (text.length > MAX_REPLACE_TEXT_CHARS) {
             return errorJson("TEXT_TOO_LONG", "replace_text 最多支持 $MAX_REPLACE_TEXT_CHARS 个字符")
         }
         AgentAccessibilityService.current()?.let { service ->
             val snapshot = observation?.accessibilitySnapshot
-            val result = service.setTextNode(snapshot, index, text)
+            val result = service.setTextNode(snapshot, index, text, displayId = displayId)
             if (result.ok) {
                 waitForUiSettle("replace_text")
                 return nodeActionJson("replace_text", result)
@@ -1013,8 +1022,12 @@ internal class RootShellDeviceController(
         return errorJson("ACCESSIBILITY_UNAVAILABLE", "replace_text 需要先启用 Eta Agent 无障碍服务")
     }
 
-    fun clearText(index: Int?, observation: ElementObservation?): String =
-        replaceText("", index, observation).let { result ->
+    fun clearText(
+        index: Int?,
+        observation: ElementObservation?,
+        displayId: Int = Display.DEFAULT_DISPLAY,
+    ): String =
+        replaceText("", index, observation, displayId = displayId).let { result ->
             val json = JSONObject(result)
             json.put("tool", "clear_text").toString()
         }
@@ -1354,7 +1367,7 @@ internal class RootShellDeviceController(
                     )
                 }
                 "ENTER" -> {
-                    val result = service.imeEnter()
+                    val result = service.imeEnter(displayId = displayId ?: Display.DEFAULT_DISPLAY)
                     if (result.ok) {
                         waitForUiSettle("press_key")
                         return attachLanding(
@@ -1469,12 +1482,13 @@ internal class RootShellDeviceController(
         val timeout = timeoutMs.coerceIn(500, 60_000)
         val deadline = System.currentTimeMillis() + timeout
         var attempts = 0
+        val isVirtual = CanvasRoutingPolicy.isVirtualDisplay(displayId ?: Display.DEFAULT_DISPLAY)
         while (System.currentTimeMillis() <= deadline) {
             attempts++
             val service = AgentAccessibilityService.current()
             if (service == null && !rootAvailable()) return accessibilityUnavailable()
             val nodes = service
-                ?.queryNodes(120, displayId)
+                ?.queryNodes(120, displayId ?: Display.DEFAULT_DISPLAY)
                 ?.map { it.toUiNode() }
                 ?.takeIf { it.isNotEmpty() }
                 ?: dumpUiNodes(120, displayId)
@@ -1517,6 +1531,7 @@ internal class RootShellDeviceController(
         val deadline = System.currentTimeMillis() + timeout
         var attempts = 0
         var lastPackage = ""
+        val isVirtual = CanvasRoutingPolicy.isVirtualDisplay(displayId ?: Display.DEFAULT_DISPLAY)
         while (System.currentTimeMillis() <= deadline) {
             attempts++
             val current = if (displayId != null) {
@@ -1610,7 +1625,10 @@ internal class RootShellDeviceController(
         return json.toString()
     }
 
-    fun pasteText(text: String): String {
+    fun pasteText(
+        text: String,
+        displayId: Int = Display.DEFAULT_DISPLAY,
+    ): String {
         if (text.length > MAX_CLIPBOARD_TEXT_CHARS) {
             return errorJson("TEXT_TOO_LONG", "paste_text 最多支持 $MAX_CLIPBOARD_TEXT_CHARS 个字符")
         }
@@ -2020,8 +2038,14 @@ internal class RootShellDeviceController(
             .put("package", focused?.packageName.orEmpty())
     }
 
-    private fun screenSize(): Pair<Int, Int> {
-        AgentAccessibilityService.current()?.displaySize()?.let { return it }
+    private fun screenSize(displayId: Int = Display.DEFAULT_DISPLAY): Pair<Int, Int> {
+        if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+            val vd = CanvasVirtualDisplay.snapshots.value
+            if (vd.active && vd.displayId == displayId && vd.width > 0 && vd.height > 0) {
+                return vd.width to vd.height
+            }
+        }
+        AgentAccessibilityService.current()?.displaySize(displayId)?.let { return it }
         if (!rootAvailable()) throw DeviceControlUnavailableException()
         val result = runSuText("wm size", timeoutSeconds = 5)
         return AndroidDisplaySizeParser.parse(result.output)

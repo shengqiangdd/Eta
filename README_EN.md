@@ -41,12 +41,14 @@ More screenshots: chat, system tools, and settings
 
 ### Execution tools
 
-- **Direct system API calls:** use Android APIs and system intents to set alarms, control media, adjust volume, and read device status without navigating through app screens.
-- **GUI Agent:** combine the accessibility UI tree, element targeting, and screenshots taken as needed to tap, scroll, and type. While it works, a flowing edge light shows the phone is being driven, and a status capsule below the status bar shows the current step; tap it to add instructions, pause, or stop. On Android 16 QPR2 and later, run status also appears in the status bar chip and on the lock screen via Live Updates, which some systems map to Fluid Cloud and similar surfaces.
-- **Virtual display:** run an app on an isolated virtual display instead of your main screen. When a text field there takes focus, Eta temporarily switches to a headless input method so the keyboard never appears on your main screen, then restores the previous one when focus leaves. If the process is reclaimed during that window, the next launch repairs the default input method.
-- **Built-in browser:** load JavaScript pages in a WebView, extract readable content, interact with the DOM, and capture screenshots. You can open the same browser session to take control.
+- **System and first-party app actions:** call Android APIs and first-party app interfaces directly to read and write calendar events (single or batch creation, updates, and deletion), manage alarms and timers, and create or recycle system notes; control the flashlight, brightness, screen timeout, ringer and Do Not Disturb, Night Light and dark mode, volume, media playback, Wi‑Fi, Bluetooth, mobile data, personal hotspot, NFC, location, and battery saver. Eta can also inspect app versions, install sources, and permissions, force-stop or freeze apps, and filter system logs with root. Settings, toggles, and first-party app writes are read back to confirm the actual state rather than replayed blindly.
+- **GUI Agent and background virtual display:** combine the accessibility UI tree, element targeting, and screenshots taken as needed to tap, long-press, swipe, scroll, and type text; successful actions include a snapshot of the new UI tree, and screenshots preserve their original size and pixels without pre-upload scaling or JPEG conversion. Eta automatically routes between the physical screen and a background virtual display: if the target app is already in the foreground on the main screen, Eta operates in place (with flowing edge light and a top status capsule that moves aside when gestures pass through); cross-app tasks run silently on a trusted background virtual display when root or LSPosed is available, suppressing background audio-focus theft so your main screen and media stay uninterrupted. While the virtual display is active, the top capsule embeds a live micro-lens; tap it to expand a framed stage card for live preview, direct touch takeover on the canvas, or one-tap fullscreen handoff, and the model can call `present_to_user` at checkout, QR-code, or result screens to move the running task seamlessly to the main display. When a text field on the virtual display takes focus, Eta temporarily switches to a headless input method so the keyboard never appears on your main screen, then restores the previous one when focus leaves; if the process is reclaimed during that window, the next launch repairs the default input method. On Android 16 QPR2 and later, run status also appears in the status bar chip and on the lock screen via Live Updates, which some systems map to Fluid Cloud and similar surfaces.
+- **Web search and built-in browser:** search public web pages and read static content in pages without launching a browser, switching between the built-in default, DeepSeek Search / Fetch, or custom HTTP endpoints in Settings. Dynamic JavaScript pages load in an off-screen WebView for content extraction, DOM interaction, and screenshots, and you can open the same browser session to take control.
+- **Terminal and files:** use Android `user`/`root` shells, Alpine or Debian Linux, file operations, image reading, and scripts, with support for persistent sessions, background commands that continue after a reply ends, and cross-run daemon tasks. Text reads continue on UTF-8 byte boundaries, edits check the old content first, and searches report the actual scope and any unfinished part; multi-edit and cross-file refactors commit in one go, roll back the already-written files if a cross-file write fails midway, and save a checkpoint before writing so `restore_file` can undo it, with `dry_run` to preview the diff only.
+- **Environment variables:** add or remove `KEY=VALUE` entries under Settings → Environment variables; they are injected into the Agent's terminal commands, background jobs, and Linux session launches, with `/sdcard/Download/eta-env.conf` as a read-only override source.
+- **Screen and power:** Settings → Chat and execution can turn on "keep the screen on while a session is running": while any session is running and not paused, the foreground window uses `FLAG_KEEP_SCREEN_ON`, and after you switch to another app an explicit wake lock keeps the device awake; pausing, finishing all sessions, or turning the switch off releases it immediately, and the power button still turns the screen off at any time. Browser previews stop polling once the page is static, and background jobs use a foreground service with wake locks on demand.
 - **Message actions:** every message has an explicit entry (the "⋯" beside it) for copy, edit, regenerate, and delete. Very large conversations stay editable too: history is read back on demand when you start editing, so you don't have to start a new conversation.
-- **Terminal and files:** use Android `user`/`root` shells, Alpine or Debian Linux, file operations, and scripts, with support for persistent sessions, asynchronous commands, and daemon tasks.
+- **Coding workflow:** AGENTS.md / CLAUDE.md / ETA.md / .eta/rules.md in the workspace are added to the system prompt; `project_info` detects the project type and suggests build, test, and check commands; existing files are read with `read_file` before editing, large changes are previewed with `dry_run`, a checkpoint is saved before writing, and afterwards `read_file` / `stat_file` plus the project's smallest test confirm the result.
 
 A task can combine these tools: read web sources and then organize files with a script, or find order details in notifications and open the relevant app to check their status.
 
@@ -86,10 +88,10 @@ Automatic compaction needs the model's context window in tokens, set under Setti
 ## System assistant entry points
 
 - **Power-button long press:** choose the default OEM assistant, Gemini, or Eta.
-- **Eta system assistant:** open Eta's text conversation panel from the power button, with screen context and follow-up conversations.
+- **Eta system assistant:** open Eta's global voice overlay from the power button, where the glow enters along the screen edge from the key position and gathers at the bottom; you can also switch to the keyboard or tap a suggestion instead of speaking. The screenshot and app content at wake time are attached automatically, with no extra tap and no accessibility screenshot permission. Speech recognition uses the Qwen or Doubao online APIs (only microphone permission and the matching service configuration; no device recognizer required) and can be turned off in Settings to open the text composer and keyboard directly. Speech synthesis supports Qwen, Doubao, Gemini, and MiniMax with voice selection and preview, plus assistant auto-read, chat dictation, and manual/automatic read-aloud that keeps playing in the background or on the lock screen; pull up on the overlay to jump straight into the main Eta chat. See [Voice](docs/VOICE.md).
 - **Breeno / Super XiaoAI integration:** keep the familiar OEM assistant entry point while routing requests to Eta and your configured model.
 
-Power-button interception requires LSPosed and a supported system.
+On ROMs that lock down the default assistant or power-button behavior, power-button routing and OEM assistant integration require LSPosed and a supported system.
 
 ## Unlocking Gemini and Circle to Search
 
@@ -113,9 +115,9 @@ System tools, sensitive reads, sensitive actions, terminal and file access, brow
 2. Enable the tools and permissions you need. GUI control requires Eta's accessibility service. Notification access and usage access are granted separately; location tools require **Allow all the time**. The tools page shows what is available on your device.
 3. Start a conversation. For Linux, install a distribution, base tools, and any development tools you need under **Linux tool environment**. For assistant integration, see [System assistant entry points](#system-assistant-entry-points).
 
-- **Unrooted devices:** Android 13+ supports chat, browsing, memory, Skills, MCP, the ordinary terminal, and a private workspace. GUI control and personal data access need their respective permissions. Linux is available on supported 64-bit devices.
-- **Rooted devices:** gain access to protected system settings, app management, privileged files, dedicated personal-data searches, root shells, and chroot.
-- **LSPosed with a compatible ROM:** adds OEM assistant integration, system shortcuts, and Google feature enablement. Some features also require root.
+- **Unrooted devices:** Android 13+ on ARM64 supports chat, web search and browsing, memory, Skills, MCP, the ordinary terminal, and a private workspace. Calendar read/write, GUI control, and notification/location/usage access need their respective permissions.
+- **Rooted devices:** gain access to background virtual-display execution, protected system settings and toggles, app management, privileged files, deep system and OEM personal-data searches, native first-party app operations (alarms, notes, etc.), root shells, and chroot.
+- **LSPosed with a compatible ROM:** adds background virtual-display execution, OEM assistant integration, system shortcuts, the in-process Xiaobu Memory query bridge, and Google feature enablement. Some features also require root.
 
 Dedicated searches for contacts, SMS messages, and calendar events still require root. See [Device Support](docs/ROOTLESS_SUPPORT.md) for full requirements and validation coverage.
 
@@ -174,6 +176,25 @@ These implementation notes are currently in Chinese:
 - [Agent Runtime](docs/AGENT_RUNTIME.md): the agent loop, providers, steering, transcripts, and result recovery.
 - [HyperOS system entry points](docs/HYPEROS_SYSTEM_ENTRY.md): power-button and Circle to Search integration, requirements, and validation coverage.
 - [Native terminal components](docs/TERMINAL_NATIVE.md): PTY and PRoot components, and rebuilding the bundled source.
+
+## Pull Requests and Contributing
+
+External pull requests are closed; only collaborator commits are accepted.
+
+In the AI era, handling external PRs has become harder than before: among the many AI-generated PRs, model capabilities and contributor skill levels vary widely, making it easy for AI slop to slip in. Coupled with a tedious workflow—aligning on architecture, going back and forth in discussions, and still having to review the code and test it ourselves—it is exhausting and costs far more than implementing an issue internally with AI. It is easier to just write it ourselves.
+
+For feature requests, bug reports, or contributions, feel free to share your ideas or **prompts** directly in [Issues](https://github.com/Mangi-11/Eta/issues) and issue comments so AI can read the context and implement them directly. Thank you for your understanding and support!
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/#Mangi-11/Eta&amp;Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Mangi-11/Eta&amp;type=Date&amp;theme=dark">
+      <img src="https://api.star-history.com/svg?repos=Mangi-11/Eta&amp;type=Date" alt="Eta Star History" width="800">
+    </picture>
+  </a>
+</p>
 
 ## References and acknowledgements
 

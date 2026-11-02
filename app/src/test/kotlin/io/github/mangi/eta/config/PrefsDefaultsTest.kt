@@ -33,6 +33,8 @@ class PrefsDefaultsTest {
                 // 后台任务续跑：默认「点一下才发」，自动续跑要用户自己打开。
                 Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON to true,
                 Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO to false,
+
+                Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED to true,
             ),
             Prefs.Keys.BOOLEAN_DEFAULTS,
         )
@@ -57,6 +59,7 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_OVERLAY_GLOW_ENABLED,
                 Prefs.Keys.AGENT_PLAN_MODE,
                 Prefs.Keys.AGENT_SUBAGENT_ENABLED,
+                Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
             ),
             Prefs.Keys.LOCAL_AGENT_KEYS,
         )

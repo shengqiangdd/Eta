@@ -30,7 +30,7 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
 // versionCode 基数：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
-val etaVersionCode = 2026102909
+val etaVersionCode = 2026103101
 
 android {
     namespace = "io.github.mangi.eta"
@@ -43,9 +43,9 @@ android {
         applicationId = "io.github.mangi.eta" + (providers.gradleProperty("eta.applicationIdSuffix").orNull ?: "")
         minSdk = 33
         targetSdk = 37
-        // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时手动递增（见上方 etaVersionCode）。
+        // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增（见上方 etaVersionCode）。
         versionCode = etaVersionCode
-        versionName = "3.3.5"
+        versionName = "3.4.0"
 
         ndk {
             // 同时过滤本地与依赖 AAR 的原生库，确保 APK 仅包含 ARM64。

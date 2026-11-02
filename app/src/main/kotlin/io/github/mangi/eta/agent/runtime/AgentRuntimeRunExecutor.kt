@@ -368,6 +368,8 @@ internal class AgentRuntimeRunExecutor(
                 // 长时工具的执行中进度：ACP 代理的 session/update 增量经此处进入事件流，
                 // 由 AgentLoop 补上 round 后转发。留空则 acp_delegate 退回原有的"静默执行"。
                 onToolProgress = toolProgressForwarder,
+
+                virtualDisplayEnabled = { currentPermissions().virtualDisplay },
             )
             val routingExecutor = RoutingToolExecutor(
                 local = executor,

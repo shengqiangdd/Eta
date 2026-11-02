@@ -17,6 +17,8 @@ internal data class TerminalExecutionContext(
     var linuxCwd: String = TerminalRuntime.LINUX_WORKSPACE_PATH,
     /** `/workspace` 这个 bind mount 的实际宿主来源；默认由后端推导，测试可显式传入。 */
     val linuxHostWorkspacePath: String = TerminalRuntime.linuxWorkspacePathFor(linuxRootfsPath),
+    /** 用户共享目录在 guest 内的挂载点（上游 3.4.0 新增，供提示与工具共用）。 */
+    val sharedMounts: List<SharedFolderMount> = emptyList(),
 ) {
     init {
         require(linuxEnvironment.isLinux)
@@ -60,6 +62,30 @@ internal data class TerminalExecutionContext(
         append(JSONObject.quote(linuxWorkspacePath))
         append(" 映射宿主目录 ")
         append(JSONObject.quote(linuxHostWorkspacePath))
-        append("；只有宿主目录相同时才与默认 Android 工作区共享文件。Linux 路径按 Linux 环境解释。")
+        append("（bind mount 同一个物理文件夹，双向实时同步）；")
+        if (linuxHostWorkspacePath == androidWorkspacePath) {
+            append("与默认 Android 工作区完全同目录，两边修改直接互通。")
+        } else {
+            append("与默认 Android 工作区不同目录，Android 侧可直接通过 ")
+            append(JSONObject.quote(linuxHostWorkspacePath))
+            append(" 访问同一文件夹。")
+        }
+        if (sharedMounts.isEmpty()) {
+            append("当前未配置额外共享目录（/workspace/mounts 仅在配置挂载项后挂载）；")
+        } else {
+            append("已配置的额外共享目录（Linux 挂载点 <-> Android 源目录，底层为同一物理文件夹，双向实时同步）：")
+            append(
+                sharedMounts.joinToString("，") { mount ->
+                    "${JSONObject.quote("${SharedFolderMounts.LINUX_MOUNTS_ROOT}/${mount.name}")} <-> ${JSONObject.quote(mount.sourcePath)}"
+                },
+            )
+            append("；")
+        }
+        if (linuxBackend == LinuxExecutionBackend.CHROOT) {
+            append("chroot 下宿主 \"/storage/emulated/0\"（及符号链接 \"/sdcard\"）与 \"/data/local/tmp\" 已默认挂载至 Linux 同路径。")
+        } else {
+            append("PRoot 下若已授予所有文件访问权限，宿主 \"/storage/emulated/0\" 也会默认挂载至 Linux 同路径。")
+        }
+        append("Linux 路径按 Linux 环境解释。")
     }
 }

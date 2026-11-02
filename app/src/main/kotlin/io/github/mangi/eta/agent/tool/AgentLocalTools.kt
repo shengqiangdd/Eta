@@ -7,6 +7,9 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.SystemClock
+import android.view.Display
+import io.github.mangi.eta.EtaApp
+import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.device.DeviceControlUnavailableException
 import io.github.mangi.eta.agent.device.DisplayScopeErrors
@@ -15,10 +18,12 @@ import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.RootShellDeviceController
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.VirtualDisplayBudget
-import io.github.mangi.eta.agent.device.VirtualDisplayController
+import io.github.mangi.eta.agent.device.VirtualDisplayController as ManagedVirtualDisplayController
 import io.github.mangi.eta.agent.device.VirtualDisplayHub
 import io.github.mangi.eta.agent.device.VirtualDisplayOwnership
 import io.github.mangi.eta.agent.device.VirtualDisplayTasks
+import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
+import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
 import io.github.mangi.eta.agent.acp.AcpClient
 import io.github.mangi.eta.agent.acp.AcpModels
 import io.github.mangi.eta.agent.acp.AcpProvider
@@ -141,6 +146,12 @@ internal class AgentLocalTools(
     runAvailableSkillIds: Set<String> = emptySet(),
     pendingSkillConflict: PendingSkillConflictCapability? = null,
     private val rootAvailable: () -> Boolean = { RootAccess.isGranted },
+    /** 后台虚拟屏（画布）总开关；关掉后 launch_app(display=auto/virtual) 一律回到物理主屏。 */
+    private val virtualDisplayEnabled: () -> Boolean = {
+        Prefs.isEnabled(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED)
+    },
+    /** 画布后端探测（LSPosed 可用的另一条创建路径）。 */
+    private val lsposedAvailable: () -> Boolean = { EtaApp.serviceInstance != null },
     /**
      * GUI 独占锁。非空时，所有「会动屏幕」的工具都要先拿到它：多会话并行时只能有一个 run
      * 在操作手机；[GuiControlCoordinator.RunControl.withAction] 同时承担排队与用户暂停。
@@ -181,12 +192,14 @@ internal class AgentLocalTools(
 ) : AgentModelClient.ToolExecutor, AutoCloseable {
 
     private val closed = AtomicBoolean(false)
+    @Volatile
+    private var activeDisplayId: Int = Display.DEFAULT_DISPLAY
     private val browserSessionRef = lazy { browserSession ?: AgentBrowserSession() }
     private val todoStore by lazy { AgentTodoStore.forApp(context) }
     private val taskStore by lazy { AgentTaskLedgerStore.forApp(context) }
     private val goalStore by lazy { AgentGoalStore.forApp(context) }
     private val runFileChanges by lazy { AgentRunFileChanges.forApp(context) }
-    private val virtualDisplays = VirtualDisplayController(context, logger, rootAvailable)
+    private val virtualDisplays = ManagedVirtualDisplayController(context, logger, rootAvailable)
     private val acpShellSupervisor = ShellProcessSupervisor()
 
     /**
@@ -453,6 +466,10 @@ internal class AgentLocalTools(
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
                 "launch_app" -> textResult(launchApp(args))
+                "present_to_user" -> {
+                    publishedObservation.set(PublishedObservation())
+                    textResult(presentToUser(args))
+                }
                 "open_uri" -> textResult(openUri(args))
                 "browser_use" -> browserUse(args, toolCall.id)
                 "web_search", "fetch_url" -> {
@@ -1056,7 +1073,16 @@ internal class AgentLocalTools(
             // 「指定了屏」→ 交给虚拟屏通路 textOnDisplay(0)；那条通路用自己的验证口径，
             // 写入明明成功（文本已经落到输入框）却报 ok=false / ACTION_OUTCOME_UNKNOWN。
             // 真机 TEXT3c 就是这么红了两轮：报告 text=中文种子后缀，但 write=false。
-            ImplicitDisplayPolicy.inherit(publishedObservation.get().displayId)
+            ImplicitDisplayPolicy.inherit(publishedObservation.get().displayId)?.let { inherited ->
+                inherited
+            } ?: activeDisplayId.takeIf { it != Display.DEFAULT_DISPLAY }
+        }
+        // 画布屏（上游 3.4.0）不在 virtual_display_* 注册表里：它由另一套控制器持有，
+        // 但它确实存在且属于本进程。不先认这一种，launch_app(display=virtual) 之后的
+        // 第一次 tap 会被下面的「注册表查不到」当成已释放，直接报错（合并后实测）。
+        if (resolved != null && resolved == VirtualDisplayController.currentDisplayId()) {
+            if (requireTask) ensureDisplayHasTask(resolved)
+            return resolved
         }
         // 虚拟屏可能已经被释放或空闲回收。此时仍把动作注入那个 display，
         // `input -d` 会回退到默认屏 —— 用户会看到自己的主屏被点。宁可报错，也不能动主屏。
@@ -1333,7 +1359,7 @@ internal class AgentLocalTools(
         )
         // 虚拟屏上不弹悬屏指示（那会打扰用户），也不做触感反馈。
         if (displayId != null) return deviceController.tap(point.x, point.y, displayId)
-        return clearOverlay(point) {
+        return clearOverlay(Display.DEFAULT_DISPLAY, point) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
             showTap(point.x, point.y)
             deviceController.tap(point.x, point.y)
@@ -1353,10 +1379,23 @@ internal class AgentLocalTools(
             y = ((first.y.toLong() + second.y.toLong()) / 2L).toInt(),
         )
         if (displayId != null) return deviceController.tap(point.x, point.y, displayId)
-        return clearOverlay(point) {
+        return clearOverlay(Display.DEFAULT_DISPLAY, point) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
             showTap(point.x, point.y)
             deviceController.tap(point.x, point.y)
+        }
+    }
+
+    /** 画布当前生效的屏：只有画布真的还活着且就是这块屏才沿用，否则回落主屏。 */
+    private fun currentActiveDisplayId(): Int {
+        val id = activeDisplayId
+        if (!CanvasRoutingPolicy.isVirtualDisplay(id)) return Display.DEFAULT_DISPLAY
+        val vd = VirtualDisplayController.snapshots.value
+        return if (vd.active && vd.displayId == id) {
+            id
+        } else {
+            activeDisplayId = Display.DEFAULT_DISPLAY
+            Display.DEFAULT_DISPLAY
         }
     }
 
@@ -1386,7 +1425,7 @@ internal class AgentLocalTools(
         displayId: Int?,
     ): String {
         val result = if (displayId == null) {
-            clearOverlay(ScreenPoint(node.centerX, node.centerY)) {
+            clearOverlay(Display.DEFAULT_DISPLAY, ScreenPoint(node.centerX, node.centerY)) {
                 deviceController.tapElement(observation, node.index)
             }
         } else {
@@ -1424,7 +1463,7 @@ internal class AgentLocalTools(
         durationMs: Int,
     ): String {
         val result = if (displayId == null) {
-            clearOverlay(ScreenPoint(node.centerX, node.centerY)) {
+            clearOverlay(Display.DEFAULT_DISPLAY, ScreenPoint(node.centerX, node.centerY)) {
                 deviceController.longPressElement(observation, node.index, durationMs)
             }
         } else {
@@ -1447,7 +1486,7 @@ internal class AgentLocalTools(
         )
         val durationMs = args.optInt("duration_ms", 800)
         if (displayId != null) return deviceController.longPress(point.x, point.y, durationMs, displayId)
-        return clearOverlay(point) {
+        return clearOverlay(Display.DEFAULT_DISPLAY, point) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.LONG_PRESS)
             showLongPress(point.x, point.y, durationMs)
             deviceController.longPress(point.x, point.y, durationMs)
@@ -1471,7 +1510,7 @@ internal class AgentLocalTools(
         if (displayId != null) {
             return deviceController.swipe(start.x, start.y, end.x, end.y, durationMs, displayId)
         }
-        return clearOverlay(start, end) {
+        return clearOverlay(Display.DEFAULT_DISPLAY, start, end) {
             AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.SWIPE)
             showSwipe(start.x, start.y, end.x, end.y, durationMs)
             deviceController.swipe(
@@ -1479,7 +1518,8 @@ internal class AgentLocalTools(
                 start.y,
                 end.x,
                 end.y,
-                durationMs
+                durationMs,
+                displayId,
             )
         }
     }
@@ -1583,7 +1623,7 @@ internal class AgentLocalTools(
         return when (args.optString("mode", "append").lowercase(Locale.ROOT)) {
             "replace" -> replaceText(args)
             "paste" -> pasteText(args)
-            else -> deviceController.inputText(text)
+            else -> deviceController.inputText(text, currentActiveDisplayId())
         }
     }
 
@@ -1616,6 +1656,7 @@ internal class AgentLocalTools(
         return retryStaleNodeAction(result, observation, node) { fresh, target ->
             deviceController.replaceText(text = text, index = target.index, observation = fresh)
         }
+
     }
 
     private fun clearText(args: JSONObject): String {
@@ -1644,6 +1685,7 @@ internal class AgentLocalTools(
         return retryStaleNodeAction(result, observation, node) { fresh, target ->
             deviceController.clearText(index = target.index, observation = fresh)
         }
+
     }
 
     private fun setClipboard(args: JSONObject): String =
@@ -1849,6 +1891,9 @@ internal class AgentLocalTools(
     private fun launchApp(args: JSONObject): String {
         val packageName = args.optString("package_name").trim().ifBlank { null }
         val appName = args.optString("app_name").trim().ifBlank { null }
+        val requestedDisplay = CanvasRoutingPolicy.RequestedDisplay.parse(
+            args.optString("display", "auto"),
+        ) ?: return errorResult("INVALID_ARGUMENT", "display 仅支持 auto、virtual 或 main")
 
         val app = if (packageName != null) {
             findAppByPackage(packageName) ?: AppInfo(packageName = packageName, appName = appName ?: packageName)
@@ -1877,27 +1922,32 @@ internal class AgentLocalTools(
         val displayId = resolveDisplayId(args, requireTask = false)
         if (displayId != null) {
             val session = virtualDisplays.findByDisplayId(displayId)
-                ?: return errorResult(
+            if (session == null && displayId != VirtualDisplayController.currentDisplayId()) {
+                return errorResult(
                     "VIRTUAL_DISPLAY_NOT_FOUND",
                     "未找到虚拟屏 $displayId；请先 virtual_display_list",
                 )
-            // launch_app 在虚拟屏上必须走 am start --display；普通 startActivity 会落在主屏。
-            val request = AgentVirtualDisplayTools.LaunchRequest(
-                id = session.id,
-                packageName = app.packageName,
-                activity = "",
-                action = "",
-                data = "",
-                flags = null,
-                extras = emptyMap(),
-            )
-            return launchOnVirtualDisplay(session, request)
-                .put("tool", "launch_app")
-                .put("app_name", app.appName)
-                .put("package_name", app.packageName)
-                .put("display", displayId)
-                .put("display_id", displayId)
-                .toString()
+            }
+            if (session != null) {
+                // launch_app 在虚拟屏上必须走 am start --display；普通 startActivity 会落在主屏。
+                val request = AgentVirtualDisplayTools.LaunchRequest(
+                    id = session.id,
+                    packageName = app.packageName,
+                    activity = "",
+                    action = "",
+                    data = "",
+                    flags = null,
+                    extras = emptyMap(),
+                )
+                return launchOnVirtualDisplay(session, request)
+                    .put("tool", "launch_app")
+                    .put("app_name", app.appName)
+                    .put("package_name", app.packageName)
+                    .put("display", displayId)
+                    .put("display_id", displayId)
+                    .toString()
+            }
+            // 这块屏是画布（上游 3.4.0）建的：不归 virtual_display_* 管，交给画布自己启动。
         }
         val context = requireContext()
         val launchIntent = context.packageManager.getLaunchIntentForPackage(app.packageName)
@@ -1908,14 +1958,52 @@ internal class AgentLocalTools(
             )
         }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        context.startActivity(launchIntent)
-        logger.info("Agent local tool action=launch_app outcome=started display=${displayId ?: "default"}")
+        // 没指定屏时按画布策略分流：auto/virtual → 后台虚拟屏，main / 不具备后端 → 物理主屏。
+        // 这条分支是上游 3.4.0 的「启动到后台，不打断用户主屏」；以前只解析 display 参数却没用，
+        // 模型写 display=virtual 也被当成主屏，属于合并时丢掉的行为。
+        val mainForegroundPkg =
+            AgentAccessibilityService.current()?.currentPackageName(Display.DEFAULT_DISPLAY)
+        val targetCanvas = CanvasRoutingPolicy.decideLaunchTarget(
+            virtualDisplayEnabled = virtualDisplayEnabled(),
+            backendAvailable = VirtualDisplayController.isBackendAvailable(rootAvailable(), lsposedAvailable()),
+            requested = requestedDisplay,
+            targetPackage = app.packageName,
+            foregroundPackageOnMainDisplay = mainForegroundPkg,
+            ownPackage = context.packageName,
+        )
+        val launchedVirtualId = if (targetCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+            VirtualDisplayController.launchAppOnVirtualDisplay(
+                context = context,
+                packageName = app.packageName,
+                appName = app.appName,
+                launchIntent = launchIntent,
+                rootAvailable = rootAvailable,
+            )
+        } else {
+            null
+        }
+        val finalDisplayId = if (launchedVirtualId != null && CanvasRoutingPolicy.isVirtualDisplay(launchedVirtualId)) {
+            activeDisplayId = launchedVirtualId
+            launchedVirtualId
+        } else {
+            activeDisplayId = Display.DEFAULT_DISPLAY
+            context.startActivity(launchIntent)
+            Display.DEFAULT_DISPLAY
+        }
+        val finalCanvas = if (CanvasRoutingPolicy.isVirtualDisplay(finalDisplayId)) {
+            CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY.wireName
+        } else {
+            CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
+        }
+        logger.info("Agent local tool action=launch_app outcome=started canvas=$finalCanvas display=$finalDisplayId")
         return JSONObject()
             .put("ok", true)
             .put("tool", "launch_app")
             .put("app_name", app.appName)
             .put("package_name", app.packageName)
-            .put("display", displayId ?: JSONObject.NULL)
+            .put("canvas", finalCanvas)
+            .put("display", finalDisplayId)
+            .put("display_id", finalDisplayId)
             .toString()
     }
 
@@ -2461,7 +2549,7 @@ internal class AgentLocalTools(
                 }.getOrElse { throwable ->
                     // 上限/缓冲不足有自己的错误码：模型据此知道该释放还是该换小尺寸，
                     // 笼统回「创建失败」只会让它重试同一件事。
-                    val code = (throwable as? VirtualDisplayController.RejectedException)?.code
+                    val code = (throwable as? ManagedVirtualDisplayController.RejectedException)?.code
                         ?: "VIRTUAL_DISPLAY_FAILED"
                     return textResult(errorResult(code, throwable.message ?: "无法创建虚拟屏"))
                 }
@@ -2736,7 +2824,7 @@ internal class AgentLocalTools(
      * 3. **启动后核验**：`am start` 返回成功不等于它在目标屏；必须在任务栈里确认。
      */
     private fun launchOnVirtualDisplay(
-        session: VirtualDisplayController.Session,
+        session: ManagedVirtualDisplayController.Session,
         request: AgentVirtualDisplayTools.LaunchRequest,
     ): JSONObject {
         var component = request.component
@@ -2938,6 +3026,39 @@ internal class AgentLocalTools(
                 }
             }
 
+    /**
+     * 把后台虚拟屏里已经准备好的画面移交给物理主屏（上游 3.4.0 的 `present_to_user`）。
+     *
+     * 刻意不在这里做「迁移后要不要关卡片」这类界面决定：Runtime 侧的结果卡片自己带「打开画面」。
+     * 没有虚拟屏时返回 ok=false 的 `NO_VIRTUAL_DISPLAY`，而不是假装成功 —— 模型据此知道该走别的手段。
+     */
+    private fun presentToUser(args: JSONObject): String {
+        val context = requireContext()
+        val reason = args.optString("reason").trim()
+        val snapshot = VirtualDisplayController.snapshots.value
+        if (!snapshot.active) {
+            return errorResult(
+                "NO_VIRTUAL_DISPLAY",
+                "当前没有后台虚拟屏画面可移交；如果目标应用在主屏，直接用 observe_screen 继续",
+            )
+        }
+        val presented = VirtualDisplayController.handoffToMainDisplay(context, rootAvailable)
+        activeDisplayId = Display.DEFAULT_DISPLAY
+        return JSONObject()
+            .put("ok", presented)
+            .put("tool", "present_to_user")
+            .put("canvas", CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName)
+            .put("display_id", Display.DEFAULT_DISPLAY)
+            .put("presented", presented)
+            .apply {
+                if (snapshot.appName.isNotBlank()) put("app_name", snapshot.appName)
+                if (snapshot.packageName.isNotBlank()) put("package_name", snapshot.packageName)
+                if (reason.isNotBlank()) put("reason", reason)
+                if (!presented) put("code", "HANDOFF_FAILED")
+            }
+            .toString()
+    }
+
     private fun openUri(args: JSONObject): String {
         val uriText = args.optString("uri").trim()
         if (uriText.isBlank()) {
@@ -2960,12 +3081,46 @@ internal class AgentLocalTools(
         if (!HookSupport.resolvesActivity(context, intent)) {
             return errorResult("NO_ACTIVITY", "没有应用可以处理该 URI")
         }
-        context.startActivity(intent)
-        logger.info("Agent local tool action=open_uri outcome=started")
+        val resolvedPkg = context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
+        val mainForegroundPkg = AgentAccessibilityService.current()?.currentPackageName(Display.DEFAULT_DISPLAY)
+        val targetCanvas = CanvasRoutingPolicy.decideLaunchTarget(
+            virtualDisplayEnabled = virtualDisplayEnabled(),
+            backendAvailable = VirtualDisplayController.isBackendAvailable(rootAvailable(), lsposedAvailable()),
+            requested = CanvasRoutingPolicy.RequestedDisplay.AUTO,
+            targetPackage = resolvedPkg,
+            foregroundPackageOnMainDisplay = mainForegroundPkg,
+            ownPackage = context.packageName,
+        )
+        val virtualId = if (targetCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+            VirtualDisplayController.openUriOnVirtualDisplay(
+                context = context,
+                intent = intent,
+                targetLabel = uri.host ?: uri.scheme.orEmpty(),
+                rootAvailable = rootAvailable,
+            )
+        } else {
+            null
+        }
+        val finalDisplayId = if (virtualId != null && CanvasRoutingPolicy.isVirtualDisplay(virtualId)) {
+            activeDisplayId = virtualId
+            virtualId
+        } else {
+            activeDisplayId = Display.DEFAULT_DISPLAY
+            context.startActivity(intent)
+            Display.DEFAULT_DISPLAY
+        }
+        val finalCanvas = if (CanvasRoutingPolicy.isVirtualDisplay(finalDisplayId)) {
+            CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY.wireName
+        } else {
+            CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
+        }
+        logger.info("Agent local tool action=open_uri outcome=started canvas=$finalCanvas")
         return JSONObject()
             .put("ok", true)
             .put("tool", "open_uri")
             .put("scheme", uri.scheme?.lowercase(Locale.ROOT))
+            .put("canvas", finalCanvas)
+            .put("display_id", finalDisplayId)
             .also { result ->
                 if (uri.scheme.equals("https", true)) {
                     result.put("display_uri", uriText)
@@ -3796,8 +3951,11 @@ internal class AgentLocalTools(
         val candidatesByPath: Map<String, String>,
     )
 
-    /** 手势经过状态胶囊时让它暂时穿透并淡出；滑动按起止点包围盒判断。 */
-    private fun <T> clearOverlay(vararg points: ScreenPoint, gesture: () -> T): T {
+    /** 手势经过状态胶囊时让它暂时穿透并淡出；在虚拟屏内操作时不干扰物理屏胶囊。 */
+    private fun <T> clearOverlay(displayId: Int, vararg points: ScreenPoint, gesture: () -> T): T {
+        if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+            return gesture()
+        }
         val area = Rect(
             points.minOf { it.x },
             points.minOf { it.y },
@@ -3807,16 +3965,40 @@ internal class AgentLocalTools(
         return AgentOverlayClearance.around(area, gesture)
     }
 
-    private fun showTap(x: Int, y: Int) {
-        GestureIndicator.showTap(context, x, y)
+    private fun showTap(x: Int, y: Int, displayId: Int = Display.DEFAULT_DISPLAY) {
+        if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+            VirtualDisplayController.emitTapEffect(x, y, longPress = false)
+        } else {
+            GestureIndicator.showTap(context, x, y)
+        }
     }
 
-    private fun showLongPress(x: Int, y: Int, durationMs: Int) {
-        GestureIndicator.showLongPress(context, x, y, durationMs)
+    private fun showLongPress(
+        x: Int,
+        y: Int,
+        durationMs: Int,
+        displayId: Int = Display.DEFAULT_DISPLAY,
+    ) {
+        if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+            VirtualDisplayController.emitTapEffect(x, y, longPress = true)
+        } else {
+            GestureIndicator.showLongPress(context, x, y, durationMs)
+        }
     }
 
-    private fun showSwipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
-        GestureIndicator.showSwipe(context, x1, y1, x2, y2, durationMs)
+    private fun showSwipe(
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        durationMs: Int,
+        displayId: Int = Display.DEFAULT_DISPLAY,
+    ) {
+        if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+            VirtualDisplayController.emitSwipeEffect(x1, y1, x2, y2, durationMs)
+        } else {
+            GestureIndicator.showSwipe(context, x1, y1, x2, y2, durationMs)
+        }
     }
 
     private data class AppInfo(

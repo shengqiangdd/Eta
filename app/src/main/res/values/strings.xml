@@ -3,6 +3,15 @@
     <string name="run_waiting_for_gui">Waiting for phone control</string>
     <string name="tool_release_gui">Release phone control</string>
     <string name="tool_release_gui_description">Finish the current phone interaction and hand control to waiting tasks.</string>
+    <string name="tool_present_to_user">Present to main screen</string>
+    <string name="tool_present_to_user_description">Seamlessly hand off the prepared virtual display page to the physical main screen.</string>
+    <string name="settings_virtual_display_title">Background virtual display</string>
+    <string name="overlay_virtual_canvas_auto">Background canvas</string>
+    <string name="overlay_virtual_canvas_takeover">Manual control</string>
+    <string name="overlay_virtual_takeover">Take over</string>
+    <string name="overlay_virtual_continue">Continue</string>
+    <string name="overlay_virtual_fullscreen">Fullscreen</string>
+    <string name="overlay_result_open_virtual_app">Open screen</string>
   <string name="permission_local_network_title">Local network access</string>
   <string name="permission_local_network_summary">Allow models, MCP, the built-in browser and terminals to access your local network when needed. Internet access remains available without this permission.</string>
   <string name="permission_local_network_denied">Local network access was not granted. You can allow Nearby devices in the system app permission settings when you need a local service. Internet access remains available.</string>
@@ -350,23 +359,6 @@
   <string name="tool_status_unknown">Result unknown</string>
   <string name="voice_listening">Listening...</string>
   <string name="voice_tap_to_speak">Tap to speak</string>
-  <string name="voice_speech_unavailable">Speech recognition is unavailable</string>
-  <string name="voice_speech_no_service">No speech recognition service is available on this device</string>
-  <string name="voice_speech_service_timeout">The speech recognition service did not respond; try again</string>
-  <string name="voice_speech_network_error">Speech recognition needs a network connection; try again or use the keyboard</string>
-  <string name="voice_speech_service_error">The speech recognition service disconnected; try again</string>
-  <string name="voice_speech_audio_error">The microphone could not be started; check whether another app is using it</string>
-  <string name="voice_speech_busy">Speech recognition is busy; try again in a moment</string>
-  <string name="voice_speech_rate_limited">Too many speech requests; try again later</string>
-  <string name="voice_language_not_supported">The current language is not supported by this speech service</string>
-  <string name="voice_language_unavailable">The current language is not ready for speech recognition</string>
-  <string name="voice_model_needed">The current language needs a speech model</string>
-  <string name="voice_model_pending">The speech model is waiting to download</string>
-  <string name="voice_download_model">Download</string>
-  <string name="voice_model_downloading">Requesting speech model download…</string>
-  <string name="voice_model_scheduled">Speech model download scheduled; try again later</string>
-  <string name="voice_model_ready">Speech model is ready; tap the microphone to try again</string>
-  <string name="voice_model_download_failed">Could not download the speech model</string>
   <string name="voice_input_hint">Message Eta…</string>
   <string name="voice_send">Send</string>
   <string name="ui_core_memory_user_name_long_term_preferences_aa6ff9"># core memory
@@ -1151,7 +1143,6 @@
   <string name="context_compact_action">Compact context</string>
   <string name="settings_auto_compaction">Automatic context compaction</string>
   <string name="voice_audio_permission">Allow the microphone in Eta\'s app permissions, then wake me again. Tap the microphone to open settings.</string>
-  <string name="voice_no_speech">Didn\'t catch that. Tap the microphone to try again, or type instead.</string>
   <string name="voice_use_keyboard">Switch to keyboard input</string>
   <string name="voice_finish_speech">Stop recording and send</string>
   <string name="voice_recognizing">Recognizing...</string>
@@ -1170,7 +1161,6 @@
   <string name="speech_auto_speak_summary">Only speaks final answers to voice questions while the assistant overlay is visible</string>
   <string name="speech_overview_note">Dictation in chat turns speech into editable text first. Answers can be read aloud manually; recording stops playback.</string>
   <string name="speech_service_and_model">Service &amp; model</string>
-  <string name="speech_asr_system">System speech service</string>
   <string name="speech_asr_qwen_realtime">Qwen · Realtime</string>
   <string name="speech_asr_qwen_flash">Qwen · Short audio</string>
   <string name="speech_asr_qwen_file">Qwen · File transcription</string>
@@ -1178,7 +1168,6 @@
   <string name="speech_tts_none">Off</string>
   <string name="speech_tts_qwen">Qwen</string>
   <string name="speech_tts_doubao">Doubao</string>
-  <string name="speech_asr_note_system">Uses a speech service already on the device; cloud services do not depend on the system recognizer.</string>
   <string name="speech_asr_note_streaming">Text appears as you speak. Tap Done to finish dictation in chat; the assistant overlay can submit automatically after a pause.</string>
   <string name="speech_asr_note_flash">Audio is uploaded for recognition after you finish recording; best for short input.</string>
   <string name="speech_asr_note_file">Recordings are uploaded to your own OSS bucket first, then transcribed asynchronously; takes longer.</string>
@@ -2106,7 +2095,6 @@
   <string name="speech_voice_minimax_executive">Calm executive</string>
   <string name="speech_voice_minimax_news">News anchor</string>
   <string name="speech_recognition_enabled">Enable speech recognition</string>
-  <string name="speech_recognition_enabled_summary">Use Eta with system or cloud speech input</string>
   <string name="speech_recognition_disabled">Off</string>
   <string name="speech_recognition_disabled_note">Saving hides the microphone entry in chat and in the assistant overlay. Global wake still opens text input and the keyboard after the entry animation, so the built-in voice input of your keyboard keeps working. The existing service configuration is kept.</string>
   <string name="web_tools_settings_title">Web search and fetch</string>
@@ -2151,4 +2139,5 @@
   <string name="route_browser">Agent browser</string>
   <string name="speech_auto_read_off">Auto read-aloud off, tap to turn on</string>
   <string name="speech_auto_read_on">Auto read-aloud on, tap to turn off</string>
+
 </resources>

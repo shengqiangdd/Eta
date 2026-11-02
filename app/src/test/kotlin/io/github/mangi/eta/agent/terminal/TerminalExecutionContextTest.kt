@@ -89,4 +89,20 @@ class TerminalExecutionContextTest {
         assertFalse(description.contains(workspace))
         assertFalse(description.contains(rootfs.path))
     }
+
+    @Test fun descriptionIncludesConfiguredSharedFolderMappings() {
+        val context = TerminalExecutionContext(
+            linuxEnvironment = TerminalEnvironment.DEBIAN,
+            linuxRootfsPath = File(temporary.root, "terminal-user/proot/debian/rootfs").path,
+            userWorkspacePath = "/eta/workspace",
+            sharedMounts = listOf(
+                SharedFolderMount(name = "Download", sourcePath = "/sdcard/Download"),
+                SharedFolderMount(name = "repos", sourcePath = "/sdcard/Projects"),
+            ),
+        )
+        val description = context.description(rootAvailable = false)
+        assertTrue(description.contains("\"/workspace/mounts/Download\" <-> \"/sdcard/Download\""))
+        assertTrue(description.contains("\"/workspace/mounts/repos\" <-> \"/sdcard/Projects\""))
+        assertTrue(description.contains("同一物理文件夹"))
+    }
 }

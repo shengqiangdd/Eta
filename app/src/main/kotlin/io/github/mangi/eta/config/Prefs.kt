@@ -102,6 +102,8 @@ internal object Prefs {
          * 进程重启不会把上限清零。
          */
         const val AGENT_BACKGROUND_RESUME_AUTO = "agent_background_resume_auto"
+
+        const val AGENT_VIRTUAL_DISPLAY_ENABLED = "agent_virtual_display_enabled"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
 
         /** 全部布尔开关及其默认值。 */
@@ -129,6 +131,7 @@ internal object Prefs {
             AGENT_SUBAGENT_ENABLED to true,
             AGENT_BACKGROUND_RESUME_BUTTON to true,
             AGENT_BACKGROUND_RESUME_AUTO to false,
+            AGENT_VIRTUAL_DISPLAY_ENABLED to true,
         )
 
         /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
@@ -145,6 +148,7 @@ internal object Prefs {
             AGENT_OVERLAY_GLOW_ENABLED,
             AGENT_PLAN_MODE,
             AGENT_SUBAGENT_ENABLED,
+            AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
     }
 
