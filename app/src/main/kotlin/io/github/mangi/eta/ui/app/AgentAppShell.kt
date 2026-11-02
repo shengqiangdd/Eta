@@ -58,6 +58,7 @@ import io.github.mangi.eta.ui.components.VirtualDisplayPanel
 import io.github.mangi.eta.ui.components.captureForTopBar
 import io.github.mangi.eta.ui.components.rememberTopBarBackdrop
 import io.github.mangi.eta.ui.components.topBarContainerColor
+import io.github.mangi.eta.ui.layout.rememberIsWideScreen
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.navigation.AppRoute
@@ -239,15 +240,19 @@ private fun AgentTopBar(
     onOpenCharacter: () -> Unit,
 ) {
     val isHome = route is AppRoute.Home
+    // 宽屏下会话列表常驻左侧，这个「拉开列表」按钮点下去不会有任何变化，直接收起来。
+    val wideScreen = rememberIsWideScreen()
     val navigationIcon: @Composable () -> Unit = {
         if (isHome) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onOpenConversationPane) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ShortText,
-                        modifier = Modifier.size(24.dp),
-                        contentDescription = stringResource(R.string.action_conversation_history),
-                    )
+                if (!wideScreen) {
+                    IconButton(onClick = onOpenConversationPane) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.ShortText,
+                            modifier = Modifier.size(24.dp),
+                            contentDescription = stringResource(R.string.action_conversation_history),
+                        )
+                    }
                 }
                 // 角色对话的身份标识放在顶栏左侧，点按进入角色详情；普通对话保持空标题。
                 homeCharacter?.let { character ->

@@ -17,7 +17,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.ui.app.LocalPlatformDensity
 
-private val WideScreenMinWidth = 600.dp
+/**
+ * 宽屏阈值：600dp，与 WindowSizeClass 的 Medium 起点一致。
+ *
+ * 页面留白和会话侧栏形态共用这一份判据 —— 两处各写一个数，迟早会出现
+ * 「内容按宽屏居中、侧栏却还当自己是手机」这种自相矛盾的画面。
+ */
+internal val WideScreenMinWidth = 600.dp
 private val MaxPageContentWidth = 800.dp
 
 @Composable

@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -48,6 +49,7 @@ import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import io.github.mangi.eta.R
+import io.github.mangi.eta.ui.layout.WideScreenMinWidth
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import kotlin.math.roundToInt
@@ -55,15 +57,50 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+/**
+ * 会话侧栏的两种形态。
+ *
+ * 窄屏沿用原来的抽屉：盖在聊天上、可拖动、返回键收起。
+ * 宽屏改成常驻一栏 —— 参考 Now in Android / Reply 的 list-detail 做法：
+ * 列表一直在左边，聊天从它右边开始，不再需要「拉开一层再选」的两步。
+ */
+internal enum class ConversationPaneMode { Overlay, Docked }
+
 private object ConversationPaneMetrics {
     val PaneMaxWidth = 340.dp
     val PaneWidthFraction = 0.84f
+
+    /** 常驻侧栏的宽度区间：再窄放不下搜索框，再宽会把聊天挤成一条。 */
+    val DockedMinWidth = 260.dp
+    val DockedMaxWidth = 360.dp
+
+    /** 常驻宽度按容器比例取值，再夹到上面的区间里。 */
+    const val DockedWidthFraction = 0.34f
     const val ChatScrimAlpha = 0.16f
     const val SettleDampingRatio = 1f
     const val SettleStiffness = 146f
     const val SettleVisibilityThresholdPx = 0.5f
     const val SettlePositionThresholdFraction = 0.5f
 }
+
+/** 容器宽度决定侧栏形态；阈值与页面留白共用 [WideScreenMinWidth]，不另写一个数。 */
+internal fun conversationPaneMode(containerWidth: Dp): ConversationPaneMode =
+    if (containerWidth >= WideScreenMinWidth) ConversationPaneMode.Docked else ConversationPaneMode.Overlay
+
+/**
+ * 侧栏占多宽。
+ *
+ * 常驻时用「容器比例 + 上下夹取」；窄屏保持原来的 84% / 340dp 上限 ——
+ * 抽屉要能露出一点聊天当背景，常驻栏则必须给聊天留下大半屏。
+ */
+internal fun conversationPaneWidth(containerWidth: Dp, mode: ConversationPaneMode): Dp =
+    when (mode) {
+        ConversationPaneMode.Docked ->
+            (containerWidth * ConversationPaneMetrics.DockedWidthFraction)
+                .coerceIn(ConversationPaneMetrics.DockedMinWidth, ConversationPaneMetrics.DockedMaxWidth)
+        ConversationPaneMode.Overlay ->
+            minOf(containerWidth * ConversationPaneMetrics.PaneWidthFraction, ConversationPaneMetrics.PaneMaxWidth)
+    }
 
 @Composable
 fun ConversationSidePaneScaffold(
@@ -94,7 +131,9 @@ fun ConversationSidePaneScaffold(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val paneWidth = minOf(maxWidth * ConversationPaneMetrics.PaneWidthFraction, ConversationPaneMetrics.PaneMaxWidth)
+        val paneMode = conversationPaneMode(maxWidth)
+        val docked = paneMode == ConversationPaneMode.Docked
+        val paneWidth = conversationPaneWidth(maxWidth, paneMode)
         val paneWidthPx = with(density) { paneWidth.toPx() }
         val anchors = remember(paneWidthPx) {
             DraggableAnchors {
@@ -104,7 +143,8 @@ fun ConversationSidePaneScaffold(
         }
         val paneDragState = remember {
             AnchoredDraggableState(
-                initialValue = if (visible) ConversationPaneAnchor.Open else ConversationPaneAnchor.Closed,
+                // 宽屏常驻时位移永远停在「关」：抽屉那套遮罩、返回拦截、焦点隔离都不该生效。
+                initialValue = if (visible && !docked) ConversationPaneAnchor.Open else ConversationPaneAnchor.Closed,
                 anchors = anchors,
             )
         }
@@ -136,8 +176,9 @@ fun ConversationSidePaneScaffold(
                 }
             }
         }
-        val isRevealed by remember(paneDragState) {
+        val isRevealed by remember(paneDragState, docked) {
             derivedStateOf {
+                if (docked) return@derivedStateOf false
                 val offset = paneDragState.offset
                 !offset.isNaN() && offset > 0.5f
             }
@@ -167,7 +208,8 @@ fun ConversationSidePaneScaffold(
             paneDragState.updateAnchors(anchors)
         }
 
-        LaunchedEffect(visible, paneWidthPx) {
+        LaunchedEffect(visible, paneWidthPx, docked) {
+            if (docked) return@LaunchedEffect
             if (!visible && isRevealed) {
                 focusManager.clearFocus()
                 keyboard?.hide()
@@ -178,7 +220,15 @@ fun ConversationSidePaneScaffold(
             }
         }
 
-        LaunchedEffect(paneDragState) {
+        LaunchedEffect(docked, paneWidthPx) {
+            // 从窄屏转到宽屏时把抽屉位移归零；否则切回窄屏会带着一个「已经拉开」的抽屉回来。
+            if (docked) {
+                paneDragState.animateTo(ConversationPaneAnchor.Closed, settleAnimation)
+            }
+        }
+
+        LaunchedEffect(paneDragState, docked) {
+            if (docked) return@LaunchedEffect
             conversationPaneSettledValues(paneDragState) { isDragging }.collectLatest { settledValue ->
                 val settledOpen = settledValue == ConversationPaneAnchor.Open
                 if (settledOpen != currentVisible) {
@@ -197,7 +247,8 @@ fun ConversationSidePaneScaffold(
         // 处理侧栏返回，避免它抢先消费二级页面的第一次返回事件。
         NavigationBackHandler(
             state = navigationEventState,
-            isBackEnabled = isRevealed &&
+            isBackEnabled = !docked &&
+                isRevealed &&
                 backHandlerEnabled &&
                 sceneLifecycleState == Lifecycle.State.RESUMED,
             onBackCompleted = closePane,
@@ -212,7 +263,7 @@ fun ConversationSidePaneScaffold(
                     state = paneDragState,
                     reverseDirection = false,
                     orientation = Orientation.Horizontal,
-                    enabled = backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED,
+                    enabled = !docked && backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED,
                     flingBehavior = flingBehavior,
                     interactionSource = dragInteractions,
                 ),
@@ -244,7 +295,8 @@ fun ConversationSidePaneScaffold(
                         modifier = Modifier
                             .focusProperties { onEnter = { if (!isRevealed) cancelFocusChange() } }
                             .focusGroup()
-                            .then(if (!isRevealed) Modifier.clearAndSetSemantics {} else Modifier),
+                            // 常驻时侧栏是正常内容，不能像抽屉藏着那样把无障碍语义清空。
+                            .then(if (!isRevealed && !docked) Modifier.clearAndSetSemantics {} else Modifier),
                     )
                     Box(
                         modifier = Modifier.fillMaxSize()
@@ -281,15 +333,26 @@ fun ConversationSidePaneScaffold(
                 val panel = measurables[0].measure(
                     Constraints.fixed(paneWidthPx.roundToInt(), constraints.maxHeight),
                 )
+                val pageWidth = if (docked) {
+                    (constraints.maxWidth - panel.width).coerceAtLeast(0)
+                } else {
+                    constraints.maxWidth
+                }
                 val page = measurables[1].measure(
-                    Constraints.fixed(constraints.maxWidth, constraints.maxHeight),
+                    Constraints.fixed(pageWidth, constraints.maxHeight),
                 )
                 layout(constraints.maxWidth, constraints.maxHeight) {
-                    // 物理左侧是会话区；不随 RTL 改变两个槽位的关系。
-                    val motion = conversationPaneMotion(paneDragState.offset, paneWidthPx)
-                    val offset = motion.foregroundOffset.roundToInt()
-                    panel.placeWithLayer(offset - panel.width, 0)
-                    page.placeWithLayer(offset, 0)
+                    if (docked) {
+                        // 宽屏：两个槽位并排，互不覆盖，也不需要拖动位移。
+                        panel.placeWithLayer(0, 0)
+                        page.placeWithLayer(panel.width, 0)
+                    } else {
+                        // 物理左侧是会话区；不随 RTL 改变两个槽位的关系。
+                        val motion = conversationPaneMotion(paneDragState.offset, paneWidthPx)
+                        val offset = motion.foregroundOffset.roundToInt()
+                        panel.placeWithLayer(offset - panel.width, 0)
+                        page.placeWithLayer(offset, 0)
+                    }
                 }
             }
         }
