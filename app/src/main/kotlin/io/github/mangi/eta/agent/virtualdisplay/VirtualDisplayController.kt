@@ -68,6 +68,11 @@ internal object VirtualDisplayController {
     private var processSupervisor: ShellProcessSupervisor? = null
 
     private var activeDisplayId: Int = Display.DEFAULT_DISPLAY
+    /** root 桥接进程已明确回报 policy=hide；in-process 路径由 system Hook 负责，不置此标志。 */
+    @Volatile
+    private var activeImePolicyHidden: Boolean = false
+    @Volatile
+    private var rootBridgeImePolicyHidden: Boolean = false
     private var displayWidth: Int = 1080
     private var displayHeight: Int = 2400
     private var displayDensityDpi: Int = 420
@@ -95,12 +100,19 @@ internal object VirtualDisplayController {
         activeDisplayId.takeIf { CanvasRoutingPolicy.isVirtualDisplay(it) } ?: Display.DEFAULT_DISPLAY
     }
 
+    /** 这块屏是否已由 root 桥接进程明确设置为 IME policy=HIDE。 */
+    fun isImePolicyHidden(displayId: Int): Boolean = synchronized(lock) {
+        activeDisplayId == displayId && activeImePolicyHidden
+    }
+
     /**
      * 确保受信任虚拟屏已就绪并返回其 displayId；不可用时返回 null，由调用方平滑回退至物理主屏。
      */
     fun ensureVirtualDisplay(
         context: Context,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
+        /** 仅调试/对照：跳过 in-process 创建，强制走 root 桥接的 trusted 路径。 */
+        forceRootBridge: Boolean = false,
     ): Int? {
         synchronized(lock) {
             if (CanvasRoutingPolicy.isVirtualDisplay(activeDisplayId) && imageReader != null) {
@@ -127,28 +139,31 @@ internal object VirtualDisplayController {
             displayHeight = height
             displayDensityDpi = densityDpi
 
-            val createdInProcess = tryCreateInProcessVirtualDisplay(
-                appContext = appContext,
-                surface = reader.surface,
-                width = width,
-                height = height,
-                densityDpi = densityDpi,
-            )
-            if (createdInProcess != null) {
-                val id = createdInProcess.display?.displayId ?: Display.INVALID_DISPLAY
-                if (CanvasRoutingPolicy.isVirtualDisplay(id)) {
-                    inProcessVirtualDisplay = createdInProcess
-                    activeDisplayId = id
-                    mutableSnapshots.value = VirtualDisplaySnapshot(
-                        active = true,
-                        displayId = id,
-                        width = width,
-                        height = height,
-                    )
-                    AndroidAgentLogger.info("Virtual display created in-process: displayId=$id size=${width}x$height")
-                    return id
+            if (!forceRootBridge) {
+                val createdInProcess = tryCreateInProcessVirtualDisplay(
+                    appContext = appContext,
+                    surface = reader.surface,
+                    width = width,
+                    height = height,
+                    densityDpi = densityDpi,
+                )
+                if (createdInProcess != null) {
+                    val id = createdInProcess.display?.displayId ?: Display.INVALID_DISPLAY
+                    if (CanvasRoutingPolicy.isVirtualDisplay(id)) {
+                        inProcessVirtualDisplay = createdInProcess
+                        activeDisplayId = id
+                        activeImePolicyHidden = false
+                        mutableSnapshots.value = VirtualDisplaySnapshot(
+                            active = true,
+                            displayId = id,
+                            width = width,
+                            height = height,
+                        )
+                        AndroidAgentLogger.info("Virtual display created in-process: displayId=$id size=${width}x$height")
+                        return id
+                    }
+                    runCatching { createdInProcess.release() }
                 }
-                runCatching { createdInProcess.release() }
             }
 
             if (rootAvailable()) {
@@ -162,6 +177,7 @@ internal object VirtualDisplayController {
                 )
                 if (rootId != null && CanvasRoutingPolicy.isVirtualDisplay(rootId)) {
                     activeDisplayId = rootId
+                    activeImePolicyHidden = rootBridgeImePolicyHidden
                     mutableSnapshots.value = VirtualDisplaySnapshot(
                         active = true,
                         displayId = rootId,
@@ -479,6 +495,8 @@ internal object VirtualDisplayController {
     ) {
         highFrequencyPreview = false
         activeDisplayId = Display.DEFAULT_DISPLAY
+        activeImePolicyHidden = false
+        rootBridgeImePolicyHidden = false
         mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
 
         if (context != null && mutedPackages.isNotEmpty()) {
@@ -654,6 +672,7 @@ internal object VirtualDisplayController {
         densityDpi: Int,
         rootAvailable: () -> Boolean,
     ): Int? {
+        rootBridgeImePolicyHidden = false
         val token = VirtualDisplaySurfaceRegistry.register(surface)
         val supervisor = ShellProcessSupervisor(rootAvailable = rootAvailable)
         val apkPath = appContext.applicationInfo.sourceDir
@@ -687,6 +706,10 @@ internal object VirtualDisplayController {
                                 .trim()
                                 .toIntOrNull()
                             readyLatch.countDown()
+                        } else if (line.startsWith(VirtualDisplayCommandMain.IME_POLICY_PREFIX)) {
+                            rootBridgeImePolicyHidden = line
+                                .removePrefix(VirtualDisplayCommandMain.IME_POLICY_PREFIX)
+                                .trim() == "hide"
                         } else if (line.startsWith(VirtualDisplayCommandMain.RESULT_PREFIX)) {
                             readyLatch.countDown()
                         }

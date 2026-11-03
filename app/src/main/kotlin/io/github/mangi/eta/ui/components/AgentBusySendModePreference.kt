@@ -29,7 +29,7 @@ import io.github.mangi.eta.config.Prefs
  * 对齐 dsh 的「繁忙时的发送行为」设置：dsh 用 `BusyEnterBehavior` 决定运行时
  * Enter 与发送按钮走哪条路，Eta 没有键盘提交，只作用于运行中的发送按钮。
  *
- * 默认排队：用户点发送的直觉是「先记下」，打断当前回合必须是显式选择。
+ * 默认排队：用户点发送的直觉是「先记下」，改变当前任务方向（插话）必须是显式选择。
  */
 @Composable
 internal fun AgentBusySendModePreference(

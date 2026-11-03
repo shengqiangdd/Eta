@@ -6,6 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VirtualDisplayImePolicyTest {
+    @Test fun hidePolicyIsTheOnlyAcceptedPerDisplayIsolation() {
+        assertTrue(VirtualDisplayImePolicy.isHidePolicy(VirtualDisplayImePolicy.IME_POLICY_HIDE))
+        assertFalse(VirtualDisplayImePolicy.isHidePolicy(0))
+        assertFalse(VirtualDisplayImePolicy.isHidePolicy(1))
+        assertFalse(VirtualDisplayImePolicy.isHidePolicy(null))
+        assertEquals("eta_vd_ime_policy_12", VirtualDisplayImePolicy.imePolicySettingKey(12))
+    }
+
     @Test fun hiddenImeIsNotTreatedAsInput() {
         assertFalse(VirtualDisplayImePolicy.mainImeVisible(""))
         assertFalse(VirtualDisplayImePolicy.mainImeVisible("mInputShown=false\nmImeWindowVis=0x0"))

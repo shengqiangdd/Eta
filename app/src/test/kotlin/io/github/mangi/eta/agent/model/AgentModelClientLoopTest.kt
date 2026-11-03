@@ -5,6 +5,8 @@ import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
 import io.github.mangi.eta.data.model.ProviderTypes
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import io.github.mangi.eta.agent.device.RootAccessState
 import io.github.mangi.eta.agent.device.RootAccessStatus
@@ -424,12 +426,13 @@ class AgentModelClientLoopTest {
             listOf("assistant", "tool", "tool", "user"),
             provider.requests[1].roleSuffix(4),
         )
-        assertTrue(
-            provider.requests[1]
-                .getJSONObjectFromEnd(1)
-                .getString("content")
-                .contains("改用第二种方案")
-        )
+        val steering = provider.requests[1]
+            .getJSONObjectFromEnd(1)
+            .getString("content")
+        assertTrue(steering.contains("改用第二种方案"))
+        // 插话是「当前最新指令」，不是「在原任务上继续」：旧提示词会把方向拽回原任务。
+        assertTrue(steering.contains("当前最新指令"))
+        assertFalse(steering.contains("请基于当前任务上下文继续执行"))
     }
 
     @Test
@@ -982,6 +985,44 @@ class AgentModelClientLoopTest {
             index += 1
             return ProviderResponse(response(request, runController))
         }
+    }
+
+    @Test
+    fun parallelSubagentCallsInOneBatchStartTogether() {
+        val bothStarted = CountDownLatch(2)
+        val provider = ScriptedProvider(
+            assistant(
+                finishReason = "tool_calls",
+                toolCalls = listOf(
+                    toolCall("sub-a", "subagent", """{"description":"A","prompt":"do A"}"""),
+                    toolCall("sub-b", "subagent", """{"description":"B","prompt":"do B"}"""),
+                ),
+            ),
+            assistant(content = "完成", finishReason = "stop"),
+        )
+        val schema = JSONObject()
+            .put("type", "function")
+            .put(
+                "function",
+                JSONObject()
+                    .put("name", "subagent")
+                    .put("description", "fake")
+                    .put("parameters", JSONObject().put("type", "object")),
+            )
+        AgentModelClient.complete(
+            config = modelConfig(),
+            prompt = "同时跑两个子代理",
+            additionalTools = JSONArray().put(schema),
+            provider = provider,
+            toolExecutor = AgentModelClient.ToolExecutor {
+                // 串行执行时第一个会等超时并让测试失败；并行时两个都能在窗口内到达。
+                bothStarted.countDown()
+                assertTrue("同一批 subagent 应并发启动", bothStarted.await(2, TimeUnit.SECONDS))
+                AgentModelClient.ToolResult("""{"ok":true}""")
+            },
+        )
+        assertTrue(provider.requests.last().toString().contains("sub-a"))
+        assertTrue(provider.requests.last().toString().contains("sub-b"))
     }
 
     private fun modelConfig(terminalTools: Boolean = false): AgentModelClient.ModelConfig =

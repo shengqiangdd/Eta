@@ -48,6 +48,17 @@ class AgentTodoPlanTest {
     }
 
     @Test
+    fun promptSectionSubordinatesPlanToCurrentMessage() {
+        val plan = AgentTodoPlan.parse(JSONArray().put(item("a", "pending")))
+        val section = plan.promptSection()
+        assertTrue(section.contains("不是本轮用户指令"))
+        assertTrue(section.contains("用户当前这条消息优先"))
+        assertTrue(section.contains("用户说停止"))
+        // 旧文案会诱导模型无条件推进清单，正是「用户提问却继续干活」的来源。
+        assertFalse(section.contains("继续推进未完成项；"))
+    }
+
+    @Test
     fun rejectsDuplicateContent() {
         assertEquals(
             "第 2 项与前面的条目重复：a",

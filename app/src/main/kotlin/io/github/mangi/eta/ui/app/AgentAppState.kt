@@ -1721,13 +1721,17 @@ internal class AgentAppState(
     )
 
     /**
-     * 运行中「插话发送」：先把这条消息入队并请求中止当前 run，run 收尾后优先发出。
+     * 运行中「插话发送」：把这句话作为当前 run 的最新用户消息插进去，**不停止 run**。
      *
-     * 与 [sendCurrentMessage] 的运行中行为（排队，见 [queueCurrentMessage]）刻意分开：
-     * 点发送的直觉是「这条先记下」，而不是「现在就把正在做的事停下」；只有明确点这个插话按钮，
-     * 才代表「别按现在的方案继续」。空闲时没有可插的话，直接退回普通发送。
+     * 对齐 dsh 的 steer：插话进入当前步骤之后的边界，由 AgentLoop 当作用户消息追加；
+     * 当前正在飞的模型请求和正在跑的工具不被打断。它可能改变任务方向，所以提示词按
+     * 「当前最新指令」解释，而不是「在原任务上再加一条」。
+     *
+     * 与 [sendCurrentMessage] 的运行中行为（排队，见 [queueCurrentMessage]）分开：
+     * 点发送的直觉是「这条先记下」；点插话才代表「现在换问题/改方向」。
+     * 空闲时没有可插的话，直接退回普通发送。
      */
-    fun interruptAndSendCurrentMessage(submittedText: String? = null) {
+    fun steerCurrentMessage(submittedText: String? = null) {
         if (rejectWhileMessagesLoading()) return
         if (homeState.isCompacting) return
         val prompt = (submittedText ?: homeState.input).trim()
@@ -1742,65 +1746,116 @@ internal class AgentAppState(
         // messageEdit，用户刚改的那条消息白改，语义也从「改这条」变成「补一句」。
         if (rejectMessageEditWhileStreaming(prompt)) return
         if (selectedConversationId?.isReadOnlyExternalArchiveConversation() == true) return
-        val queued = QueuedMessageUi(
-            id = "queue-${UUID.randomUUID()}",
-            content = prompt,
-            pendingImages = pendingImages,
-            pendingFileReferences = pendingFileReferences,
-            immediateInterrupt = true,
+
+        // 插话协议只带文字：附件没法塞进当前 run，排队而不是悄悄把 run 停掉。
+        if (pendingImages.isNotEmpty() || pendingFileReferences.isNotEmpty()) {
+            queueCurrentMessage(prompt)
+            toastNotice(R.string.chat_steer_attachment_queued)
+            return
+        }
+        val runId = runIdForConversation(selectedConversationId)
+        if (runId == null) {
+            queueCurrentMessage(prompt)
+            toastNotice(R.string.chat_steer_unavailable)
+            return
+        }
+        val conversationId = selectedConversationId
+        val client = AgentRuntimeClient(appContext, AndroidAgentLogger)
+        scope.launch(Dispatchers.IO) {
+            val sent = client.sendSupplement(runId, prompt) { accepted ->
+                if (accepted) {
+                    consumeDraftAfterSteer(conversationId, prompt)
+                    toastNotice(R.string.chat_steer_sent)
+                } else {
+                    // 没被接纳（run 刚结束/不是对话 run）：草稿留着，让用户决定重发还是排队。
+                    toastNotice(R.string.chat_steer_rejected)
+                }
+            }
+            if (!sent) {
+                withContext(Dispatchers.Main) {
+                    if (homeState.input.trim() == prompt) {
+                        if (homeState.isStreaming) {
+                            // run 还活着：按原计划排队，等这次收尾再发。
+                            queueCurrentMessage(prompt)
+                            toastNotice(R.string.chat_steer_unavailable)
+                        } else {
+                            // run 刚好结束：不要再排一条永远等不到收尾的消息，直接发。
+                            sendCurrentMessage(prompt)
+                        }
+                    } else {
+                        toastNotice(R.string.chat_steer_unavailable)
+                    }
+                }
+            }
+        }
+    }
+
+    /** 插话被接纳后再清草稿；用户中途改了字就不动，避免把新输入吞掉。 */
+    private fun consumeDraftAfterSteer(conversationId: String?, text: String) {
+        if (conversationId == null || selectedConversationId != conversationId) return
+        if (homeState.input.trim() != text.trim()) return
+        setDraftText(conversationId, "")
+        updateCurrentConversation(
+            homeState.copy(
+                input = "",
+                // 只清这次送出的文字。发送后用户可能又贴了图，那些不属于这句话，不能顺手清掉。
+                inputSyncVersion = homeState.inputSyncVersion + 1,
+            )
         )
-        // 同上：插话入队也是一次「草稿被消费」，先清权威草稿表再落状态。
-        setDraftText(selectedConversationId, "")
-        updateCurrentConversation(AgentMessageQueueReducer.enqueue(homeState, queued))
-        requestInterruptCurrentRun()
     }
 
     /**
-     * 把队列里的某条提升为「立即插话」：运行中打断当前 run，空闲时直接发出。
+     * 把队列里的某条作为「插话」送进当前 run：不打断当前步骤，也不结束 run。
      *
-     * 两种状态下直接拒绝，不打断当前的 run：
-     * - 编辑态：插话会先打断 run，而消息本身因为 [dispatchQueuedMessage] 的
-     *   `messageEdit != null` 守卫发不出去（被原样放回队首）—— 用户白停一轮还看不出原因。
-     *   界面上按钮已经置灰，这里兜住键盘/无障碍/恢复态等其他入口。
-     * - 压缩中：`promoteToInterrupt` 会走「空闲」分支把它**弹出**队列，而
-     *   `dispatchQueuedMessage` 又因为 `isCompacting` 发不出去，两头都不在 —— 消息静默消失。
+     * 空闲时仍走原来的直接发送；运行中则只支持纯文字——附件塞不进当前 run，
+     * 留在队列里并说明，而不是悄悄把 run 停掉。
+     *
+     * 编辑态与压缩中直接拒绝：界面上的入口已经置灰，这里兜住键盘/无障碍/恢复态。
      */
     fun steerQueuedMessage(id: String) {
-        // 输入框有草稿时，run 收尾接力见草稿非空会整段跳过 —— 打断会发生，消息却永远排在队首，
-        // 队列条停在「插话中」。真机实测复现过，直接拒绝比白停一轮诚实。
-        if (homeState.input.isNotBlank()) {
-            Toast.makeText(
-                appContext,
-                appContext.getString(R.string.chat_queue_steer_blocked_by_draft),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
+        // 输入框里有草稿也可以插话：这条队列消息独立送出，草稿原样保留。
         if (homeState.messageEdit != null) {
-            Toast.makeText(
-                appContext,
-                appContext.getString(R.string.chat_queue_steer_blocked_by_edit),
-                Toast.LENGTH_SHORT,
-            ).show()
+            toastNotice(R.string.chat_queue_steer_blocked_by_edit)
             return
         }
         if (homeState.isCompacting) {
-            Toast.makeText(
-                appContext,
-                appContext.getString(R.string.chat_queue_steer_while_compacting),
-                Toast.LENGTH_SHORT,
-            ).show()
+            toastNotice(R.string.chat_queue_steer_while_compacting)
             return
         }
-        val (nextState, promoted) = AgentMessageQueueReducer.promoteToInterrupt(homeState, id)
-        if (promoted == null) return
-        updateCurrentConversation(nextState)
-        if (nextState.isStreaming && !nextState.isCompacting) {
-            requestInterruptCurrentRun()
-        } else {
-            // 空闲：直接发。发不出去时 [dispatchQueuedMessage] 自己会把它放回队首（它掌握
-            // 具体原因），这里不要再补一次 —— 那里若已经把附件消息转成草稿，补回队列就是重复。
+        val queued = homeState.queuedMessages.firstOrNull { it.id == id } ?: return
+        if (!homeState.isStreaming) {
+            val (nextState, promoted) = AgentMessageQueueReducer.promoteToInterrupt(homeState, id)
+            if (promoted == null) return
+            updateCurrentConversation(nextState)
+            // 空闲：直接发。发不出去时 [dispatchQueuedMessage] 自己会把它放回队首。
             dispatchQueuedMessage(promoted)
+            return
+        }
+        if (queued.pendingImages.isNotEmpty() || queued.pendingFileReferences.isNotEmpty()) {
+            toastNotice(R.string.chat_steer_attachment_queued)
+            return
+        }
+        val runId = runIdForConversation(selectedConversationId)
+        if (runId == null) {
+            toastNotice(R.string.chat_steer_unavailable)
+            return
+        }
+        val client = AgentRuntimeClient(appContext, AndroidAgentLogger)
+        scope.launch(Dispatchers.IO) {
+            val sent = client.sendSupplement(runId, queued.content) { accepted ->
+                if (accepted) {
+                    val next = AgentMessageQueueReducer.remove(homeState, id)
+                    if (next !== homeState) updateCurrentConversation(next)
+                    toastNotice(R.string.chat_steer_sent)
+                } else {
+                    toastNotice(R.string.chat_steer_rejected)
+                }
+            }
+            if (!sent) {
+                withContext(Dispatchers.Main) {
+                    toastNotice(R.string.chat_steer_unavailable)
+                }
+            }
         }
     }
 
@@ -1892,11 +1947,11 @@ internal class AgentAppState(
         return dispatchQueuedMessage(promoted)
     }
 
-    /** 请求中止当前会话的 run，但**不清空队列**：插话及队列续发都靠它。 */
+    /** 回答 ask_user 的接力：请求结束旧 run，但**不清空队列**；收尾后由 maybeLaunchPendingAskAnswer 接上新回答。 */
     private fun requestInterruptCurrentRun() {
         // 与「停止」共用同一条解析路径：本地映射缺失时也会向服务端对账，
         // 确认没有运行中的 run 就把假运行态收掉，排队消息才有机会被发出。
-        // byInterrupt=true：这里的停止只是「换一条继续说」的手段，收尾后允许队列头立刻发出；
+        // byInterrupt=true：这里的停止只是给「回答」让位的手段，收尾后允许队列头立刻发出；
         // 用户点停止按钮走默认 false，队列一律保留，绝不再自己跑起来。
         requestStop(selectedConversationId, byInterrupt = true)
     }
@@ -1904,7 +1959,7 @@ internal class AgentAppState(
     /**
      * 运行中「排队发送」：不打断当前回合，按 FIFO 等它自然结束后自动发出。
      *
-     * 与 [interruptAndSendCurrentMessage] 是两条完全不同的路：这里不调 requestStop，
+     * 与 [steerCurrentMessage] 是两条完全不同的路：这里不调 requestStop，
      * 所以界面不会先闪出「未运行」再突然跑起来。用户点发送时的意思通就是
      * 「把这句话记下，等你这轮做完再说」。
      */
@@ -2040,9 +2095,8 @@ internal class AgentAppState(
             // 运行中停在编辑态：这条输入属于编辑框，不是新消息。入队会把它当新消息、
             // 并顺手清掉 messageEdit（编辑白做），所以明确拒绝并保留现场。
             if (rejectMessageEditWhileStreaming(prompt)) return
-            // 运行中发送 = 排队，不打断当前回合（「打断并立即发送」是输入栏上那个插话按钮）。
-            // 之前这里走 steering：消息直接塞进正在跑的那个 run，用户看到的是「又被插话了」，
-            // 想发的新一轮永远不会出现 —— 这是真机反馈里最刺眼的一条。
+            // 运行中发送 = 排队，不结束当前 run；想改变方向请用输入栏的「插话」。
+            // 排队保证「发新消息」不会被误当成 steering，等这一轮自然结束后再发。
             queueCurrentMessage(prompt)
             return
         }
@@ -2162,18 +2216,6 @@ internal class AgentAppState(
     }
 
     /**
-     * 运行中把输入作为补充指令送入当前 run（steering）。
-     * 返回 false 表示没有活跃 run 或发送失败，调用方可以退回原行为。
-     */
-    /**
-     * 输入草稿写回会话状态（仅内存）。
-     *
-     * 输入框的文本只存在于 TextFieldState：一旦 `updateConversation` 用会话状态覆盖
-     * `homeState`（恢复提示、后台结果、刷新模型都会），输入框会按旧的 `input` 重设，用户
-     * 正在打的字就没了；切换会话时新组件也只拿得到旧状态里的空串。这里只写 map、不写
-     * `homeState.input`，避免每个字符都让整段聊天重组。
-     */
-    /**
      * 把权威草稿表对齐到指定文本（空串等于清掉）。
      *
      * 单独抽出来是因为顺序真的重要：`updateConversation` 会用这张表校正 `input`，
@@ -2184,6 +2226,14 @@ internal class AgentAppState(
         if (text.isEmpty()) draftsByConversation.remove(id) else draftsByConversation[id] = text
     }
 
+    /**
+     * 输入草稿写回会话状态（仅内存）。
+     *
+     * 输入框的文本只存在于 TextFieldState：一旦 `updateConversation` 用会话状态覆盖
+     * `homeState`（恢复提示、后台结果、刷新模型都会），输入框会按旧的 `input` 重设，用户
+     * 正在打的字就没了；切换会话时新组件也只拿得到旧状态里的空串。这里只写 map、不写
+     * `homeState.input`，避免每个字符都让整段聊天重组。
+     */
     fun updateDraft(text: String) {
         val conversationId = selectedConversationId
         if (conversationId == null) {
@@ -3797,10 +3847,10 @@ internal class AgentAppState(
     }
 
     /**
-     * run 收尾后衔接队列：队首是「插话」时立即发出，用户主动停止时保留队列。
+     * run 收尾后衔接队列：队首带「立即发送」标记时优先发出，用户主动停止时保留队列。
      *
      * 上游 3.3.5 的这段接线在合并时整段丢了（[AgentMessageQueueReducer.pollNextToSendAfterRun]
-     * 变成只有单测在调用的死代码），真机表现就是：插话确实打断了 run，但消息永远停在
+     * 变成只有单测在调用的死代码），旧实现的表现就是：插话会先打断 run，但消息永远停在
      * 「插话中」，用户怎么点都没反应。
      *
      * 只处理当前选中的会话：[dispatchQueuedMessage] 依赖 homeState 与草稿位，后台会话的队列
@@ -3828,7 +3878,7 @@ internal class AgentAppState(
             if (demoted !== state) updateConversation(conversationId, demoted, updateTimestamp = false)
             return
         }
-        // 插话按钮也会 requestStop（run 的 error 同样是「已停止」），但它要的是「换一条继续说」，
+        // 回答 ask_user 的接力也会 requestStop（run 的 error 同样是「已停止」），但它要的是「换一条继续说」，
         // 不能算「用户想停下」。只有最后一次点击是停止按钮时，才冻结整个队列。
         val stoppedByUser = AgentMessageQueueReducer.isQueueFrozen(
             explicitlyStoppedByUser = explicitlyStoppedByUser,

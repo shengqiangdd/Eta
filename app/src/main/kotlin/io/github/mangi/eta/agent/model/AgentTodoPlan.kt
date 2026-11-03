@@ -67,9 +67,10 @@ internal data class AgentTodoPlan(val items: List<AgentTodoItem>) {
      */
     fun promptSection(): String = buildString {
         appendLine("<todo_plan>")
-        appendLine("这是本会话跨轮保留的任务清单（最近一次 todo_write 的完整结果）：")
+        appendLine("这是本会话跨轮保留的任务清单（最近一次 todo_write 的完整结果），不是本轮用户指令。")
         appendLine(renderChecklist())
-        append("继续推进未完成项；目标变化、清单作废或全部完成后，用 todo_write 传入完整新清单（空列表表示清空）。")
+        appendLine("用户当前这条消息优先：如果它在提问、要求分析、表示停止或改变方向，就先响应当前消息，不要为了推进清单而忽略它。")
+        append("只有当前消息确实要求继续该任务时才推进未完成项；用户说停止/不做了时不要再执行，并用 todo_write 传入空列表清空。目标变化、清单作废或全部完成后，也用 todo_write 传入完整新清单。")
         appendLine()
         append("</todo_plan>")
     }

@@ -8,6 +8,7 @@ import android.os.Process
 import android.view.Display
 import android.view.Surface
 import io.github.mangi.eta.agent.accessibility.AccessibilityProtectionProtocol
+import io.github.mangi.eta.agent.device.VirtualDisplayImePolicy
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.UUID
@@ -67,6 +68,10 @@ internal object VirtualDisplaySurfaceRegistry {
 internal object VirtualDisplayCommandMain {
     const val READY_PREFIX = "ETA_VD_READY:"
     const val RESULT_PREFIX = "ETA_VD_RESULT:"
+    const val IME_POLICY_PREFIX = "ETA_VD_IME_POLICY:"
+
+    private const val IME_POLICY_RETRY_COUNT = 8
+    private const val IME_POLICY_RETRY_DELAY_MS = 50L
 
     @JvmStatic
     @Suppress("DEPRECATION")
@@ -88,6 +93,32 @@ internal object VirtualDisplayCommandMain {
                     val result = moveTaskToMainDisplay(request)
                     println(RESULT_PREFIX + result.toString())
                     exitProcess(0)
+                }
+                "ime_policy_probe" -> {
+                    val displayId = request.optInt("display_id", -1)
+                    if (displayId <= 0) {
+                        println(
+                            RESULT_PREFIX + JSONObject()
+                                .put("ok", false)
+                                .put("code", "INVALID_DISPLAY_ID"),
+                        )
+                        exitProcess(1)
+                    }
+                    if (Process.myUid() == Process.ROOT_UID) {
+                        android.system.Os.setuid(Process.SYSTEM_UID)
+                    }
+                    val before = VirtualDisplayImePolicy.getDisplayImePolicyViaBinder(displayId)
+                    val setOk = VirtualDisplayImePolicy.setDisplayImePolicyViaBinder(displayId)
+                    val after = VirtualDisplayImePolicy.getDisplayImePolicyViaBinder(displayId)
+                    println(
+                        RESULT_PREFIX + JSONObject()
+                            .put("ok", setOk && VirtualDisplayImePolicy.isHidePolicy(after))
+                            .put("display_id", displayId)
+                            .put("before", before ?: JSONObject.NULL)
+                            .put("after", after ?: JSONObject.NULL)
+                            .put("set_ok", setOk),
+                    )
+                    exitProcess(if (setOk && VirtualDisplayImePolicy.isHidePolicy(after)) 0 else 1)
                 }
                 else -> {
                     println(RESULT_PREFIX + JSONObject().put("ok", false).put("code", "UNKNOWN_ACTION"))
@@ -140,6 +171,18 @@ internal object VirtualDisplayCommandMain {
             exitProcess(1)
         }
 
+        // 当前进程已切到 SYSTEM_UID(1000)，可以直接设置 per-display IME policy。
+        // 这样即使设备只有 Root、没有 system_server Hook，也能避免键盘回退到主屏。
+        // display 可能还没同步到 WindowManagerService，短暂重试几次；失败则如实回报。
+        var imePolicyHidden = false
+        for (attempt in 0 until IME_POLICY_RETRY_COUNT) {
+            if (VirtualDisplayImePolicy.setDisplayImePolicyViaBinder(displayId)) {
+                imePolicyHidden = true
+                break
+            }
+            Thread.sleep(IME_POLICY_RETRY_DELAY_MS)
+        }
+        println("$IME_POLICY_PREFIX${if (imePolicyHidden) "hide" else "unavailable"}")
         println("$READY_PREFIX$displayId")
         System.out.flush()
 

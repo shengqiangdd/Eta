@@ -1,9 +1,14 @@
 package io.github.mangi.eta.agent.model
 
 import io.github.mangi.eta.agent.runtime.AgentEvent
+import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
+import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -76,6 +81,8 @@ internal class AgentLoop(
 
     private var availableToolNames = emptySet<String>()
     private val toolGuard = AgentToolGuard()
+    /** 并行子代理共享的收尾锁：guard/spill/敏感集合都不是线程安全的，工具本身并行，收尾串行。 */
+    private val toolFinalizeLock = Any()
     private val accumulatedReasoning = StringBuilder()
     private val sensitiveToolCallIds = linkedSetOf<String>()
     private var pendingToolImageMessage: JSONObject? = null
@@ -261,21 +268,10 @@ internal class AgentLoop(
             )
 
             if (toolCalls.isNotEmpty()) {
-                val outcomes = toolCalls.map { call ->
-                    val outcome = when (providerResponse.stopReason) {
-                        AssistantStopReason.TOOL_USE -> executeTool(round, call)
-                        AssistantStopReason.OUTPUT_LIMIT -> rejectedToolOutcome(
-                            round, call, "TRUNCATED_TOOL_CALL",
-                            "模型输出达到长度上限，工具参数可能不完整；本次调用未执行，请重新提交完整参数。",
-                        )
-                        else -> rejectedToolOutcome(
-                            round, call, "UNEXPECTED_TOOL_CALL",
-                            "模型在 ${providerResponse.stopReason.name} 终止状态下返回了工具调用；本批调用未执行，请重新规划。",
-                        )
-                    }
+                val outcomes = executeToolBatch(round, toolCalls, providerResponse.stopReason)
+                outcomes.forEach { outcome ->
                     appendMessage(AgentConversationCodec.toolResultMessage(outcome.call, outcome.result))
                     publishTranscript()
-                    outcome
                 }
                 appendToolImages(round, outcomes)
                 publishTranscript()
@@ -357,11 +353,67 @@ internal class AgentLoop(
     }
 
     private fun steeringPrompt(supplement: String): String =
-        "用户补充指令：$supplement\n\n请基于当前任务上下文继续执行，不要从头重复已经完成或已经验证过的操作。"
+        "用户插话（当前最新指令）：$supplement\n\n" +
+            "按这句话重新判断方向。它可能替换原来的任务：原任务里还没完成的部分先停下，" +
+            "除非用户明确要求继续；已经完成且仍然有用的结果可以复用，但不要为了“做完”继续执行。" +
+            "如果用户只是说“继续”，再继续原任务。"
 
     private fun steeringMessage(supplement: String): JSONObject =
         AgentConversationCodec.userTextMessage(steeringPrompt(supplement))
             .put("_eta_message_id", "user-$operationId-supplement-${++supplementIndex}")
+
+    /**
+     * 同一轮里模型可能一次发起多个 `subagent`。它们之间没有数据依赖，串行跑只是白等；
+     * 但普通工具仍顺序执行：写文件、改配置这类调用有隐式先后关系，不能擅自并发。
+     * 子代理内部对 GUI 的访问仍受 `GuiControlCoordinator` 按屏互斥，不会两个代理同时点同一块屏。
+     */
+    private fun executeToolBatch(
+        round: Int,
+        toolCalls: List<AgentModelClient.ToolCall>,
+        stopReason: AssistantStopReason,
+    ): List<ToolOutcome> {
+        fun outcomeFor(call: AgentModelClient.ToolCall): ToolOutcome = when (stopReason) {
+            AssistantStopReason.TOOL_USE -> executeTool(round, call)
+            AssistantStopReason.OUTPUT_LIMIT -> rejectedToolOutcome(
+                round, call, "TRUNCATED_TOOL_CALL",
+                "模型输出达到长度上限，工具参数可能不完整；本次调用未执行，请重新提交完整参数。",
+            )
+            else -> rejectedToolOutcome(
+                round, call, "UNEXPECTED_TOOL_CALL",
+                "模型在 ${stopReason.name} 终止状态下返回了工具调用；本批调用未执行，请重新规划。",
+            )
+        }
+
+        val parallelSubagents = stopReason == AssistantStopReason.TOOL_USE &&
+            toolCalls.size > 1 &&
+            toolCalls.all { it.name == AgentSubagentToolCatalog.TOOL_NAME }
+        if (!parallelSubagents) return toolCalls.map(::outcomeFor)
+
+        val pool = Executors.newFixedThreadPool(
+            minOf(toolCalls.size, MAX_PARALLEL_SUBAGENTS),
+        ) { runnable ->
+            Thread(runnable, "eta-subagent-batch").apply { isDaemon = true }
+        }
+        return try {
+            val futures = toolCalls.map { call -> pool.submit(Callable { outcomeFor(call) }) }
+            futures.map { future ->
+                try {
+                    future.get()
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw AgentRunCancelledException()
+                } catch (failed: ExecutionException) {
+                    when (val cause = failed.cause) {
+                        is AgentRunCancelledException -> throw cause
+                        is Throwable -> throw cause
+                        else -> throw failed
+                    }
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
 
     private fun executeTool(
         round: Int,
@@ -382,17 +434,21 @@ internal class AgentLoop(
         } else {
             null
         }
-        onEvent(
-            AgentEvent.ToolStarted(
-                round = round,
-                toolCallId = toolCall.id,
-                name = toolCall.name,
-                argsPreview = traceFormatter.summarizeArguments(toolCall),
-                command = traceFormatter.displayCommand(toolCall),
-                askQuestion = ask?.question,
-                askOptions = ask?.options.orEmpty(),
+        // 并行 subagent 会同时从多个线程进入这里：事件投影与归档列表不是线程安全的，
+        // 开始事件也按同一把收尾锁串行。
+        synchronized(toolFinalizeLock) {
+            onEvent(
+                AgentEvent.ToolStarted(
+                    round = round,
+                    toolCallId = toolCall.id,
+                    name = toolCall.name,
+                    argsPreview = traceFormatter.summarizeArguments(toolCall),
+                    command = traceFormatter.displayCommand(toolCall),
+                    askQuestion = ask?.question,
+                    askOptions = ask?.options.orEmpty(),
+                )
             )
-        )
+        }
 
         val startedAtNanos = System.nanoTime()
         // 先广播轮次再执行：进度可能在工具内部第一条日志就产生，
@@ -421,21 +477,29 @@ internal class AgentLoop(
         // 原地打转时把提醒塞进这次工具结果：模型下一轮就能看到，且不需要伪造用户消息。
         // 顺序很重要：guard 先看原始结果（错误码完整），命中提醒后再溢写大输出，
         // 最后把提醒贴到最终内容上——否则溢写后的定位符里没有 code，重复失败再也认不出来。
-        val guardNote = toolGuard.observe(toolCall, result.content)
-        if (result.sensitive || AgentSensitiveToolPolicy.isSensitive(toolCall.name)) {
-            sensitiveToolCallIds += toolCall.id
-        } else {
-            // 敏感结果不落盘：那类数据连会话历史都要脱敏，写文件等于绕过整条脱敏链路。
-            toolSpill?.maybeSpill(toolCall.name, operationId, toolCall.id, result.content)?.let { spilled ->
-                result = result.copy(content = spilled.content)
+        // 并行子代理时工具本身并发，但 guard/spill/敏感集合与事件收尾必须串行：
+        // 这些状态没有线程安全契约，交给锁比让两个线程各写一半便宜得多。
+        val finalResult = synchronized(toolFinalizeLock) {
+            var finalized = result
+            val guardNote = toolGuard.observe(toolCall, finalized.content)
+            if (finalized.sensitive || AgentSensitiveToolPolicy.isSensitive(toolCall.name)) {
+                sensitiveToolCallIds += toolCall.id
+            } else {
+                // 敏感结果不落盘：那类数据连会话历史都要脱敏，写文件等于绕过整条脱敏链路。
+                toolSpill?.maybeSpill(toolCall.name, operationId, toolCall.id, finalized.content)?.let { spilled ->
+                    finalized = finalized.copy(content = spilled.content)
+                }
             }
+            guardNote?.let { note -> finalized = finalized.copy(content = AgentToolGuard.attach(finalized.content, note)) }
+            finalized
         }
-        guardNote?.let { note -> result = result.copy(content = AgentToolGuard.attach(result.content, note)) }
 
         val elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000
-        emitToolFinished(round, toolCall, result, elapsedMs)
-        onToolTrace(round, toolCall, result, elapsedMs)
-        return ToolOutcome(toolCall, result)
+        synchronized(toolFinalizeLock) {
+            emitToolFinished(round, toolCall, finalResult, elapsedMs)
+            onToolTrace(round, toolCall, finalResult, elapsedMs)
+        }
+        return ToolOutcome(toolCall, finalResult)
     }
 
     private fun rejectedToolOutcome(
@@ -594,6 +658,11 @@ internal class AgentLoop(
             is ProviderEvent.SearchSuggestions -> AgentEvent.SearchSuggestions(round, index, html)
             is ProviderEvent.Completed -> null
         }
+
+    private companion object {
+        /** 同一轮最多同时跑几个子代理；再多会挤占主进程内存与模型连接，收益递减。 */
+        const val MAX_PARALLEL_SUBAGENTS = 4
+    }
 
     private fun AssistantBlockKind.toRuntimeKind(): AgentEvent.AssistantBlockKind =
         when (this) {

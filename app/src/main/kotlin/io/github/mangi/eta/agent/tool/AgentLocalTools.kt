@@ -265,6 +265,8 @@ internal class AgentLocalTools(
         rootAvailable = rootAvailable,
         virtualDisplays = virtualDisplays,
         packageNameProvider = { context.packageName },
+        systemHookAvailable = { EtaApp.serviceInstance != null },
+        appContext = context,
     )
 
     init {
@@ -677,7 +679,9 @@ internal class AgentLocalTools(
         if (!terminalToolsEnabled()) {
             return errorResult("TERMINAL_TOOLS_DISABLED", "请先启用终端/文件工具")
         }
-        return block()
+        // 终端与文件工具最容易读到配置、数据库和日志里的密钥；在结果离开工具层之前打码，
+        // 避免密钥进入模型上下文、会话记录和导出文件。
+        return SecretRedactor.redact(block())
     }
 
     private fun fileVisionTool(block: () -> AgentModelClient.ToolResult): AgentModelClient.ToolResult {

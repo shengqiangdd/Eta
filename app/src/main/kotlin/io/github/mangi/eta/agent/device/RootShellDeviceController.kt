@@ -14,6 +14,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.Display
 import java.io.IOException
 import java.io.StringReader
@@ -34,6 +35,14 @@ internal class RootShellDeviceController(
     private val virtualDisplays: VirtualDisplayController? = null,
     /** 当前包名：虚拟屏动作期间用它切换到无 UI 输入法（避免主屏弹键盘）。 */
     private val packageNameProvider: () -> String = { "" },
+
+    /**
+     * system_server Hook 是否可用。可用时虚拟屏创建会由 Hook 设置
+     * `DISPLAY_IME_POLICY_HIDE`，正常路径不再切换全局默认输入法。
+     */
+    private val systemHookAvailable: () -> Boolean = { false },
+    /** 读取 Hook 写在 Settings.Global 的 policy 确认；没有 Context 时只能走兜底。 */
+    private val appContext: Context? = null,
 ) : AutoCloseable {
     private val processSupervisor = ShellProcessSupervisor(rootAvailable = rootAvailable)
 
@@ -2300,11 +2309,20 @@ internal class RootShellDeviceController(
         }
         // 虚拟屏上点击/长按可能命中输入框：动作期间切到无 UI 输入法，
         // 系统就不会把键盘弹到主屏（打游戏时尤其致命）。
-        // 两个会话可能同时操作：用全局锁串行化 IME 切换，避免恢复错乱。
-        val guardIme = displayId != null && (tool == "tap" || tool == "long_press")
+        // 首选 per-display IME policy=HIDE；只有没有该策略的旧路径才退回上面的静默 IME 租约。
+        // 兜底路径仍用全局锁串行化切换，避免两个会话恢复错乱。
+        val virtualDisplayId = displayId
+        val perDisplayImePolicy = virtualDisplayId != null && (
+            (systemHookAvailable() && isHookImePolicyConfirmed(virtualDisplayId)) ||
+                (CanvasVirtualDisplay.currentDisplayId() == virtualDisplayId &&
+                    CanvasVirtualDisplay.isImePolicyHidden(virtualDisplayId))
+            )
+        val guardIme = virtualDisplayId != null &&
+            (tool == "tap" || tool == "long_press") &&
+            !perDisplayImePolicy
         var guardError: String? = null
         val result: ShellTextResult? = synchronized(IME_SWITCH_LOCK) {
-            if (guardIme) guardError = ensureVirtualIme(displayId!!)
+            if (guardIme) guardError = ensureVirtualIme(virtualDisplayId)
             if (guardError != null) null else runSuText(scoped, timeoutSeconds = 8)
         }
         guardError?.let { return it }
@@ -2343,7 +2361,22 @@ internal class RootShellDeviceController(
         }
     }
 
-    /** 首次进入虚拟屏输入时建立静默 IME 租约；后续点击复用，不再反复切换。 */
+    /** Hook 只有在 policy 设置成功后才写 `Settings.Global`；没有确认就仍走兜底。 */
+    private fun isHookImePolicyConfirmed(displayId: Int): Boolean {
+        val context = appContext ?: return false
+        return runCatching {
+            Settings.Global.getInt(
+                context.contentResolver,
+                VirtualDisplayImePolicy.imePolicySettingKey(displayId),
+                0,
+            ) == VirtualDisplayImePolicy.IME_POLICY_HIDE
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 旧设备兜底：没有 per-display `IME_POLICY_HIDE` 时，首次进入虚拟屏输入
+     * 建立静默 IME 租约；后续点击复用，不再反复切换。正常路径不应走到这里。
+     */
     private fun ensureVirtualIme(displayId: Int): String? {
         silentImeOriginal?.let {
             silentImeDisplayId = displayId

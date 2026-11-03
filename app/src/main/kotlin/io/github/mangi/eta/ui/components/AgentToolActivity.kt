@@ -440,7 +440,7 @@ private fun formatElapsed(ms: Long): String = when {
  * 用户看到的「秒数重新计数」就是它。
  */
 @Composable
-private fun rememberRunningSeconds(id: String, running: Boolean, startedAtMs: Long?): Int? {
+internal fun rememberRunningSeconds(id: String, running: Boolean, startedAtMs: Long?): Int? {
     if (!running) return null
     val fallbackStart = rememberSaveable(id) { System.currentTimeMillis() }
     val start = startedAtMs?.takeIf { it > 0L } ?: fallbackStart

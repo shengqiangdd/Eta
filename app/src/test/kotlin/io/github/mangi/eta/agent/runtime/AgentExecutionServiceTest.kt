@@ -54,6 +54,63 @@ class AgentExecutionServiceTest {
     }
 
     @Test
+    fun executionNotificationCarriesSupplementAndPauseActions() {
+        val context = RuntimeEnvironment.getApplication()
+        val leaseId = "test:notification-actions"
+        // 暂停/补充按钮只在真实 Agent run 租约存在时出现；终端会话租约只有「停止」。
+        assertTrue(AgentExecutionService.acquire(context, leaseId, agentRunId = "test-run") {})
+        AgentExecutionService.updateRunStatus(context, AgentOverlayStatus.Reasoning, activeRunCount = 1)
+        shadowOf(Looper.getMainLooper()).idle()
+        val controller = Robolectric.buildService(AgentExecutionService::class.java).create()
+        try {
+            val notification = requireNotNull(shadowOf(controller.get()).lastForegroundNotification)
+            assertEquals(3, notification.actions.size)
+
+            val supplement = notification.actions[0]
+            assertEquals(context.getString(R.string.execution_supplement), supplement.title)
+            val remoteInputs = requireNotNull(supplement.remoteInputs)
+            assertEquals(1, remoteInputs.size)
+            assertEquals(AgentExecutionService.KEY_SUPPLEMENT, remoteInputs.single().resultKey)
+
+            assertEquals(context.getString(R.string.execution_pause), notification.actions[1].title)
+            assertEquals(context.getString(R.string.execution_stop), notification.actions[2].title)
+
+            // 暂停后标签要变成「继续」，否则用户会以为再点一次仍是暂停。
+            AgentExecutionService.updateRunStatus(context, AgentOverlayStatus.Paused, activeRunCount = 1)
+            shadowOf(Looper.getMainLooper()).idle()
+            // refreshNotification() 走 NotificationManager.notify，不会更新 ShadowService.lastForegroundNotification。
+            val paused = context.getSystemService(NotificationManager::class.java)
+                .activeNotifications.single().notification
+            assertEquals(context.getString(R.string.execution_resume), paused.actions[1].title)
+        } finally {
+            AgentExecutionService.updateRunStatus(context, null, activeRunCount = 0)
+            AgentExecutionService.release(leaseId)
+            shadowOf(Looper.getMainLooper()).idle()
+            controller.destroy()
+        }
+    }
+
+    @Test
+    fun terminalOnlyNotificationExposesStopWithoutAgentActions() {
+        val context = RuntimeEnvironment.getApplication()
+        val leaseId = "test:terminal-only"
+        assertTrue(AgentExecutionService.acquire(context, leaseId) {})
+        AgentExecutionService.updateRunStatus(context, null, activeRunCount = 0)
+        shadowOf(Looper.getMainLooper()).idle()
+        val controller = Robolectric.buildService(AgentExecutionService::class.java).create()
+        try {
+            val notification = requireNotNull(shadowOf(controller.get()).lastForegroundNotification)
+            // 终端会话没有可暂停的推理：多出来的按钮只会“点了没反应”。
+            assertEquals(1, notification.actions.size)
+            assertEquals(context.getString(R.string.execution_stop), notification.actions.single().title)
+        } finally {
+            AgentExecutionService.release(leaseId)
+            shadowOf(Looper.getMainLooper()).idle()
+            controller.destroy()
+        }
+    }
+
+    @Test
     fun foregroundExecutionUsesOnlyServiceTypesSupportedByThePlatform() {
         val controller = Robolectric.buildService(AgentExecutionService::class.java).create()
         try {

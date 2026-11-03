@@ -6,6 +6,12 @@
         <item quantity="other">%1$d 項任務正在執行，可返回 Eta 查看進度</item>
     </plurals>
     <string name="execution_stop">停止執行任務</string>
+    <string name="execution_pause">暫停</string>
+    <string name="execution_resume">繼續</string>
+    <string name="execution_supplement">插話</string>
+    <string name="execution_supplement_hint">換問題或改方向，Eta 繼續目前工作階段…</string>
+    <string name="execution_steer_rejected">插話未送達：任務可能剛結束</string>
+    <string name="execution_steer_unavailable">目前任務不支援插話</string>
     <string name="execution_chip_running">操作中</string>
     <string name="execution_chip_answering">回答中</string>
 </resources>

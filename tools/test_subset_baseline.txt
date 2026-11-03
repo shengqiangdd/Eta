@@ -79,7 +79,6 @@ io.github.mangi.eta.agent.model.AgentFileVisionToolCatalogTest
 io.github.mangi.eta.agent.model.AgentGoalTest
 io.github.mangi.eta.agent.model.AgentGoalToolCatalogTest
 io.github.mangi.eta.agent.model.AgentModeTest
-io.github.mangi.eta.agent.model.AgentModelClientLoopTest
 io.github.mangi.eta.agent.model.AgentModelRetryTest
 io.github.mangi.eta.agent.model.AgentPhoneResultFormatterTest
 io.github.mangi.eta.agent.model.AgentPlanModePolicyTest
@@ -138,7 +137,6 @@ io.github.mangi.eta.agent.runtime.AgentFileBackupsTest
 io.github.mangi.eta.agent.runtime.AgentHistoryRetentionTest
 io.github.mangi.eta.agent.runtime.AgentRunArchiveStoreTest
 io.github.mangi.eta.agent.runtime.AgentRunCheckpointStoreTest
-io.github.mangi.eta.agent.runtime.AgentRunControllerTest
 io.github.mangi.eta.agent.runtime.AgentRunExclusivityPolicyTest
 io.github.mangi.eta.agent.runtime.AgentRunExportTest
 io.github.mangi.eta.agent.runtime.AgentRunFileChangesTest
@@ -156,7 +154,6 @@ io.github.mangi.eta.agent.runtime.AgentRuntimeWireServiceIntentTest
 io.github.mangi.eta.agent.runtime.AgentRuntimeWireTest
 io.github.mangi.eta.agent.runtime.AgentTodoStoreTest
 io.github.mangi.eta.agent.runtime.EntrySurfaceGuardTest
-io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest
 io.github.mangi.eta.agent.runtime.ExecutionStopQueueTest
 io.github.mangi.eta.agent.runtime.GuiControlCoordinatorTest
 io.github.mangi.eta.agent.runtime.RuntimeRunRegistryTest

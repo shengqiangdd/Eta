@@ -198,14 +198,23 @@ internal class AgentRuntimeClient(
     }
 
     /**
-     * 给正在执行的 run 追加一条用户补充指令（steering）。
+     * 给正在执行的 run 追加一条用户补充指令（steering/插话）。
+     *
      * 与“停止再重发”不同，它不打断当前步骤：AgentLoop 在步骤边界轮询补充并继续同一轮。
+     * [onAccepted] 在服务端回执后于主线程调用；只有 true 才能清掉界面草稿。
      */
-    fun sendSupplement(runId: String, text: String): Boolean {
+    fun sendSupplement(
+        runId: String,
+        text: String,
+        onAccepted: ((Boolean) -> Unit)? = null,
+    ): Boolean {
         if (runId.isBlank() || text.isBlank()) return false
         return withRuntimeMessenger(false) { serviceMessenger ->
             val msg = Message.obtain(null, AgentRuntimeWire.MSG_SUPPLEMENT)
             msg.data = AgentRuntimeWire.supplementBundle(runId, text)
+            if (onAccepted != null) {
+                msg.replyTo = Messenger(SupplementAckHandler(onAccepted))
+            }
             serviceMessenger.send(msg)
             true
         }
@@ -488,6 +497,21 @@ internal class AgentRuntimeClient(
             if (msg.what == AgentRuntimeWire.MSG_DRAIN_RESULTS_RESPONSE) {
                 onResults(AgentRuntimeWire.completedRunsFromBundle(msg.data ?: return))
             }
+        }
+    }
+
+    /** 只处理补充指令回执；缺失字段按未接纳处理，界面据此保留草稿。 */
+    private class SupplementAckHandler(
+        private val onAccepted: (Boolean) -> Unit,
+    ) : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            if (msg.what != AgentRuntimeWire.MSG_SUPPLEMENT_ACK) return
+            val data = msg.data
+            if (data == null) {
+                onAccepted(false)
+                return
+            }
+            onAccepted(AgentRuntimeWire.supplementAcceptedFromBundle(data))
         }
     }
 

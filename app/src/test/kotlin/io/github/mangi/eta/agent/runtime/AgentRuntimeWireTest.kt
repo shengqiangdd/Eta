@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.runtime
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Bundle
 import android.os.Parcel
 import android.util.Base64
 import io.github.mangi.eta.agent.media.AgentImageCodec
@@ -918,5 +919,22 @@ class AgentRuntimeWireTest {
         val handoff = AgentRuntimeWire.entryHandoffFromBundle(bundle)
 
         assertEquals(false, handoff.dismissEntrySurfaceOnForegroundOperation)
+    }
+
+    @Test
+    fun supplementAckRoundTripsAcceptance() {
+        val accepted = AgentRuntimeWire.supplementAckBundle("run-1", true)
+        assertEquals("run-1", AgentRuntimeWire.runIdFromBundle(accepted))
+        assertTrue(AgentRuntimeWire.supplementAcceptedFromBundle(accepted))
+
+        val rejected = AgentRuntimeWire.supplementAckBundle("run-1", false)
+        assertFalse(AgentRuntimeWire.supplementAcceptedFromBundle(rejected))
+    }
+
+    @Test
+    fun supplementAckMissingFieldMeansRejected() {
+        val bundle = Bundle().apply { putString("run_id", "run-1") }
+
+        assertFalse(AgentRuntimeWire.supplementAcceptedFromBundle(bundle))
     }
 }

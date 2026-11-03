@@ -65,11 +65,26 @@ internal fun SubagentActivityRow(
     val running = message.status == ToolActivityStatusUi.Running
     val failed = message.status == ToolActivityStatusUi.Failed ||
         snapshot.status == SubagentActivitySnapshot.STATUS_FAILED
+    val interrupted = snapshot.status == SubagentActivitySnapshot.STATUS_INTERRUPTED
+    // 插话中断的工具结果也是 ok=false，界面层必须把“中断”从“失败”里摘出来，否则会被画成红色错误。
+    val hardFailed = failed && !interrupted
+    // 用「最后一次真实事件」而不是当前时间算停滞：子代理在长工具调用里没有输出时，
+    // 界面要能明确告诉用户“不是我没刷新，是它真的很久没动了”。
+    val idleSeconds = rememberRunningSeconds(
+        id = "${message.id}-idle",
+        running = running && snapshot.lastActivityAtMs > 0L,
+        startedAtMs = snapshot.lastActivityAtMs,
+    )
     val typeLabel = snapshot.subagentType.ifBlank { "subagent" }
     val taskTitle = snapshot.description.ifBlank { message.argumentsSummary.ifBlank { "Subagent" } }
     val subtitle = when {
-        running -> snapshot.currentAction.takeIf { it.isNotBlank() }
-            ?: if (snapshot.toolStepCount > 0) "已执行 ${snapshot.toolStepCount} 步" else "正在运行…"
+        running -> when {
+            idleSeconds != null && idleSeconds >= SUBAGENT_STALL_SECONDS ->
+                stringResource(R.string.subagent_stalled_seconds, idleSeconds)
+            else -> snapshot.currentAction.takeIf { it.isNotBlank() }
+                ?: if (snapshot.toolStepCount > 0) "已执行 ${snapshot.toolStepCount} 步" else "正在运行…"
+        }
+        interrupted -> stringResource(R.string.subagent_interrupted)
         failed -> snapshot.error?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
             ?: message.outcomeLine()
             ?: "执行未完成"
@@ -109,7 +124,7 @@ internal fun SubagentActivityRow(
                     Text(
                         text = subtitle,
                         style = MiuixTheme.textStyles.footnote2,
-                        color = if (failed && !running) {
+                        color = if (hardFailed && !running) {
                             StatusError
                         } else {
                             MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f)
@@ -147,10 +162,14 @@ internal fun SubagentActivityRow(
         SubagentInspectorContent(
             snapshot = snapshot,
             running = running,
-            failed = failed,
+            failed = hardFailed,
+            interrupted = interrupted,
         )
     }
 }
+
+/** 超过这个秒数没有子代理事件，就在行内提示可能卡住；20 秒足够过滤正常的模型思考间隔。 */
+private const val SUBAGENT_STALL_SECONDS = 20
 
 @Composable
 private fun SubagentTypeBadge(
@@ -191,6 +210,7 @@ private fun SubagentInspectorContent(
     snapshot: SubagentActivitySnapshot,
     running: Boolean,
     failed: Boolean,
+    interrupted: Boolean,
 ) {
     val density = LocalDensity.current
     val maxSheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.76f
@@ -221,6 +241,7 @@ private fun SubagentInspectorContent(
                         when {
                             running -> MiuixTheme.colorScheme.primary
                             failed -> StatusError
+                            interrupted -> MiuixTheme.colorScheme.onSurfaceVariantSummary
                             else -> StatusSuccess
                         },
                     ),
@@ -298,6 +319,7 @@ private fun SubagentInspectorContent(
                             tone = when (step.status) {
                                 SubagentStepSnapshot.STATUS_RUNNING -> WorkNodeTone.Running
                                 SubagentStepSnapshot.STATUS_FAILED -> WorkNodeTone.Failed
+                                SubagentStepSnapshot.STATUS_INTERRUPTED -> WorkNodeTone.Done
                                 else -> WorkNodeTone.Done
                             },
                             isLast = isLastStep,
@@ -333,17 +355,19 @@ private fun SubagentInspectorContent(
             }
         }
 
-        // 错误信息
-        val error = snapshot.error?.takeIf { it.isNotBlank() && failed }
+        // 错误信息；插话中断不是错误，用中性色单独说明，避免用户误以为子代理崩了。
+        val error = snapshot.error?.takeIf { it.isNotBlank() && (failed || interrupted) }
         if (error != null) {
+            val errorColor = if (failed) StatusError else MiuixTheme.colorScheme.onSurfaceVariantSummary
             Text(
                 text = error,
                 style = MiuixTheme.textStyles.footnote1,
-                color = StatusError,
+                color = errorColor,
                 modifier = Modifier
                     .fillMaxWidth()
                     .squircleSurface(
-                        color = StatusError.copy(alpha = 0.08f),
+                        color = if (failed) StatusError.copy(alpha = 0.08f)
+                        else MiuixTheme.colorScheme.surfaceContainer,
                         cornerRadius = 12.dp,
                     )
                     .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -387,6 +411,7 @@ private fun SubagentStepRow(
     }
     val running = step.status == SubagentStepSnapshot.STATUS_RUNNING
     val failed = step.status == SubagentStepSnapshot.STATUS_FAILED
+    val interrupted = step.status == SubagentStepSnapshot.STATUS_INTERRUPTED
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -405,6 +430,7 @@ private fun SubagentStepRow(
                 color = when {
                     running -> MiuixTheme.colorScheme.onSurface
                     failed -> StatusError
+                    interrupted -> MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f)
                     else -> MiuixTheme.colorScheme.onSurfaceVariantSummary
                 },
                 modifier = Modifier.weight(1f),

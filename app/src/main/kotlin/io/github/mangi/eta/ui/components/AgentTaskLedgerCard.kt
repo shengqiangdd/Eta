@@ -136,6 +136,9 @@ internal fun AgentTaskLedgerCard(ledger: AgentTaskLedger, modifier: Modifier = M
 
 @Composable
 private fun TaskLedgerRow(entry: AgentTaskRecord) {
+    val running = entry.status == AgentTaskStatus.RUNNING
+    val statusLabel = entry.status.label()
+    val elapsedSeconds = rememberRunningSeconds("task-${entry.id}", running, entry.startedAt)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -158,12 +161,27 @@ private fun TaskLedgerRow(entry: AgentTaskRecord) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${entry.status.label()} · ${entry.id}",
+                text = buildString {
+                    append(statusLabel).append(" · ").append(entry.id)
+                    if (elapsedSeconds != null && elapsedSeconds >= 3) {
+                        append(" · ").append(elapsedSeconds).append('s')
+                    }
+                },
                 style = MiuixTheme.textStyles.footnote2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // 运行中的进度是用户判断“还在动还是卡住”的唯一线索；结束态不再重复最后一步。
+            if (running && !entry.progress.isNullOrBlank()) {
+                Text(
+                    text = "↳ ${entry.progress}",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

@@ -102,7 +102,9 @@ has_stage() {
 # 以及「没有 root 时必须写进 unavailable，而不是报『没有崩溃』」。
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
+  --tests io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest
   --tests io.github.mangi.eta.agent.tool.AgentSelfAuditTest
+  --tests io.github.mangi.eta.agent.tool.SecretRedactorTest
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
   --tests io.github.mangi.eta.ui.components.ChatTurnNavigatorGutterTest
@@ -148,6 +150,9 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.model.AgentTranscriptViewTest
   --tests io.github.mangi.eta.agent.model.AgentSubmitDedupPolicyTest
   --tests io.github.mangi.eta.agent.runtime.AgentGoalStoreTest
+  --tests io.github.mangi.eta.agent.runtime.AgentRunControllerTest
+  --tests io.github.mangi.eta.agent.model.AgentModelClientLoopTest
+  --tests io.github.mangi.eta.agent.subagent.SubagentSteeringWatchTest
   --tests io.github.mangi.eta.agent.runtime.AgentTaskLedgerStoreTest
   --tests io.github.mangi.eta.agent.runtime.BackgroundEventStoreTest
   --tests io.github.mangi.eta.agent.runtime.BackgroundResumeStoreTest

@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.runtime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,5 +56,39 @@ class ExecutionLeaseRegistryTest {
         assertTrue(registry.acquire("run:2") { stopped += "next" })
         registry.release("user:daemon")
         assertEquals(1, registry.count())
+    }
+
+    /**
+     * 通知栏「暂停/继续」需要拿到全部 run，「补充指令」只发给最新一个。
+     * 顺序错一位就会把话塞进另一个会话，所以顺序本身也要有单测守着。
+     */
+    @Test
+    fun agentRunIdsFollowAcquisitionOrderAndIgnoreOtherLeases() {
+        val registry = ExecutionLeaseRegistry()
+        assertNull(registry.latestAgentRunId())
+        assertTrue(registry.agentRunIds().isEmpty())
+
+        registry.acquire("terminal-background-commands") {}
+        registry.acquire("run:a", agentRunId = "a") {}
+        registry.acquire("run:b", agentRunId = "b") {}
+
+        // 终端会话排在前面也不能被当成 Agent run：否则补充指令会发给不存在的 run。
+        assertEquals(listOf("a", "b"), registry.agentRunIds())
+        assertEquals("b", registry.latestAgentRunId())
+
+        registry.release("run:b")
+        assertEquals("a", registry.latestAgentRunId())
+    }
+
+    /** 重复登记被拒绝时不能把旧任务挪到「最新」，否则补充指令会误发给它。 */
+    @Test
+    fun rejectedDuplicateAcquireDoesNotChangeOrder() {
+        val registry = ExecutionLeaseRegistry()
+        registry.acquire("run:a", agentRunId = "a") {}
+        assertFalse(registry.acquire("run:a", agentRunId = "a") {})
+        registry.acquire("run:b", agentRunId = "b") {}
+
+        assertEquals(listOf("a", "b"), registry.agentRunIds())
+        assertEquals("b", registry.latestAgentRunId())
     }
 }

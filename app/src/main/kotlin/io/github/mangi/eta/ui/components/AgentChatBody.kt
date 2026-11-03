@@ -212,7 +212,7 @@ internal fun AgentChatBody(
     onOpenPermissions: () -> Unit = {},
     onModelSelected: (String) -> Unit,
     onSubmit: (String) -> Unit,
-    onInterruptAndSubmit: (String) -> Unit = onSubmit,
+    onSteerAndSubmit: (String) -> Unit = onSubmit,
     onSteerQueuedMessage: (String) -> Unit = {},
     onRecallQueuedMessage: (String, String) -> Unit = { _, _ -> },
     onRemoveQueuedMessage: (String) -> Unit = {},
@@ -444,9 +444,9 @@ internal fun AgentChatBody(
                 keepBottomAnchored = true
                 onSubmit(text)
             },
-            onInterruptAndSubmit = { text ->
+            onSteerAndSubmit = { text ->
                 keepBottomAnchored = true
-                onInterruptAndSubmit(text)
+                onSteerAndSubmit(text)
             },
             onSteerQueuedMessage = onSteerQueuedMessage,
             onRecallQueuedMessage = onRecallQueuedMessage,
@@ -683,7 +683,7 @@ private fun AgentChatScaffold(
     onLoadEarlierMessages: () -> Unit = {},
     onHistoryViewportChanged: (Boolean) -> Unit = {},
     onSubmit: (String) -> Unit,
-    onInterruptAndSubmit: (String) -> Unit = onSubmit,
+    onSteerAndSubmit: (String) -> Unit = onSubmit,
     onSteerQueuedMessage: (String) -> Unit = {},
     onRecallQueuedMessage: (String, String) -> Unit = { _, _ -> },
     onRemoveQueuedMessage: (String) -> Unit = {},
@@ -874,7 +874,7 @@ private fun AgentChatScaffold(
                 queuedMessages = queuedMessages,
                 messageEdit = messageEdit,
                 onSubmit = onSubmit,
-                onInterruptAndSubmit = onInterruptAndSubmit,
+                onSteerAndSubmit = onSteerAndSubmit,
                 onSteerQueuedMessage = onSteerQueuedMessage,
                 onRecallQueuedMessage = onRecallQueuedMessage,
                 onRemoveQueuedMessage = onRemoveQueuedMessage,
@@ -1776,7 +1776,7 @@ private fun AgentChatBottomBar(
     queuedMessages: List<QueuedMessageUi> = emptyList(),
     messageEdit: MessageEditUiState?,
     onSubmit: (String) -> Unit,
-    onInterruptAndSubmit: (String) -> Unit = onSubmit,
+    onSteerAndSubmit: (String) -> Unit = onSubmit,
     onSteerQueuedMessage: (String) -> Unit = {},
     onRecallQueuedMessage: (String, String) -> Unit = { _, _ -> },
     onRemoveQueuedMessage: (String) -> Unit = {},
@@ -1896,7 +1896,7 @@ private fun AgentChatBottomBar(
                 editHasLaterTurns = messageEdit?.hasLaterTurns == true,
                 preserveFollowingMessages = messageEdit?.preserveFollowingMessages == true,
                 onSubmit = onSubmit,
-                onInterruptAndSubmit = onInterruptAndSubmit,
+                onSteerAndSubmit = onSteerAndSubmit,
                 onSteerQueuedMessage = onSteerQueuedMessage,
                 onRecallQueuedMessage = onRecallQueuedMessage,
                 onRemoveQueuedMessage = onRemoveQueuedMessage,

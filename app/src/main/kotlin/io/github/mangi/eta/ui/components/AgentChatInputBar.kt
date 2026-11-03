@@ -142,8 +142,8 @@ internal fun AgentChatInputBar(
     canCompactContext: Boolean,
     onModelSelected: (String) -> Unit,
     onSubmit: (String) -> Unit,
-    /** 运行中「插话」：先入队再打断当前 run；空闲时退回 [onSubmit]。 */
-    onInterruptAndSubmit: (String) -> Unit = onSubmit,
+    /** 运行中「插话」：送入当前 run、不结束它；空闲时退回 [onSubmit]。 */
+    onSteerAndSubmit: (String) -> Unit = onSubmit,
     onSteerQueuedMessage: (String) -> Unit = {},
     onRecallQueuedMessage: (String, String) -> Unit = { _, _ -> },
     onRemoveQueuedMessage: (String) -> Unit = {},
@@ -268,7 +268,6 @@ internal fun AgentChatInputBar(
                 queuedMessages = queuedMessages,
                 isStreaming = isStreaming,
                 isEditingMessage = isEditingMessage,
-                hasDraft = textFieldState.text.isNotBlank(),
                 onSteer = onSteerQueuedMessage,
                 onRecall = { id -> onRecallQueuedMessage(id, textFieldState.text.toString()) },
                 onRemove = onRemoveQueuedMessage,
@@ -504,8 +503,8 @@ internal fun AgentChatInputBar(
                             isStreaming && !canSend -> ChatPrimaryGlyph.Stop
                             else -> ChatPrimaryGlyph.Send
                         }
-                        // 暂停态与编辑态一律排队：插话会先打断 run，而这两种状态下
-                        // 打断都不是用户想要的结果（暂停要保现场，编辑内容本身发不出去）。
+                        // 暂停态与编辑态一律排队：插话虽不打断 run，但会改掉任务方向，
+                        // 这两种状态下都不是用户想要的结果（暂停要保现场，编辑内容本身发不出去）。
                         val steersNow = AgentBusySendPolicy.steers(
                             streaming = isStreaming,
                             paused = isPaused,
@@ -546,7 +545,7 @@ internal fun AgentChatInputBar(
                                             lastSubmit = submittedText to now
                                             dictation.cancel()
                                             if (steersNow) {
-                                                onInterruptAndSubmit(submittedText)
+                                                onSteerAndSubmit(submittedText)
                                             } else {
                                                 onSubmit(submittedText)
                                             }

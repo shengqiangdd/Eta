@@ -11,7 +11,7 @@ sealed interface AgentHomeAction {
     /** 输入框草稿变化；只写内存，不落盘、不触发聊天区重组。 */
     data class DraftChanged(val text: String) : AgentHomeAction
     data class SubmitMessage(val text: String) : AgentHomeAction
-    data class InterruptAndSubmitMessage(val text: String) : AgentHomeAction
+    data class SteerAndSubmitMessage(val text: String) : AgentHomeAction
 
     /** 回答 `ask_user` 的提问；不走排队（见 AgentAppState.answerPendingAsk）。 */
     data class AnswerAsk(val text: String) : AgentHomeAction

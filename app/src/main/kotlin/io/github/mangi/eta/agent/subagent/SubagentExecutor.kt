@@ -109,7 +109,8 @@ internal class SubagentExecutor(
         val subagentId = entry.subagentId
         val startedAt = nowMillis()
         recordTaskStart(subagentId, description, startedAt)
-        val childController = AgentRunController()
+        // 子控制器挂在父级上：父 run 暂停/取消会同步作用到子代理，不再出现「父界面已停、子代理还在跑」。
+        val childController = AgentRunController(parentController)
         val controllerBinding = parentController.register(childController::cancel)
 
         val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
@@ -126,27 +127,52 @@ internal class SubagentExecutor(
             prompt = prompt,
             model = modelLabel,
             resumed = isResume,
+            startedAtMs = startedAt,
         )
 
+        val publishLock = Any()
         var lastEmitNanos = 0L
-        fun publishSnapshot(force: Boolean) {
+        var lastTaskProgress = ""
+        fun publishSnapshot(force: Boolean) = synchronized(publishLock) {
             val now = nanoTime()
-            if (!force && now - lastEmitNanos < PROGRESS_THROTTLE_NANOS) return
+            if (!force && now - lastEmitNanos < PROGRESS_THROTTLE_NANOS) return@synchronized
             lastEmitNanos = now
-            val encoded = tracker.snapshot().encode()
+            val snapshot = tracker.snapshot()
+            val encoded = snapshot.encode()
             latestSnapshots[toolCall.id] = encoded
-            onProgress(
-                AgentEvent.SubagentProgress(
-                    round = parentRound,
-                    toolCallId = toolCall.id,
-                    subagentId = subagentId,
-                    subagentType = profile.name,
-                    snapshotJson = encoded,
-                ),
-            )
+            // 并行 subagent 共用同一个进度回调；Runtime 的事件归档与界面投影不是线程安全的，
+            // 用执行器实例锁串行，避免两路进度同时写同一个 Event 列表。
+            synchronized(this@SubagentExecutor) {
+                onProgress(
+                    AgentEvent.SubagentProgress(
+                        round = parentRound,
+                        toolCallId = toolCall.id,
+                        subagentId = subagentId,
+                        subagentType = profile.name,
+                        snapshotJson = encoded,
+                    ),
+                )
+            }
+            // 台账只记「动作变了」，不按心跳刷：updatedAt 必须停留在最后一次真实进展，
+            // 否则界面会把“卡住 10 分钟”误判成“刚刚还在动”。
+            if (snapshot.status == SubagentActivitySnapshot.STATUS_RUNNING) {
+                val action = snapshot.currentAction.trim()
+                if (action.isNotEmpty() && action != lastTaskProgress) {
+                    lastTaskProgress = action
+                    recordTaskProgress(subagentId, action, nowMillis())
+                }
+            }
         }
 
         publishSnapshot(force = true)
+
+        // 父循环在工具返回前不会消费 steering；子代理跑得久时用户插话会一直压着。
+        // 这个看门狗一旦发现插话就取消子代理，让工具带着部分结果尽快返回，父循环下一轮就能读到新指令。
+        // 放在配置加载之后创建：配置失败会提前 return，不能留下一个永远轮询的线程。
+        val steeringWatch = SubagentSteeringWatch(
+            hasPendingSteering = { parentController.hasPendingSteering },
+            cancelChild = { childController.cancel() },
+        )
 
         val childToolExecutor = AgentModelClient.ToolExecutor { subCall ->
             childController.throwIfCancelled()
@@ -229,49 +255,67 @@ internal class SubagentExecutor(
                 tracker.partialOutput()
             }
 
-            val cancelled = parentController.isCancelled ||
+            val parentCancelled = parentController.isCancelled
+            val steered = steeringWatch.wasSteered && !parentCancelled
+            val cancelled = parentCancelled ||
                 childController.isCancelled ||
                 throwable is AgentRunCancelledException
-            val errorMessage = if (cancelled) {
-                "已停止"
-            } else {
-                throwable.message ?: throwable.javaClass.simpleName
+            val errorMessage = when {
+                steered -> "用户插话，已中断当前子代理"
+                cancelled -> "已停止"
+                else -> throwable.message ?: throwable.javaClass.simpleName
             }
-            if (cancelled) {
-                tracker.markCancelled(partial)
-            } else {
-                tracker.markFailed(errorMessage, partial)
+            when {
+                steered -> tracker.markInterrupted(partial)
+                cancelled -> tracker.markCancelled(partial)
+                else -> tracker.markFailed(errorMessage, partial)
             }
             recordTaskEnd(
                 subagentId,
-                if (cancelled) AgentTaskStatus.CANCELLED else AgentTaskStatus.FAILED,
+                if (steered) AgentTaskStatus.CANCELLED
+                else if (cancelled) AgentTaskStatus.CANCELLED
+                else AgentTaskStatus.FAILED,
                 errorMessage,
             )
             publishSnapshot(force = true)
 
-            if (parentController.isCancelled) {
+            if (parentCancelled) {
                 throw AgentRunCancelledException()
             }
 
+            val interruptedStatus = steered
             AgentModelClient.ToolResult(
                 content = JSONObject()
                     .put("ok", false)
-                    .put("code", if (cancelled) "SUBAGENT_CANCELLED" else "SUBAGENT_FAILED")
+                    .put(
+                        "code",
+                        when {
+                            interruptedStatus -> "SUBAGENT_INTERRUPTED"
+                            cancelled -> "SUBAGENT_CANCELLED"
+                            else -> "SUBAGENT_FAILED"
+                        },
+                    )
                     .put("subagent_id", subagentId)
                     .put("subagent_type", profile.name)
                     .put("description", description)
                     .put("model", modelLabel)
                     .put(
                         "status",
-                        if (cancelled) {
-                            SubagentActivitySnapshot.STATUS_CANCELLED
-                        } else {
-                            SubagentActivitySnapshot.STATUS_FAILED
+                        when {
+                            interruptedStatus -> SubagentActivitySnapshot.STATUS_INTERRUPTED
+                            cancelled -> SubagentActivitySnapshot.STATUS_CANCELLED
+                            else -> SubagentActivitySnapshot.STATUS_FAILED
                         },
                     )
                     .put("message", errorMessage)
                     .apply {
                         if (partial.isNotBlank()) put("partial_output", partial)
+                        if (interruptedStatus) {
+                            put(
+                                "next_step",
+                                "用户已经插话。请先按用户的新指令处理；需要继续原子任务时再调用 subagent(resume=\"$subagentId\", ...)。",
+                            )
+                        }
                         if (!cancelled) {
                             put(
                                 "resume_hint",
@@ -283,6 +327,7 @@ internal class SubagentExecutor(
                 command = latestSnapshots[toolCall.id],
             )
         } finally {
+            steeringWatch.close()
             controllerBinding.close()
         }
     }
@@ -308,9 +353,17 @@ internal class SubagentExecutor(
                     summary = null,
                     startedAt = startedAt,
                     endedAt = null,
+                    progress = "正在启动…",
+                    updatedAt = startedAt,
                 ),
             )
         }
+    }
+
+    private fun recordTaskProgress(id: String, progress: String, at: Long) {
+        val store = taskLedger ?: return
+        if (taskScopeId.isBlank()) return
+        runCatching { store.recordProgress(taskScopeId, id, progress, at) }
     }
 
     private fun recordTaskEnd(id: String, status: AgentTaskStatus, summary: String?) {
@@ -450,6 +503,7 @@ internal class SubagentExecutor(
         private val prompt: String,
         private val model: String,
         private val resumed: Boolean,
+        private val startedAtMs: Long,
     ) {
         private val lock = Any()
         private val steps = mutableListOf<SubagentStepSnapshot>()
@@ -458,8 +512,11 @@ internal class SubagentExecutor(
         private val roundTexts = linkedMapOf<Int, StringBuilder>()
         private var finalOutput = ""
         private var errorText: String? = null
+        private var lastActivityAtMs = startedAtMs
 
         fun onChildEvent(event: AgentEvent): Boolean = synchronized(lock) {
+            // 任何子代理事件都算“还活着”；心跳不在这里刷，否则界面永远看不出停滞。
+            lastActivityAtMs = System.currentTimeMillis()
             when (event) {
                 is AgentEvent.RoundStarted -> {
                     currentAction = if (event.round <= 1) "正在思考…" else "第 ${event.round} 轮思考…"
@@ -572,6 +629,7 @@ internal class SubagentExecutor(
 
         fun markCompleted(content: String) = synchronized(lock) {
             finishRunningThinkingSteps()
+            lastActivityAtMs = System.currentTimeMillis()
             status = SubagentActivitySnapshot.STATUS_COMPLETED
             finalOutput = content.trim().take(MAX_OUTPUT_CHARS)
             val tools = toolCount()
@@ -580,6 +638,7 @@ internal class SubagentExecutor(
 
         fun markFailed(error: String, partial: String) = synchronized(lock) {
             finishAllRunningSteps(SubagentStepSnapshot.STATUS_FAILED)
+            lastActivityAtMs = System.currentTimeMillis()
             status = SubagentActivitySnapshot.STATUS_FAILED
             errorText = error.take(1_000)
             if (partial.isNotBlank()) finalOutput = partial.take(MAX_OUTPUT_CHARS)
@@ -588,10 +647,20 @@ internal class SubagentExecutor(
 
         fun markCancelled(partial: String) = synchronized(lock) {
             finishAllRunningSteps(SubagentStepSnapshot.STATUS_FAILED)
+            lastActivityAtMs = System.currentTimeMillis()
             status = SubagentActivitySnapshot.STATUS_CANCELLED
             errorText = "已停止"
             if (partial.isNotBlank()) finalOutput = partial.take(MAX_OUTPUT_CHARS)
             currentAction = "已停止"
+        }
+
+        fun markInterrupted(partial: String) = synchronized(lock) {
+            finishAllRunningSteps(SubagentStepSnapshot.STATUS_INTERRUPTED)
+            lastActivityAtMs = System.currentTimeMillis()
+            status = SubagentActivitySnapshot.STATUS_INTERRUPTED
+            errorText = "用户插话，已中断当前子代理"
+            if (partial.isNotBlank()) finalOutput = partial.take(MAX_OUTPUT_CHARS)
+            currentAction = "用户插话，已中断"
         }
 
         fun partialOutput(): String = synchronized(lock) {
@@ -625,6 +694,8 @@ internal class SubagentExecutor(
                 steps = steps.takeLast(MAX_STEPS),
                 output = liveOutput,
                 error = errorText,
+                startedAtMs = startedAtMs,
+                lastActivityAtMs = lastActivityAtMs,
             )
         }
 

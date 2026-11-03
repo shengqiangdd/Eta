@@ -103,6 +103,14 @@ class MainActivity : ComponentActivity() {
                 "EtaVirtualDisplayDebug",
                 VirtualDisplayDebugHost.release(),
             )
+            "create_canvas" -> android.util.Log.i(
+                "EtaVirtualDisplayDebug",
+                VirtualDisplayDebugHost.createCanvas(this),
+            )
+            "release_canvas" -> android.util.Log.i(
+                "EtaVirtualDisplayDebug",
+                VirtualDisplayDebugHost.releaseCanvas(this),
+            )
             "probe" -> android.util.Log.i(
                 "EtaVirtualDisplayDebug",
                 VirtualDisplayDebugHost.probe(

@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.device
 import android.annotation.SuppressLint
 import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController as CanvasVirtualDisplay
 import io.github.mangi.eta.agent.tool.AgentLocalTools
 import io.github.mangi.eta.agent.tool.CoordinateSpaceErrors
 import io.github.mangi.eta.agent.tool.DisplayTextErrors
@@ -81,6 +82,31 @@ internal object VirtualDisplayDebugHost {
             created.close()
             "failed: ${error.message}"
         }
+    }
+
+    /** 调试用：走生产的新画布路径，验证 trusted 与 per-display IME policy。 */
+    fun createCanvas(context: Context): String {
+        val appContext = context.applicationContext
+        // 创建可能等待 system_server Hook，不能占主线程。
+        Thread({
+            val displayId = CanvasVirtualDisplay.ensureVirtualDisplay(appContext)
+            android.util.Log.i(
+                "EtaVirtualDisplayDebug",
+                if (displayId == null) {
+                    "canvas failed"
+                } else {
+                    "canvas display=$displayId inProcessImePolicyHidden=" +
+                        CanvasVirtualDisplay.isImePolicyHidden(displayId)
+                },
+            )
+        }, "eta-canvas-debug").start()
+        return "canvas starting"
+    }
+
+    /** 调试用：释放上一条 createCanvas 创建的屏。 */
+    fun releaseCanvas(context: Context): String {
+        CanvasVirtualDisplay.release(context.applicationContext)
+        return "canvas released"
     }
 
     fun release(): String {

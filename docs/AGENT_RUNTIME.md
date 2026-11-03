@@ -37,7 +37,7 @@ pending steering
 
 关键不变量：
 
-- steering 默认逐条排队，只在当前 turn 完整结束后注入；它不会取消当前 HTTP 请求或关闭工具资源。
+- steering（插话）默认逐条排队，在当前 turn 完整结束后注入同一个 run；它是用户此刻的最新指令，可能改变任务方向。普通 HTTP 请求和工具不被打断；但**运行中的 subagent 会被主动中断并保留部分结果**（见「子代理并行与插话中断」）。
 - 同一 assistant 消息中的全部 tool result 必须连续写入，再追加不受 Provider 原生 tool-result image 支持的图片观察。
 - `finish_reason=length` 或 `max_tokens` 且包含工具调用时，不执行任何可能被截断的参数；为每个调用写入结构化错误结果，让模型重新规划。
 - 只有明确的 `tool_calls` / `tool_use` 终止原因才允许执行工具；`stop`、内容过滤或未知终止原因中夹带的调用一律作为协议矛盾拒绝。
@@ -45,7 +45,7 @@ pending steering
 - transcript 只返回本次 run 新增的 assistant、tool 和运行中 steering 消息，不重复旧 history 或本轮初始用户消息。
 - GUI/终端工具保持串行。Android 前台状态和会话式 Shell 都不具备可安全并行的通用语义。
 - 单次 run 不设置固定回合数或总时限，由模型自然结束、用户取消或不可恢复错误终止。
-- cancel 是终止信号；pause 是检查点阻塞；steering 是下一回合输入。三者不能互相模拟。
+- cancel 是终止信号；pause 是检查点阻塞；steering 是同一 run 内下一步的用户输入。三者不能互相模拟。
 - cancel 的主线程路径只做原子终态与资源关闭：共享浏览器按 runId 校验归属；终端立即封闭新的前台进程接纳，并在后台按独立进程组终止同步命令与会话、回收所属线程与流；已提交的后台命令由 App 宿主管理，需单独停止。Android 上 `setsid` 或 PID/PGID ownership 握手不可用时会 fail closed；非 Android 测试环境才允许父子树快照回退。终止前还会核验随机 ownership token，避免陈旧 PGID 复用后误杀无关进程。
 - 最终 steering 检查会原子关闭接收入口；Loop 返回后不会再把无人消费的补充指令误报为已接收。补充指令也不会解除 pause。
 - 新 run 替换旧 run、用户取消和正常完成都通过 `AgentRuntimeSession` 的 `RUNNING → COMMITTING → TERMINAL` 状态机竞争唯一终态；提交胜者独占 outbox、归档和最终发布，客户端等待最终结果或 Binder 断连，不按等待时长取消任务。
@@ -53,6 +53,13 @@ pending steering
 - 设备工具分为直达工具、敏感读取工具和敏感操作工具，当前均默认开启。Runtime 在每次执行前重新读取用户开关；开关允许且参数符合工具 Schema 后即可执行，不再匹配用户原话，也不维护关键包、系统应用或 Settings key 黑名单。
 - 微信发送不提供专用工具、参数协议或额外策略层，完全使用通用 GUI 工具观察和操作微信界面。
 - 通知、短信验证码、Wi‑Fi 凭据、日志及设置读写返回的原始值属于瞬时敏感工具数据。当前模型回合可以使用原始值，但持久 transcript 会同时替换对应工具参数和结果，避免进入会话数据库或后续 IPC。
+
+### 插话、排队与停止
+
+- **插话（steer）**：把这句话作为当前 run 的最新用户消息，在当前步骤结束后注入；同一个 run 继续，普通 HTTP 请求和工具不被打断。若当前步骤是 `subagent`，它的看门狗会取消子代理、带着部分结果尽快返回，下一轮再消费插话——用户不必等一个跑十几分钟的子代理结束。提示词按「当前最新指令」解释，因此可以换问题或改方向，不再被「先把原任务做完」压回去。
+- **排队（queue）**：把这句话留到当前 run 自然结束之后，再作为下一轮发送；适合「先记下，等你这轮做完再说」。
+- **停止（cancel）**：终止当前 run，不再执行后续步骤；和插话是两条完全不同的路径。
+- 插话只支持纯文字。带图片／文件引用的消息塞不进当前 run，界面会改为排队；服务端回执明确区分「已接纳」与「被丢弃（run 刚结束 / 非对话 run）」，被丢弃时保留草稿。
 
 助理入口的 `assistant_screen_context` 是有界、可选的单次运行字段；旧入口缺失时按空内容处理。应用原始内容只保留在当前用户消息的临时元数据中，并在发给 Provider 时投影为数据文本。稳定会话编码和压缩摘要输入不包含该元数据，用户原话保持不变。截图仍使用既有图片传输协议。
 
@@ -403,6 +410,20 @@ App 恢复时以 `checkpoint + outbox + active session` 统一对账，不再用
 `VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED`（无反馈圆点）与
 `FLAG_OWN_CONTENT_ONLY`（不镜像主屏内容）。
 
+**输入法隔离（2026-11-03 起）**：system_server Hook 在创建受信任虚拟屏后调用
+`WindowManager.setDisplayImePolicy(displayId, DISPLAY_IME_POLICY_HIDE)`，并由 Hook 把
+成功结果写入 `Settings.Global` 的 `eta_vd_ime_policy_<displayId>`；App 只有读到该确认键
+才跳过旧的静默 IME 兜底。这样 Hook 可用但 policy 设置失败时，不会误以为已隔离而让键盘
+弹到主屏。root 桥创建的屏也会直接设置同一 policy。**人工输入、登录、支付、验证码仍必须
+`present_to_user` 回物理主屏**，不要让 Agent 在虚拟屏里替用户输入敏感信息。
+
+2026-11-03 本机（PKX110 / Android 16，canary + LSPosed system_server Hook，重启后）实测：
+创建 `EtaAgentVirtualDisplay` 后日志出现 `虚拟屏 IME policy=HIDE displayId=4`（后续 display 5 同），
+`Settings.Global` 的 `eta_vd_ime_policy_4=2`；点击屏内设置搜索框后
+`dumpsys input_method` 中该屏 client 始终 `sessionRequested=false / curSession=null`，
+主屏 `mCurClient` 仍是用户应用、`mInputShown=false`，默认输入法全程为搜狗；
+`input -d 5 text wifi + ENTER` 能出现 WLAN 搜索结果。旧 `eta-virtual-*` 路径同样被 Hook 升级并设置 HIDE。
+
 **有 UI 树（fix98 起）**：虚拟屏同时带 `VIRTUAL_DISPLAY_FLAG_PUBLIC`，
 AOSP `AccessibilityManagerService.isValidDisplay()` 才会跟踪它的窗口；
 `observe_screen(display_id=...)` 返回 `ui_nodes`，`tap_element`/`scroll_element`/
@@ -687,7 +708,21 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 - 卡片**没有真机截图验证**：设备上装的仍是旧版本（`files／agent／tasks` 目录都不存在），
   装机重启会打断当前会话，没有擅自做。界面层目前只有编译 + 纯逻辑单测。
 - 底部常驻区不可滚动：目标卡 + 清单卡 + 台账卡 + 追问卡同时出现时高度会叠加，小屏没实测。
-- 卡片只有状态与 id，没有开始 ／ 结束时间（台账里有 `startedAt`，界面没显示）。
+- 卡片显示状态、id、运行秒数与最近一步进度；没有开始 ／ 结束的绝对时间（台账里有 `startedAt`，界面没显示）。
+
+### 子代理并行与插话中断（2026-11-03）
+
+两个体感问题一起修：
+
+1. **同一轮多个 `subagent` 不再串行**：`AgentLoop.executeToolBatch` 只对「整批都是 `subagent`」的调用开有界线程池（最多 4 个），普通工具仍严格顺序执行。结果按模型给出的顺序写回 transcript，不按完成顺序；`toolGuard`、结果溢写、敏感集合和事件收尾用同一把锁串行，避免并行写坏共享状态。GUI 操作仍由 `GuiControlCoordinator` 按屏互斥，两个子代理不会同时点同一块屏。
+2. **插话不再被长任务压住**：`SubagentSteeringWatch` 在子代理运行期间每 200ms 查一次父控制器的 steering 队列；发现插话就取消子控制器。`SubagentExecutor` 捕获取消后写入 `STATUS_INTERRUPTED` / `SUBAGENT_INTERRUPTED`，保留 `partial_output`，并提示父模型「先按用户新指令处理」。父 loop 下一轮正常消费插话。
+3. **暂停/取消向下传导**：`AgentRunController` 支持可选的 parent；子控制器的 `throwIfCancelled` 先检查自己的取消，再走父级检查点。父 run 暂停时子代理也停，父 run 取消时子代理不能继续跑。自己的取消优先于父级暂停，避免「已经被插话中断的子代理还在等父级 resume」。
+
+可观察性：`SubagentActivitySnapshot` 新增 `startedAtMs` / `lastActivityAtMs`，行内超过 20 秒没有子代理事件就显示「可能卡住」；运行时长按 `startedAtMs` 每秒重算。任务台账新增 `progress` / `updatedAt`，`recordProgress` 只更新 RUNNING 条目，完成时清空进度，避免迟到的进度把终态覆盖回 running。`tasks` 的 `line` 与详情 JSON 都带最近进度。
+
+后台任务卡也补了只读日志详情：点任意任务行打开 `BackgroundTaskLogSheet`，显示命令与日志尾部（最多 16 KB，运行中每秒刷新），不再需要让用户去终端页翻。
+
+验证计划（本机）：`AgentRunControllerTest` 新增父子暂停/取消 2 例，`SubagentSteeringWatchTest` 2 例，`AgentTaskLedgerTest` 进度覆盖 1 例，`AgentModelClientLoopTest` 并行启动 1 例；全量单测与 lint 门禁见本轮结果。
 
 ### 第五批：后台任务上提示（2026-11-01）
 
@@ -1400,7 +1435,10 @@ Eta 没有 Web 端，导出物要能直接发出去（聊天、邮件、文件�
 | edit_file / read_file | 27 次中位 **5.4s** / 38 次中位 **3.2s** |
 
 结论：并行调度能省的不到 1 秒/次，却要动核心 loop 的事件顺序、guard 状态与结果装配
-（guard 的重复检测必须按模型顺序观察，不能按完成顺序），风险与收益不成比例。**不实现。**
+（guard 的重复检测必须按模型顺序观察，不能按完成顺序），风险与收益不成比例。**普通工具不实现。**
+
+**2026-11-03 补充**：`subagent` 是例外——它的单次耗时远高于普通工具，且上下文天然隔离，
+同一轮多个 subagent 已改为有界并行（最多 4 个）；普通工具仍按本节结论串行。
 
 真正的时间在别处：每个工具都要起一次新的 `su` 进程，`edit_file` 一次要经历
 stat / 分块读 / 写 / 校验多个往返，所以中位数到 5 秒。见下一节实测与优化。
@@ -3226,6 +3264,9 @@ Robolectric native（Linux aarch64）限制，仍有 3 个环境性失败。
   可以补一张结果卡。
 - `MSG_PAUSE_RUN` / `MSG_RESUME_RUN` 支持按 runId 暂停/恢复；胶囊上的暂停/恢复
   仍作用于 primary。后台会话跑完后会安排释放其 messages/history/journal。
+- `MSG_SUPPLEMENT` 支持带 `replyTo`：服务端回 `MSG_SUPPLEMENT_ACK`，`accepted=true`
+  表示请求已被接收（活动 run 入队，或已完成 run 启动续接），`false` 表示未接收，
+  客户端应保留草稿而不是误以为已送达。
 - `MSG_QUERY_ACTIVE_RUN` 支持带 runId：客户端确认的是「自己这一轮」是否活跃，
   不会因为另一个 run 在跑而误判。
 - App 侧 `stopCurrentRun` / `steerCurrentRun` / compact 改用「当前选中会话的 run」，
@@ -9818,3 +9859,96 @@ STEP9d 与 STEP8b 共用。
 - `AcpModelsTest` **9/9**；已加入 `FAST_TEST_FILTERS`，门禁用例 677 → **686**。
 - **未验证（如实）**：真机 App 内 `acp_delegate(model=…)` 的端到端效果要装新包后实测一次；
   provider 层（`/root/.codex/config.toml` 的 `model_provider`）不在 ACP 协议内，本轮没有动它。
+
+
+## 用户当前这句话优先：清单/工具不再压过提问（2026-11-03，PKX110/A16）
+
+### 真实现场
+
+一次排查中，用户问「为什么网络这么差，是 Eta 还是提供商」，Agent 却继续执行跨轮待办十几分钟，
+期间用户连问「啥问题」「继续」，仍然没有回到问题本身。根因不在模型「不会答」，而是 Eta 每轮
+都在把「继续任务」排在「回答当前问题」前面：
+
+- `AgentPromptBuilder`：有「用户要求执行任务时主动推进到完成」「立即调用工具，不要先输出计划」，
+  没有「用户是在提问时先回答」的约束。
+- `AgentTodoPlan.promptSection()`：结尾直接写「继续推进未完成项」，等于每轮催促模型接着干。
+- 用户说「停止」时，没有一条规则告诉模型先停手；清单还在，就继续执行。
+
+### 改动
+
+- 系统提示新增四条：提问/分析先直接回答；需要证据只做最少量查询且必须回到回答；用户说停止/
+  别做了/改变方向时立即停手，「继续」只指继续上一句明确要求；凭据必须打码。
+- 清单段改成「不是本轮用户指令」，明确「用户当前这条消息优先」；用户说停止时用空清单清空，
+  不再写「继续推进未完成项」这种无条件催促。
+- 单测：`AgentPromptBuilderTest` 22 项、`AgentTodoPlanTest` 12 项，全部通过。
+
+### 凭据打码
+
+同一轮排查里，`grep` 数据库把 API key 原样打进了终端输出。新增 `SecretRedactor`，在终端/文件
+工具结果离开工具层之前替换常见凭据：
+
+- `api_key=...` / `password: ...` / `"secret": "..."` 这类赋值；
+- `Authorization: Bearer ...`；
+- OpenAI 风格 `sk-...`（包括 URL 后面直接粘 key 的畸形输出）；
+- `get_logcat` 结果同样过一遍（日志里常带完整请求头）。
+
+只做保守匹配：普通正文、短示例值不动；JSON 字段名保留，值替换为 `<已隐藏>`，替换后仍是合法 JSON。
+`SecretRedactorTest` 5 项（含 JSON 仍可解析、URL 粘连、普通词不误伤）。
+
+### 验证
+
+- 四组定向单测：22 + 12 + 5 + 5，全部通过。
+- `:app:assembleDebug` 成功，`Eta-v3.4.0-debug.apk` 33,850,197 字节。
+- **未验证（如实）**：真机上的实际对话是否因此不再「问一句却继续干活」，需要装新包后复现场景；
+  打码对真实 `.env`/数据库输出的覆盖度也只验了单测样例。
+
+
+## 长任务不打断：通知栏暂停 / 补充 / 停止（2026-11-03，PKX110/A16）
+
+### 动机
+
+编译、跑测试、批量操作这类长任务跑到一半时，用户想「改一句话」或「先停一下」只能切回 App；
+通知栏原来只有「停止」——想微调时只能打断重来，或者等它跑完。
+
+### 实现
+
+- 运行通知新增三个动作：`补充`（RemoteInput 输入框）、`暂停 / 继续`、`停止`。
+- 复用 `AgentRuntimeClient.pauseRun/resumeRun/sendSupplement`，没有新协议。
+- 暂停 / 继续作用于所有 Agent run；补充只发给最近启动的那个（多会话并行时，用户眼前的是刚发起的）。
+- 点击后不在本地伪造「已暂停」：真实状态仍由 Runtime 回传，运行时可能正在提交终态而拒绝暂停。
+- Binder 调用放在单线程 executor，避免 onStartCommand 主线程等待导致 ANR；连点两次也按顺序到达。
+- 三语文案（en / zh-Hans / zh-Hant）同步补齐。
+
+### 差点上线的错误：租约不只是 Agent run
+
+租约注册表同时登记终端会话、后台命令、Linux 启动（id 形如 `terminal-background-commands`）。
+第一版拿「最新租约 id」去补发指令，但 **Agent run 的租约 id 是 `run:<runId>`，不是裸 runId**，
+而终端会话也可能排到最新 —— 结果是补充指令发给一个不存在的 run，界面上表现为「点了没反应」。
+修法：租约增加 `agentRunId`（只有 Agent run 非空，存裸 runId），通知动作只在 `agentRunIds()`
+非空时出现；纯终端任务的通知保持原来只有一个「停止」。
+`ExecutionLeaseRegistryTest` 专门守着「终端租约排在前面也不会被当成 Agent run」。
+
+### 验证
+
+- `ExecutionLeaseRegistryTest` **5/5**。
+- Robolectric（SDK 33，本机 aarch64）：`executionNotificationCarriesSupplementAndPauseActions` 通过
+  （三个动作、RemoteInput 键、暂停后标签变「继续」）；`terminalOnlyNotificationExposesStopWithoutAgentActions`
+  通过（纯终端只有「停止」）。旧用例 `agentRunPromotionEndsWhileTerminalSessionRemains` 仍因
+  Robolectric native runtime 在本机不可用而失败，与本改动无关。
+- `:app:assembleDebug` 成功，APK 33,850,197 字节。
+- **未验证（如实）**：真机通知栏上的实际点击与 RemoteInput 输入（需要装新包并跑一个长任务）。
+
+### 2026-11-03 真机回归：插话主链路（canary）
+
+- 环境：PKX110 / Android 16 / canary 3.4.0-debug（UID 10619）+ 本机 mock
+  （`127.0.0.1:18080`），虚拟屏操作，不碰主屏。
+- 运行中（工具 `wait 60000` 正在执行）输入「插话成功」并点「插话发送」：
+  UI 草稿清空、run 继续、用户消息出现在当前回合；mock 收到
+  `msgs=5 roles=system,user,assistant,tool,user last_role=user steer=True tool_result=True`，
+  说明补充文本在工具结果之后的步骤边界注入同一 run，模型请求与工具都没有被打断。
+- 同一场景再发一条未带 mock 标记的文本，仍得到 `msgs=5 ... tool_result=True`；
+  mock 的 `steer` 字段只按文本标记判断，不能当作协议判据。
+- `am stop-service` 无法制造「服务端 run 已终态、客户端仍 streaming」的拒绝路径：服务被 binder
+  绑定，命令报 `Service stopped` 但服务仍在；该路径仍只有 wire 单测覆盖，未真机复现。
+- canary 的 `POST_NOTIFICATIONS` 默认未授权，通知栏动作无法显示；本轮已授予后未完成点击验证，
+  权限已撤销。因此通知栏 RemoteInput 插话仍未真机验证。

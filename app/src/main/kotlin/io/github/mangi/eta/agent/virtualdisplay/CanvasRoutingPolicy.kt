@@ -16,6 +16,18 @@ internal object CanvasRoutingPolicy {
 
     const val VIRTUAL_DISPLAY_NAME = "EtaAgentVirtualDisplay"
 
+    /**
+     * 旧版 Agent 虚拟屏的显示名前缀。
+     *
+     * 这条路径仍由 `agent.device.VirtualDisplayController` 创建；system_server 的
+     * VirtualDisplay Hook 必须同时认这个前缀，否则旧屏拿不到 trusted 标志，
+     * 也就无法设置 per-display IME policy。
+     */
+    const val LEGACY_VIRTUAL_DISPLAY_PREFIX = "eta-virtual-"
+
+    fun isEtaVirtualDisplayName(name: String): Boolean =
+        name == VIRTUAL_DISPLAY_NAME || name.startsWith(LEGACY_VIRTUAL_DISPLAY_PREFIX)
+
     // DisplayManager 公开与内部受信任虚拟屏标志位（AOSP DisplayManager.java）
     const val FLAG_PUBLIC = 1 shl 0
     const val FLAG_PRESENTATION = 1 shl 1

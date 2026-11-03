@@ -241,4 +241,41 @@ class AgentRunControllerTest {
         }
         assertFalse(worker.isAlive)
     }
+
+    @Test
+    fun childRunStopsAtParentPauseCheckpoint() {
+        val parent = AgentRunController()
+        val child = AgentRunController(parent)
+        val entered = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val failure = AtomicReference<Throwable>()
+        parent.pause()
+        val worker = thread(name = "controller-child-pause-test") {
+            entered.countDown()
+            runCatching(child::throwIfCancelled).exceptionOrNull()?.let(failure::set)
+            finished.countDown()
+        }
+
+        try {
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            assertTrue(child.isPaused)
+            assertFalse(finished.await(100, TimeUnit.MILLISECONDS))
+            parent.resume()
+            assertTrue(finished.await(1, TimeUnit.SECONDS))
+            assertNull(failure.get())
+        } finally {
+            parent.cancel()
+            worker.join(1_000)
+        }
+    }
+
+    @Test
+    fun parentCancelStopsChildChecker() {
+        val parent = AgentRunController()
+        val child = AgentRunController(parent)
+        parent.cancel()
+
+        val failure = runCatching { child.throwIfCancelled() }.exceptionOrNull()
+        assertTrue(failure is AgentRunCancelledException)
+    }
 }

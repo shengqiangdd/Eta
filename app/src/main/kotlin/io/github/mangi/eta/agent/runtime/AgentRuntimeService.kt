@@ -392,7 +392,17 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     val data = msg.data ?: return
                     val runId = AgentRuntimeWire.runIdFromBundle(data)
                     val text = data.getString(AgentRuntimeWire.KEY_SUPPLEMENT_TEXT).orEmpty()
-                    requestSupplement(text, expectedRunId = runId)
+                    val accepted = requestSupplement(text, expectedRunId = runId)
+                    // 回执是界面能否清草稿的唯一依据：发送成功不等于被接纳（run 可能刚结束）。
+                    msg.replyTo?.let { reply ->
+                        val ack = Message.obtain(null, AgentRuntimeWire.MSG_SUPPLEMENT_ACK)
+                        ack.data = AgentRuntimeWire.supplementAckBundle(runId, accepted)
+                        runCatching { reply.send(ack) }.onFailure { error ->
+                            AndroidAgentLogger.warnThrottled("runtime_supplement_ack_failed") {
+                                "Agent runtime supplement ack failed: type=${error.safeLogType()}"
+                            }
+                        }
+                    }
                 }
 
                 AgentRuntimeWire.MSG_PAUSE_RUN -> {
@@ -605,6 +615,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val allowBoundFallback = RootAccess.isGranted
         val executionHeld = AgentExecutionService.acquire(
             this, "run:${request.runId}", allowBoundFallback = allowBoundFallback,
+            // 通知栏的暂停/补充只认这个裸 runId；终端会话的租约不参与。
+            agentRunId = request.runId,
         ) { session.controller.cancel() }
         AndroidAgentLogger.info(
             "Agent run dispatch: id=${request.runId.take(8)} foreground=$executionHeld rootFallback=$allowBoundFallback"
@@ -1380,9 +1392,9 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         primaryRunId?.let(::resumeRun)
     }
 
-    private fun requestSupplement(text: String, expectedRunId: String? = null) {
+    private fun requestSupplement(text: String, expectedRunId: String? = null): Boolean {
         val supplementText = text.trim()
-        if (supplementText.isBlank()) return
+        if (supplementText.isBlank()) return false
         // 入口层指定了目标 run 时先核对：run 已经换人（用户发了新任务）就丢弃这条补充，
         // 否则会把本该给上一轮的指令塞进新任务。
         val targetRunId = expectedRunId?.takeIf { it.isNotBlank() } ?: primaryRunId
@@ -1391,7 +1403,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             !hasCompletedContext(expectedRunId)
         ) {
             AndroidAgentLogger.warn("Agent runtime supplement dropped: run changed")
-            return
+            return false
         }
         setCapsuleInputMode(focusable = false)
         targetRunId?.let(sessions::get)?.let { session ->
@@ -1405,7 +1417,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                             status = AgentOverlayStatus.Finishing,
                         )
                     }
-                    return
+                    return false
                 }
             } else {
                 AndroidAgentLogger.info(
@@ -1414,19 +1426,19 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 if (primaryRunId == session.runId) {
                     state.value = state.value.applyEvent(event)
                 }
-                return
+                return true
             }
         }
 
         val completed = if (!expectedRunId.isNullOrBlank()) {
-            completedContext(expectedRunId) ?: return
+            completedContext(expectedRunId) ?: return false
         } else {
-            latestCompletedContext() ?: return
+            latestCompletedContext() ?: return false
         }
         if (completed.request.operation != AgentRuntimeWire.OP_CHAT ||
             completed.request.handoff?.source != AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE) {
             state.value = state.value.copy(status = AgentOverlayStatus.ContinuationUnavailable)
-            return
+            return false
         }
         val continuationRequest = AgentContinuationBuilder.build(
             request = completed.request,
@@ -1434,6 +1446,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             supplement = supplementText,
         )
         startRun(continuationRequest)
+        return true
     }
 
     private fun recordSupplementEvent(runId: String, text: String): AgentEvent.UserSupplementReceived {

@@ -141,6 +141,9 @@ android {
         // 但把「自动改构建文件」留在门禁里不值得赌。
         // 升级依赖应当是一次显式决定（改 toml + 重跑门禁），不该由 lint 在每一轮捎带决定。
         disable += "GradleDependency"
+        // AndroidGradlePluginVersion 是 GradleDependency 的姊妹检查：报“AGP 有新版本”，
+        // 同样是上游发布节奏而不是代码质量。离线构建不能升级，也不该由 lint 替升级做决定。
+        disable += "AndroidGradlePluginVersion"
     }
 
     testOptions {

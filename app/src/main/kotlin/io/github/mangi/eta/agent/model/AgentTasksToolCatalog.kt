@@ -47,7 +47,8 @@ internal object AgentTasksToolCatalog {
             AgentToolSchema.function(
                 name = NAME,
                 description = "Read this conversation's task ledger: which subagents were dispatched, " +
-                    "their ids, status and a one-line summary. It survives across turns, so a subagent " +
+                    "their ids, status, a one-line summary, and the latest progress of running entries. " +
+                    "It survives across turns, so a subagent " +
                     "started in an earlier turn can still be found and resumed with " +
                     "`subagent(resume=\"<id>\", ...)` instead of redoing its work. " +
                     "Read-only: the ledger is written by the runtime when a subagent starts and ends; " +

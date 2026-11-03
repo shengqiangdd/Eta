@@ -535,9 +535,9 @@ fun AgentAppRoot(
                                 AgentHomeAction.LoadEarlierMessages -> agentState.loadEarlierMessages()
                                 is AgentHomeAction.HistoryViewportChanged ->
                                     agentState.updateHistoryViewport(action.atLatest)
-                                is AgentHomeAction.InterruptAndSubmitMessage -> {
+                                is AgentHomeAction.SteerAndSubmitMessage -> {
                                     requestExecutionNotifications()
-                                    agentState.interruptAndSendCurrentMessage(action.text)
+                                    agentState.steerCurrentMessage(action.text)
                                 }
                                 is AgentHomeAction.AnswerAsk -> {
                                     requestExecutionNotifications()

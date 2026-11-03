@@ -33,6 +33,10 @@ internal data class AgentTaskRecord(
     val summary: String?,
     val startedAt: Long,
     val endedAt: Long?,
+    /** 运行中最近一步在做什么；只用于让用户和模型判断「还在动」还是「卡住了」。 */
+    val progress: String? = null,
+    /** 最后一次进度更新的 wall clock；结束态为收尾时间。 */
+    val updatedAt: Long? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -43,6 +47,8 @@ internal data class AgentTaskRecord(
         .put("summary", summary ?: JSONObject.NULL)
         .put("started_at", startedAt)
         .put("ended_at", endedAt ?: JSONObject.NULL)
+        .put("progress", progress ?: JSONObject.NULL)
+        .put("updated_at", updatedAt ?: JSONObject.NULL)
 
     /** 给模型看的一行；摘要另起，不拼进同一行。id 放最后，方便直接拿去 resume。 */
     fun renderLine(): String = buildString {
@@ -53,11 +59,17 @@ internal data class AgentTaskRecord(
         summary?.takeIf { it.isNotBlank() }?.lineSequence()?.firstOrNull()?.let { first ->
             append(" — ").append(first.take(80))
         }
+        if (status == AgentTaskStatus.RUNNING) {
+            progress?.takeIf { it.isNotBlank() }?.let { line ->
+                append(" · ").append(line.lineSequence().firstOrNull()?.take(80).orEmpty())
+            }
+        }
     }
 
     companion object {
         const val MAX_TITLE_CHARS = 120
         const val MAX_SUMMARY_CHARS = 600
+        const val MAX_PROGRESS_CHARS = 200
         /** 子代理 id 是 `sub-` + 十六进制；64 足够，且不让坏文件把 id 撑成一段正文。 */
         const val MAX_ID_CHARS = 64
         /** 目前只有这一种任务；`kind` 留着是因为台账不能只为 subagent 定制。 */
@@ -72,6 +84,7 @@ internal data class AgentTaskRecord(
             val startedAt = raw.optLong("started_at", 0L)
             if (startedAt <= 0L) return null
             val endedAt = if (raw.isNull("ended_at")) null else raw.optLong("ended_at").takeIf { it > 0L }
+            val updatedAt = if (raw.isNull("updated_at")) null else raw.optLong("updated_at").takeIf { it > 0L }
             return AgentTaskRecord(
                 id = id.take(MAX_ID_CHARS),
                 kind = kind.take(32),
@@ -81,6 +94,8 @@ internal data class AgentTaskRecord(
                 summary = raw.optString("summary").trim().takeIf { it.isNotEmpty() }?.take(MAX_SUMMARY_CHARS),
                 startedAt = startedAt,
                 endedAt = endedAt,
+                progress = raw.optString("progress").trim().takeIf { it.isNotEmpty() }?.take(MAX_PROGRESS_CHARS),
+                updatedAt = updatedAt,
             )
         }
     }

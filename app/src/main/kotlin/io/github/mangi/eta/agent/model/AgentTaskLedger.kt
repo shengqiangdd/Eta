@@ -45,8 +45,30 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
                 if (entry.id != id) {
                     entry
                 } else {
-                    entry.copy(status = status, summary = bounded, endedAt = endedAt)
+                    entry.copy(
+                        status = status,
+                        summary = bounded,
+                        endedAt = endedAt,
+                        progress = null,
+                        updatedAt = endedAt,
+                    )
                 }
+            },
+        )
+    }
+
+    /**
+     * 只更新运行中条目的进度，不改状态。
+     *
+     * 为什么不复用 [upsert]：进度每两秒写一次，整条替换会把并发结束写入的终态覆盖回 RUNNING。
+     * 这里只动 progress/updatedAt 两个字段，且非 RUNNING 条目直接跳过。
+     */
+    fun progress(id: String, text: String, at: Long): AgentTaskLedger? {
+        val bounded = text.trim().takeIf { it.isNotEmpty() }?.take(AgentTaskRecord.MAX_PROGRESS_CHARS) ?: return null
+        val target = entries.firstOrNull { it.id == id && it.status == AgentTaskStatus.RUNNING } ?: return null
+        return AgentTaskLedger(
+            entries.map { entry ->
+                if (entry.id == target.id) entry.copy(progress = bounded, updatedAt = at) else entry
             },
         )
     }

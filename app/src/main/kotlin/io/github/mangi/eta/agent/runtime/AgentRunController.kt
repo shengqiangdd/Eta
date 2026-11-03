@@ -8,7 +8,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-internal class AgentRunController {
+internal class AgentRunController(
+    /**
+     * 父 run 的控制权。子代理、嵌套编排这类「run 里的 run」必须挂到父级：
+     * 用户暂停父任务时子任务也要停在同一检查点，取消时更不能让子任务继续跑。
+     * 只向下传导暂停/取消，不反向传导——子任务结束不等于父任务结束。
+     */
+    private val parent: AgentRunController? = null,
+) {
     private val resources = CopyOnWriteArraySet<CancellableResource>()
 
     @Volatile
@@ -69,7 +76,7 @@ internal class AgentRunController {
 
     /** 当前是否处于暂停（客户端据此显示「继续」而不是「暂停」）。 */
     val isPaused: Boolean
-        get() = paused
+        get() = paused || parent?.isPaused == true
 
     fun cancel() {
         lock.withLock {
@@ -139,6 +146,10 @@ internal class AgentRunController {
      * 在 agent 循环的每轮/每步调用，实现暂停可恢复、取消即终止。
      */
     fun throwIfCancelled() {
+        // 自己的取消优先：被插话中断的子代理不能因为父级正在暂停而继续等下去。
+        if (cancelled) throw AgentRunCancelledException()
+        // 再看父级：父 run 已取消时连子级的锁都不用拿；暂停也要在父级检查点一起等待。
+        parent?.throwIfCancelled()
         lock.withLock {
             while (paused && !cancelled) {
                 try {

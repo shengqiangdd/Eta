@@ -4,11 +4,13 @@ import io.github.mangi.eta.ui.model.AgentChatUiState
 import io.github.mangi.eta.ui.model.QueuedMessageUi
 
 /**
- * 会话内排队发送（Queue）与插话发送（Interrupt）的纯状态转换器。
+ * 会话内排队发送（Queue）与立即发送标记的纯状态转换器。
  *
  * - 排队发送追加到队尾，等待当前回合自然结束后按 FIFO 顺序自动发出。
- * - 插话发送（[QueuedMessageUi.immediateInterrupt]）置入队首并请求中止当前运行，
- *   待当前运行收尾落盘后立即优先发出，避免取消与新运行之间出现历史写入竞态。
+ * - 运行中的「插话」已经改走 AgentRuntimeClient.sendSupplement：直接注入当前 run，
+ *   不经过本队列，也不会请求停止当前运行。
+ * - [QueuedMessageUi.immediateInterrupt] 现在只表示「空闲时把这条优先弹出」或旧状态
+ *   恢复时仍带着的「插话中」标记；它不再代表要中止 run。
  * - 用户主动点击停止按钮时保留队列不自动发出，防止想停下时后续排队指令继续跑起来。
  */
 internal object AgentMessageQueueReducer {
@@ -46,7 +48,7 @@ internal object AgentMessageQueueReducer {
             ) to DispatchPlan.Deferred
         }
         // 正在跑 / 正在压缩：不可能再开一轮。上游都先确认过空闲，这里是兜底，
-        // 消息放回队首等这次收尾；清掉插话标记，别让它反复尝试打断。
+        // 消息放回队首等这次收尾；清掉插话标记，避免界面一直停在「插话中」。
         if (state.isStreaming || state.isCompacting) return deferred()
         // 编辑态下 input 存的就是「正在改的那条」：写进去会把用户刚改的内容顶掉，
         // 若这条编辑是「保留后续消息」模式，还会被当成编辑正文写进历史。
@@ -96,10 +98,11 @@ internal object AgentMessageQueueReducer {
     }
 
     /**
-     * 将队列中的指定消息提升为立即插话。
+     * 将队列中的指定消息提升为「立即发送」。
      *
-     * - 若当前仍在流式运行（非压缩）：将其移至队首并标记 [QueuedMessageUi.immediateInterrupt]，等待当前运行取消后自动发出。
-     * - 若当前已空闲：直接从队列弹出并返回，由调用方立即发起新运行。
+     * 运行中的插话不再调用这里（改走 sendSupplement）；这里的流式分支只用于兼容旧状态／
+     * 直接调用者：把它移到队首并打标记，等当前 run 自然收尾后由队列接力发出，不请求停止。
+     * 已空闲则直接从队列弹出并返回，由调用方立即发起新运行。
      */
     fun promoteToInterrupt(
         state: AgentChatUiState,
@@ -201,7 +204,7 @@ internal object AgentMessageQueueReducer {
      * run 收尾时要不要冻结队列。
      *
      * 拆成纯函数是为了能单测：之前这段「意图合并」写在 AppState 里，三个条件
-     * （用户点过停止 / 插话触发的停止 / error 恰好是「已停止」）只能靠真机试。
+     * （用户点过停止 / 回答 ask_user 需要接力 / error 恰好是「已停止」）只能靠真机试。
      */
     fun isQueueFrozen(
         explicitlyStoppedByUser: Boolean,

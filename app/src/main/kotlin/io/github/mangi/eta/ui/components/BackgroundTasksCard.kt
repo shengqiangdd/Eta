@@ -9,8 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -30,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -45,10 +50,13 @@ import io.github.mangi.eta.agent.terminal.backgroundResumePrompt
 import io.github.mangi.eta.agent.terminal.canOfferManualResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.config.Prefs
+import java.io.File
+import java.io.RandomAccessFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -77,7 +85,7 @@ private fun rememberDetachedTasks(): List<DetachedTask>? {
  * 为什么要有它：第五、六批把「还有谁在跑」「哪些结束了」写进了系统提示，模型知道了，
  * 但用户仍要去终端页翻。这个卡片是同一份记录的只读视图。
  *
- * 只读：不提供停止 / 读日志 —— 这些动作要走 `terminal_job` / `terminal_daemon`，
+ * 只提供只读日志预览；停止任务仍要走 `terminal_job` / `terminal_daemon`，
  * 界面直接触发会让「谁在调度」变成两套真相（与台账卡同一条理由）。
  *
  * 「继续」是这个卡片唯一会发消息的入口：要用户点一下。自动续跑由进程级 watcher 负责，
@@ -99,6 +107,7 @@ internal fun BackgroundTasksCard(
     val view = remember(records) { summarizeBackgroundTasks(records) }
     if (view.isEmpty) return
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var inspectedTask by remember { mutableStateOf<DetachedTask?>(null) }
     // 时间不能只在记录变化时算一次：运行中的任务显示的是「已运行多久」，
     // 静止的 00:05 挂十分钟就是界面在说假话（与 `rememberRunningSeconds` 同一条教训）。
     // 因此展开期间按秒重算；只剩已结束的行时改成 30 秒（那里是「多久以前」，一秒一跳纯属白重组）。
@@ -171,7 +180,9 @@ internal fun BackgroundTasksCard(
         }
         AnimatedVisibility(visible = expanded) {
             Column(modifier = Modifier.padding(top = 6.dp)) {
-                view.running.forEach { task -> BackgroundTaskRow(task, now, onResume = null) }
+                view.running.forEach { task ->
+                    BackgroundTaskRow(task, now, onResume = null, onOpen = { inspectedTask = task })
+                }
                 val rest = view.runningTotal - view.running.size
                 if (rest > 0) {
                     Text(
@@ -205,6 +216,7 @@ internal fun BackgroundTasksCard(
                         } else {
                             null
                         },
+                        onOpen = { inspectedTask = task },
                     )
                 }
                 if (autoResumeEnabled) {
@@ -238,6 +250,12 @@ internal fun BackgroundTasksCard(
             }
         }
     }
+
+    inspectedTask?.let { selected ->
+        // records 会在任务结束时刷新；用最新记录覆盖打开时的那份快照，否则日志轮询永远不会停。
+        val current = records.firstOrNull { it.id == selected.id } ?: selected
+        BackgroundTaskLogSheet(task = current, onDismiss = { inspectedTask = null })
+    }
 }
 
 @Composable
@@ -246,6 +264,7 @@ private fun BackgroundTaskRow(
     now: Long,
     resumeLabel: String = "",
     onResume: (() -> Unit)? = null,
+    onOpen: (() -> Unit)? = null,
 ) {
     val line = backgroundTaskLine(task, now)
     val runningLabel = stringResource(R.string.tool_status_running)
@@ -264,6 +283,7 @@ private fun BackgroundTaskRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(enabled = onOpen != null) { onOpen?.invoke() }
             .padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -305,6 +325,122 @@ private fun BackgroundTaskRow(
         }
     }
 }
+
+/**
+ * 后台任务的只读详情：命令 + 日志尾部。
+ *
+ * 运行中的任务每秒刷新一次；已结束的任务只读一次。日志文件可能很大，只读最后 [MAX_LOG_BYTES]，
+ * 并明确标注“只显示最后 16 KB”，避免用户把截断当成全部输出。
+ */
+@Composable
+private fun BackgroundTaskLogSheet(task: DetachedTask, onDismiss: () -> Unit) {
+    var log by remember(task.id) { mutableStateOf<String?>(null) }
+    var truncated by remember(task.id) { mutableStateOf(false) }
+    LaunchedEffect(task.id, task.completedAt) {
+        while (true) {
+            val loaded = withContext(Dispatchers.IO) { readLogTail(File(task.logPath), MAX_LOG_BYTES) }
+            log = loaded.first
+            truncated = loaded.second
+            if (task.completedAt != null) break
+            delay(1_000L)
+        }
+    }
+
+    OverlayBottomSheet(
+        show = true,
+        title = task.id,
+        onDismissRequest = onDismiss,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 460.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp),
+        ) {
+            if (task.description.isNotBlank()) {
+                Text(
+                    text = task.description,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface,
+                )
+            }
+            Text(
+                text = stringResource(R.string.background_tasks_command),
+                style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+            )
+            SelectionContainer {
+                Text(
+                    text = task.command,
+                    style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                    color = MiuixTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = MiuixTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(10.dp),
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+            Text(
+                text = stringResource(R.string.background_tasks_log),
+                style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 14.dp, bottom = 4.dp),
+            )
+            val text = log?.trimEnd()
+            if (text.isNullOrEmpty()) {
+                Text(
+                    text = stringResource(R.string.background_tasks_log_empty),
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f),
+                )
+            } else {
+                SelectionContainer {
+                    Text(
+                        text = text,
+                        style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                        color = MiuixTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = MiuixTheme.colorScheme.surfaceContainer,
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            if (truncated) {
+                Text(
+                    text = stringResource(R.string.background_tasks_log_truncated),
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun readLogTail(file: File, maxBytes: Int): Pair<String, Boolean> {
+    if (!file.isFile) return "" to false
+    return runCatching {
+        RandomAccessFile(file, "r").use { raf ->
+            val length = raf.length()
+            val start = (length - maxBytes).coerceAtLeast(0L)
+            raf.seek(start)
+            val bytes = ByteArray((length - start).toInt())
+            raf.readFully(bytes)
+            String(bytes, Charsets.UTF_8) to (start > 0L)
+        }
+    }.getOrDefault("" to false)
+}
+
+private const val MAX_LOG_BYTES = 16 * 1024
 
 /**
  * 读一个本地 Agent 开关。

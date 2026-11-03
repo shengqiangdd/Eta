@@ -198,4 +198,21 @@ class AgentTaskLedgerTest {
         // 子代理是默认类型，不重复标注（否则每一行都带同样的尾巴）。
         assertFalse(line.contains("（subagent）"))
     }
+
+    @Test
+    fun progressOnlyTouchesRunningEntriesAndFinishClearsIt() {
+        val ledger = AgentTaskLedger()
+            .upsert(record("run", status = AgentTaskStatus.RUNNING, startedAt = 1))
+            .upsert(record("done", status = AgentTaskStatus.COMPLETED, startedAt = 2))
+
+        val updated = ledger.progress("run", "正在读取日志", 5_000L)!!
+        assertEquals("正在读取日志", updated.entries.first { it.id == "run" }.progress)
+        assertEquals(5_000L, updated.entries.first { it.id == "run" }.updatedAt)
+        assertNull("已结束的条目不能被迟到的进度写回", ledger.progress("done", "迟到", 5_000L))
+
+        val finished = updated.finish("run", AgentTaskStatus.COMPLETED, "完成", 6_000L)!!
+        val run = finished.entries.first { it.id == "run" }
+        assertNull(run.progress)
+        assertEquals(6_000L, run.updatedAt)
+    }
 }

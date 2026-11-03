@@ -21,6 +21,8 @@ internal data class SubagentStepSnapshot(
         const val STATUS_RUNNING = "running"
         const val STATUS_SUCCESS = "success"
         const val STATUS_FAILED = "failed"
+        /** 用户插话主动中断；不是失败，界面不应把它画成红色错误。 */
+        const val STATUS_INTERRUPTED = "interrupted"
     }
 }
 
@@ -43,6 +45,10 @@ internal data class SubagentActivitySnapshot(
     val steps: List<SubagentStepSnapshot> = emptyList(),
     val output: String = "",
     val error: String? = null,
+    /** 子代理开始时间（wall clock），界面据此显示已运行时长。 */
+    val startedAtMs: Long = 0L,
+    /** 最后一次收到子代理事件的时间；界面用它判断「一直没动静」是否已经像卡住。 */
+    val lastActivityAtMs: Long = 0L,
 ) {
     val toolStepCount: Int
         get() = steps.count { it.kind == SubagentStepSnapshot.KIND_TOOL }
@@ -54,6 +60,8 @@ internal data class SubagentActivitySnapshot(
         const val STATUS_COMPLETED = "completed"
         const val STATUS_FAILED = "failed"
         const val STATUS_CANCELLED = "cancelled"
+        /** 用户插话把当前子代理中断，保留部分结果，由父 Agent 接着处理新指令。 */
+        const val STATUS_INTERRUPTED = "interrupted"
 
         private const val SNAPSHOT_PREFIX = "{\"subagentId\":"
 
@@ -90,6 +98,8 @@ internal data class SubagentActivitySnapshot(
                 resumed = resumeId.isNotEmpty(),
                 status = STATUS_RUNNING,
                 currentAction = "正在启动…",
+                startedAtMs = System.currentTimeMillis(),
+                lastActivityAtMs = System.currentTimeMillis(),
             )
         }.getOrNull()
     }

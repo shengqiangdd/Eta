@@ -155,7 +155,6 @@ io.github.mangi.eta.agent.runtime.AgentRuntimeSessionTest
 io.github.mangi.eta.agent.runtime.AgentTodoStoreTest
 io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
 io.github.mangi.eta.agent.runtime.EntrySurfaceGuardTest
-io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest
 io.github.mangi.eta.agent.runtime.ExecutionStopQueueTest
 io.github.mangi.eta.agent.runtime.GuiControlCoordinatorTest
 io.github.mangi.eta.agent.runtime.SearchSuggestionsPayloadTest
@@ -230,6 +229,7 @@ io.github.mangi.eta.agent.tool.NodeActionRetryPolicyTest
 io.github.mangi.eta.agent.tool.ObservationReferencePolicyTest
 io.github.mangi.eta.agent.tool.ObservationScopePolicyTest
 io.github.mangi.eta.agent.tool.PendingSkillConflictCapabilityParserTest
+io.github.mangi.eta.agent.tool.SecretRedactorTest
 io.github.mangi.eta.agent.tool.ToolArgumentHintPolicyTest
 io.github.mangi.eta.agent.tool.ToolArgumentSchemaTest
 io.github.mangi.eta.agent.trace.AgentNetworkRetryStatsTest

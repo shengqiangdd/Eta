@@ -39,6 +39,11 @@ class AgentPromptBuilderTest {
         for (contents in ungranted + granted) {
             assertTrue(contents.contains("identity=user 是显式选择"))
             assertTrue(contents.contains("terminal(action=check_root)"))
+            // 直接提问优先于「推进清单」：否则用户问一句，模型会继续把待办跑完。
+            assertTrue(contents.contains("先直接回答"))
+            assertTrue(contents.contains("立即停止工具操作"))
+            assertTrue(contents.contains("插话当成当前最新指令"))
+            assertTrue(contents.contains("必须打码"))
         }
     }
 

@@ -69,6 +69,18 @@ internal class AgentTaskLedgerStore(
         write(scopeId, updated)
     }
 
+    /**
+     * 刷新运行中条目的进度。
+     *
+     * 特意做成"读-改-写同一把锁"，并且 [AgentTaskLedger.progress] 只改 RUNNING 条目：
+     * 子代理结束写终态与子代理线程写进度可能同时发生，不能把 completed 覆盖回 running。
+     */
+    fun recordProgress(scopeId: String, id: String, text: String, at: Long): Boolean =
+        synchronized(writeLock) {
+            val updated = load(scopeId).progress(id, text, at) ?: return false
+            write(scopeId, updated)
+        }
+
     fun clear(scopeId: String): Boolean {
         val file = fileFor(scopeId) ?: return false
         val ok = runCatching { !file.exists() || file.delete() }.getOrDefault(false)

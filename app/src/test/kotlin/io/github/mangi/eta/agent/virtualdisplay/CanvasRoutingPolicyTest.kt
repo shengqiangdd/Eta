@@ -99,6 +99,25 @@ class CanvasRoutingPolicyTest {
     }
 
     @Test
+    fun trustedInteractiveFlagsAlwaysIncludeTrusted() {
+        assertTrue(
+            CanvasRoutingPolicy.TRUSTED_INTERACTIVE_FLAGS and CanvasRoutingPolicy.FLAG_TRUSTED != 0,
+        )
+    }
+
+    @Test
+    fun etaVirtualDisplayNameAcceptsNewAndLegacyDisplayNames() {
+        assertTrue(CanvasRoutingPolicy.isEtaVirtualDisplayName(CanvasRoutingPolicy.VIRTUAL_DISPLAY_NAME))
+        assertTrue(
+            CanvasRoutingPolicy.isEtaVirtualDisplayName(
+                CanvasRoutingPolicy.LEGACY_VIRTUAL_DISPLAY_PREFIX + "vdmw0qe8x9",
+            ),
+        )
+        assertFalse(CanvasRoutingPolicy.isEtaVirtualDisplayName("OtherAppVirtualDisplay"))
+        assertFalse(CanvasRoutingPolicy.isEtaVirtualDisplayName("eta-virtual"))
+    }
+
+    @Test
     fun isVirtualDisplayDistinguishesVirtualIdsFromDefaultAndInvalidDisplays() {
         assertFalse(CanvasRoutingPolicy.isVirtualDisplay(Display.DEFAULT_DISPLAY))
         assertFalse(CanvasRoutingPolicy.isVirtualDisplay(Display.INVALID_DISPLAY))

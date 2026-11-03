@@ -113,9 +113,19 @@ internal object AgentRuntimeWire {
     /** service -> client：返回各运行的会话归属与当前阶段。 */
     const val MSG_QUERY_ACTIVE_RUNS_RESPONSE = 21
 
+    /**
+     * service -> client：补充指令（插话）是否被当前 run 接纳。
+     *
+     * 只回「收没收到」：接纳后 AgentLoop 会在下一个步骤边界把这条当作用户消息追加；
+     * 被丢弃（run 刚结束 / 不是对话 run）时界面必须保留草稿并说明，不能假装已发送。
+     */
+    const val MSG_SUPPLEMENT_ACK = 22
+
     /** MSG_SUPPLEMENT 的补充正文键。 */
     const val KEY_SUPPLEMENT_TEXT = "supplement_text"
 
+    /** MSG_SUPPLEMENT_ACK 的接纳结果键。 */
+    const val KEY_SUPPLEMENT_ACCEPTED = "supplement_accepted"
 
     /**
      * 旧版 Runtime 不会在活跃 run 响应里带执行总数。
@@ -829,6 +839,16 @@ internal object AgentRuntimeWire {
         putString(KEY_RUN_ID, runId)
         putString(KEY_SUPPLEMENT_TEXT, text)
     }
+
+    /** 构造补充指令回执：目标 run + 是否被接纳。 */
+    fun supplementAckBundle(runId: String, accepted: Boolean): Bundle = Bundle().apply {
+        putString(KEY_RUN_ID, runId)
+        putBoolean(KEY_SUPPLEMENT_ACCEPTED, accepted)
+    }
+
+    /** 读取补充指令回执；字段缺失一律按「未接纳」处理，避免界面误清草稿。 */
+    fun supplementAcceptedFromBundle(bundle: Bundle): Boolean =
+        bundle.getBoolean(KEY_SUPPLEMENT_ACCEPTED, false)
 
     private fun String.boundedText(maxChars: Int): String =
         if (length <= maxChars) this else take((maxChars - TRUNCATED_SUFFIX.length).coerceAtLeast(0)) + TRUNCATED_SUFFIX

@@ -69,20 +69,12 @@ internal fun AgentChatQueueStrip(
     isStreaming: Boolean,
     modifier: Modifier = Modifier,
     /**
-     * 编辑某条既有消息期间禁用「立即插话发送」。
+     * 编辑某条既有消息期间暂不提供队列插话。
      *
-     * 插话会先打断当前 run，但消息本身发不出去 —— dispatchQueuedMessage 见
-     * `messageEdit != null` 会把它原样放回队首。结果是「白停一轮、消息还在队列里」，
-     * 用户完全看不出发生了什么。这里直接置灰，比点完没反应诚实。
+     * 现在插话已经不会打断 run，但一次点击同时改变任务方向和编辑现场，
+     * 容易让用户失去上下文；退出编辑后再操作更稳。
      */
     isEditingMessage: Boolean = false,
-    /**
-     * 输入框里有未发送草稿时同样禁用（与 dsh 的 canSteerQueue 要求输入框为空一致）。
-     *
-     * 插话会先打断 run，而接力发出的那一步见草稿非空会整段跳过 —— 同样白停一轮，
-     * 而且队列条会停在「插话中」。真机实测复现过，所以这里一并置灰。
-     */
-    hasDraft: Boolean = false,
     onSteer: (String) -> Unit,
     onRecall: (String) -> Unit,
     onRemove: (String) -> Unit,
@@ -174,7 +166,7 @@ internal fun AgentChatQueueStrip(
                 QueuedMessageItemActions(
                     item = first,
                     isStreaming = isStreaming,
-                    steerEnabled = !isEditingMessage && !hasDraft,
+                    steerEnabled = !isEditingMessage,
                     onSteer = { onSteer(first.id) },
                     onRemove = { onRemove(first.id) },
                 )
@@ -226,7 +218,7 @@ internal fun AgentChatQueueStrip(
                         QueuedMessageItemActions(
                             item = item,
                             isStreaming = isStreaming,
-                            steerEnabled = !isEditingMessage && !hasDraft,
+                            steerEnabled = !isEditingMessage,
                             onSteer = { onSteer(item.id) },
                             onRemove = { onRemove(item.id) },
                         )

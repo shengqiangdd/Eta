@@ -154,7 +154,8 @@ internal class AgentStructuredDeviceTools(
                     "wifi_credentials" -> sensitive(wifiCredentials(args))
                     "recent_notifications" -> sensitive(recentNotifications(args))
                     "read_sms_code" -> sensitive(readSmsCode(args))
-                    "get_logcat" -> sensitive(logcatQuery.execute(args).toString())
+                    // 日志里经常带完整请求 URL、Authorization 头和 SDK 打印的 key。
+                    "get_logcat" -> sensitive(SecretRedactor.redact(logcatQuery.execute(args).toString()))
                     "set_setting" -> sensitive(stateMutations.setSetting(args))
                     "set_device_state" ->
                         if (args.optString("target") in setOf("mobile_data", "night_light"))
