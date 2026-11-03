@@ -74,6 +74,23 @@ class AgentAfterActionSummaryTest {
         assertFalse(nodes.getJSONObject(1).has("checked"))
     }
 
+    @Test
+    fun changedScreenWithNoNodesAsksForAFreshObservation() {
+        // 页面跳转途中真的会一个节点都取不到（真机实测 ui_nodes_shown=0）。
+        // 原来照样说「可直接用该 observation_id 继续操作」，模型拿着空列表只能盲试。
+        val before = observation("o1", "app.a", listOf(node(0, "WLAN")))
+        val after = observation("o2", "app.b", emptyList())
+        val summary = AgentAfterActionSummary.build(before, after)
+        assertTrue(summary.getBoolean("screen_changed"))
+        assertEquals(0, summary.getInt("ui_nodes_shown"))
+        val note = summary.getString("note")
+        assertFalse(
+            "没取到节点时不能承诺可直接继续",
+            note.contains("可直接用该 observation_id 继续操作"),
+        )
+        assertTrue("必须让模型先重新观察", note.contains("observe_screen"))
+    }
+
     private fun observation(id: String, pkg: String, nodes: List<UiNode>) = ElementObservation(
         id = id, source = ElementSource.ACCESSIBILITY, packageName = pkg, windowId = 1,
         nodes = nodes, maxNodes = 30, truncated = false,

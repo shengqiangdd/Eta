@@ -509,7 +509,7 @@ internal class AgentLocalTools(
                     guiControl?.release()
                     textResult(JSONObject().put("ok", true).put("tool", "release_gui").toString())
                 }
-                in AgentVirtualDisplayTools.names -> virtualDisplayTool(toolCall.name, args)
+                in AgentVirtualDisplayTools.names -> virtualDisplayTool(toolCall.name, args, guiGeneration)
                 in AgentAcpTools.names -> acpTool(toolCall.name, args, toolCall.id)
                 in AgentPluginTools.names -> pluginTool(toolCall.name, args)
                 "tap" -> {
@@ -2551,7 +2551,7 @@ internal class AgentLocalTools(
      * launch 赬倒到 root am start --display，因为主进程的 startActivity
      * 无法把 activity 送到非默认屏（setActivityRecordInFullscreen 等阻抑）。
      */
-    private fun virtualDisplayTool(name: String, args: JSONObject): AgentModelClient.ToolResult {
+    private fun virtualDisplayTool(name: String, args: JSONObject, generation: Long? = null): AgentModelClient.ToolResult {
         val result = when (name) {
             "virtual_display_create" -> {
                 val mainMetrics = context.resources.displayMetrics
@@ -2617,7 +2617,7 @@ internal class AgentLocalTools(
                         created
                             .put("package_name", request.packageName)
                             .put("component", launched.optString("component"))
-                        observeAfterLaunch(session.displayId)?.let { observation ->
+                        observeAfterLaunch(session.displayId, generation)?.let { observation ->
                             created.put("first_observation", summarizeLaunchObservation(observation))
                         }
                     } else {
@@ -2820,7 +2820,7 @@ internal class AgentLocalTools(
                 if (!outcome.optBoolean("ok")) return textResult(outcome.toString())
                 // 启动后顺手观察首次屏：以前这一步要 launch → wait N 秒 → observe_screen 三次调用，
                 // 而且"等多久"只能猜。现在一次调用就把首屏节点和 observation_id 一起拿到。
-                val firstObservation = observeAfterLaunch(session.displayId)
+                val firstObservation = observeAfterLaunch(session.displayId, generation)
                 outcome
                     .put("tool", "virtual_display_launch")
                     .put("display_id", session.displayId)
@@ -2962,7 +2962,7 @@ internal class AgentLocalTools(
      * 一旦有节点就停；顺便把这次观察登记为「当前观察」，紧接着的 tap_element
      * 无需再自己重现观察一次。
      */
-    private fun observeAfterLaunch(displayId: Int): JSONObject? {
+    private fun observeAfterLaunch(displayId: Int, generation: Long? = null): JSONObject? {
         val deadline = SystemClock.elapsedRealtime() + LAUNCH_OBSERVE_TIMEOUT_MS
         var last: JSONObject? = null
         var lastObservation: Observation? = null
@@ -2981,7 +2981,7 @@ internal class AgentLocalTools(
                 lastObservation = observation
                 if (launchObservationReady(content)) {
                     content.put("tree_ready", true)
-                    publishObservation(observation, displayId)
+                    publishObservation(observation, displayId, generation)
                     return content
                 }
             }
@@ -2990,7 +2990,7 @@ internal class AgentLocalTools(
                 // 但必须标明「这棵树可能还没画完」：否则模型会把「没看到」当成「那里没东西」——
                 // 真机上就出现过「只有 2 个节点时盲点坐标，点到不该点的地方」。
                 last?.put("tree_ready", false)
-                lastObservation?.let { publishObservation(it, displayId) }
+                lastObservation?.let { publishObservation(it, displayId, generation) }
                 return last
             }
             Thread.sleep(LAUNCH_OBSERVE_POLL_MS)
@@ -3016,6 +3016,7 @@ internal class AgentLocalTools(
     private fun publishObservation(
         observation: Observation,
         displayId: Int,
+        generation: Long? = null,
     ) {
         val elements = observation.elementObservation ?: return
         publishedObservation.set(
@@ -3023,6 +3024,10 @@ internal class AgentLocalTools(
                 elements = elements,
                 coordinateSpace = observation.coordinateSpace,
                 displayId = displayId,
+                // 与 observeScreen 保持一致：必须登记当时的 GUI 代号。
+                // 漏了它，紧接着的 tap_element / type_text 会因「代号不匹配」被判成
+                // NO_OBSERVATION —— 建屏后第一次操作必然失败一次（真机连踩两次才发现）。
+                generation = generation,
             ),
         )
     }

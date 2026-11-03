@@ -342,15 +342,26 @@ internal class VirtualDisplayController(
             },
             nowMs = System.currentTimeMillis(),
         )
+        var releasedCount = 0
         expired.forEach { id ->
             val session = sessions[id] ?: return@forEach
             logger.info(
                 "Agent virtual display action=recycle reason=idle id=$id displayId=${session.displayId} " +
                     "idleSeconds=${session.idleSeconds}",
             )
-            release(id)
+            if (release(id)) {
+                releasedCount++
+            } else {
+                // release(id) 返回 false 表示「任务没清干净，屏被故意留着」（不能把任务迁回主屏）。
+                // 原来这里直接忽略返回值并按 expired.size 报告「已回收」：回收失败被记成成功，
+                // 屏其实还在、下一轮又被 sweep 一次，日志里也看不出异常。
+                logger.warn(
+                    "Agent virtual display action=recycle outcome=skipped id=$id " +
+                        "displayId=${session.displayId} reason=tasks-remain",
+                )
+            }
         }
-        return expired.size
+        return releasedCount
     }
 
     /** 坐标/滑动这类输入走系统命令，控制器只能在此显式记一次「用过了」。 */

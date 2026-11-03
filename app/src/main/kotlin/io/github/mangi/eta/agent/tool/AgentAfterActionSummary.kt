@@ -67,7 +67,13 @@ internal object AgentAfterActionSummary {
                         "这份反馈来自${if (mainScreen) "主屏" else "display $displayId"}，" +
                             "与动作前观察的不是同一块屏：这次没有做前后比较（跨屏差异没有意义）；" +
                             "要刚才那块屏请重新 observe_screen"
-                    changed -> "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
+                    changed && nodes.shown > 0 ->
+                        "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
+                    // 页面跳转途中常见：界面确实变了（screen_changed=true），但这一帧一个节点都没取到。
+                    // 原来照样说「可直接继续」，模型拿着空节点列表只能盲试或反复报错。
+                    changed ->
+                        "界面已变化，但这一帧没有取到节点（页面还在加载或正在切窗口）：" +
+                            "先用该 observation_id 调用 observe_screen 再操作，不要沿用动作前的节点"
                     else -> "界面没有可见变化，动作可能未生效；请换目标或方式，不要原样重复"
                 },
             )
