@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.model
 
+import io.github.mangi.eta.agent.acp.AcpDelegationMode
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
@@ -58,6 +59,10 @@ internal object AgentModelClient {
                     reasoningEffort = effort,
                     autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
                     subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
+                    acpDelegationMode = Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DELEGATION_MODE)
+                        ?: runtime.acpDelegationMode,
+                    acpDefaultAgent = Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_AGENT)
+                        ?: runtime.acpDefaultAgent,
                 )
             }
         }
@@ -77,6 +82,9 @@ internal object AgentModelClient {
             systemPrompt = BuiltinProviders.DEFAULT_SYSTEM_PROMPT,
             autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
             subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
+            acpDelegationMode = Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DELEGATION_MODE)
+                ?: AcpDelegationMode.ASK.wire,
+            acpDefaultAgent = Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_AGENT).orEmpty(),
             terminalTools = Prefs.isEnabled(Prefs.Keys.AGENT_TERMINAL_TOOLS),
             browserTools = Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS),
             deviceDirectTools = Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_DIRECT_TOOLS),
@@ -433,6 +441,15 @@ internal object AgentModelClient {
         /** 模型请求失败（限流/5xx/网络）时的重试次数；0 表示只尝试一次。 */
         val modelMaxRetries: Int = 3,
         val subagentTools: Boolean = Prefs.Keys.BOOLEAN_DEFAULTS.getValue(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
+        /**
+         * 复杂编码任务是否交给 ACP 编码代理；`off` / `ask` / `auto`。
+         *
+         * 存字符串是因为它是三态：用两个布尔表达「关闭 / 询问 / 自动」会出现
+         * 两个都 true 这种无法解释的组合。
+         */
+        val acpDelegationMode: String = AcpDelegationMode.ASK.wire,
+        /** 默认委派给哪个代理；空表示用第一个可用的。 */
+        val acpDefaultAgent: String = "",
         val authMode: String = ProviderAuthModes.API_KEY,
     ) {
         val usesHostedWebSearch: Boolean

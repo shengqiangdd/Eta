@@ -121,7 +121,8 @@ class AgentPromptBuilderTest {
         )
 
         assertEquals(
-            listOf("system", "system", "system", "system", "user", "assistant", "user"),
+            // 多出的一个 system 是「编码任务委派」段（terminalTools=true 时有它）。
+            listOf("system", "system", "system", "system", "system", "user", "assistant", "user"),
             messages.roles(),
         )
         assertEquals("自定义系统约束", messages.getJSONObject(0).getString("content"))
@@ -157,10 +158,14 @@ class AgentPromptBuilderTest {
         assertTrue(messages.getJSONObject(2).getString("content").contains("观察返回内容后再读下一张"))
         assertTrue(messages.getJSONObject(3).getString("content").contains("可调用 subagent 派发子智能体"))
         assertFalse(messages.systemContents().any { it.contains("网页浏览、读取") })
-        assertEquals("旧问题", messages.getJSONObject(4).getString("content"))
-        assertEquals("旧回答", messages.getJSONObject(5).getString("content"))
+        // 用「角色序列里的第一条 user」定位，不写死下标：系统段随时可能增减，
+        // 写死下标会让一条无关的提示词改动变成这里莫名其妙的失败。
+        val userIndex = messages.roles().indexOfFirst { it == "user" }
+        assertEquals(5, userIndex)
+        assertEquals("旧问题", messages.getJSONObject(userIndex).getString("content"))
+        assertEquals("旧回答", messages.getJSONObject(userIndex + 1).getString("content"))
 
-        val currentContent = messages.getJSONObject(6).getJSONArray("content")
+        val currentContent = messages.getJSONObject(userIndex + 2).getJSONArray("content")
         assertEquals("当前问题", currentContent.getJSONObject(0).getString("text"))
         assertEquals(
             image.reference,
@@ -478,6 +483,46 @@ class AgentPromptBuilderTest {
         ).systemContents()
 
         assertTrue(messages.none { it.contains("<background_events>") })
+    }
+
+    /**
+     * 委派偏好要真的进到系统提示里，而不是只存在于设置页。
+     *
+     * 这是「设置项 → 提示词」的端到端断言：上面的 AcpDelegationPromptTest 只验了
+     * 那段文字本身对不对，验不了它有没有被拼进 prompt —— 而漏拼的后果是
+     * 无论用户怎么设置，模型行为都不变，且不会有任何报错。
+     */
+    @Test
+    fun delegationPreferenceReachesTheSystemPrompt() {
+        fun prompt(mode: String, root: Boolean = true): String =
+            AgentPromptBuilder.buildSystemMessages(
+                // terminalTools=false 也要有：委派判据是 root 能力，不是终端开关。
+                config = modelConfig("", terminalTools = false, browserTools = false).copy(
+                    acpDelegationMode = mode,
+                    acpDefaultAgent = "codex",
+                ),
+                skillContext = SkillContext.EMPTY,
+                memoryContext = AgentMemoryContext.DISABLED,
+                rootAvailable = root,
+            ).systemContents().joinToString("\n")
+
+        val auto = prompt("auto")
+        assertTrue("auto 模式应写明直接委派", auto.contains("直接调 acp_delegate"))
+
+        val ask = prompt("ask")
+        assertTrue(ask.contains("ask_user"))
+        assertFalse(ask.contains("不要先问用户"))
+
+        // 关闭时整段都不出现：留着「不要委派」反而让模型惦记这个工具。
+        val off = prompt("off")
+        assertFalse(off.contains("acp_delegate"))
+
+        // 未探测时应要求模型先确认代理可用，而不是假定它装好了。
+        assertTrue(auto.contains("acp_agent_list"))
+
+        // 没有 root 时 acp_* 根本不在工具清单里（代理进程要经 su 拉起），
+        // 这时写这段等于让它去调一个不存在的工具。
+        assertFalse(prompt("auto", root = false).contains("acp_delegate"))
     }
 
     private fun modelConfig(

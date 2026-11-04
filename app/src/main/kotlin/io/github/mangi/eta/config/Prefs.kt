@@ -90,6 +90,21 @@ internal object Prefs {
         const val AGENT_TRANSCRIPT_VIEW = "agent_transcript_view"
 
         /**
+         * 复杂编码任务是否交给 ACP 编码代理（codex / claude）：`off` / `ask`（默认）/ `auto`。
+         *
+         * 字符串键，不走 [BOOLEAN_DEFAULTS]，读取用 [getLocalAgentString] 再交给
+         * `AcpDelegationMode.fromWire`（未知值回退 ask）。
+         */
+        const val AGENT_ACP_DELEGATION_MODE = "agent_acp_delegation_mode"
+
+        /**
+         * 默认委派给哪个代理（`codex` / `claude`）；空表示用第一个可用的。
+         *
+         * 存 id 而不是标题：标题是可翻译的展示文案，改了就对不上。
+         */
+        const val AGENT_ACP_DEFAULT_AGENT = "agent_acp_default_agent"
+
+        /**
          * 聊天页底部常驻卡「没有在跑的就收起」（默认开）。
          *
          * 关掉 = 永远显示台账与后台任务卡，包含早就结束的那些。
@@ -159,6 +174,8 @@ internal object Prefs {
             AGENT_PLAN_MODE,
             AGENT_SUBAGENT_ENABLED,
             AGENT_CHAT_CARDS_AUTO_COLLAPSE,
+            AGENT_ACP_DELEGATION_MODE,
+            AGENT_ACP_DEFAULT_AGENT,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
     }

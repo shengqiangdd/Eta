@@ -92,6 +92,8 @@ import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.AgentBusySendModePreference
 import io.github.mangi.eta.ui.components.AgentTranscriptViewPreference
 import io.github.mangi.eta.ui.components.AgentWorkCollapseTimingPreference
+import io.github.mangi.eta.ui.components.AcpDefaultAgentPreference
+import io.github.mangi.eta.ui.components.AcpDelegationPreference
 import io.github.mangi.eta.ui.components.AgentModePreference
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaDropdownPreference
@@ -330,6 +332,22 @@ private fun SettingsPageContent(
                         key = Prefs.Keys.AGENT_THINKING_ENABLED,
                         icon = Icons.Rounded.Psychology,
                         iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    AcpDelegationPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_acp_delegation_title),
+                        icon = Icons.Rounded.Code,
+                        iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    AcpDefaultAgentPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_acp_default_agent_title),
+                        icon = Icons.Rounded.AccountTree,
+                        iconTint = EtaPreferenceColors.Orange,
                     )
 
                     EtaPreferenceDivider()

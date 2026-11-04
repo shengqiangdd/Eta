@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.model
 
+import io.github.mangi.eta.agent.acp.AcpDelegationMode
+import io.github.mangi.eta.agent.acp.AcpDelegationPrompt
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
@@ -238,6 +240,23 @@ internal object AgentPromptBuilder {
                         "子智能体没有当前会话上下文，也不执行屏幕 GUI 手势；派发时提供完整目标与已知线索，收到汇总结果后由你向用户统一作答。"
                 )
             )
+        }
+        // 委派指导放在工具说明之后、角色与记忆之前：它是对「怎么干活」的补充，
+        // 与上面那段 subagent 说明同类；放进记忆段后面会被当成背景资料而非指令。
+        //
+        // 判据是 rootAvailable 而不是 terminalTools：`acp_*` 工具一直注册在
+        // AgentToolCatalog 里，只由 root 能力筛（代理进程经 `su -c` 拉起），
+        // 与终端开关无关 —— 按 terminalTools 判会漏掉「有关系权限但关掉终端」的组合。
+        if (roleplayContext == null && rootAvailable) {
+            val delegation = AcpDelegationPrompt.section(
+                mode = AcpDelegationMode.fromWire(config.acpDelegationMode),
+                defaultAgent = config.acpDefaultAgent,
+                // 本轮可用代理传 null（未探测）：探测要经 `su -c` 起进程（首次 200~500ms），
+                // 放在每轮提示构建路径上会把首字延迟拉长。让模型自己调一次 acp_agent_list
+                // 更可靠 —— 那本来就是它的职责，工具描述里也这么写了。
+                available = null,
+            )
+            if (delegation.isNotEmpty()) messages.put(systemMessage(delegation))
         }
         roleplayContext?.personaMessage()?.let(messages::put)
         buildMemorySystemMessage(memoryContext, writable = roleplayContext == null)?.let(messages::put)

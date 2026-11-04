@@ -157,6 +157,8 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.subagent.SubagentEndStatusTest
   --tests io.github.mangi.eta.agent.acp.AcpTranscriptTest
   --tests io.github.mangi.eta.agent.acp.AcpBuiltinAgentsTest
+  --tests io.github.mangi.eta.agent.acp.AcpDelegationPromptTest
+  --tests io.github.mangi.eta.ui.components.AcpDelegationAgentsTest
   --tests io.github.mangi.eta.ui.components.ChatStatusCardsTest
   --tests io.github.mangi.eta.agent.runtime.AgentTaskLedgerStoreTest
   --tests io.github.mangi.eta.agent.runtime.BackgroundEventStoreTest

@@ -808,6 +808,107 @@ APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
 这正是「加状态时不能静默漏分类」的正确做法，`AgentTaskLedgerSummaryTest` 里
 「各桶之和 == total」那条用例是第二道保险。
 
+#### 第三批：复杂编码任务委派策略（2026-11-04）
+
+**需求**：Eta 遇到复杂编码任务时优先交给编码代理（`acp_delegate`），但要允许用户在菜单里
+自己定「要不要交、交给谁」，而不是写死。
+
+**为什么做成显式策略而不是一个默认值**：这不是能力问题，是**信任与成本**问题。
+委派会拉起另一个进程、跑另一个模型、可能动工作区文件 —— 花的是另一份 token 和另一段时间。
+有人希望「我的仓库只让当前这个模型改」，也有人希望「凡是要改代码都别让我陪着」。
+两种偏好都合理，所以给三档：
+
+| 档位 | 行为 | 提示词里的写法 |
+|---|---|---|
+| `off` | 不委派，自己动手 | **整段不写**（留着反而让模型惦记这个工具） |
+| `ask`（默认） | 复杂任务先问一句 | 先用 `ask_user` 说明打算派给谁、要做什么，同意再派 |
+| `auto` | 复杂任务直接派 | 直接调 `acp_delegate`，不要先问、不必先解释 |
+
+默认 `ask` 而不是 `auto`：委派要花另一份 token 与时间，默认替用户决定「再跑一个模型」是越权；
+也不放 `off`，那等于把能力藏起来。
+
+**判据（告诉模型什么算「复杂」）**：跨文件重构、按规格新建模块、批量改写、跑测试并修失败、
+在陌生仓库里定位并修复问题 —— 特征是多文件、需要多轮试错。
+反过来，单文件小改、读一个函数、查一段配置**明确不要委派**，委派本身的开销大于收益。
+
+**关键设计决定：可用代理不现查。**
+`AcpClient.agents()` 要判断凭据，而凭据探测是经 `su -c` 起进程跑 `[ -s 文件 ]`
+（首次 200~500ms，有 TTL 缓存）。提示构建在**每轮请求路径**上，把那个调用放进来会
+直接拉长首字延迟。所以 `AcpDelegationPrompt.section` 的 `available` 参数保留三态：
+
+- `null`（本轮实际传的值）：未探测 → 照常给指导，但要求模型**先调一次 `acp_agent_list`**
+  确认代理装了、有凭据；未装则自己动手并如实告知，不要反复重试。
+- `List` 非空：已知可用 → 直接给 `agent="xxx"`，并列出备选。
+- `List` 空：探测过一个都用不了 → 整段不写，否则模型会去调一个必然失败的工具，
+  白花一轮，还可能把「工具坏了」当成结论告诉用户。
+
+`section` 仍是纯函数，因此这三种分支与档位差异全部可单测。
+
+**注入位置**：`AgentPromptBuilder.buildSystemMessages`，放在工具说明之后、角色与记忆之前。
+放在记忆段后面会被当成背景资料而不是指令。
+
+**注入判据是 `rootAvailable`，不是 `terminalTools`**（第一版写错了）：
+`acp_*` 工具一直注册在 `AgentToolCatalog`，只由 root 能力筛（代理进程经 `su -c` 拉起），
+与终端开关无关。按 `terminalTools` 判会漏掉「有关系权限但关掉终端」这种组合 ——
+而那种组合下 `acp_delegate` 明明可用。反过来说，没有 root 时 `acp_*` 不在工具清单里，
+写这段等于让它去调不存在的工具。
+
+**设置入口**（设置页 → Agent 分组，紧跟 Agent 模式之后）：
+
+- 「编码任务委派」单选三档，弹窗里每档带一句具体说明（判据是什么、会/不会发生什么）。
+  用单选不用开关：「关闭 + 自动」这种组合没有意义，而两个开关要用户自己推优先级。
+- 「默认编码代理」：`自动`（第一个已安装的）+ 具体代理。
+  给一个显式的「自动」选项而不是「不选就等于第一个」，是因为后者在装了第二个代理之后
+  会**悄悄换掉**用户一直用的那个。
+
+**代理清单只有一份**：`AcpDelegationAgents.entries` 的 id 必须与 `AcpClient.BUILTIN_AGENTS`
+一致，由 `AcpDelegationAgentsTest` 钉住（含反向用例，保证那个探查函数本身不会永真）。
+两边各写一份是必然的（一边要可执行路径，一边要展示文案），漏改的后果则是用户可见的：
+界面能选一个不存在的代理，或装了新代理却在设置页找不到它。
+
+**存储**：`agent_acp_delegation_mode` / `agent_acp_default_agent` 两个字符串键，
+登记在 `Prefs.Keys.LOCAL_AGENT_KEYS`（走 `getLocalAgentString`，不进 `BOOLEAN_DEFAULTS`）。
+未知的 `wire` 值回退 `ask`：手改配置或旧版本写进别的值，功能不会被静默关掉。
+
+**改动文件**：
+`agent/acp/AcpDelegation.kt`（新，枚举 + 纯函数）、
+`ui/components/AcpDelegationPreference.kt`（新）、
+`ui/components/AcpDefaultAgentPreference.kt`（新）、
+`ui/components/AcpDelegationAgents.kt`（新）、
+`ui/SettingsScreen.kt`、`model/AgentModelClient.kt`、`model/AgentPromptBuilder.kt`、
+三套 `strings.xml`、`tools/gate.sh`（登记两个测试类）。
+
+**验证**：
+- `AcpDelegationPromptTest` 9 例：三档语气互不相同、`off` 完全不出现、空列表不写、
+  `null` 要求先确认、默认代理不在可用列表时回退到第一个、未知 wire 值回退 `ask`。
+- `AcpDelegationAgentsTest` 3 例：界面清单与内置代理清单一致 + 反向验证探查函数有效。
+- `AgentPromptBuilderTest` 新增 1 例端到端：**设置真的改变了系统提示**（而不只是能存进 Prefs）。
+- 注入实验：删掉「简单任务不要委派」那句 → 对应用例立刻变红，还原后转绿。
+- 修既有用例：`messagesKeepSystemHistoryAndCurrentImageInputInStableOrder` 原先写死角色序列
+  与消息下标，新增一个 system 段后失败；改为按角色定位用户消息，不再写死下标
+  （否则一条无关的提示词改动会变成那里莫名其妙的失败）。
+
+**门禁结果（本机 PKX110/A16，2026-11-04）**：
+- `STAGES=test`：**1248 例，失败 0**（比上轮 1235 多 13，正是本轮新增的 9 + 3 + 1）。
+- `STAGES=lint`：**155 条命中，与 baseline 一致**（另有 11 条依赖更新提示未复现，按既有规则放过）。
+- `STAGES=assemble`：成功，`Eta-v3.4.0-debug.apk` **32,367,017 字节**，sha256 `784ded34e3093c66…`。
+- 死文案 0 条（新增 19×3 条全部被引用）；UI 动作接线 65 个动作齐全。
+
+**被 lint 抓到的一处真实问题**：`AcpDefaultAgentPreference` 里
+`target.edit().putString(...).commit()` 触发 `UseKtx`。没有改成 KTX 的 `edit { }` ——
+它默认异步 `apply()` 且不返回成败，而这里正需要「写失败要告诉用户」，
+故用 `@Suppress("UseKtx")` 并写明理由。`AcpDelegationPreference` 的链式写法没被这条规则命中，
+但语义相同，一并标注，避免以后换 lint 版本时只报一处。
+
+**未验证（如实）**：
+- 没有真跑一轮「复杂任务自动委派给 Claude」的完整链路（需要可用的 Anthropic 凭据）。
+  模型是否真的按这段指导行事，只有在真实复杂任务上才能观察到。
+- 设置页这两个新入口没有截图核对，只做了编译 + 单测；单测覆盖的是读写的默认值与回退，
+  覆盖不到 Compose 布局本身。
+- `acpAvailableAgents` 恒为「未探测」：真探测要经 `su -c` 起进程（首次 200~500ms），
+  不能放在每轮请求路径上。所以「已知可用 → 直接给出 agent 名」这条分支只有单测覆盖，
+  运行时不会走到。当前行为是每次都要求模型先调 `acp_agent_list`。
+
 #### 第二批：任务卡收纳、ACP 全量回传、接入 Claude（2026-11-04）
 
 三个都是用户直接问出来的，问题都在「界面说了什么」而不是「功能能不能跑」：
