@@ -113,10 +113,28 @@ internal class RootShellTerminalController(
                     sessionScope = backgroundScopeId.takeIf { it.isNotBlank() },
                 )
             }
-            "list" -> jobs.list(args.optBoolean("active_only", true))
-            "read" -> jobs.read(args.requiredText("job_id"), args.optInt("max_bytes", 16_000))
-            "wait" -> jobs.waitFor(args.requiredText("job_id"), args.optLong("wait_ms", 30_000)) { processSupervisor.isClosing }
-            "stop" -> jobs.stop(args.requiredText("job_id"))
+            "list" -> jobs.list(
+                activeOnly = args.optBoolean("active_only", true),
+                // 默认只看本会话派的任务：旧行为是全局共享，别人派的活会出现在你的面板里，
+                // 你会当成自己的（选错 id、误读日志、甚至去 stop）。
+                scopeId = backgroundScopeId.takeIf { it.isNotBlank() },
+                includeOther = args.optBoolean("include_other", false),
+            )
+            "read" -> jobs.read(
+                args.requiredText("job_id"),
+                args.optInt("max_bytes", 16_000),
+                scopeId = backgroundScopeId.takeIf { it.isNotBlank() },
+            )
+            "wait" -> jobs.waitFor(
+                args.requiredText("job_id"),
+                args.optLong("wait_ms", 30_000),
+                isCancelled = { processSupervisor.isClosing },
+                scopeId = backgroundScopeId.takeIf { it.isNotBlank() },
+            )
+            "stop" -> jobs.stop(
+                args.requiredText("job_id"),
+                scopeId = backgroundScopeId.takeIf { it.isNotBlank() },
+            )
             else -> errorJson("UNSUPPORTED_TERMINAL_ACTION", "terminal_job action 仅支持 start/list/read/wait/stop")
         }
     }

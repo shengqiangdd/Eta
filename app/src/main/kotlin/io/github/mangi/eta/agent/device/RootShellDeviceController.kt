@@ -2879,6 +2879,7 @@ internal class RootShellDeviceController(
                         )
                     }
                 }
+                .also { result -> ScreenCaptureHints.forCode(code)?.let { result.put("hint", it) } }
         }
 
         companion object {

@@ -62,10 +62,48 @@ internal class BackgroundTerminalJobs(
         }
     }
 
-    fun list(activeOnly: Boolean): String {
+    /**
+     * 列出后台命令。
+     *
+     * [scopeId] 非空时只回该会话自己派的任务，并附带 hidden_tasks 告知还有多少属于别的会话。
+     * 为什么不直接全隐：旧行为是所有会话看到同一份全局列表 —— 别人派的活出现在你的面板里，
+     * 你会以为那是自己的（选错 id、误读日志、甚至去 stop 别人的任务）。
+     * 但也不能一概拒绝让你看：排查问题确实需要全局视角，所以留一个明确的出口（includeOther）。
+     */
+    fun list(activeOnly: Boolean, scopeId: String? = null, includeOther: Boolean = false): String {
         refresh()
-        val tasks = supervisor.list().filter { it.task.commandTask && (!activeOnly || it.task.completedAt == null) }
-        return base("list").put("tasks", JSONArray(tasks.map { taskJson(it.task) })).toString()
+        val visible = supervisor.list().filter { it.task.commandTask && (!activeOnly || it.task.completedAt == null) }
+        if (scopeId.isNullOrBlank() || includeOther) {
+            return base("list").put("tasks", JSONArray(visible.map { taskJson(it.task) })).toString()
+        }
+        // 先算「本会话真正拥有的」和「需要挡掉的」，不要先过滤再统计 —— 那样 foreign 恒为 0。
+        val foreign = visible.count {
+            !BackgroundTaskOwnership.visible(
+                taskScope = it.task.sessionScope,
+                viewerScope = scopeId,
+                includeOther = includeOther,
+            )
+        }
+        val mine = visible.filter {
+            BackgroundTaskOwnership.visible(
+                taskScope = it.task.sessionScope,
+                viewerScope = scopeId,
+                includeOther = includeOther,
+            )
+        }
+        return base("list")
+            .put("tasks", JSONArray(mine.map { taskJson(it.task) }))
+            .apply {
+                if (foreign > 0) {
+                    put("hidden_tasks", foreign)
+                    put(
+                        "hidden_note",
+                        "另有 $foreign 个后台任务属于其他会话，默认不列出；" +
+                            "确实需要看全部时传 include_other=true",
+                    )
+                }
+            }
+            .toString()
     }
 
     /**
@@ -79,27 +117,57 @@ internal class BackgroundTerminalJobs(
         return supervisor.list().size
     }
 
-    fun read(id: String, maxBytes: Int = 16_000): String {
+    /**
+     * 这个任务能不能被 [scopeId] 这个会话操作。
+     *
+     * 规则：
+     *  - 没传 scopeId（语音一次性入口、外部直调）→ 不做限制，保持旧行为；
+     *  - 任务没有归属（旧记录）→ 允许，否则升级后旧任务会突然无法 stop；
+     *  - 有归属 → 必须同会话。
+     *
+     * 为什么不只看 list：光把别人任务藏起来不够 —— 只要知道 id（之前 listing 过、
+     * 或从日志里看到），read / stop 照样能操作到别的会话的活。
+     */
+    private fun ownedBy(task: DetachedTask, scopeId: String?): Boolean =
+        BackgroundTaskOwnership.visible(
+            taskScope = task.sessionScope,
+            viewerScope = scopeId,
+            includeOther = false,
+        )
+
+    private fun foreignTask(id: String): String = failure(
+        "JOB_NOT_FOUND",
+        "未找到后台命令 $id（它可能属于其他会话）。确实需要看全部时用 terminal_job list 传 include_other=true",
+    )
+
+    fun read(id: String, maxBytes: Int = 16_000, scopeId: String? = null): String {
         refresh()
-        val task = supervisor.findTask(id)?.takeIf { it.commandTask }
-            ?: return failure("JOB_NOT_FOUND", "未找到后台命令，请用 terminal_job 的 list 查看任务")
+        val task = supervisor.findTask(id)?.takeIf { it.commandTask && ownedBy(it, scopeId) }
+            ?: return foreignTask(id)
         val logs = supervisor.readLogs(id, maxBytes)
         val result = taskJson(task).put("action", "read")
         if (!logs.ok) return result.put("ok", false).put("code", logs.code).put("message", logs.message).toString()
         return result.put("output", logs.text).put("output_truncated", logs.truncated).toString()
     }
 
-    fun stop(id: String): String {
-        val task = supervisor.findTask(id)?.takeIf { it.commandTask }
-            ?: return failure("JOB_NOT_FOUND", "未找到后台命令")
+    fun stop(id: String, scopeId: String? = null): String {
+        val task = supervisor.findTask(id)?.takeIf { it.commandTask && ownedBy(it, scopeId) }
+            ?: return foreignTask(id)
         if (!supervisor.stopCommand(task.id)) return failure("JOB_STOP_FAILED", "无法停止后台命令，请检查当前身份授权")
         refresh()
         return taskJson(supervisor.findTask(id) ?: task).put("action", "stop").toString()
     }
 
-    fun waitFor(id: String, timeoutMs: Long, isCancelled: () -> Boolean): String {
+    fun waitFor(
+        id: String,
+        timeoutMs: Long,
+        scopeId: String? = null,
+        isCancelled: () -> Boolean,
+    ): String {
         resume()
-        if (supervisor.findTask(id)?.commandTask != true) return failure("JOB_NOT_FOUND", "未找到后台命令")
+        if (supervisor.findTask(id)?.let { it.commandTask && ownedBy(it, scopeId) } != true) {
+            return foreignTask(id)
+        }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.coerceIn(0, 60_000))
         waitLock.withLock {
             while (supervisor.findTask(id)?.completedAt == null) {

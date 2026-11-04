@@ -42,6 +42,7 @@ io.github.mangi.eta.agent.device.RootCommandEnvelopeTest
 io.github.mangi.eta.agent.device.RootScrollMotionContractTest
 io.github.mangi.eta.agent.device.RootScrollResendPolicyTest
 io.github.mangi.eta.agent.device.RootShellTextTest
+io.github.mangi.eta.agent.device.ScreenCaptureHintsTest
 io.github.mangi.eta.agent.device.ScreenshotOutcomePolicyTest
 io.github.mangi.eta.agent.device.ScrollAxisContractTest
 io.github.mangi.eta.agent.device.ScrollEvidenceContractTest
@@ -166,6 +167,7 @@ io.github.mangi.eta.agent.terminal.AgentFileOperationsScanLimitTest
 io.github.mangi.eta.agent.terminal.AgentFileOperationsTest
 io.github.mangi.eta.agent.terminal.AlpineEnvironmentInstallerTest
 io.github.mangi.eta.agent.terminal.BackgroundTerminalJobsTest
+io.github.mangi.eta.agent.terminal.BackgroundTaskOwnershipTest
 io.github.mangi.eta.agent.terminal.CodeOutlineTest
 io.github.mangi.eta.agent.terminal.CodeOutlineToolTest
 io.github.mangi.eta.agent.terminal.ConsoleSessionControllerTest

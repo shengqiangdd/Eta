@@ -122,6 +122,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.tool.AgentToolRequirementsTest
   --tests io.github.mangi.eta.agent.tool.GuiScopeRoutingTest
   --tests io.github.mangi.eta.agent.model.AgentContextSplitTest
+  --tests io.github.mangi.eta.agent.device.ScreenCaptureHintsTest
   --tests io.github.mangi.eta.agent.device.UiNodeWireTest
   --tests io.github.mangi.eta.agent.device.VirtualDisplayFallbackPolicyTest
   --tests io.github.mangi.eta.agent.device.VirtualDisplayOwnershipTest
