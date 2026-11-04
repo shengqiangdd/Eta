@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +20,10 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.acp.AcpClient
 import io.github.mangi.eta.config.Prefs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 默认把复杂编码任务派给哪个代理。
@@ -54,6 +58,7 @@ internal fun AcpDefaultAgentPreference(
         .firstOrNull { it.id == current }
         ?.let { stringResource(it.titleRes) }
         ?: stringResource(R.string.acp_agent_auto_title)
+
     EtaPreference(
         title = title,
         summary = currentLabel,

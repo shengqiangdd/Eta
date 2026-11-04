@@ -26,6 +26,7 @@ import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
 import io.github.mangi.eta.agent.acp.AGENT_CLAUDE
 import io.github.mangi.eta.agent.acp.AcpClient
+import io.github.mangi.eta.agent.acp.AcpDelegationMode
 import io.github.mangi.eta.agent.acp.AcpTranscriptStore
 import io.github.mangi.eta.agent.acp.AcpModels
 import io.github.mangi.eta.agent.acp.AcpProvider
@@ -2293,6 +2294,12 @@ internal class AgentLocalTools(
     private fun providerReadyNow(): Boolean =
         codexProviders().any { provider -> provider.codexReady() }
 
+    /** 用户在设置页选的委派模式（off/ask/auto）；空串按默认 ASK 处理。 */
+    private fun preferredAcpDelegationMode(): String =
+        runCatching {
+            Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DELEGATION_MODE).orEmpty()
+        }.getOrDefault("")
+
     /** 用户在设置页选的默认编码代理；空 = 自动（第一个真正能用的）。 */
     private fun preferredAcpAgent(): String =
         runCatching {
@@ -2491,6 +2498,25 @@ internal class AgentLocalTools(
             }
 
             "acp_delegate" -> {
+                // OFF 是「不委派，自己动手」的承诺，必须在执行侧兑现。
+                //
+                // 此前只在提示词层不写委派段，而 `acp_delegate` **始终注册在工具表里** ——
+                // 模型完全可以看到并调用它。于是「关掉委派」形同虚设：用户以为关了，
+                // 实际只是「没被主动建议」，一旦模型自己想到就会跑起来（另一个进程、
+                // 另一份 token）。这正是设置页说假话的一类，比不提供开关更糟。
+                //
+                // 选在执行侧拒绝而不是把工具从清单里摘掉：后者要动能力计算的整条链，
+                // 而「能用但会被明确拒」至少让模型能得到可解释的结果而不是凭空少一个工具。
+                if (AcpDelegationMode.fromWire(preferredAcpDelegationMode()) == AcpDelegationMode.OFF) {
+                    return textResult(
+                        errorResult(
+                            "ACP_DELEGATION_DISABLED",
+                            "用户把「编码任务委派」设成了关闭（自己动手，不交给外部代理）。" +
+                                "请用当前工具直接完成这个任务，不要再尝试委派；" +
+                                "需要时让用户到 设置 → 编码任务委派 里改成「先征得同意」或「直接委派」。",
+                        ),
+                    )
+                }
                 val request = AgentAcpTools.parseDelegate(args)
                     ?: return textResult(
                         errorResult(

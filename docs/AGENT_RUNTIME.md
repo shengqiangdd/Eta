@@ -989,6 +989,25 @@ java.util.NoSuchElementException: Key agent_acp_delegation_mode is missing in th
 
 注入实验：把字符串键塞回布尔集合 → **3 个测试同时变红**。
 
+**缺陷五：把委派设成「关闭」，其实没关。**
+
+`AcpDelegationMode.OFF` 的文档写的是「不委派，自己动手」，实现却只做到
+**提示词里不写委派那段**。而 `acp_delegate` 一直注册在 `AgentToolRequirements`
+的工具表里 —— 模型照样看得到、也调得动它。
+
+后果：用户以为关掉了（省另一份 token、不让别的模型碰仓库），
+实际只是「没被主动建议」；模型一旦自己想到就会跑起来。
+**这比不提供开关更糟** —— 前者是能力，后者是承诺没兑现。
+
+修：在 `acp_delegate` 的执行入口拦一道，返回 `ACP_DELEGATION_DISABLED`
+并说明去哪改。选执行侧拒绝而不是把工具从清单里摘掉，是因为后者要动
+能力计算整条链，而「能用但被明确拒」至少让模型拿到可解释的结果，
+不会凭空少一个工具还以为是环境问题。
+
+**这条不变量值得记住**：凡是用户可见的「关闭/不启用」，
+必须在**执行侧**有对应的拒绝，不能只在提示词或界面上体现。
+提示词是建议，不是约束。
+
 **仍未解决（真机结论，非猜测）**：Claude **代理本身**对这个 provider 跑不通。
 sq6/apigoto 走 Anthropic 原生 `/v1/messages`，但它们不认 SDK 内置的
 `claude-sonnet-4-5-20250929`；而 `claude-sonnet-5` / `default` 经代理映射后仍指向那个内置 ID。

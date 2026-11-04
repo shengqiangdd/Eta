@@ -31,7 +31,10 @@ internal object AgentAcpTools {
                     description =
                         "列出已配置的 ACP 编码代理（Codex、Claude）。返回代理 id、可执行文件路径、" +
                             "是否具备凭据、当前存活的委派会话，以及 Eta 中可用的模型提供商。" +
-                            "**委派前先调用它**，不要把任务发给一个没有凭据或没装的代理。",
+                            "**委派前先调用它**，不要把任务发给一个没有凭据或没装的代理。" +
+                            "注意 credential_present 只说明「凭据找得到」，不保证真能跑通：" +
+                            "第三方供应商可能与某个代理的模型名不兼容，那时 acp_delegate 会失败。" +
+                            "失败后换另一个代理重试一次是合理的；同样失败就停下来告诉用户，不要硬撞。",
                     parameters = JSONObject().put("type", "object").put("properties", JSONObject()),
                 )
             )
