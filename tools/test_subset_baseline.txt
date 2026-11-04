@@ -298,7 +298,6 @@ io.github.mangi.eta.ui.app.AgentConversationRealDatabaseLoadTest
 io.github.mangi.eta.ui.app.AgentConversationReleasePolicyTest
 io.github.mangi.eta.ui.app.AgentConversationRevisionReducerTest
 io.github.mangi.eta.ui.app.AgentConversationStoreTest
-io.github.mangi.eta.ui.app.AgentKeepScreenOnPolicyTest
 io.github.mangi.eta.ui.app.AgentPendingResultRecoveryTest
 io.github.mangi.eta.ui.app.AgentRunEventCoalescerTest
 io.github.mangi.eta.ui.app.AgentRunReplayProjectionTest

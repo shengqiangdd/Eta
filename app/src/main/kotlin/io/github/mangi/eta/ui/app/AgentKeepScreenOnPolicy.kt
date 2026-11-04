@@ -11,4 +11,19 @@ package io.github.mangi.eta.ui.app
 internal object AgentKeepScreenOnPolicy {
     fun shouldKeep(enabled: Boolean, streaming: Boolean, paused: Boolean = false): Boolean =
         enabled && streaming && !paused
+
+    /**
+     * 续期时该不该真的去 acquire。
+     *
+     * 三个条件缺一不可，就是三个已经被真机验证过的缺陷：
+     * 1. `wantedHeld` —— 决策层还希望保屏。**旧实现缺这一条**：它只看锁对象自己，
+     *    于是用户点停止的瞬间，正在跑的续期协程会把刚释放的锁重新抢回来，
+     *    此后不再有状态变化，锁挂到 12 小时上限。
+     * 2. `isHeld` —— 锁确实还持着。没持有时续期一次 acquire 就是凭空多拿一把。
+     * 3. 有锁对象。
+     *
+     * 单独提出来是因为这是纯函数：JVM 单测能直接盖住，不必去抢真的系统唤醒锁。
+     */
+    fun shouldRenew(wantedHeld: Boolean, hasLock: Boolean, isHeld: Boolean): Boolean =
+        wantedHeld && hasLock && isHeld
 }

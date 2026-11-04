@@ -123,6 +123,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.model.ComposerQuoteTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
   --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
+  --tests io.github.mangi.eta.ui.app.AgentKeepScreenOnPolicyTest
   --tests io.github.mangi.eta.ui.app.LocaleResourceParityTest
   --tests io.github.mangi.eta.ui.app.ToolCatalogUiTest
   --tests io.github.mangi.eta.ui.app.WorkspaceRootCommandTest

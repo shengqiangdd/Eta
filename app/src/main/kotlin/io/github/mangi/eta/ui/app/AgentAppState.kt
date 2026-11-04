@@ -122,6 +122,8 @@ internal class AgentAppState(
     private var keepScreenEnabled = agentBooleanForUi(Prefs.Keys.AGENT_KEEP_SCREEN_ON)
     /** 长任务运行期间的保屏续期循环；不再需要保屏时取消。 */
     private var keepScreenRenewJob: Job? = null
+    /** 保屏自愈任务：周期性把锁强度与决策对齐（见 [ensureKeepScreenLockSettles]）。 */
+    private var keepScreenSettleJob: Job? = null
     private val runConversationIds = mutableMapOf<String, String>()
     private val runMessageProjector = AgentRunMessageProjector()
     private val runEventCoalescer = AgentRunEventCoalescer()
@@ -329,12 +331,45 @@ internal class AgentAppState(
         applyKeepScreenLock()
     }
 
+    /**
+     * 把保屏锁切到“当前应该的状态”。
+     *
+     * 这是**唯一**决定锁开/关的地方；[AgentScreenWakeLock.renew] 只负责把已有的锁续期。
+     * 两者分工必须分明：旧实现的 renew 会自己 acquire，于是决策层与执行层各有一套判断，
+     * 结果就是「会话已经结束，锁还在」。
+     *
+     * 调用点（状态变化时）之外，还有一条自愈：见 [ensureKeepScreenLockSettles]。
+     */
     private fun applyKeepScreenLock() {
         val runningUnpaused = conversationsById.values.count { it.isStreaming && !it.isPaused }
         val shouldHold = keepScreenEnabled && runningUnpaused > 0
         screenWakeLock.setHeld(shouldHold)
         AgentKeepScreenStatus.publish(keepScreenEnabled, shouldHold, runningUnpaused)
         if (shouldHold) startKeepScreenRenew() else stopKeepScreenRenew()
+    }
+
+    /**
+     * 保屏自愈：把锁强度与决策对齐。
+     *
+     * 为什么不能只靠「状态变化时调 applyKeepScreenLock」：
+     * 锁是**系统级**资源，一旦因为某条异常路径（续期与释放的竞态、被杀的 run、
+     * 状态镜像漏刷）多持了一把，就再没有任何事件会来纠正它——
+     * 用户看到的是「会话已结束，屏幕一直亮着」，只能等到 12 小时上限。
+     *
+     * 定时重算而不是只看标志位：这正是本次缺陷的教训——
+     * 状态镜像可能和真实列表不一致，以现场计算为准。
+     * 间隔取 1 分钟：发现漏锁够快，又不会带来可见开销。
+     */
+    private fun ensureKeepScreenLockSettles() {
+        if (keepScreenSettleJob?.isActive == true) return
+        keepScreenSettleJob = scope.launch {
+            while (true) {
+                delay(KEEP_SCREEN_SETTLE_INTERVAL_MS)
+                val shouldHold = keepScreenEnabled &&
+                    conversationsById.values.any { it.isStreaming && !it.isPaused }
+                screenWakeLock.setHeld(shouldHold)
+            }
+        }
     }
 
     /**
@@ -346,7 +381,16 @@ internal class AgentAppState(
         keepScreenRenewJob = scope.launch {
             while (true) {
                 delay(KEEP_SCREEN_RENEW_INTERVAL_MS)
-                if (!keepScreenEnabled || !anyRunningUnpausedConversation) break
+                // 不信任缓存标志，每轮重新算一次：anyRunningUnpausedConversation
+                // 是状态镜像，而这里要回答的是“现在还需不需要保屏”。
+                // 两者不一致时以现场计算为准，否则一次漏刷就可能把锁挂到 12 小时。
+                val stillNeeded = keepScreenEnabled &&
+                    conversationsById.values.any { it.isStreaming && !it.isPaused }
+                if (!stillNeeded) {
+                    // 还有锁残余就收掉——会话已经停了，没有理由继续亮屏。
+                    screenWakeLock.setHeld(false)
+                    break
+                }
                 screenWakeLock.renew()
             }
         }
@@ -389,6 +433,9 @@ internal class AgentAppState(
         // 冷启动就先把“开着但当前没有任务”的真实状态发布给设置页：
         // 以前只有“运行状态变化”才会发布，冷启动且没跑过任务时设置页会错报“已关闭”。
         applyKeepScreenLock()
+        // 保屏自愈：启动就开，长期盯着「锁强度 == 应有状态」。
+        // 不能只靠状态变化触发——锁是系统级资源，漏一次就没有事件会来纠正它。
+        ensureKeepScreenLockSettles()
         // 进程级自动续跑：任务结束不再依赖「卡片那张组合恰好活着」。
         // 分发器就是这个状态对象：只有它知道会话历史、模型与会话级预算。
         BackgroundAutoResumeWatcher.install(backgroundResumeDispatcher)
@@ -4334,8 +4381,16 @@ internal class AgentAppState(
         const val SYNTHETIC_STATUS_STOPPED = "eta_status:stopped"
         // 数据状态以较粗粒度发布，文字显现由独立的帧时钟连续推进。
         const val STREAM_UI_UPDATE_INTERVAL_MS = 80L
-        /** 保屏续期间隔：远小于 12 小时上线，长任务不会悄悄失去保屏。 */
+        /** 保屏续期间隔：远小于 12 小时上限，长任务不会悄悄失去保屏。 */
         const val KEEP_SCREEN_RENEW_INTERVAL_MS = 30L * 60L * 1000L
+        /**
+         * 保屏自愈间隔。
+         *
+         * 取 1 分钟：漏锁能在用户注意到之前收掉，又不是每轮都去碰系统服务。
+         * 不要跟续期间隔合并——续期只需要在心跳时做，自愈需要更勤；
+         * 共用一个 30 分钟周期就等于“漏了要再亮半小时”。
+         */
+        const val KEEP_SCREEN_SETTLE_INTERVAL_MS = 60L * 1000L
         /** 用户消息落盘等待上限：超过就按保存失败报错，避免界面永远停在“停止”。 */
         const val PREPARE_TIMEOUT_MS = 8_000L
         /** 同一个 run 的重复「停止」去抖窗口：只防连点，不做永久抑制。 */
