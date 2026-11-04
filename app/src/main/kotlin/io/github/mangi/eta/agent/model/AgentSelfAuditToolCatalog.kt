@@ -10,6 +10,8 @@ internal object AgentSelfAuditToolCatalog {
                 name = "eta_self_audit",
                 description = "只读地检查 Eta 自身的运行状况，返回三段内容：findings（有证据的缺陷，按 P0/P1/P2 排序，每条带 evidence/impact/fix/verify）、clues（线索，不是缺陷）、unavailable（这次测不了的域与原因）。" +
                     "用于回答「Eta 现在有什么问题、该怎么改」：先跑它拿事实，再基于 evidence 做归因，不要凭空猜缺陷。" +
+                    "**agent 域回答的是「我自己最近做得怎么样」**：按工具拆开的失败率、失败码分布、多轮空转、上下文压缩与网络重试。" +
+                    "想知道「我哪里反复做错、下次怎么改」时把 scope 设为 agent；它会直接给出可执行的改法（例如改文件前先读），而不是笼统地「注意一下」。" +
                     "崩溃与 ANR 域需要 root（读系统 dropbox）；没有 root 时该域会明确写进 unavailable，此时不得声称「没有崩溃」。" +
                     "资源域用 Java Heap PSS 与堆上限的比值判断压力，PSS 不等于已分配量，只能看趋势。" +
                     "本工具不修改任何系统状态或配置。",
@@ -22,18 +24,18 @@ internal object AgentSelfAuditToolCatalog {
                                 "scope",
                                 JSONObject()
                                     .put("type", "string")
-                                    .put("enum", JSONArray(listOf("all", "crash", "resource", "capability", "code")))
+                                    .put("enum", JSONArray(listOf("all", "agent", "crash", "resource", "capability", "code")))
                                     .put(
                                         "description",
-                                        "要检查的域，默认 all。crash=崩溃与 ANR（需 root）；resource=堆压力与进程存活；" +
-                                            "capability=无障碍/通知使用权/使用情况访问；code=源码注释里的 TODO 与未提交改动（仅开发机）。",
+                                        "要检查的域，默认 all。agent=我自己最近的工具使用与失败（无需 root）；crash=崩溃与 ANR（需 root）；" +
+                                            "resource=堆压力与进程存活；capability=无障碍/通知使用权/使用情况访问；code=源码注释里的 TODO 与未提交改动（仅开发机）。",
                                     ),
                             )
                             .put(
                                 "hours",
                                 JSONObject()
                                     .put("type", "integer")
-                                    .put("description", "回溯多少小时内的崩溃与 ANR，1-720，默认 48。"),
+                                    .put("description", "回溯多少小时内的崩溃、ANR 与运行追踪，1-720，默认 48。"),
                             )
                             .put(
                                 "source_root",

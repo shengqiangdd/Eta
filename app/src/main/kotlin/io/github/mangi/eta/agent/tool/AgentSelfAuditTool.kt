@@ -3,6 +3,8 @@ package io.github.mangi.eta.agent.tool
 import android.content.Context
 import android.provider.Settings
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
+import io.github.mangi.eta.agent.trace.AgentRunTraceStore
+import io.github.mangi.eta.agent.trace.AgentSelfStats
 import io.github.mangi.eta.core.AgentLogger
 import java.io.File
 import java.util.Locale
@@ -47,6 +49,7 @@ internal class AgentSelfAuditTool(
             javaHeapPssKb = meminfo,
             capabilities = readCapabilities(),
             codeClues = if (AgentSelfAudit.Domain.CODE in domains) readCodeClues(args) else null,
+            selfStats = if (AgentSelfAudit.Domain.AGENT in domains) readSelfStats(hours) else null,
         )
         val report = AgentSelfAudit.audit(input)
         toJson(report, input).toString()
@@ -63,7 +66,37 @@ internal class AgentSelfAuditTool(
         "resource" -> setOf(AgentSelfAudit.Domain.RESOURCE)
         "capability" -> setOf(AgentSelfAudit.Domain.CAPABILITY)
         "code" -> setOf(AgentSelfAudit.Domain.CODE)
+        "agent" -> setOf(AgentSelfAudit.Domain.AGENT)
         else -> AgentSelfAudit.Domain.entries.toSet()
+    }
+
+    /**
+     * 读自己的运行追踪并聚合成自评指标。
+     *
+     * 只读、不写：追踪目录由 [AgentRunTraceStore] 负责回收，这里最多读 [MAX_TRACES_FOR_STATS] 份，
+     * 避免自审本身变成一个大 IO 操作（自审的目的是诊断，不应该拖慢正在做的事）。
+     *
+     * 读不到时返回 **null** 而不是空统计：两者语义不同——
+     * null 会进 `unavailable`（「测不了」），空统计只能进 `notes`（「确实没跑过」）。
+     */
+    private fun readSelfStats(hours: Int): AgentSelfStats.Stats? = runCatching {
+        val summaries = AgentRunTraceStore.list(limit = MAX_TRACES_FOR_STATS)
+        if (summaries.isEmpty()) return@runCatching null
+        val since = System.currentTimeMillis() - hours.coerceIn(1, MAX_HOURS) * 3_600_000L
+        val inWindow = summaries.filter { it.startedAt >= since }
+        // 展开哪些、展多少，统一由 [AgentSelfStats.pickForDetail] 决定（纯函数，可测）。
+        val picked = AgentSelfStats.pickForDetail(inWindow, MAX_DETAIL_BYTES, MAX_DETAIL_TRACES)
+        val loaded = picked.mapNotNull { summary ->
+            runCatching { AgentRunTraceStore.read(summary.runId) }.getOrNull()
+        }
+        // 总体指标仍用全部头部数据，所以「没展开」不会让分母变小。
+        AgentSelfStats.aggregate(
+            traces = loaded,
+            summaries = inWindow,
+        )
+    }.getOrElse { throwable ->
+        logger.warn("eta_self_audit 读追踪失败：${throwable.message}")
+        null
     }
 
     /**
@@ -257,6 +290,16 @@ internal class AgentSelfAuditTool(
         .put("notes", JSONArray(report.notes))
 
     private companion object {
+        /** 自评最多看多少份追踪的头部：够看出趋势，又不会把自审变成一次大 IO。 */
+        const val MAX_TRACES_FOR_STATS = 40
+        /**
+         * 展开明细的总字节预算。
+         *
+         * 实测 72 份追踪里 97% 都需要展开（都有失败或零工具），
+         * 所以单纯「只读有问题的」省不下 IO；真正兜住开钢的是这个上限。
+         */
+        const val MAX_DETAIL_BYTES = 2L * 1024 * 1024
+        const val MAX_DETAIL_TRACES = 12
         const val DEFAULT_HOURS = 48
         const val MAX_HOURS = 720
         const val MAX_CRASH_FILES = 8

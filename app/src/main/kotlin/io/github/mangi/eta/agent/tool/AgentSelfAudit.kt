@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.tool
 
+import io.github.mangi.eta.agent.memory.AgentFailureHints
+import io.github.mangi.eta.agent.trace.AgentSelfStats
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -25,7 +27,7 @@ internal object AgentSelfAudit {
     /** 有证据 = OBSERVED；由证据推断出来、还需要人确认 = INFERRED。 */
     internal enum class Confidence { OBSERVED, INFERRED }
 
-    internal enum class Domain { CRASH, RESOURCE, CAPABILITY, CODE }
+    internal enum class Domain { CRASH, RESOURCE, CAPABILITY, CODE, AGENT }
 
     internal data class CrashFile(val name: String, val timeMillis: Long, val text: String)
 
@@ -81,6 +83,11 @@ internal object AgentSelfAudit {
         val javaHeapPssKb: Int? = null,
         val capabilities: Map<String, Boolean> = emptyMap(),
         val codeClues: CodeClues? = null,
+        /**
+         * 自己的近期表现。null 表示「没读到追踪记录」，与「读了但是空的」不是同一个意思：
+         * 前者要进 `unavailable`，后者只能进 `notes`。
+         */
+        val selfStats: AgentSelfStats.Stats? = null,
     )
 
     internal data class Finding(
@@ -152,6 +159,9 @@ internal object AgentSelfAudit {
         }
         if (Domain.CODE in input.domains) {
             collectCode(input, clues, unavailable)
+        }
+        if (Domain.AGENT in input.domains) {
+            collectAgent(input, findings, clues, unavailable, notes)
         }
 
         return Report(
@@ -386,4 +396,165 @@ internal object AgentSelfAudit {
             clues += Clue(title = "源码里没有 TODO/FIXME，工作区是干净的", evidence = code.sourceRoot)
         }
     }
+
+    /**
+     * 自己做得怎么样 —— 唯一一个「主语是 Eta 本身」的域。
+     *
+     * 判定原则（比设备域更严，因为这里很容易变成自我批评表演）：
+     * 1. **只报能落到具体动作的**：「失败率偏高」不算，要能说出「先读再改」这种改法。
+     * 2. **样本不足不报**：调用次数太少时失败率毫无意义（1/2 = 50%）。
+     * 3. **分工具看，不看全局**：全局失败率 4.6% 看着很好，而 edit_file 17.6% 才是真问题。
+     * 4. **失败按错误码分组**：READ_REQUIRED 与 FILE_CHANGED 需要完全不同的动作。
+     */
+    private fun collectAgent(
+        input: Input,
+        findings: MutableList<Finding>,
+        clues: MutableList<Clue>,
+        unavailable: MutableList<String>,
+        notes: MutableList<String>,
+    ) {
+        val stats = input.selfStats
+        if (stats == null) {
+            unavailable += "自我表现：没读到运行追踪（run-traces 为空或不可读）；本次无法评价自己的工具使用"
+            return
+        }
+        if (!stats.hasData) {
+            notes += "自我表现：还没有可用的运行记录，下一次运行后再看"
+            return
+        }
+        notes += String.format(
+            Locale.US,
+            "自我表现口径：最近 %d 次运行（其中 %d 次用过工具），工具调用 %d 次、失败 %d 次（%.1f%%）",
+            stats.runs,
+            stats.runsWithTools,
+            stats.toolCalls,
+            stats.toolFailures,
+            stats.toolFailureRate * 100,
+        )
+        // 只读了一部分追踪明细时必须说清楚，否则 per-tool 归因会漏掉一部分失败却看不出来。
+        if (stats.unreadFailureRuns > 0) {
+            notes += "其中 ${stats.unreadFailureRuns} 次运行的明细没读成（文件已回收或损坏）：" +
+                "它们计入上面的失败总数，但没参与下面的按工具归因"
+        }
+
+        // ---- 1. 具体工具的失败集中在哪 ----
+        stats.tools.forEach { tool ->
+            // 样本不足不报：调用次数太少时失败率是噪声。
+            if (tool.calls < MIN_CALLS_FOR_RATE) return@forEach
+            if (tool.failureRate < HIGH_FAILURE_RATE) return@forEach
+            val topCode = tool.failureCodes.entries.firstOrNull()
+            val codeName = topCode?.key
+            findings += Finding(
+                id = "agent-tool-fail-${tool.name}",
+                severity = if (tool.failureRate >= SEVERE_FAILURE_RATE) Severity.P1 else Severity.P2,
+                confidence = Confidence.OBSERVED,
+                title = String.format(
+                    Locale.US,
+                    "我调用 %s 时失败率 %.0f%%（%d/%d 次）",
+                    tool.name,
+                    tool.failureRate * 100,
+                    tool.failures,
+                    tool.calls,
+                ),
+                evidence = buildList {
+                    add("工具：${tool.name}")
+                    add("调用 ${tool.calls} 次，失败 ${tool.failures} 次")
+                    tool.failureCodes.entries.take(MAX_EVIDENCE_LINES).forEach { (code, count) ->
+                        add("失败码 $code：$count 次")
+                    }
+                    val uncategorized = tool.failures - tool.failureCodes.values.sum()
+                    if (uncategorized > 0) add("另有 $uncategorized 次失败没有错误码（只能看 message）")
+                },
+                impact = "这部分失败是本可以避免的重做：同样的请求要再花一遍 token 与时间，长任务里会累积成明显延迟",
+                fix = agentFixFor(tool.name, codeName),
+                verify = "按上面那条改法做之后，新跑的 ${MIN_CALLS_FOR_RATE} 次以上同类调用里该失败码不再出现",
+            )
+        }
+
+        // ---- 2. 空转：多轮往返却没调任何工具 ----
+        // 只统计已展开的明细。unreadFailureRuns>0 说明有运行没读成，
+        // 这时「未发现空转」不能当成「没有空转」。
+        val worstIdle = stats.idleRuns.firstOrNull()
+        if (worstIdle != null && stats.idleRuns.size >= IDLE_RUNS_FOR_FINDING) {
+            findings += Finding(
+                id = "agent-idle-runs",
+                severity = Severity.P2,
+                confidence = Confidence.OBSERVED,
+                title = "有 ${stats.idleRuns.size} 次运行多轮往返却没有调用任何工具",
+                evidence = stats.idleRuns.take(MAX_EVIDENCE_LINES).map {
+                    "${it.runId.take(20)}…：${it.rounds} 轮、0 次工具调用"
+                },
+                impact = "纯对话多轮不算问题；但若是「该动手时没动手」，用户看到的是反复解释而不是结果",
+                fix = "检查这些回合是不是在重复确认已足够确定的事；能直接执行的就执行，把不确定性写成一句假设再往下做",
+                verify = "后续运行里「多轮且零工具调用」的占比下降，且用户没有重复催促",
+            )
+        } else if (worstIdle != null) {
+            clues += Clue(
+                title = "有 ${stats.idleRuns.size} 次运行多轮往返却没调工具（单次不构成问题，供观察）",
+                evidence = "${worstIdle.runId.take(20)}…：${worstIdle.rounds} 轮",
+            )
+        } else if (stats.unreadFailureRuns > 0) {
+            // 没发现空转不等于没有：空转要从全文看「几轮 + 零工具」，
+            // 没展开的运行里有没有空转，本次是不知道的。
+            notes += "空转检测：有 ${stats.unreadFailureRuns} 次运行的明细没展开，未发现空转不代表它们里没有"
+        }
+
+        // ---- 3. 上下文压缩：长会话里的信息丢失风险 ----
+        if (stats.compactionRuns >= COMPACTION_RUNS_FOR_CLUE) {
+            clues += Clue(
+                title = "有 ${stats.compactionRuns} 次运行触发过上下文压缩（共 ${stats.compactions} 次）：" +
+                    "压缩会丢弃早期细节，长任务里要主动把关键结论写进文件或记忆",
+                evidence = "窗口内 ${stats.runs} 次运行",
+            )
+        }
+
+        // ---- 4. 网络重试：不是我写错了，但也影响交付 ----
+        if (stats.retryRuns >= RETRY_RUNS_FOR_CLUE) {
+            clues += Clue(
+                title = "有 ${stats.retryRuns} 次运行发生过模型请求重试（共 ${stats.retries} 次），多为网络或限流，非工具用法问题",
+                evidence = "窗口内 ${stats.runs} 次运行",
+            )
+        }
+
+        // ---- 5. 整体失败率：只在真的高时才报 ----
+        if (stats.runsWithTools >= MIN_RUNS_FOR_OVERALL && stats.toolFailureRate >= SEVERE_FAILURE_RATE) {
+            findings += Finding(
+                id = "agent-overall-fail",
+                severity = Severity.P1,
+                confidence = Confidence.OBSERVED,
+                title = String.format(
+                    Locale.US,
+                    "整体工具失败率 %.0f%%（%d/%d），高于本仓常见水平（中位数约 5%%）",
+                    stats.toolFailureRate * 100,
+                    stats.toolFailures,
+                    stats.toolCalls,
+                ),
+                evidence = listOf(
+                    "用过工具的运行 ${stats.runsWithTools} 次",
+                    "工具调用 ${stats.toolCalls} 次、失败 ${stats.toolFailures} 次",
+                ),
+                impact = "失败重做直接消耗时间与额度，而且在长任务里会放大成「跑很久还是没结果」",
+                fix = "先看上面列出的具体工具与失败码，从次数最多的那个改起；不要笼统地「小心一点」",
+                verify = "连续若干个运行窗口内整体失败率回到个位数",
+            )
+        }
+    }
+
+    /**
+     * 失败码 → 具体改法。
+     *
+     * 表本身在 [AgentFailureHints]，与「失败经验」共用同一份口径：
+     * 自审给模型看的建议，和写进记忆的改法必须是同一句话，
+     * 否则模型会从两个地方学到两套做法。
+     */
+    private fun agentFixFor(tool: String, code: String?): String = AgentFailureHints.fixFor(tool, code)
+
+    /** 样本门槛与阈值。数值取自本仓 72 份真实追踪记录（中位失败率 5.2%）。 */
+    private const val MIN_CALLS_FOR_RATE = 8
+    private const val MIN_RUNS_FOR_OVERALL = 10
+    private const val HIGH_FAILURE_RATE = 0.12f
+    private const val SEVERE_FAILURE_RATE = 0.25f
+    private const val IDLE_RUNS_FOR_FINDING = 2
+    private const val COMPACTION_RUNS_FOR_CLUE = 3
+    private const val RETRY_RUNS_FOR_CLUE = 3
 }

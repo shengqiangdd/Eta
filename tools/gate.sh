@@ -104,6 +104,10 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
   --tests io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest
   --tests io.github.mangi.eta.agent.tool.AgentSelfAuditTest
+  --tests io.github.mangi.eta.agent.tool.AgentSelfAuditAgentDomainTest
+  --tests io.github.mangi.eta.agent.trace.AgentSelfStatsTest
+  --tests io.github.mangi.eta.agent.memory.AgentFailureHintsTest
+  --tests io.github.mangi.eta.agent.memory.AgentMemoryLearningsTest
   --tests io.github.mangi.eta.agent.tool.SecretRedactorTest
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.data.backup.AutoBackupSchedulerTest

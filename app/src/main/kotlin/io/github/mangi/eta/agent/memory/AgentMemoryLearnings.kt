@@ -165,7 +165,15 @@ internal object AgentMemoryLearnings {
         val ordered = (frequent + recent).distinctBy { signature(it.tool, it.code) }
         val output = StringBuilder()
         for (entry in ordered) {
-            val rendered = "- ${entry.tool} · ${entry.code} · ×${entry.hits}：${entry.message}"
+            // 反复踩的坑才附上「下次怎么改」：
+            // 偶发一次的失败可能只是环境抖动，给它配一句改法反而挤占预算；
+            // 而 hits≥2 说明这个错在反复发生，这时一句可执行的改法比多列三个坑有用。
+            val fix = if (entry.hits >= 2 && AgentFailureHints.hasSpecificFix(entry.code)) {
+                "｜下次：" + AgentFailureHints.fixFor(entry.tool, entry.code)
+            } else {
+                ""
+            }
+            val rendered = "- ${entry.tool} · ${entry.code} · ×${entry.hits}：${entry.message}$fix"
             val separator = if (output.isEmpty()) 0 else 1
             if (output.length + separator + rendered.length > maxChars) break
             if (output.isNotEmpty()) output.append('\n')

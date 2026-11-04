@@ -126,6 +126,50 @@ class AgentMemoryLearningsTest {
         assertTrue(summary.length <= 40)
     }
 
+    // ---- 反复踩的坑附「下次怎么改」----
+
+    @Test
+    fun `反复出现的真实错误码会附上可执行改法`() {
+        val body = "- 2026-10-01 · tool=edit_file · code=READ_REQUIRED · hits=3 · 先读取该文件"
+
+        val summary = AgentMemoryLearnings.summarize(body, 400)
+
+        assertTrue("应带改法：$summary", summary.contains("下次："))
+        assertTrue("改法应指向 read_file：$summary", summary.contains("read_file"))
+    }
+
+    @Test
+    fun `只出现一次的坑不附改法，避免挤占预算`() {
+        val body = "- 2026-10-01 · tool=edit_file · code=READ_REQUIRED · hits=1 · 先读取该文件"
+
+        val summary = AgentMemoryLearnings.summarize(body, 400)
+
+        assertTrue(summary.contains("READ_REQUIRED"))
+        assertFalse("偶发一次不该带改法：$summary", summary.contains("下次："))
+    }
+
+    @Test
+    fun `没有专属改法的码即使高频也不乱配一句话`() {
+        // some_new_error 不在表里 → hasSpecificFix=false，不应编一个固定改法。
+        val body = "- 2026-10-01 · tool=terminal · code=SOME_NEW_ERROR · hits=9 · 退出码 3"
+
+        val summary = AgentMemoryLearnings.summarize(body, 400)
+
+        assertFalse(summary.contains("下次："))
+        assertTrue(summary.contains("SOME_NEW_ERROR"))
+    }
+
+    @Test
+    fun `带改法后仍然不超预算`() {
+        val body = (1..5).joinToString("\n") { index ->
+            "- 2026-10-0$index · tool=edit_file · code=READ_REQUIRED · hits=${index + 1} · message$index"
+        }
+
+        val summary = AgentMemoryLearnings.summarize(body, 120)
+
+        assertTrue("实际长度 ${summary.length}：$summary", summary.length <= 120)
+    }
+
     @Test
     fun emptyBodyMeansNoLearnings() {
         assertEquals(0, AgentMemoryLearnings.parse("").size)
