@@ -83,6 +83,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,6 +91,7 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+import io.github.mangi.eta.ui.model.ComposerQuoteUi
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
 import io.github.mangi.eta.ui.model.QueuedMessageUi
@@ -158,6 +160,9 @@ internal fun AgentChatInputBar(
     onCancelMessageEdit: () -> Unit,
     /** 草稿同步：只写内存里的会话状态，不逐字触发聊天区重组。 */
     onDraftChange: (String) -> Unit = {},
+    /** 待发送的引用；null 表示没有引用。 */
+    quotedMessage: ComposerQuoteUi? = null,
+    onClearQuote: () -> Unit = {},
 ) {
     // 繁忙时发送行为（对齐 dsh 的 BusyEnterBehavior）：运行中点击发送是排队还是插话。
     // 设置页写同一个键，这里监听变化即时生效，不需要重进页面。
@@ -296,6 +301,55 @@ internal fun AgentChatInputBar(
                 onRemoveImage = onRemoveImage,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
+        }
+
+        // 引用条：发送前能一眼看到「这次在回哪一句」，不需要时一键取消。
+        quotedMessage?.takeUnless { it.isBlank }?.let { quote ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MiuixTheme.colorScheme.surfaceContainer)
+                    .padding(start = 12.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 3.dp, height = 26.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MiuixTheme.colorScheme.primary),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.chat_quote_chip_title, quote.author),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = quote.excerpt.lineSequence().firstOrNull().orEmpty(),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(
+                    onClick = onClearQuote,
+                    minWidth = ChatInputActionSize,
+                    minHeight = ChatInputActionSize,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = stringResource(R.string.chat_quote_clear),
+                        modifier = Modifier.size(ChatInputActionIconSize),
+                        tint = MiuixTheme.colorScheme.onSurface,
+                    )
+                }
+            }
         }
 
         AnimatedVisibility(
@@ -544,6 +598,12 @@ internal fun AgentChatInputBar(
                                         if (!duplicate) {
                                             lastSubmit = submittedText to now
                                             dictation.cancel()
+                                            // 发送后收起键盘（dsh 0.2.2 的手机端做法）。本页刻意
+                                            // 不自动弹键盘（见上方 LaunchedEffect），发送完就该把屏幕
+                                            // 还给内容；否则输入法会一直压着聊天区，得手动按返回键。
+                                            // 只在真正提交时收：被去重拦下的第二次连点不动键盘。
+                                            keyboard?.hide()
+                                            focusManager.clearFocus(force = true)
                                             if (steersNow) {
                                                 onSteerAndSubmit(submittedText)
                                             } else {

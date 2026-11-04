@@ -55,6 +55,8 @@ import io.github.mangi.eta.data.model.ModelReasoningCapabilities
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.backup.AutoBackupOutcome
+import io.github.mangi.eta.data.backup.AutoBackupRepository
 import io.github.mangi.eta.data.repository.EtaBackupRepository
 import io.github.mangi.eta.data.repository.EtaBackupSummary
 import io.github.mangi.eta.data.repository.ProviderRepository
@@ -516,6 +518,18 @@ internal class AgentAppState(
 
     suspend fun exportBackup(output: OutputStream): EtaBackupSummary =
         EtaBackupRepository.export(appContext, output)
+
+    /**
+     * 到期就自动备份一次；返回 null 表示这次没做事（未开启 / 没到期 / 正在跑任务）。
+     *
+     * 正在跑任务时跳过：导出要遍历会话与消息全表，不该插在用户等回复的时候。
+     */
+    suspend fun runAutoBackupIfDue(): AutoBackupOutcome? {
+        val busy = withContext(Dispatchers.Main.immediate) {
+            currentRunId != null || conversationsById.values.any { it.isStreaming }
+        }
+        return AutoBackupRepository.runIfDue(appContext, busy)
+    }
 
     suspend fun importBackup(input: InputStream): EtaBackupSummary {
         val locallyBusy = withContext(Dispatchers.Main.immediate) {

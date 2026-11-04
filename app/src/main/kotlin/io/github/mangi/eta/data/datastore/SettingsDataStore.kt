@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.github.mangi.eta.data.model.AppearanceAccentColor
@@ -16,6 +17,7 @@ import io.github.mangi.eta.data.model.AppearancePaletteStyle
 import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
+import io.github.mangi.eta.data.model.AutoBackupSettings
 import io.github.mangi.eta.data.model.resolveChatViewMode
 import io.github.mangi.eta.data.model.ModelRetrySettings
 import io.github.mangi.eta.data.model.SpeechSettings
@@ -124,6 +126,11 @@ internal object SettingsDataStore {
     private val SELECTED_MODEL_ID = stringPreferencesKey("selected_model_id")
     private val OFFICIAL_MODEL_CATALOG_REVISION = intPreferencesKey("official_model_catalog_revision")
     private val MEMORY_ENABLED = booleanPreferencesKey("memory_enabled")
+    private val AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
+    private val AUTO_BACKUP_INTERVAL_HOURS = intPreferencesKey("auto_backup_interval_hours")
+    private val AUTO_BACKUP_LAST_AT = longPreferencesKey("auto_backup_last_at")
+    private val AUTO_BACKUP_LAST_PATH = stringPreferencesKey("auto_backup_last_path")
+    private val AUTO_BACKUP_LAST_ERROR = stringPreferencesKey("auto_backup_last_error")
     private val LINUX_DISTRIBUTION = stringPreferencesKey("linux_distribution")
     private val APPEARANCE_THEME_MODE = stringPreferencesKey("appearance_theme_mode")
     private val APPEARANCE_MONET_ENABLED = booleanPreferencesKey("appearance_monet_enabled")
@@ -195,6 +202,20 @@ internal object SettingsDataStore {
             prefs.putOrRemove(SELECTED_MODEL_ID, updated.selectedModelId)
             prefs[MEMORY_ENABLED] = updated.memoryEnabled
             prefs.putAppearance(updated.appearance.normalized())
+            prefs.putAutoBackup(updated.autoBackup)
+        }
+    }
+
+    /**
+     * 只更新自动备份段。
+     *
+     * 备份结束后只需要写「上次时间/路径/错误」，调 [updateSettings] 会顺带重写
+     * 外观等无关项，后台任务不该去碰用户刚改过的设置。
+     */
+    suspend fun updateAutoBackup(transform: (AutoBackupSettings) -> AutoBackupSettings) {
+        ensureInitialized()
+        dataStore.edit { prefs ->
+            prefs.putAutoBackup(transform(prefs.toAutoBackup()))
         }
     }
 
@@ -316,10 +337,28 @@ internal object SettingsDataStore {
         }
     }
 
+    private fun Preferences.toAutoBackup(): AutoBackupSettings = AutoBackupSettings(
+        enabled = this[AUTO_BACKUP_ENABLED] ?: true,
+        intervalHours = this[AUTO_BACKUP_INTERVAL_HOURS]
+            ?: AutoBackupSettings.DEFAULT_INTERVAL_HOURS,
+        lastBackupAt = this[AUTO_BACKUP_LAST_AT] ?: 0L,
+        lastBackupPath = this[AUTO_BACKUP_LAST_PATH],
+        lastError = this[AUTO_BACKUP_LAST_ERROR],
+    )
+
+    private fun MutablePreferences.putAutoBackup(settings: AutoBackupSettings) {
+        this[AUTO_BACKUP_ENABLED] = settings.enabled
+        this[AUTO_BACKUP_INTERVAL_HOURS] = settings.intervalHours
+        this[AUTO_BACKUP_LAST_AT] = settings.lastBackupAt
+        putOrRemove(AUTO_BACKUP_LAST_PATH, settings.lastBackupPath)
+        putOrRemove(AUTO_BACKUP_LAST_ERROR, settings.lastError)
+    }
+
     private fun Preferences.toSettings(): Settings = Settings(
         selectedProviderId = this[SELECTED_PROVIDER_ID],
         selectedModelId = this[SELECTED_MODEL_ID],
         memoryEnabled = this[MEMORY_ENABLED] ?: true,
+        autoBackup = toAutoBackup(),
         appearance = AppearanceSettings(
             themeMode = AppearanceThemeMode.fromPersistedValue(this[APPEARANCE_THEME_MODE]),
             monetEnabled = this[APPEARANCE_MONET_ENABLED] ?: false,

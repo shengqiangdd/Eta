@@ -661,14 +661,41 @@ internal class DetachedTaskSupervisor(
     private fun rootfsPath(environment: TerminalEnvironment): String? =
         linuxRootfsPathProvider?.invoke(environment) ?: linuxRootfsPath
 
-    private fun pruneExitedRecords(statuses: List<DetachedTaskStatus>) {
-        val victims = pickPruneVictims(statuses, MAX_RETAINED_RECORDS, System.currentTimeMillis())
-        if (victims.isEmpty()) return
-        victims.groupBy { it.task.identity }.forEach { (identity, group) ->
+    /**
+     * 用户从界面主动清除全部已结束的记录，进行中的一条不动。
+     *
+     * 与自动淘汰（[pruneExitedRecords]）共用同一套保护条件：命令任务没通知过「跑完了」不能删，
+     * 刚结束不足 [PruneGraceMs] 的也不能删 —— 带 `sessionScope` 的记录是自动续跑的事件源，
+     * 兜底扇描还没看到就删掉等于这次续跑没发生过。
+     *
+     * 刻意**不**复用 [MAX_RETAINED_RECORDS] 上限：那正是本方法存在的理由 ——
+     * 记录远没到 32 条时用户也想让 `terminal_job` 的列表干净（系统提示里也少一段噪音）。
+     *
+     * @return 真正清掉的条数；0 表示没有可清的（全在保护期里），或落盘失败。
+     */
+    fun dismissFinished(): Int {
+        val now = System.currentTimeMillis()
+        val victims: List<DetachedTask>
+        synchronized(RECORDS_LOCK) {
+            val tasks = loadTasksLocked()
+            victims = pickDismissVictims(tasks, now)
+            if (victims.isEmpty()) return 0
+            val victimIds = victims.mapTo(mutableSetOf()) { it.id }
+            // 先落盘再删文件：写失败时记录还在，用户下次还能再清一次；
+            // 反过来会出现「文件没了、记录还在」的死行，点开日志永远是空的。
+            if (!saveTasksLocked(tasks.filterNot { it.id in victimIds })) return 0
+        }
+        removeTaskFiles(victims)
+        return victims.size
+    }
+
+    /** 删掉这些任务的日志 / pid / exit 文件；同一个身份的合并成一条 shell，少起几次进程。 */
+    private fun removeTaskFiles(tasks: List<DetachedTask>) {
+        tasks.groupBy { it.identity }.forEach { (identity, group) ->
             val removeScript = group.joinToString("\n") {
-                "rm -f ${shellQuote(hostDaemonPath(it.task, it.task.logPath))} " +
-                    shellQuote(hostDaemonPath(it.task, it.task.logPath.removeSuffix(".log") + ".pid")) + " " +
-                    shellQuote(hostDaemonPath(it.task, it.task.logPath.removeSuffix(".log") + ".exit"))
+                "rm -f ${shellQuote(hostDaemonPath(it, it.logPath))} " +
+                    shellQuote(hostDaemonPath(it, it.logPath.removeSuffix(".log") + ".pid")) + " " +
+                    shellQuote(hostDaemonPath(it, it.logPath.removeSuffix(".log") + ".exit"))
             }
             runOneShotShell(
                 processSupervisor = oneShotSupervisor,
@@ -677,6 +704,12 @@ internal class DetachedTaskSupervisor(
                 timeoutSeconds = 10,
             )
         }
+    }
+
+    private fun pruneExitedRecords(statuses: List<DetachedTaskStatus>) {
+        val victims = pickPruneVictims(statuses, MAX_RETAINED_RECORDS, System.currentTimeMillis())
+        if (victims.isEmpty()) return
+        removeTaskFiles(victims.map { it.task })
         val victimIds = victims.mapTo(mutableSetOf()) { it.task.id }
         synchronized(RECORDS_LOCK) {
             saveTasksLocked(loadTasksLocked().filterNot { it.id in victimIds })
@@ -717,6 +750,19 @@ internal class DetachedTaskSupervisor(
     }
 
 }
+
+/**
+ * 「清除已结束」要删哪些记录。
+ *
+ * 三条条件与自动淘汰完全一致（见 [pickPruneVictims] 那三个坑），唯一区别是**不设条数上限**：
+ * 用户的诉求正是「记录还没攒到 32 条，也想把列表清干净」。
+ */
+internal fun pickDismissVictims(tasks: List<DetachedTask>, nowMs: Long): List<DetachedTask> =
+    tasks.filter {
+        it.completedAt != null &&
+            (!it.commandTask || it.completionNotified) &&
+            (it.completedAt ?: 0L) <= nowMs - PruneGraceMs
+    }
 
 /**
  * 该淘汰哪些记录。

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FormatQuote
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.runtime.Composable
@@ -205,6 +206,8 @@ internal fun ChatMessageItem(
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
+    /** 非空时消息上出现「引用」入口；作者名与去重由聊天页决定，这里只负责触发。 */
+    onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
 ) {
     when (message) {
         is UserMessageUi -> UserMessageBubble(
@@ -214,6 +217,9 @@ internal fun ChatMessageItem(
             isEditing = isEditing,
             onEdit = { onEditMessage(message.id) },
             onDelete = { onDeleteMessage(message.id) },
+            onQuote = onQuoteMessage
+                ?.takeIf { message.content.isNotBlank() }
+                ?.let { handler -> { handler(message) } },
             modifier = modifier,
         )
         is AgentMessageUi -> AgentMessageBlock(
@@ -228,6 +234,9 @@ internal fun ChatMessageItem(
             onRegenerate = { onRegenerateMessage(message.id) },
             onEdit = { onEditMessage(message.id) },
             onSelectCandidate = { onSelectReplyCandidate(message.id, it) },
+            onQuote = onQuoteMessage
+                ?.takeIf { message.content.isNotBlank() }
+                ?.let { handler -> { handler(message) } },
             modifier = modifier,
         )
         is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
@@ -283,6 +292,7 @@ private fun UserMessageBubble(
     isEditing: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onQuote: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -353,6 +363,16 @@ private fun UserMessageBubble(
                                 tooltipState.dismiss()
                             },
                         )
+                        onQuote?.let { quote ->
+                            MessageTooltipAction(
+                                icon = Icons.Rounded.FormatQuote,
+                                label = stringResource(R.string.chat_quote_action),
+                                onClick = {
+                                    tooltipState.dismiss()
+                                    quote()
+                                },
+                            )
+                        }
                         MessageTooltipAction(
                             icon = Icons.Rounded.Edit,
                             label = stringResource(R.string.ui_edit_a7f814),
@@ -550,17 +570,21 @@ private fun ContextCompactionMarker(
 @Composable
 private fun AgentMessageBlock(
     message: AgentMessageUi,
-    allowSpeech: Boolean = false,
-    assistantOverlay: Boolean = false,
     retainedStreamingState: StreamingMarkdownState?,
     showCopyAction: Boolean,
     showMessageActions: Boolean,
     messageActionsEnabled: Boolean,
     onDelete: () -> Unit,
     onRegenerate: () -> Unit,
+    // Compose lint `ModifierParameter`：modifier 必须是**第一个可选**参数，所以它和后面
+    // 三个带默认值的（含原本排在最前面的 allowSpeech/assistantOverlay）都得排在必填参数之后。
+    // 三处调用点全部具名传参，重排零影响。
+    modifier: Modifier = Modifier,
+    allowSpeech: Boolean = false,
+    assistantOverlay: Boolean = false,
     onEdit: () -> Unit = {},
     onSelectCandidate: (Int) -> Unit = {},
-    modifier: Modifier = Modifier,
+    onQuote: (() -> Unit)? = null,
 ) {
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
@@ -679,6 +703,14 @@ private fun AgentMessageBlock(
                     },
                     tint = if (copied) MiuixTheme.colorScheme.primary else null,
                 )
+                onQuote?.let { quote ->
+                    AnswerActionButton(
+                        icon = Icons.Rounded.FormatQuote,
+                        contentDescription = stringResource(R.string.chat_quote_action),
+                        onClick = quote,
+                        enabled = messageActionsEnabled,
+                    )
+                }
                 if (allowSpeech) SpeechReadAloudButton(message.id, message.content)
                 if (showMessageActions) {
                     if (message.characterEditable) {

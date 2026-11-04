@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,13 +50,17 @@ import io.github.mangi.eta.agent.terminal.backgroundTaskLine
 import io.github.mangi.eta.agent.terminal.backgroundResumePrompt
 import io.github.mangi.eta.agent.terminal.canOfferManualResume
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
+import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.layout.DialogDefaults
+import top.yukonga.miuix.kmp.window.WindowDialog
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -124,6 +129,9 @@ internal fun BackgroundTasksCard(
     }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inspectedTask by remember { mutableStateOf<DetachedTask?>(null) }
+    // 「清除已结束」要和用户说清后果再动手：删掉的是记录与日志文件，之后 terminal_job list
+    // 和系统提示里都不再有它们，但进行中的任务一条都不受影响。
+    var showDismissConfirm by rememberSaveable { mutableStateOf(false) }
     // 时间不能只在记录变化时算一次：运行中的任务显示的是「已运行多久」，
     // 静止的 00:05 挂十分钟就是界面在说假话（与 `rememberRunningSeconds` 同一条教训）。
     // 因此展开期间按秒重算；只剩已结束的行时改成 30 秒（那里是「多久以前」，一秒一跳纯属白重组）。
@@ -138,6 +146,8 @@ internal fun BackgroundTasksCard(
     }
 
     val context = LocalContext.current
+    // 清理走 IO，不能卡在点击帧上：dismissFinished 会写记录文件，并按身份起一次 shell 删日志。
+    val dismissScope = rememberCoroutineScope()
     // 两个开关在设置页里改（写的是**本地** Agent prefs）；这里按组合时读一次，回到本页会重新读。
     // 注意不能用 `Prefs.isEnabled`：它只对 `LOCAL_AGENT_KEYS` 里的键读本地，其余键一律读 remote，
     // 而这两个键属于界面行为、不在那份名单里 —— 用错就会永远读成默认值（开关看起来没反应）。
@@ -257,6 +267,16 @@ internal fun BackgroundTasksCard(
                         )
                     }
                 }
+                if (view.finished > 0) {
+                    Text(
+                        text = stringResource(R.string.background_tasks_dismiss_finished, view.finished),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = primary,
+                        modifier = Modifier
+                            .padding(top = 6.dp, start = 14.dp)
+                            .clickable { showDismissConfirm = true },
+                    )
+                }
                 Text(
                     text = stringResource(R.string.background_tasks_card_hint),
                     style = MiuixTheme.textStyles.footnote2,
@@ -265,6 +285,30 @@ internal fun BackgroundTasksCard(
                 )
             }
         }
+    }
+
+    WindowDialog(
+        show = showDismissConfirm,
+        cornerRadius = DialogDefaults.CornerRadius,
+        title = stringResource(R.string.background_tasks_dismiss_finished_title),
+        summary = stringResource(R.string.background_tasks_dismiss_finished_summary),
+        onDismissRequest = { showDismissConfirm = false },
+    ) {
+        MiuixDialogActions(
+            confirmText = stringResource(R.string.background_tasks_dismiss_finished_confirm),
+            destructive = true,
+            onCancel = { showDismissConfirm = false },
+            onConfirm = {
+                showDismissConfirm = false
+                dismissScope.launch {
+                    withContext(Dispatchers.IO) {
+                        // 失败不派弹窗：卡片靠 changes 自增刷新，没变就说明一条没清；
+                        // 真出错时下次打开仍看得到记录，不会把用户的记录默默吃掉。
+                        runCatching { TerminalRuntime.backgroundJobs(context).dismissFinished() }
+                    }
+                }
+            },
+        )
     }
 
     inspectedTask?.let { selected ->

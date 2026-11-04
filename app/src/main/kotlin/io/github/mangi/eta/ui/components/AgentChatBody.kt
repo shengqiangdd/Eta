@@ -107,6 +107,7 @@ import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+import io.github.mangi.eta.ui.model.ComposerQuoteUi
 import io.github.mangi.eta.ui.model.ConversationHistoryLoadState
 import io.github.mangi.eta.ui.model.MessageEditUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
@@ -114,6 +115,7 @@ import io.github.mangi.eta.ui.model.PendingImageUi
 import io.github.mangi.eta.ui.model.QueuedMessageUi
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
+import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
 import io.github.mangi.eta.agent.model.AgentGoal
 import io.github.mangi.eta.agent.model.AgentTaskLedger
 import io.github.mangi.eta.agent.model.AgentTodoPlan
@@ -123,6 +125,8 @@ import io.github.mangi.eta.agent.model.AgentWorkCollapsePolicy
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
+import io.github.mangi.eta.ui.model.composeQuotedMessage
+import io.github.mangi.eta.ui.model.composerQuoteExcerpt
 import io.github.mangi.eta.ui.model.latestContextUsage
 import io.github.mangi.eta.ui.voice.SpeechAutoReadAloud
 import io.github.mangi.eta.ui.voice.SpeechPlaybackHost
@@ -390,12 +394,24 @@ internal fun AgentChatBody(
             }?.id
         }
     }
-    var sentFromKeyboard by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isStreaming) {
-        if (isStreaming && sentFromKeyboard) {
-            keyboard?.hide()
-            sentFromKeyboard = false
+    // 引用只在这一屏存在：按会话 id 记忆，切会话/新建会话时旧引用自然失效。
+    var quotedMessage by remember(noticeScopeKey) { mutableStateOf<ComposerQuoteUi?>(null) }
+    val userAuthorLabel = stringResource(R.string.conversation_export_user)
+    val etaAuthorLabel = stringResource(R.string.conversation_export_assistant)
+    val quoteMessage: (AgentChatMessageUi) -> Unit = { message ->
+        // 用户气泡显示的是去掉文件引用后的请求正文，引用也用同一段，不把路径块带进去。
+        val body = when (message) {
+            is UserMessageUi -> AgentFileReferencePromptCodec.parse(message.content).request
+            is AgentMessageUi -> message.content
+            else -> ""
+        }
+        val excerpt = composerQuoteExcerpt(body)
+        if (excerpt.isNotBlank()) {
+            quotedMessage = ComposerQuoteUi(
+                messageId = message.id,
+                author = if (message is UserMessageUi) userAuthorLabel else etaAuthorLabel,
+                excerpt = excerpt,
+            )
         }
     }
 
@@ -439,16 +455,26 @@ internal fun AgentChatBody(
             onLoadEarlierMessages = onLoadEarlierMessages,
             onHistoryViewportChanged = onHistoryViewportChanged,
             onSubmit = { text ->
-                sentFromKeyboard = true
+                // 发送即收键盘：过去挂在 isStreaming 翻转上，而排队/插话时它早就是 true，
+                // 键盘会一直挡着刚发出的内容（dsh 0.2.2「发送后收起键盘」）。
+                keyboard?.hide()
+                val composed = composeQuotedMessage(quotedMessage, text)
+                quotedMessage = null
                 // 发送即重新锚定底部：用户从历史上方直接发送时，同帧内 isStreaming 与
                 // 新消息一起到位，立即回到底部并恢复后续的流式平滑跟底。
                 keepBottomAnchored = true
-                onSubmit(text)
+                onSubmit(composed)
             },
             onSteerAndSubmit = { text ->
+                keyboard?.hide()
+                val composed = composeQuotedMessage(quotedMessage, text)
+                quotedMessage = null
                 keepBottomAnchored = true
-                onSteerAndSubmit(text)
+                onSteerAndSubmit(composed)
             },
+            quotedMessage = quotedMessage,
+            onClearQuote = { quotedMessage = null },
+            onQuoteMessage = quoteMessage,
             onSteerQueuedMessage = onSteerQueuedMessage,
             onRecallQueuedMessage = onRecallQueuedMessage,
             onRemoveQueuedMessage = onRemoveQueuedMessage,
@@ -733,6 +759,10 @@ private fun AgentChatScaffold(
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     currentBrowserMessageId: String?,
+    /** 输入框里待发送的引用；null 表示没有引用。 */
+    quotedMessage: ComposerQuoteUi? = null,
+    onClearQuote: () -> Unit = {},
+    onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val missingPermissionCount = missingPermissionIds.size
@@ -876,6 +906,8 @@ private fun AgentChatScaffold(
                 messageEdit = messageEdit,
                 onSubmit = onSubmit,
                 onSteerAndSubmit = onSteerAndSubmit,
+                quotedMessage = quotedMessage,
+                onClearQuote = onClearQuote,
                 onSteerQueuedMessage = onSteerQueuedMessage,
                 onRecallQueuedMessage = onRecallQueuedMessage,
                 onRemoveQueuedMessage = onRemoveQueuedMessage,
@@ -951,6 +983,7 @@ private fun AgentChatScaffold(
                 messageActionsEnabled = !isStreaming && messageEdit == null,
                 editTargetMessageId = messageEdit?.targetMessageId,
                 currentBrowserMessageId = currentBrowserMessageId,
+                onQuoteMessage = onQuoteMessage,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -994,6 +1027,8 @@ internal fun AgentConversationMessages(
     messageActionsEnabled: Boolean = false,
     editTargetMessageId: String? = null,
     currentBrowserMessageId: String? = null,
+    /** 非空时每条可引用的消息都带「引用」入口。 */
+    onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 上一版条目只作复用比对，不参与组合观察。
@@ -1428,6 +1463,7 @@ internal fun AgentConversationMessages(
                             onDeleteMessage = onDeleteMessage,
                             onRegenerateMessage = onRegenerateMessage,
                             onSelectReplyCandidate = onSelectReplyCandidate,
+                            onQuoteMessage = onQuoteMessage,
                             modifier = entryModifier,
                         )
                     }
@@ -1794,6 +1830,9 @@ private fun AgentChatBottomBar(
     onAttachFilePath: (String) -> Unit,
     onRemoveFileReference: (String) -> Unit,
     onCancelMessageEdit: () -> Unit,
+    /** 待发送的引用；输入框上方会显示一行可取消的引用条。 */
+    quotedMessage: ComposerQuoteUi? = null,
+    onClearQuote: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -1927,6 +1966,8 @@ private fun AgentChatBottomBar(
                 onAttachFilePath = onAttachFilePath,
                 onRemoveFileReference = onRemoveFileReference,
                 onCancelMessageEdit = onCancelMessageEdit,
+                quotedMessage = quotedMessage,
+                onClearQuote = onClearQuote,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

@@ -239,6 +239,21 @@ internal class BackgroundTerminalJobs(
         refresh()
     }
 
+    /**
+     * 清除全部已结束的任务记录（进行中的一条不动），给界面上的「清除已结束」用。
+     *
+     * 保护条件在 [DetachedTaskSupervisor.dismissFinished] 里，与自动淘汰共用同一套：
+     * 没通知过结果的命令任务、刚结束不足一分钟的记录都会留下。
+     *
+     * @return 真正清掉的条数；0 表示没有可清的。
+     */
+    @Synchronized
+    fun dismissFinished(): Int {
+        val removed = supervisor.dismissFinished()
+        if (removed > 0) refresh()
+        return removed
+    }
+
     @Synchronized
     override fun close() {
         stopAll()

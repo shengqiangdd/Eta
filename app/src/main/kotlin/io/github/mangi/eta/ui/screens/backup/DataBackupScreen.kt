@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,17 +24,24 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.safeStackTrace
+import io.github.mangi.eta.data.backup.AutoBackupOutcome
+import io.github.mangi.eta.data.backup.AutoBackupRepository
+import io.github.mangi.eta.data.backup.AutoBackupScheduler
+import io.github.mangi.eta.data.model.AutoBackupSettings
 import io.github.mangi.eta.data.repository.EtaBackupSummary
+import io.github.mangi.eta.ui.app.ConversationTimeLabels
 import io.github.mangi.eta.ui.app.WorkspacePickerHistory
 import io.github.mangi.eta.ui.app.importHistoryDirectory
 import io.github.mangi.eta.ui.app.pickerStartPath
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaCard
+import io.github.mangi.eta.ui.components.EtaDropdownPreference
 import io.github.mangi.eta.ui.components.EtaPreference
 import io.github.mangi.eta.ui.components.EtaPreferenceDefaults
 import io.github.mangi.eta.ui.components.EtaPreferenceDivider
 import io.github.mangi.eta.ui.components.EtaPreferenceGroup
 import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
+import io.github.mangi.eta.ui.components.EtaSwitchPreference
 import io.github.mangi.eta.ui.components.EtaWindowDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -47,6 +55,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -68,6 +77,9 @@ internal fun DataBackupScreen(
     // 系统 CreateDocument / OpenDocument 在虚拟屏上会把整个任务搬到主屏（实测），
     // 备份的导入导出因此改走应用内选择器：只读路径，不碰系统文件选择器。
     var pickerMode by remember { mutableStateOf<BackupPickerMode?>(null) }
+    // 自动备份状态跟着设置流走：开关、间隔、上次结果都在这里。
+    val autoBackup by remember { AutoBackupRepository.settingsFlow() }
+        .collectAsState(initial = null)
 
     fun showFailure(throwable: Throwable) {
         if (throwable is CancellationException) throw throwable
@@ -166,6 +178,80 @@ internal fun DataBackupScreen(
                 EtaPreference(
                     title = stringResource(R.string.data_backup_warning_title),
                     summary = stringResource(R.string.data_backup_warning_summary),
+                )
+            }
+        }
+        item(key = "auto-title") {
+            EtaPreferenceGroupTitle(stringResource(R.string.data_backup_auto_title))
+        }
+        item(key = "auto-card") {
+            val current = autoBackup
+            EtaPreferenceGroup(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+                EtaSwitchPreference(
+                    title = stringResource(R.string.data_backup_auto_enable),
+                    checked = current?.enabled == true,
+                    summary = stringResource(R.string.data_backup_auto_enable_summary),
+                    enabled = !busy && current != null,
+                    onCheckedChange = { enabled ->
+                        scope.launch { AutoBackupRepository.setEnabled(enabled) }
+                    },
+                )
+                EtaPreferenceDivider(hasLeading = true)
+                EtaDropdownPreference(
+                    title = stringResource(R.string.data_backup_auto_interval),
+                    items = AutoBackupScheduler.INTERVAL_CHOICES.map { hours ->
+                        DropdownItem(text = intervalLabel(context, hours))
+                    },
+                    selectedIndex = AutoBackupScheduler.INTERVAL_CHOICES
+                        .indexOf(current?.intervalHours ?: AutoBackupSettings.DEFAULT_INTERVAL_HOURS)
+                        .coerceAtLeast(0),
+                    enabled = !busy && current?.enabled == true,
+                    onSelectedIndexChange = { index ->
+                        val hours = AutoBackupScheduler.INTERVAL_CHOICES.getOrNull(index)
+                        if (hours != null) {
+                            scope.launch { AutoBackupRepository.setIntervalHours(hours) }
+                        }
+                    },
+                )
+                EtaPreferenceDivider(hasLeading = true)
+                EtaPreference(
+                    title = stringResource(R.string.data_backup_auto_last),
+                    summary = autoBackupSummary(context, current),
+                )
+                EtaPreferenceDivider(hasLeading = true)
+                EtaArrowPreference(
+                    title = stringResource(R.string.data_backup_auto_run_now),
+                    summary = if (busy) {
+                        stringResource(R.string.data_backup_working)
+                    } else {
+                        stringResource(R.string.data_backup_auto_run_now_summary)
+                    },
+                    enabled = !busy,
+                    startAction = {
+                        BackupIcon(
+                            icon = Icons.Rounded.Download,
+                            loading = busy,
+                        )
+                    },
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            try {
+                                val outcome = AutoBackupRepository.runNow(context)
+                                Toast.makeText(
+                                    context,
+                                    autoBackupOutcomeMessage(context, outcome),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            } catch (cancel: CancellationException) {
+                                throw cancel
+                            } catch (throwable: Throwable) {
+                                showFailure(throwable)
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    },
                 )
             }
         }
@@ -298,6 +384,57 @@ private fun BackupIcon(icon: ImageVector, loading: Boolean) {
             )
         }
     }
+}
+
+/** 间隔选项的显示文案。 */
+private fun intervalLabel(context: Context, hours: Int): String = when (hours) {
+    6 -> context.getString(R.string.data_backup_auto_interval_6h)
+    12 -> context.getString(R.string.data_backup_auto_interval_12h)
+    24 -> context.getString(R.string.data_backup_auto_interval_24h)
+    72 -> context.getString(R.string.data_backup_auto_interval_72h)
+    168 -> context.getString(R.string.data_backup_auto_interval_168h)
+    else -> context.resources.getQuantityString(
+        R.plurals.data_backup_auto_interval_hours,
+        hours,
+        hours,
+    )
+}
+
+/** 「上次备份」那一行：有错误先说错误（否则用户以为自动备份正在好好工作）。 */
+private fun autoBackupSummary(context: Context, settings: AutoBackupSettings?): String {
+    if (settings == null) return ""
+    val error = settings.lastError
+    if (!error.isNullOrBlank()) {
+        return context.getString(R.string.data_backup_auto_failed, error)
+    }
+    if (settings.lastBackupAt <= 0L) {
+        return context.getString(R.string.data_backup_auto_never)
+    }
+    val whenLabel = ConversationTimeLabels.label(settings.lastBackupAt)
+    val bytes = settings.lastBackupPath
+        ?.let { path -> File(path).takeIf { it.isFile }?.length() }
+        ?: 0L
+    return if (bytes > 0L) {
+        context.getString(R.string.data_backup_auto_last_value, whenLabel, formatFileSize(bytes))
+    } else {
+        whenLabel
+    }
+}
+
+private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcome): String =
+    outcome.error?.let { error ->
+        context.getString(R.string.data_backup_auto_failed, error)
+    } ?: context.getString(
+        R.string.data_backup_auto_done,
+        outcome.file?.name.orEmpty(),
+        outcome.pruned,
+    )
+
+private fun formatFileSize(bytes: Long): String = when {
+    bytes <= 0L -> "0 B"
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "${bytes / 1024} KB"
+    else -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
 }
 
 private fun formatMemorySize(bytes: Int): String = when {

@@ -435,6 +435,9 @@
   <string name="ui_tool_ability_9f0f80">Tools</string>
   <string name="ui_disabled_0fe5a9">Disabled</string>
   <string name="ui_removed_4e5c49">Removed</string>
+  <string name="chat_quote_action">Quote</string>
+  <string name="chat_quote_chip_title">Quoting · %1$s</string>
+  <string name="chat_quote_clear">Remove quote</string>
   <string name="chat_message_actions_6b2f41">Message actions</string>
   <string name="ui_edited_c36776">Edited</string>
   <string name="ui_enforce_accessibility_55e838">Enforce accessibility</string>
@@ -1084,6 +1087,10 @@
   <string name="background_run_failed">Background task failed</string>
   <string name="background_run_stopped">Background task stopped</string>
   <string name="background_tasks_finished">Finished</string>
+  <string name="background_tasks_dismiss_finished">Clear finished (%1$d)</string>
+  <string name="background_tasks_dismiss_finished_title">Clear finished task records?</string>
+  <string name="background_tasks_dismiss_finished_summary">Deletes these finished tasks and their logs. Running tasks are not touched; ones that finished under a minute ago, or whose result has not been reported yet, are kept.</string>
+  <string name="background_tasks_dismiss_finished_confirm">Clear</string>
   <string name="background_tasks_card_hint">Tap a task to view its latest output; use terminal_job / terminal_daemon to stop it</string>
   <string name="background_tasks_command">Command</string>
   <string name="background_tasks_log">Latest output</string>
@@ -1175,6 +1182,26 @@
   <string name="data_backup_exported" tools:ignore="PluralsCandidate">Exported %1$d conversations and %2$d providers</string>
   <string name="data_backup_imported" tools:ignore="PluralsCandidate">Imported %1$d conversations and %2$d providers</string>
   <string name="data_backup_failed">Backup operation failed</string>
+  <string name="data_backup_auto_title">Automatic backup</string>
+  <string name="data_backup_auto_enable">Automatic backup</string>
+  <string name="data_backup_auto_enable_summary">Saves to Download/Eta/backups and keeps only the latest 3</string>
+  <string name="data_backup_auto_interval">Interval</string>
+  <string name="data_backup_auto_interval_6h">Every 6 hours</string>
+  <string name="data_backup_auto_interval_12h">Every 12 hours</string>
+  <string name="data_backup_auto_interval_24h">Daily</string>
+  <string name="data_backup_auto_interval_72h">Every 3 days</string>
+  <string name="data_backup_auto_interval_168h">Every 7 days</string>
+  <plurals name="data_backup_auto_interval_hours">
+    <item quantity="one">Every %1$d hour</item>
+    <item quantity="other">Every %1$d hours</item>
+  </plurals>
+  <string name="data_backup_auto_last">Last backup</string>
+  <string name="data_backup_auto_last_value">%1$s · %2$s</string>
+  <string name="data_backup_auto_never">Never backed up yet</string>
+  <string name="data_backup_auto_failed">Last automatic backup failed: %1$s</string>
+  <string name="data_backup_auto_done" tools:ignore="PluralsCandidate">Saved %1$s (removed %2$d old backups)</string>
+  <string name="data_backup_auto_run_now">Back up now</string>
+  <string name="data_backup_auto_run_now_summary">Ignores the interval and writes a backup immediately</string>
   <string name="context_compaction">Context compaction</string>
   <string name="context_compact_action">Compact context</string>
   <string name="settings_auto_compaction">Automatic context compaction</string>
@@ -1498,6 +1525,7 @@
   <string name="plugins_already_installed">%1$s v%2$s is already installed.</string>
   <string name="plugins_install_failed_title">Plugin install failed</string>
   <string name="plugins_install_failed_message">The package could not be read.</string>
+  <string name="plugins_install_failed_with_detail">The package could not be read.\n%1$s</string>
   <string name="plugins_toggle_failed_title">Could not change plugin state</string>
   <string name="plugins_toggle_failed_message">The switch did not change. Try again.</string>
   <string name="plugins_read_failed_title">Could not read plugins</string>

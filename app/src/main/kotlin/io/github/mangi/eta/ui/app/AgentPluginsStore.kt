@@ -232,6 +232,7 @@ internal class AgentPluginsStore(
         if (pluginsState.isImporting) return
         pluginsState = pluginsState.copy(isImporting = true, notice = null)
         scope.launch(Dispatchers.IO) {
+            var failureDetail: String? = null
             val result = runCatching {
                 runtime.installZip(
                     openStream = openStream,
@@ -249,7 +250,8 @@ internal class AgentPluginsStore(
                     ),
                 )
             }.getOrElse { error ->
-                AndroidAgentLogger.warn("Agent plugin install failed: type=${error.javaClass.simpleName}")
+                failureDetail = error.describeForUser()
+                AndroidAgentLogger.warn("Agent plugin install failed: type=${error.javaClass.simpleName} message=${error.message}")
                 null
             }
             val mcpDetail = syncMcpAfterInstall(result)
@@ -258,7 +260,7 @@ internal class AgentPluginsStore(
                     isImporting = false,
                     // 装完版本就可能变了：上一轮检查更新的结论立即过期。
                     updateStatuses = emptyMap(),
-                    notice = installNotice(result, updating = false, mcpDetail = mcpDetail),
+                    notice = installNotice(result, updating = false, mcpDetail = mcpDetail, failureDetail = failureDetail),
                 )
             }
             refresh()
@@ -414,6 +416,7 @@ internal class AgentPluginsStore(
         val updatingId = preview.updateTargetId
         pluginsState = pluginsState.copy(isImporting = true, notice = null)
         scope.launch(Dispatchers.IO) {
+            var failureDetail: String? = null
             val result = runCatching {
                 runtime.installZip(
                     openStream = { file.inputStream() },
@@ -430,7 +433,11 @@ internal class AgentPluginsStore(
                         installedAtMillis = 0L,
                     ),
                 )
-            }.getOrNull()
+            }.getOrElse { error ->
+                failureDetail = error.describeForUser()
+                AndroidAgentLogger.warn("Agent plugin update failed: type=${error.javaClass.simpleName} message=${error.message}")
+                null
+            }
             discardPendingLink()
             val mcpDetail = syncMcpAfterInstall(result)
             withContext(Dispatchers.Main) {
@@ -443,6 +450,7 @@ internal class AgentPluginsStore(
                         result = result,
                         updating = updatingId != null,
                         mcpDetail = mcpDetail,
+                        failureDetail = failureDetail,
                     ),
                 )
             }
@@ -796,6 +804,8 @@ internal class AgentPluginsStore(
         result: PluginPackageInstaller.Result?,
         updating: Boolean,
         mcpDetail: String?,
+        /** 抛异常时的真实原因；界面要能看到「到底哪一步不行」，而不是一句笼统的读取失败。 */
+        failureDetail: String? = null,
     ): PluginNoticeUi {
         fun withMcp(base: String): String = if (mcpDetail.isNullOrBlank()) base else "$base\n$mcpDetail"
         return when (result) {
@@ -831,7 +841,9 @@ internal class AgentPluginsStore(
             )
             null -> notice(
                 title = appContext.getString(R.string.plugins_install_failed_title),
-                message = appContext.getString(R.string.plugins_install_failed_message),
+                message = failureDetail?.takeIf { it.isNotBlank() }?.let { detail ->
+                    appContext.getString(R.string.plugins_install_failed_with_detail, detail)
+                } ?: appContext.getString(R.string.plugins_install_failed_message),
                 isError = true,
             )
         }
@@ -839,6 +851,13 @@ internal class AgentPluginsStore(
 
     private fun describeFailure(failed: PluginPackageInstaller.Result.Failed): String =
         if (failed.message.isBlank()) failed.code else "${failed.code}：${failed.message}"
+
+    /** 异常类型 + 消息：用户拿这一行就能判断是文件坏了、权限不对，还是包结构不合法。 */
+    private fun Throwable.describeForUser(): String =
+        buildString {
+            append(javaClass.simpleName)
+            message?.takeIf { it.isNotBlank() }?.let { append(": ").append(it.take(MAX_FAILURE_DETAIL_CHARS)) }
+        }
 
     private fun describeSource(source: PluginSourceStore.Source): String =
         if (source.isLink && source.host.isNotBlank()) {
@@ -858,3 +877,6 @@ internal class AgentPluginsStore(
 
 /** 提示里最多逐条列几个插件：再多就变成一堵墙，用户反而看不到重点。 */
 private const val MAX_LISTED_UPDATE_ITEMS = 5
+
+/** 异常信息最多带多少字：完整堆栈是日志的事，弹窗里只需能看出原因。 */
+private const val MAX_FAILURE_DETAIL_CHARS = 300

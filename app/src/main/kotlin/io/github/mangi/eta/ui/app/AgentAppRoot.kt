@@ -107,6 +107,7 @@ import io.github.mangi.eta.ui.voice.SpeechRecognitionScreen
 import io.github.mangi.eta.ui.voice.SpeechSettingsScreen
 import io.github.mangi.eta.ui.voice.SpeechSynthesisScreen
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -246,6 +247,22 @@ fun AgentAppRoot(
 
     LaunchedEffect(Unit) {
         RuntimeConfigRepository.ensureDefaults(EtaApp.serviceInstance)
+    }
+
+    // 自动备份：启动后立即检查一次，之后每 30 分钟看一次是否到期。
+    // 用固定节拍而不是精确闹钟：Eta 是常驻应用，用户回到前台时大概率已经在节拍上；
+    // 真正的「该不该备」由 lastBackupAt + 间隔决定，这里的节拍不会多写文件。
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                agentState.runAutoBackupIfDue()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                // 自动备份失败不该影响启动或使用；原因已写进设置的 lastError。
+            }
+            delay(30 * 60 * 1000L)
+        }
     }
 
     LaunchedEffect(requestedConversationId, agentState.conversationsLoaded) {

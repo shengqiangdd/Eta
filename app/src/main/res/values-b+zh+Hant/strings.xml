@@ -414,6 +414,9 @@
   <string name="ui_tool_ability_9f0f80">工具能力</string>
   <string name="ui_disabled_0fe5a9">已停用</string>
   <string name="ui_removed_4e5c49">已移除</string>
+  <string name="chat_quote_action">引用</string>
+  <string name="chat_quote_chip_title">引用 · %1$s</string>
+  <string name="chat_quote_clear">取消引用</string>
   <string name="chat_message_actions_6b2f41">訊息操作</string>
   <string name="ui_edited_c36776">已編輯</string>
   <string name="ui_enforce_accessibility_55e838">強制維持無障礙</string>
@@ -1052,6 +1055,10 @@
   <string name="background_run_failed">背景任務失敗</string>
   <string name="background_run_stopped">背景任務已停止</string>
   <string name="background_tasks_finished">已結束</string>
+  <string name="background_tasks_dismiss_finished">清除已結束（%1$d）</string>
+  <string name="background_tasks_dismiss_finished_title">清除已結束的任務記錄？</string>
+  <string name="background_tasks_dismiss_finished_summary">將刪除這些已結束任務的記錄與日誌。進行中的任務不受影響；剛結束不到一分鐘、或結果還沒通知過的會保留。</string>
+  <string name="background_tasks_dismiss_finished_confirm">清除</string>
   <string name="background_tasks_card_hint">點任務查看最新輸出；停止任務請用 terminal_job / terminal_daemon</string>
   <string name="background_tasks_command">命令</string>
   <string name="background_tasks_log">最新輸出</string>
@@ -1141,6 +1148,25 @@
   <string name="data_backup_exported">已匯出 %1$d 個對話與 %2$d 個模型供應商</string>
   <string name="data_backup_imported">已匯入 %1$d 個對話與 %2$d 個模型供應商</string>
   <string name="data_backup_failed">備份操作失敗</string>
+  <string name="data_backup_auto_title">自動備份</string>
+  <string name="data_backup_auto_enable">自動備份</string>
+  <string name="data_backup_auto_enable_summary">儲存到 Download/Eta/backups，只保留最近 3 份</string>
+  <string name="data_backup_auto_interval">備份間隔</string>
+  <string name="data_backup_auto_interval_6h">每 6 小時</string>
+  <string name="data_backup_auto_interval_12h">每 12 小時</string>
+  <string name="data_backup_auto_interval_24h">每天</string>
+  <string name="data_backup_auto_interval_72h">每 3 天</string>
+  <string name="data_backup_auto_interval_168h">每 7 天</string>
+  <plurals name="data_backup_auto_interval_hours">
+    <item quantity="other">每 %1$d 小時</item>
+  </plurals>
+  <string name="data_backup_auto_last">上次備份</string>
+  <string name="data_backup_auto_last_value">%1$s · %2$s</string>
+  <string name="data_backup_auto_never">還沒有備份過</string>
+  <string name="data_backup_auto_failed">上次自動備份失敗：%1$s</string>
+  <string name="data_backup_auto_done">已備份 %1$s（清理 %2$d 份舊備份）</string>
+  <string name="data_backup_auto_run_now">立即備份一次</string>
+  <string name="data_backup_auto_run_now_summary">不看間隔，馬上產生一份</string>
   <string name="voice_audio_permission">请在 Eta 应用权限中允许麦克风，然后重新唤醒；点击麦克风可打开设置</string>
   <string name="voice_use_keyboard">切换键盘输入</string>
   <string name="voice_finish_speech">结束录音并发送</string>
@@ -1432,6 +1458,7 @@
   <string name="plugins_already_installed">%1$s v%2$s 已經安裝，無需重複匯入。</string>
   <string name="plugins_install_failed_title">外掛安裝失敗</string>
   <string name="plugins_install_failed_message">外掛套件無法讀取。</string>
+  <string name="plugins_install_failed_with_detail">外掛套件無法讀取。\n%1$s</string>
   <string name="plugins_toggle_failed_title">無法更新外掛開關</string>
   <string name="plugins_toggle_failed_message">開關沒有變化，請重試。</string>
   <string name="plugins_read_failed_title">無法讀取外掛清單</string>
