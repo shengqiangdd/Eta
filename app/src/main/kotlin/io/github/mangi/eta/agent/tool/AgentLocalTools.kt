@@ -2517,7 +2517,13 @@ internal class AgentLocalTools(
                         ),
                     )
                 }
-                val request = AgentAcpTools.parseDelegate(args)
+                // 缺省 cwd 跟随当前会话的工作目录，而不是写死的 /workspace。
+                // 代理跑到 /workspace 根下会改错位置 —— 而且它不会报错，只是“没找到文件”
+                // 或者更糟：在错的地方建了一堆新文件。
+                val request = AgentAcpTools.parseDelegate(
+                    args,
+                    defaultCwd = terminalExecutionContext.linuxCwd,
+                )
                     ?: return textResult(
                         errorResult(
                             "INVALID_ARGUMENT",

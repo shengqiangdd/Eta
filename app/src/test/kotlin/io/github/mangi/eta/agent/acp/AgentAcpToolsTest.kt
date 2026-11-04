@@ -40,6 +40,30 @@ class AgentAcpToolsTest {
     }
 
     @Test
+    fun omittedCwdUsesTheSessionWorkingDirectory() {
+        // 回归：cwd 缺省值原本写死 /workspace，无视会话自己的工作区。
+        // 后果是委派在错误目录里改文件，而且它不会报错。
+        val parsed = AgentAcpTools.parseDelegate(
+            JSONObject().put("task", "改配置"),
+            defaultCwd = "/workspace/my-project",
+        )!!
+        assertEquals("/workspace/my-project", parsed.cwd)
+
+        // 显式给了 cwd 时仍然以显式为准，不被会话目录覆盖。
+        val explicit = AgentAcpTools.parseDelegate(
+            JSONObject().put("task", "改配置").put("cwd", "/tmp/other"),
+            defaultCwd = "/workspace/my-project",
+        )!!
+        assertEquals("/tmp/other", explicit.cwd)
+
+        // 会话目录为空/空白时回退到 DEFAULT_CWD，不能拼出空路径。
+        assertEquals(
+            AgentAcpTools.DEFAULT_CWD,
+            AgentAcpTools.parseDelegate(JSONObject().put("task", "t"), defaultCwd = "  ")!!.cwd,
+        )
+    }
+
+    @Test
     fun delegateTaskLengthAndTimeoutBounds() {
         val tooLong = JSONObject().put("task", "x".repeat(AgentAcpTools.MAX_TASK_CHARS + 1))
         assertNull(AgentAcpTools.parseDelegate(tooLong))

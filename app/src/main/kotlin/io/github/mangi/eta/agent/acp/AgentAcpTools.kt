@@ -157,10 +157,15 @@ internal object AgentAcpTools {
 
     data class SessionRequest(val sessionId: String)
 
-    fun parseDelegate(args: JSONObject): DelegateRequest? {
+    fun parseDelegate(args: JSONObject, defaultCwd: String = DEFAULT_CWD): DelegateRequest? {
         val task = args.optString("task").trim()
         if (task.isEmpty() || task.length > MAX_TASK_CHARS) return null
-        val cwd = args.optString("cwd").trim().ifEmpty { DEFAULT_CWD }
+        // 缺省用调用方给的目录（会话自己的工作区），而不是写死的 /workspace。
+        //
+        // 为什么：Eta 有会话级工作目录（working_directory），项目通常在
+        // /workspace/<子目录>。委派时若不传 cwd 就落到根目录，代理会在错误的地方
+        // 改文件 —— 改错地方比报错更难发现。这里把「委派到当前项目」变成名副其实。
+        val cwd = args.optString("cwd").trim().ifEmpty { defaultCwd.trim().ifEmpty { DEFAULT_CWD } }
         // 只接受 Linux 环境内的绝对路径，避免把宿主路径或相对路径带进子进程。
         if (!cwd.startsWith("/") || cwd.contains("..")) return null
         val timeout = args.optInt("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
