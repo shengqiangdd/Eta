@@ -32,6 +32,31 @@ val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 // versionCode 基数：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
 val etaVersionCode = 2026103101
 
+/*
+ * Robolectric 的 native runtime 只提供 Linux x86_64 与 macOS arm64 的预编译库；在
+ * Linux aarch64（本机开发环境）上，每个 Robolectric 用例都会在 runner 初始化时抛
+ * `AssertionError: The Robolectric native runtime is not supported on Linux (aarch64)`。
+ * 一次全量跑就是几百条环境错误，把真正的 JVM 失败淹掉（实测 451 条失败里 448 条是它）。
+ *
+ * 这里在跑不了的平台上自动排除这些类，并在日志里写明跳过多少个——不是让测试静默通过。
+ * 在支持的机器或需要排查时加 `-Peta.runRobolectric=true` 照常跑全部。
+ */
+val robolectricTestClasses: List<String> = run {
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    val arch = System.getProperty("os.arch").orEmpty().lowercase()
+    val unsupported = os.contains("linux") && (arch == "aarch64" || arch == "arm64")
+    val forced = providers.gradleProperty("eta.runRobolectric").orNull == "true"
+    if (!unsupported || forced) {
+        emptyList()
+    } else {
+        fileTree("src/test") { include("**/*.kt") }.files.mapNotNull { file ->
+            val text = file.readText()
+            if (!text.contains("RobolectricTestRunner")) return@mapNotNull null
+            Regex("""\bclass\s+(\w+Test)\b""").findAll(text).map { it.groupValues[1] }.toList()
+        }.flatten().distinct()
+    }
+}
+
 android {
     namespace = "io.github.mangi.eta"
     compileSdk = 37
@@ -162,6 +187,19 @@ android {
                 "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
                 "--enable-native-access=ALL-UNNAMED",
             )
+            if (robolectricTestClasses.isNotEmpty()) {
+                // 必须用局部 val：直接引用脚本属性会被配置缓存当作「脚本对象引用」而无法序列化。
+                val skipped = robolectricTestClasses.toList()
+                it.filter {
+                    skipped.forEach { name -> excludeTestsMatching("*.$name") }
+                }
+                it.doFirst {
+                    logger.lifecycle(
+                        "跳过 ${skipped.size} 个 Robolectric 测试类：" +
+                            "Linux aarch64 没有 native runtime；强制跑加 -Peta.runRobolectric=true",
+                    )
+                }
+            }
         }
     }
 }
