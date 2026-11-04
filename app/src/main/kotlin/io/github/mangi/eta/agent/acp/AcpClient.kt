@@ -471,6 +471,18 @@ internal class AcpClient(
             result.put("code", if (handle.error != null) "ACP_PROTOCOL_ERROR" else "ACP_TIMEOUT")
             val detail = handle.error ?: "超过 ${timeoutSeconds}s 未完成，已终止代理进程"
             result.put("message", withStderrHint(detail, stderrTail(handle)))
+            // 失败/超时 ≠ 什么都没发生。代理在进程被杀之前可能已经改了文件，
+            // 而调用方（模型）只看 message 很容易以为“白跑一趟”、接着按旧假设干活。
+            // 把“可能已改盘”的事实作为独立字段给出，不靠它去推。
+            val edits = handle.stats.editedStepCount()
+            if (edits > 0) {
+                result.put("possible_side_effects", true)
+                result.put(
+                    "side_effect_note",
+                    "代理在终止前执行过 $edits 次文件改动，可能已经落盘；" +
+                        "继续之前先核对工作区（例如 git status / git diff）",
+                )
+            }
         }
         return ok to result.toString()
     }

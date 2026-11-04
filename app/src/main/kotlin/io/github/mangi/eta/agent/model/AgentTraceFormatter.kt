@@ -4,6 +4,7 @@ import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
 import io.github.mangi.eta.agent.subagent.SubagentProfile
 import java.net.URI
+import org.json.JSONArray
 import java.util.Locale
 import org.json.JSONObject
 
@@ -547,7 +548,30 @@ internal class AgentTraceFormatter {
             snippet.lineSequence()
                 .firstOrNull { it.isNotBlank() }
                 ?.let { add(it.trim().take(60)) }
+            // 委派失败/超时 ≠ 什么都没做。代理在进程被杀之前完全可能已经改了文件，
+            // 而卡片只写「失败」会让人以为改动没发生 —— 接着在同一个仓库里干活。
+            if (!json.optBoolean("ok", false)) {
+                touchedFiles(json.optJSONArray("steps"))?.let { add(it) }
+            }
         }.joinToString(" · ")
+    }
+
+    /**
+     * 失败/超时时，看步骤里有没有过文件改动。
+     *
+     * 返回 null 表示没执行过 edit 类动作；返回文字表示「这些东西可能已经改了」。
+     * 注意：即使步骤状态是 failed，那次 edit 也可能已经落盘（写一半、或写完才在下一步出错），
+     * 所以不看 status，只看有没有出现过 edit。
+     */
+    private fun touchedFiles(steps: JSONArray?): String? {
+        if (steps == null || steps.length() == 0) return null
+        var edits = 0
+        for (index in 0 until steps.length()) {
+            val kind = steps.optJSONObject(index)?.optString("kind").orEmpty()
+            if (kind in ACP_EDIT_KINDS) edits++
+        }
+        if (edits == 0) return null
+        return "已执行 $edits 次文件改动，可能已落盘"
     }
 
     private fun formatAcpDuration(ms: Long): String =
@@ -883,6 +907,15 @@ internal class AgentTraceFormatter {
 
         /** 委派步骤里算「失败」的状态；决定卡片是否带「（n 失败）」。 */
         val FAILED_STEP_STATUSES = setOf("failed", "error", "cancelled", "canceled")
+
+        /**
+         * ACP 协议里代表「会改到工作区」的 kind。
+         *
+         * 用 kind 而不是工具名：工具名是各家代理自己起的（write_file / str_replace /
+         * apply_patch 都有），而 kind 是协议枚举，跨代理才稳。
+         * 与 AcpUpdateAccumulator.EDIT_KINDS 同一个口径，改一处要同时改两处。
+         */
+        private val ACP_EDIT_KINDS = setOf("edit", "write", "delete", "move")
         const val MAX_DETAIL_CHARS = 4_000
         const val MAX_DISPLAY_COMMAND_CHARS = 4_000
         const val MAX_QUERY_SUMMARY_CHARS = 30

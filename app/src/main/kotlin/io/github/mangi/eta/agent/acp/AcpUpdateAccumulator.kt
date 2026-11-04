@@ -135,4 +135,23 @@ internal class AcpUpdateAccumulator(private val clock: () -> Long = System::curr
             )
         }
     }
+
+    /**
+     * 已经发生过多少次文件改动类步骤。
+     *
+     * 只看 kind，不看 status：一次 edit 即使被标记为 failed，也可能已经把内容写进去了；
+     * 而这里要回答的是「工作区可能被动过吗」，宁可宽一点。
+     * 与 stepsJson 的 limit 无关 —— 改动可能发生在几十步之前，不能被截断掉。
+     */
+    fun editedStepCount(): Int = steps.values.count { it.kind in EDIT_KINDS }
+
+    companion object {
+        /**
+         * ACP 标准里代表「会改到工作区」的工具类别。
+         *
+         * 用 kind 而不是工具名：工具名是各家代理自己起的（write_file / str_replace /
+         * apply_patch 都有），而 kind 是协议枚举，跨代理才稳。
+         */
+        val EDIT_KINDS = setOf("edit", "write", "delete", "move")
+    }
 }
