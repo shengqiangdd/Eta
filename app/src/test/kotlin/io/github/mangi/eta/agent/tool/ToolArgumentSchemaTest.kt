@@ -55,6 +55,22 @@ class ToolArgumentSchemaTest {
     }
 
     /**
+     * `terminal_job` 的隔离提示会让调用方「传 include_other=true」，而那个出口
+     * 必须真的在 schema 里 —— 否则模型读到报错照着做，得到的却是「未知参数」。
+     *
+     * 这条守的是「报错文案与 schema 一致」：文案里承诺的出口，schema 必须声明。
+     */
+    @Test
+    fun `terminal job schema declares the cross-session escape hatch it advertises`() {
+        val keys = ToolArgumentSchema.declaredKeys("terminal_job")
+        assertTrue("terminal_job 没有登记到参数索引里", keys != null)
+        assertTrue(
+            "JOB_NOT_FOUND 的提示让调用方传 include_other，schema 必须声明它",
+            "include_other" in checkNotNull(keys),
+        )
+    }
+
+    /**
      * fix170：device / phone 目录的 `appendTo` 带开关参数，fix168 时因签名对不上被跳过，
      * 结果这一百多个设备工具收到错参数仍然静默。
      */
