@@ -944,6 +944,9 @@
   <string name="linux_kimi_tools">Kimi Code</string>
   <string name="linux_kimi_tools_summary">Install the latest Kimi Code release via npm; requires the Node.js environment first</string>
   <string name="linux_kimi_tools_ready">Kimi Code is ready; run kimi in the terminal</string>
+  <string name="linux_acp_agents_tools">Coding agents (Codex / Claude)</string>
+  <string name="linux_acp_agents_tools_summary">Install codex-acp and claude-code-acp via npm so delegation can find them; install the Node.js environment first. This only installs the programs — logging in is separate.</string>
+  <string name="linux_acp_agents_tools_ready">Installed; delegation can now find these agents</string>
   <string name="linux_profile_dependency_missing">Install %1$s first</string>
   <string name="linux_kimi_web_launch">Launch Web UI</string>
   <string name="linux_kimi_web_starting">Starting…</string>

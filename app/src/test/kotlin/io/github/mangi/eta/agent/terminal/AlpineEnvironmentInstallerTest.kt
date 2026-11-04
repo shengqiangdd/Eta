@@ -131,6 +131,29 @@ class AlpineEnvironmentInstallerTest {
         LinuxDistribution.entries.forEach { distribution ->
             assertTrue(LinuxPackageProfiles.SSH.spec(distribution).packages.isNotEmpty())
         }
+        // ACP 编码代理：acp_delegate 真正启动的就是这两个可执行文件，
+        // 它们曾经只能靠手工 npm i -g，新设备上根本不存在。
+        val acp = LinuxPackageProfiles.ACP_AGENTS
+        assertEquals(LinuxPackageProfiles.NODE, acp.dependsOn)
+        LinuxDistribution.entries.forEach { distribution ->
+            val acpScript = acp.spec(distribution).setupScript.orEmpty()
+            assertTrue(acpScript.contains("@agentclientprotocol/codex-acp@latest"))
+            assertTrue(acpScript.contains("@zed-industries/claude-code-acp@latest"))
+            assertTrue(acpScript.contains("registry.npmmirror.com"))
+            // 官方 registry 兜底：镜像挂了不能直接装不了。
+            assertTrue(acpScript.contains("||"))
+            // npm install --prefix **不会自己建目录**，它直接 lstat <prefix>/lib（实测）。
+            assertTrue(acpScript.contains("mkdir -p /opt/eta/lib"))
+            // 产物必须落到 /usr/local/bin：那是探测候选里已有的位置，
+            // 而且不随 node 版本目录变动而失效。
+            assertTrue(acpScript.contains("ln -sfn /opt/eta/bin/codex-acp /usr/local/bin/codex-acp"))
+            assertTrue(acpScript.contains("ln -sfn /opt/eta/bin/claude-code-acp /usr/local/bin/claude-code-acp"))
+            // npm 返回 0 不等于产物真在。没这句，装坏了也会写 marker，
+            // 界面就会把「装坏了」报成「已安装」。
+            assertTrue(acpScript.contains("test -x /usr/local/bin/codex-acp"))
+            assertTrue(acpScript.contains("test -x /usr/local/bin/claude-code-acp"))
+        }
+        assertTrue(LinuxPackageProfiles.ALL.contains(acp))
         LinuxPackageProfiles.ALL.forEach { profile ->
             assertTrue(profile.markerName.startsWith(".eta-"))
             profile.specs.values.forEach { spec ->

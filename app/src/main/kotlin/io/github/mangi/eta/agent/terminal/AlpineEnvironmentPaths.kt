@@ -12,6 +12,8 @@ internal object AlpineEnvironmentPaths {
     const val NODE_TOOLS_MARKER = ".eta-node-tools-ready"
     const val SSH_TOOLS_MARKER = ".eta-ssh-tools-ready"
     const val KIMI_TOOLS_MARKER = ".eta-kimi-tools-ready"
+    /** ACP 编码代理（codex-acp / claude-code-acp）共用同一个标记。 */
+    const val ACP_AGENTS_MARKER = ".eta-acp-agents-ready"
     const val TOOLSET_REVISION = 1
     const val APK_ANALYSIS_REVISION = 1
     const val PYTHON_TOOLS_REVISION = 1
@@ -19,6 +21,7 @@ internal object AlpineEnvironmentPaths {
     const val NODE_TOOLS_REVISION = 2
     const val SSH_TOOLS_REVISION = 1
     const val KIMI_TOOLS_REVISION = 1
+    const val ACP_AGENTS_REVISION = 1
 
     fun environmentDir(context: Context): File =
         LinuxEnvironmentPaths.environmentDir(context, LinuxDistribution.ALPINE)
