@@ -294,9 +294,11 @@ internal class SubagentExecutor(
             }
             recordTaskEnd(
                 subagentId,
-                if (steered) AgentTaskStatus.CANCELLED
-                else if (cancelled) AgentTaskStatus.CANCELLED
-                else AgentTaskStatus.FAILED,
+                endStatusFor(
+                    steered = steered,
+                    cancelled = cancelled,
+                    stalled = stalled != null,
+                ),
                 errorMessage,
             )
             publishSnapshot(force = true)
@@ -687,7 +689,9 @@ internal class SubagentExecutor(
             status = SubagentActivitySnapshot.STATUS_STALLED
             errorText = error.take(1_000)
             if (partial.isNotBlank()) finalOutput = partial.take(MAX_OUTPUT_CHARS)
-            currentAction = "长时间无进展，已自动收尾"
+            // 取实际结束原因（无进展 / 超时长），与 errorText 同一句：
+            // 这里写死一句泛化文案的话，界面会先用 currentAction 覆盖掉 errorText 里更具体的原因。
+            currentAction = error.lineSequence().firstOrNull()?.take(80) ?: "已自动收尾"
         }
 
         fun markCancelled(partial: String) = synchronized(lock) {
@@ -774,6 +778,23 @@ internal class SubagentExecutor(
     }
 
     companion object {
+        /**
+         * 子代理结束时该记在台账上的状态。
+         *
+         * 顺序容易写错且看不出：停滞看门狗也是 cancel，所以停滞后 `cancelled` 同样为 true；
+         * 先判取消就会把「卡住」记成「用户叫停」，而这两者对模型的含义正好相反 ——
+         * 一个该拆小重派，一个不该重试。
+         */
+        internal fun endStatusFor(
+            steered: Boolean,
+            cancelled: Boolean,
+            stalled: Boolean,
+        ): AgentTaskStatus = when {
+            stalled -> AgentTaskStatus.STALLED
+            steered || cancelled -> AgentTaskStatus.CANCELLED
+            else -> AgentTaskStatus.FAILED
+        }
+
         private const val PROGRESS_THROTTLE_NANOS = 80_000_000L
         private const val MAX_STEP_DETAIL_CHARS = 2_000
         private const val MAX_OUTPUT_CHARS = 12_000

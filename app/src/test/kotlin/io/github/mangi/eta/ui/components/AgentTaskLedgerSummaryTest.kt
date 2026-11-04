@@ -60,7 +60,8 @@ class AgentTaskLedgerSummaryTest {
 
         assertEquals(
             summary.total,
-            summary.completed + summary.running + summary.failed + summary.cancelled,
+            summary.completed + summary.running + summary.failed +
+                summary.cancelled + summary.stalled,
         )
     }
 
@@ -73,6 +74,30 @@ class AgentTaskLedgerSummaryTest {
         assertEquals(0, summary.running)
         assertEquals(0, summary.failed)
         assertEquals(0, summary.cancelled)
+        assertEquals(0, summary.stalled)
+    }
+
+    /**
+     * 停滞收尾必须单独一桶：并进 cancelled 的话，卡片会把「卡住自动放弃」
+     * 显示成「用户叫停」，而两者对模型下一步的含义正好相反。
+     */
+    @Test
+    fun stalledIsItsOwnBucketNotCancelled() {
+        val ledger = AgentTaskLedger(
+            listOf(
+                record("a", AgentTaskStatus.STALLED, startedAt = 3_000L),
+                record("b", AgentTaskStatus.CANCELLED, startedAt = 2_000L),
+                record("c", AgentTaskStatus.STALLED, startedAt = 1_000L),
+            ),
+        )
+
+        val summary = ledger.cardSummary()
+
+        assertEquals(3, summary.total)
+        assertEquals(2, summary.stalled)
+        assertEquals(1, summary.cancelled)
+        assertEquals(0, summary.failed)
+        assertEquals(0, summary.running)
     }
 
     @Test

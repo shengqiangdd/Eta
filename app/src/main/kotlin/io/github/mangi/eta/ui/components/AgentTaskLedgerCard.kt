@@ -79,6 +79,7 @@ internal fun AgentTaskLedgerCard(ledger: AgentTaskLedger, modifier: Modifier = M
     val runningLabel = stringResource(R.string.tool_status_running)
     val failedLabel = stringResource(R.string.tool_status_failed)
     val cancelledLabel = stringResource(R.string.status_cancelled)
+    val stalledLabel = stringResource(R.string.task_status_stalled)
     val primary = MiuixTheme.colorScheme.primary
     val error = MiuixTheme.colorScheme.error
     // 计数全拼进同一个 Text：Row 里并排几个 Text 时，后面的会被挤成零宽，直接看不见。
@@ -92,6 +93,9 @@ internal fun AgentTaskLedgerCard(ledger: AgentTaskLedger, modifier: Modifier = M
         if (summary.failed > 0) {
             withStyle(SpanStyle(color = error)) { append(" · $failedLabel ${summary.failed}") }
         }
+        // 自动收尾单列一项：它不属于失败（子代理没做错）也不属于用户叫停，
+        // 只显示“已完成／总数”时，用户看不出“有几个是被自动放弃的”。
+        if (summary.stalled > 0) append(" · $stalledLabel ${summary.stalled}")
         if (summary.cancelled > 0) append(" · $cancelledLabel ${summary.cancelled}")
     }
 
@@ -192,6 +196,9 @@ private fun AgentTaskStatus.color(): Color = when (this) {
     AgentTaskStatus.RUNNING -> StatusRunning
     AgentTaskStatus.COMPLETED -> StatusSuccess
     AgentTaskStatus.FAILED -> StatusError
+    // 自动收尾用警告色：它既不是“做完了”（绿），也不是“用户叫停”（灰）。
+    // 用户看到红色会以为子代理崩了，看到灰色会以为自己误停。
+    AgentTaskStatus.STALLED -> StatusWarning
     AgentTaskStatus.CANCELLED -> StatusIdle
 }
 
@@ -201,6 +208,7 @@ private fun AgentTaskStatus.label(): String = stringResource(
         AgentTaskStatus.RUNNING -> R.string.tool_status_running
         AgentTaskStatus.COMPLETED -> R.string.tool_status_success
         AgentTaskStatus.FAILED -> R.string.tool_status_failed
+        AgentTaskStatus.STALLED -> R.string.task_status_stalled
         AgentTaskStatus.CANCELLED -> R.string.status_cancelled
     },
 )

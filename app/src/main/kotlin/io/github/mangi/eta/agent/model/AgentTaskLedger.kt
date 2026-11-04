@@ -124,7 +124,9 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
                 appendLine("另有 ${entries.size - shown.size} 条更早的任务未列出，需要完整列表时调用 tasks。")
             }
             if (resumeable) {
-                append("需要接着用其中某个子代理的上下文时，调用 subagent(resume=\"<上面那一行末尾的 id>\", ...)，不要从头再派一个；")
+                // 不能写「行尾的 id」：行格式是「[状态] 标题 · id（失效标记） — 摘要」，
+                // id 后面还可能跟失效标记与摘要；让模型去行尾找只会让它拿到一段文字。
+                append("需要接着用其中某个子代理的上下文时，把该行「· 」后面的 id 填进 subagent(resume=\"<id>\", ...)，不要从头再派一个；")
                 appendLine("标了「上下文已失效」的条目不能 resume，那部分工作需要重新派发。")
             } else {
                 appendLine("这些条目的上下文都已经失效（进程重启后子代理历史不会保留），不能 resume；需要继续时重新派发一个子代理。")
@@ -204,6 +206,7 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
             AgentTaskStatus.COMPLETED -> "已完成"
             AgentTaskStatus.FAILED -> "失败"
             AgentTaskStatus.CANCELLED -> "已停止"
+            AgentTaskStatus.STALLED -> "已自动收尾"
         }
 
         /**

@@ -27,7 +27,7 @@ class AgentTasksToolCatalogTest {
 
         val properties = function.getJSONObject("parameters").getJSONObject("properties")
         assertEquals(
-            setOf("running", "completed", "failed", "cancelled", "all"),
+            setOf("running", "completed", "failed", "cancelled", "stalled", "all"),
             properties.getJSONObject("status").getJSONArray("enum").toStringList().toSet(),
         )
         assertEquals(1, properties.getJSONObject("limit").getInt("minimum"))
@@ -56,6 +56,10 @@ class AgentTasksToolCatalogTest {
 
         val all = AgentTasksToolCatalog.parse(JSONObject().put("status", "all"))
         assertNull(all.status)
+
+        // 自动收尾要能单独筛：模型靠这个区分「用户叫停」与「卡住该重派」。
+        val stalled = AgentTasksToolCatalog.parse(JSONObject().put("status", "stalled"))
+        assertEquals(AgentTaskStatus.STALLED, stalled.status)
 
         val huge = AgentTasksToolCatalog.parse(JSONObject().put("limit", 9_999))
         assertEquals(AgentTaskLedger.MAX_ENTRIES, huge.limit)

@@ -16,6 +16,8 @@ internal data class AgentTaskLedgerSummary(
     val running: Int,
     val failed: Int,
     val cancelled: Int,
+    /** 停滞看门狗自动收尾：既不是“失败”（子代理没做错），也不是“用户叫停”。 */
+    val stalled: Int,
 )
 
 /**
@@ -23,7 +25,7 @@ internal data class AgentTaskLedgerSummary(
  *
  * 复用 [AgentTaskLedger.counts]（`tasks` 工具也用同一份），避免界面和工具各算一套导致
  * 两处数字对不上。将来加新状态时，`counts()` 会自动带上它，但这里不显式归类就会漏进
- * 「总数 - 已完成」的差额里 —— 单测用「四个桶之和 == total」守着这一点。
+ * 「总数 - 已完成」的差额里 —— 单测用「各桶之和 == total」守着这一点。
  */
 internal fun AgentTaskLedger.cardSummary(): AgentTaskLedgerSummary {
     val byStatus = counts()
@@ -33,5 +35,6 @@ internal fun AgentTaskLedger.cardSummary(): AgentTaskLedgerSummary {
         running = byStatus[AgentTaskStatus.RUNNING] ?: 0,
         failed = byStatus[AgentTaskStatus.FAILED] ?: 0,
         cancelled = byStatus[AgentTaskStatus.CANCELLED] ?: 0,
+        stalled = byStatus[AgentTaskStatus.STALLED] ?: 0,
     )
 }

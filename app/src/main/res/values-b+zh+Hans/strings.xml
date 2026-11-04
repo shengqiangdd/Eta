@@ -517,6 +517,7 @@
   <string name="tool_elapsed_seconds">%1$d 秒</string>
   <string name="subagent_stalled_seconds">已 %1$d 秒没有新进展 · 可能卡住</string>
   <string name="subagent_interrupted">已被你的插话中断 · 保留已有结果</string>
+  <string name="subagent_auto_stopped">长时间无进展，已自动收尾</string>
   <plurals name="tool_group_calls">
     <item quantity="other">%d 次</item>
   </plurals>
@@ -955,6 +956,7 @@
   <string name="linux_apk_stage_verifying">验证分析命令</string>
   <string name="linux_apk_stage_complete">APK 分析工具已就绪</string>
   <string name="status_cancelled">已取消</string>
+  <string name="task_status_stalled">已自动收尾</string>
   <string name="status_ready">已就绪</string>
   <string name="status_needs_attention">需注意</string>
   <plurals name="provider_configured_count">

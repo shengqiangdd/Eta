@@ -68,6 +68,8 @@ internal fun SubagentActivityRow(
     val interrupted = snapshot.status == SubagentActivitySnapshot.STATUS_INTERRUPTED
     // 停滞自动收尾与失败分开：工具结果是 ok=false，但用户该看到「已自动收尾」而不是一个红色错误。
     val stalled = snapshot.status == SubagentActivitySnapshot.STATUS_STALLED
+    // 文案走资源：硬编码中文在英文界面里会直接露出来。
+    val autoStoppedText = stringResource(R.string.subagent_auto_stopped)
     // 插话中断的工具结果也是 ok=false，界面层必须把“中断”从“失败”里摘出来，否则会被画成红色错误。
     val hardFailed = failed && !interrupted && !stalled
     // 用「最后一次真实事件」而不是当前时间算停滞：子代理在长工具调用里没有输出时，
@@ -88,7 +90,7 @@ internal fun SubagentActivityRow(
         }
         interrupted -> stringResource(R.string.subagent_interrupted)
         stalled -> snapshot.error?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
-            ?: "长时间无进展，已自动收尾"
+            ?: autoStoppedText
         failed -> snapshot.error?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
             ?: message.outcomeLine()
             ?: "执行未完成"

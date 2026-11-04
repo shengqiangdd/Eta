@@ -34,7 +34,7 @@ internal object AgentTasksToolCatalog {
             rawStatus.isEmpty() || rawStatus == "all" -> null
             else -> AgentTaskStatus.fromWire(rawStatus)
                 ?: throw IllegalArgumentException(
-                    "status 只能是 running / completed / failed / cancelled / all",
+                    "status 只能是 running / completed / failed / cancelled / stalled / all",
                 )
         }
         val limit = if (args.has("limit")) args.optInt("limit", 0) else DEFAULT_LIMIT
@@ -73,6 +73,7 @@ internal object AgentTasksToolCatalog {
                                             .put("completed")
                                             .put("failed")
                                             .put("cancelled")
+                                            .put("stalled")
                                             .put("all"),
                                     )
                                     .put("description", "Optional filter; omit or `all` for every entry."),

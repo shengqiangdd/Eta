@@ -106,8 +106,16 @@ internal fun ToolActivityRow(
 ) {
     val running = message.status == ToolActivityStatusUi.Running
     val elapsedSeconds = rememberRunningSeconds(message.id, running, message.startedAtMs)
+    val autoStoppedError = stringResource(R.string.subagent_auto_stopped)
     if (message.toolName == AgentSubagentToolCatalog.TOOL_NAME) {
-        val snapshot = remember(message.command, message.argumentsSummary, message.resultSummary, message.status) {
+        val snapshot = remember(
+            message.command,
+            message.argumentsSummary,
+            message.resultSummary,
+            message.status,
+            // 语言切了要重算：error 文案是资源字符串，不跟着键走就会停在旧语言。
+            autoStoppedError,
+        ) {
             val fallback = SubagentActivitySnapshot(
                 subagentType = message.argumentsSummary.substringBefore(" · ").ifBlank { "subagent" },
                 description = message.argumentsSummary.substringAfter(" · ", message.argumentsSummary),
@@ -126,7 +134,7 @@ internal fun ToolActivityRow(
             ) {
                 fallback.copy(
                     status = SubagentActivitySnapshot.STATUS_STALLED,
-                    error = "长时间无进展，已自动收尾",
+                    error = autoStoppedError,
                 )
             } else {
                 fallback

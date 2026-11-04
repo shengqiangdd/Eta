@@ -169,6 +169,30 @@ class AgentTaskLedgerTest {
         assertEquals(listOf("b", "a"), restored.entries.map { it.id })
     }
 
+    /**
+     * 新版写下的状态，旧版读的时候不能把整条记录丢掉。
+     *
+     * 台账文件是跨版本共享的：`stalled` 是后来加的，旧版不认识它。
+     * 如果按「认不出就丢」处理，用户升级再回退（或两个版本交替跑）时会看到
+     * 「我明明派过，记录没了」—— 丢的是执行痕迹，比显示得不准更糟。
+     */
+    @Test
+    fun unknownStatusFromANewerVersionDegradesInsteadOfDroppingTheEntry() {
+        val json = JSONObject()
+            .put("version", 1)
+            .put(
+                "tasks",
+                org.json.JSONArray().put(
+                    record("a", startedAt = 100).toJson().put("status", "some_future_status"),
+                ),
+            )
+
+        val restored = AgentTaskLedger.fromStoredJson(json.toString())!!
+
+        assertEquals(1, restored.entries.size)
+        assertEquals(AgentTaskStatus.CANCELLED, restored.entries.single().status)
+    }
+
     @Test
     fun corruptFileReadsAsNull() {
         assertNull(AgentTaskLedger.fromStoredJson("not json"))
@@ -217,6 +241,31 @@ class AgentTaskLedgerTest {
         assertTrue(section.contains("这些条目的上下文都已经失效"))
         assertTrue(expired.entries.single().renderLine().contains("不能 resume"))
         assertTrue(expired.resumeNote().contains("不能 resume"))
+    }
+
+    /**
+     * 提示里叫模型去哪拿 id，必须与实际行格式一致。
+     *
+     * 行格式是「[状态] 标题 · id（失效标记） — 摘要」：id 后面还可能跟失效标记和摘要，
+     * 所以「行末尾的 id」是错的 —— 模型照做只会拿到一段摘要文字，resume 必然报 SUBAGENT_NOT_FOUND。
+     */
+    @Test
+    fun resumeHintPointsAtTheIdWhereItActuallyIs() {
+        val ledger = AgentTaskLedger().upsert(
+            record("sub-7", status = AgentTaskStatus.COMPLETED, startedAt = 100, summary = "读完了日志"),
+        )
+
+        val line = ledger.entries.single().renderLine()
+        // 前提：id 确实不在行尾（否则这条测试就是在守一个不存在的坑）。
+        assertFalse("行尾是摘要，不是 id", line.endsWith("sub-7"))
+        assertTrue(line.contains(" · sub-7"))
+
+        val section = ledger.promptSection()
+        assertFalse(
+            "不该再让模型去行末尾找 id",
+            section.contains("末尾的 id"),
+        )
+        assertTrue("必须给出真实可用的定位方式", section.contains("「· 」后面的 id"))
     }
 
     @Test

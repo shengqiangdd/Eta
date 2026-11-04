@@ -753,12 +753,60 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 `STAGES=lint` 无新增问题（baseline 155 条命中）；`STAGES=assemble` 成功，
 APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
 
+下一节（复查批）改动后重跑：`STAGES=test` **1218／0**、`STAGES=lint` 仍 155 条无新增、
+`STAGES=assemble` 成功，APK 32,331,145 字节（sha256 前缀 `ff2c24e456eea72f…`）。
+
 值得记一笔的测试坑：用 `error()`（`IllegalStateException`）造批次失败是**测不到的** ——
 单次调用边界会把普通异常折成 `TOOL_ERROR` 工具结果，根本到不了批次层；只有 `Error`
 （断言失败、OOM 这类）才会穿过去。第一版用例就是这么「绿」的，已改成 `AssertionError`。
 
 
 验证计划（本机）：`AgentRunControllerTest` 新增父子暂停/取消 2 例，`SubagentSteeringWatchTest` 2 例，`AgentTaskLedgerTest` 进度覆盖 1 例，`AgentModelClientLoopTest` 并行启动 1 例；全量单测与 lint 门禁见本轮结果。
+
+#### 第一批补强的复查：四个「改完才发现」的问题（2026-11-03 晚）
+
+上一批把停滞收尾、resume 失效、批次不连坐做完了，但复查时发现四处仍在说假话/说不清：
+
+1. **停滞收尾在台账里被记成「已取消」**。`SubagentStallWatch` 是通过 `childController.cancel()`
+   生效的，所以停滞后 `cancelled` 同样为 true；原来那个 `if (steered) CANCELLED else if
+   (cancelled) CANCELLED else FAILED` 把「卡住自动放弃」全归成了「用户叫停」。
+   对模型的含义正好相反：前者该拆小重派，后者不该重试。新增 `AgentTaskStatus.STALLED`
+   （wire `stalled`），`SubagentExecutor.endStatusFor` 抽出判定并把 stalled 放在最前，
+   `tasks(status="stalled")` 可单独筛，台账卡用警告色单列一桶（既不红也不是灰）。
+2. **resume 提示指错了地方**。系统提示写「上面那一行末尾的 id」，而行的实际格式是
+   `[状态] 标题 · id（失效标记） — 摘要` —— id 后面还有东西，照做只会拿到一段摘要。
+   改成「把该行『· 』后面的 id 填进 `subagent(resume="<id>")`」。
+3. **并行批次失败的耗时写死 0**。`failedBatchOutcome` 传 `elapsedMs = 0L`，
+   卡片会显示「耗时 0 秒」，与用户刚看着它转了几分钟的事实冲突。
+   改成从批次提交时刻实测（`System.nanoTime()` 差值）。
+4. **界面硬编码中文**。同一句「长时间无进展，已自动收尾」在界面与数据层各写一遍，
+   而项目有 `values` / `values-b+zh+Hans` / `values-b+zh+Hant` 三套资源 ——
+   英文界面上会直接露中文。界面两处改用 `R.string.subagent_auto_stopped`，
+   `remember` 的键也带上该字符串（否则切语言不重算）；数据层的 `currentAction`
+   改为取实际结束原因（无进展/超时长），不再写一句泛化文案覆盖掉更具体的信息。
+
+**验证方式与前一批不同：这次每条都做了注入实验**（把代码改回错误写法，确认对应用例变红）：
+
+- 把 `cause, elapsedMs` 改回 `0L` → `oneFailingSubagentInAParallelBatchDoesNotDropTheOthers` 红。
+  连带发现原用例是**假绿**：它只断言 `elapsedMs != null`，而 0 也是非 null，且没有 sleep 时
+  实测耗时本来就接近 0 —— 已加 `Thread.sleep(60)` 与 `>= 60ms` 的下界断言。
+- 把提示文案改回「末尾的 id」→ `resumeHintPointsAtTheIdWhereItActuallyIs` 红。
+- 把 `stalled` 分支删掉 → **没有任何用例变红**，暴露出 `SubagentExecutor` 此前零测试覆盖。
+- 把 `fromStoredWire` 改回「认不出就丢」→ `unknownStatusFromANewerVersionDegradesInsteadOfDroppingTheEntry` 红。
+  这也说明光有实现不够：判定顺序错了照样全绿。已把该判定抽成
+  `SubagentExecutor.endStatusFor`（companion 纯函数）并新增 `SubagentEndStatusTest` 4 例；
+  把两个分支交换顺序后该用例立刻红。
+
+5. **新增 wire 状态会让旧版本静默丢条目**。`AgentTaskStatus.fromJson` 原来对认不出的
+   `status` 直接 `return null`，于是新版写下的 `stalled` 在旧版眼里就是“这条记录不存在” ——
+   台账文件跨版本共享，升级再回退 / 两个版本交替跑时，用户会看到执行痕迹凭空消失。
+   改为 `fromStoredWire`：认不出就降级成 `CANCELLED`（旧版至少诚实地说「已停止」）。
+   顺带发现 `version` 字段**只写不读**，是个空洞的兼容性装饰 —— 这次的降级策略不再依赖它。
+
+**顺带学到的编译器行为**：给 `AgentTaskStatus` 加枚举值后，`when` 只有三处编译报错
+（`statusLabel`、台账卡的颜色与文案），全部是穷举检查抓出来的 ——
+这正是「加状态时不能静默漏分类」的正确做法，`AgentTaskLedgerSummaryTest` 里
+「各桶之和 == total」那条用例是第二道保险。
 
 ### 第五批：后台任务上提示（2026-11-01）
 

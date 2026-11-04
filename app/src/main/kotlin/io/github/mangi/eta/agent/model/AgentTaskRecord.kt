@@ -8,10 +8,29 @@ internal enum class AgentTaskStatus(val wire: String) {
     COMPLETED("completed"),
     FAILED("failed"),
     CANCELLED("cancelled"),
+
+    /**
+     * 停滞看门狗自动收尾（长时间无进展 / 超单次上限）。
+     *
+     * 为什么不归入 [CANCELLED]：两者对模型的含义完全相反 —— 「用户叫停」不该重试，
+     * 「卡住自动放弃」应该拆小重派。归在一起的话，`tasks(status="cancelled")` 会把
+     * 一次可恢复的失败读成用户主动结束，模型于是不再尝试。
+     */
+    STALLED("stalled"),
     ;
 
     companion object {
         fun fromWire(value: String): AgentTaskStatus? = entries.firstOrNull { it.wire == value }
+
+        /**
+         * 读落盘台账时用：认不出的状态**降级**而不是丢整条。
+         *
+         * 为什么不能直接丢弃：台账文件是跨版本共享的。新版写下的 `stalled` 在旧版眼里不认识，
+         * 旧版每次启动、每次 `tasks` 都会把那一条静默漏掉 —— 用户看到的是“我明明派过，记录没了”。
+         * 降到 [CANCELLED]：旧版至少能诚实地说「已停止」，而不是凭空删一行执行痕迹。
+         */
+        fun fromStoredWire(value: String): AgentTaskStatus =
+            fromWire(value) ?: CANCELLED
     }
 }
 
@@ -62,7 +81,7 @@ internal data class AgentTaskRecord(
         .put("updated_at", updatedAt ?: JSONObject.NULL)
         .put("session_expired", sessionExpired)
 
-    /** 给模型看的一行；摘要另起，不拼进同一行。id 放最后，方便直接拿去 resume。 */
+    /** 给模型看的一行；状态在前、id 紧跟标题，摘要另起不拼进首行。 */
     fun renderLine(): String = buildString {
         append("[").append(status.wire).append("] ")
         append(title)
@@ -92,8 +111,8 @@ internal data class AgentTaskRecord(
             val id = raw.optString("id").trim()
             val kind = raw.optString("kind").trim()
             val title = raw.optString("title").trim()
-            val status = AgentTaskStatus.fromWire(raw.optString("status").trim())
-            if (id.isEmpty() || kind.isEmpty() || title.isEmpty() || status == null) return null
+            val status = AgentTaskStatus.fromStoredWire(raw.optString("status").trim())
+            if (id.isEmpty() || kind.isEmpty() || title.isEmpty()) return null
             val startedAt = raw.optLong("started_at", 0L)
             if (startedAt <= 0L) return null
             val endedAt = if (raw.isNull("ended_at")) null else raw.optLong("ended_at").takeIf { it > 0L }

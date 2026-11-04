@@ -395,6 +395,7 @@ internal class AgentLoop(
             Thread(runnable, "eta-subagent-batch").apply { isDaemon = true }
         }
         return try {
+            val startedAtNanos = System.nanoTime()
             val futures = toolCalls.map { call -> pool.submit(Callable { outcomeFor(call) }) }
             futures.mapIndexed { index, future ->
                 try {
@@ -407,7 +408,10 @@ internal class AgentLoop(
                     // 取消是终止信号，必须往外抛；其它异常只影响它自己那一个子代理。
                     if (cause is AgentRunCancelledException) throw cause
                     runController.throwIfCancelled()
-                    failedBatchOutcome(round, toolCalls[index], cause)
+                    // 从提交算起：失败之前它可能已经跑了很久，写 0 会让卡片显示「耗时 0 秒」。
+                    // 捕获到异常的那一刻就是它的终态，误差只是取结果前的排队时间。
+                    val elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000
+                    failedBatchOutcome(round, toolCalls[index], cause, elapsedMs)
                 }
             }
         } finally {
@@ -430,6 +434,7 @@ internal class AgentLoop(
         round: Int,
         toolCall: AgentModelClient.ToolCall,
         cause: Throwable,
+        elapsedMs: Long,
     ): ToolOutcome {
         val result = AgentModelClient.ToolResult(
             content = JSONObject()
@@ -439,7 +444,6 @@ internal class AgentLoop(
                 .put("tool_call_id", toolCall.id)
                 .toString(),
         )
-        val elapsedMs = 0L
         synchronized(toolFinalizeLock) {
             emitToolFinished(round, toolCall, result, elapsedMs)
             onToolTrace(round, toolCall, result, elapsedMs)

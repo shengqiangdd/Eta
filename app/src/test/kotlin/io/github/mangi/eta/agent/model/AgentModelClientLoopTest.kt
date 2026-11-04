@@ -1050,7 +1050,12 @@ class AgentModelClientLoopTest {
             toolExecutor = AgentModelClient.ToolExecutor { call ->
                 // 用 Error 而不是 Exception：本地工具的普通异常已被 executeTool 折成 TOOL_ERROR，
                 // 能穿过单次调用边界到达批次层的只有 Error（断言失败、OOM）这类。
-                if (call.id == "sub-bad") throw AssertionError("boom from sub-bad")
+                if (call.id == "sub-bad") {
+                    // 真的跑一会儿再炸：真实子代理是跑了几分钟才出事，
+                    // 不睡一下就分不出「写了实测耗时」和「写死 0」。
+                    Thread.sleep(60L)
+                    throw AssertionError("boom from sub-bad")
+                }
                 AgentModelClient.ToolResult("""{"ok":true,"summary":"A done"}""")
             },
             runController = AgentRunController(),
@@ -1071,6 +1076,15 @@ class AgentModelClientLoopTest {
             "两个调用都要有终态，避免界面留一张永远转圈的工具卡",
             2,
             events.filterIsInstance<AgentEvent.ToolFinished>().size,
+        )
+        // 失败那一个的耗时必须是实测的：写死 0 的话卡片会显示「耗时 0 秒」，
+        // 与用户刚刚看着它转了几分钟的事实矛盾。
+        val failedElapsed = events.filterIsInstance<AgentEvent.ToolFinished>()
+            .first { it.toolCallId == "sub-bad" }
+            .elapsedMs
+        assertTrue(
+            "失败调用的耗时应当是实测值（>= 60ms），实际 $failedElapsed",
+            failedElapsed != null && failedElapsed >= 60L,
         )
     }
 
