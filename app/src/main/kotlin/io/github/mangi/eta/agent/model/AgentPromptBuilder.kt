@@ -344,6 +344,16 @@ internal object AgentPromptBuilder {
                 }
                 appendLine("</memory_learnings>")
             }
+            // 自评块放在记忆之后：它描述「我自己的行为」，优先级低于用户的稳定偏好，
+            // 但比任何工具都靠前 —— 否则模型读到它时已经犯完错了。
+            if (context.selfBrief.isNotBlank()) {
+                appendLine()
+                appendLine("<self_review>")
+                appendLine("以下是根据你最近的运行追踪自动统计的自身表现。这是**你**的数据，不是用户的。")
+                appendLine("遇到列出的错误码时，先按对应改法处理，不要原样重试。")
+                appendLine(context.selfBrief)
+                appendLine("</self_review>")
+            }
         }.trim()
         return systemMessage(body)
     }

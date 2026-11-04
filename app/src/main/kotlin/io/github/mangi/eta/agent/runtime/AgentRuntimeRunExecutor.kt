@@ -22,7 +22,9 @@ import io.github.mangi.eta.agent.model.AgentHttpClient
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
 import io.github.mangi.eta.agent.memory.AgentLearningRecorder
+import io.github.mangi.eta.agent.memory.AgentSelfBrief
 import io.github.mangi.eta.agent.memory.ConversationMemoryPins
+import io.github.mangi.eta.agent.trace.AgentSelfStatsLoader
 import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
 import io.github.mangi.eta.agent.terminal.BackgroundEvents
 import io.github.mangi.eta.agent.terminal.BackgroundTasksSection
@@ -205,6 +207,18 @@ internal class AgentRuntimeRunExecutor(
                         conversationId = conversationId,
                         snapshot = AgentMemoryRepository.snapshot(),
                         contextWindow = request.config.contextWindow,
+                        // 自评只在本会话首次注入时算一次；之后由 pin 冻结，
+                        // 否则「我自己又跑了一轮」会让系统提示每轮都变、前缀缓存失效。
+                        selfBriefSource = {
+                            runCatching {
+                                AgentSelfBrief.render(AgentSelfStatsLoader.load())
+                            }.getOrElse { throwable ->
+                                AndroidAgentLogger.warnThrottled("agent_self_brief_failed") {
+                                    "Agent self brief unavailable: type=${throwable.safeLogType()}"
+                                }
+                                ""
+                            }
+                        },
                     )
                 }.getOrElse { throwable ->
                     AndroidAgentLogger.warnThrottled("agent_memory_context_failed") {

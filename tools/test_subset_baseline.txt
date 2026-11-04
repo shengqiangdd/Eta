@@ -61,7 +61,6 @@ io.github.mangi.eta.agent.media.AgentImageCodecTest
 io.github.mangi.eta.agent.memory.AgentLearningRecorderTest
 io.github.mangi.eta.agent.memory.AgentMemoryContextBuilderTest
 io.github.mangi.eta.agent.memory.AgentMemoryHeadingsTest
-io.github.mangi.eta.agent.memory.ConversationMemoryPinsTest
 io.github.mangi.eta.agent.model.AgentAskUserToolCatalogTest
 io.github.mangi.eta.agent.model.AgentCompactionProviderTest
 io.github.mangi.eta.agent.model.AgentCompactionReasoningTest

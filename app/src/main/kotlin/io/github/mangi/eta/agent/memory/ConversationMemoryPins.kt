@@ -18,6 +18,15 @@ internal object ConversationMemoryPins {
         val context: AgentMemoryContext,
         val contextWindow: Int?,
         var knownRevision: String,
+        /**
+         * 首次注入时定下的自评块。
+         *
+         * **必须单独存**，不能跟着 [context] 一起按 revision 重建：
+         * 记忆被改（revision 变）→ context 重建 → 若自评也跟着重算，
+         * 系统提示就会因为「我自己的 trace 又多了一条」而变，前缀缓存照样失效。
+         * 自评反映的是「这段时期我的表现」，本来就不需要每轮精确 —— 会话内冻结反而更可信。
+         */
+        var selfBrief: String = "",
     )
 
     private const val MAX_PINS = 32
@@ -27,15 +36,28 @@ internal object ConversationMemoryPins {
     }
 
     @Synchronized
-    fun contextFor(conversationId: String?, snapshot: AgentMemorySnapshot, contextWindow: Int?): AgentMemoryContext {
+    fun contextFor(
+        conversationId: String?,
+        snapshot: AgentMemorySnapshot,
+        contextWindow: Int?,
+        /** 自评块的数据源；null 表示本次没取（读不到或未启用），沿用会话内已定的那份。 */
+        selfBriefSource: (() -> String)? = null,
+    ): AgentMemoryContext {
         if (conversationId != null) {
             val pin = pins[conversationId]
             if (pin != null && pin.knownRevision == snapshot.revision && pin.contextWindow == contextWindow) {
                 return pin.context
             }
         }
-        val context = AgentMemoryContextBuilder.build(snapshot, contextWindow)
-        if (conversationId != null) pins[conversationId] = Pin(context, contextWindow, snapshot.revision)
+        var context = AgentMemoryContextBuilder.build(snapshot, contextWindow)
+        val existing = conversationId?.let { pins[it] }
+        // 优先沿用会话内已经定下的自评块；只有首轮（没有 pin）才真正去取。
+        val brief = existing?.selfBrief?.takeIf { it.isNotEmpty() }
+            ?: selfBriefSource?.invoke().orEmpty()
+        if (brief.isNotEmpty()) context = context.copy(selfBrief = brief)
+        if (conversationId != null) {
+            pins[conversationId] = Pin(context, contextWindow, snapshot.revision, brief)
+        }
         return context
     }
 

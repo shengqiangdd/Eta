@@ -17,6 +17,14 @@ internal data class AgentMemoryContext(
     val learningsTotal: Int = 0,
     /** 本次注入的条目数。 */
     val learningsShown: Int = 0,
+    /**
+     * 「我最近哪些工具常失败、该怎么改」的自评；空串表示没数据或不值得注入。
+     *
+     * 与 [learnings] 的区别：[learnings] 是**跨对话**累积的经验教训（写进 MEMORY.md），
+     * 这一份是**近期 trace 的现算投影**，不进记忆文件，也不该被 memory_write 影响。
+     * 会话内必须保持不变（见 [ConversationMemoryPins]），否则系统提示每轮都变、前缀缓存失效。
+     */
+    val selfBrief: String = "",
 ) {
     companion object {
         val DISABLED = AgentMemoryContext(
