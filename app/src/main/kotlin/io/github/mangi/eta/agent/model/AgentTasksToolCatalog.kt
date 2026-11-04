@@ -50,7 +50,10 @@ internal object AgentTasksToolCatalog {
                     "their ids, status, a one-line summary, and the latest progress of running entries. " +
                     "It survives across turns, so a subagent " +
                     "started in an earlier turn can still be found and resumed with " +
-                    "`subagent(resume=\"<id>\", ...)` instead of redoing its work. " +
+                    "`subagent(resume=\"<id>\", ...)` instead of redoing its work — but subagent " +
+                    "contexts live in memory only: after a process restart the ledger marks them " +
+                    "with `session_expired=true` / “上下文已失效”, and resuming those will fail. " +
+                    "Check `resumable` / `resume_note` before resuming, and re-dispatch when it is 0. " +
                     "Read-only: the ledger is written by the runtime when a subagent starts and ends; " +
                     "this tool cannot change it. Defaults to the newest $DEFAULT_LIMIT entries " +
                     "(newest first); `status=\"running\"` answers \"what is still running\".",

@@ -62,6 +62,13 @@ internal data class SubagentActivitySnapshot(
         const val STATUS_CANCELLED = "cancelled"
         /** 用户插话把当前子代理中断，保留部分结果，由父 Agent 接着处理新指令。 */
         const val STATUS_INTERRUPTED = "interrupted"
+        /**
+         * 长时间没有进展，被停滞看门狗自动收尾。
+         *
+         * 与 [STATUS_FAILED] 分开：它不是子代理做错了什么，而是「任务太大或上游卡住了」——
+         * 界面该显示「已自动收尾」而不是一个红色错误，主 Agent 也该考虑拆小重新派发。
+         */
+        const val STATUS_STALLED = "stalled"
 
         private const val SNAPSHOT_PREFIX = "{\"subagentId\":"
 

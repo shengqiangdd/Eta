@@ -761,6 +761,9 @@ internal class AgentLocalTools(
             .put("total", ledger.entries.size)
             .put("shown", entries.size)
             .put("summary", ledger.renderSummary())
+            // 直接告诉模型「哪些还能 resume」：否则它只能看到一串 id，照着 resume 一个失效的上下文。
+            .put("resumable", ledger.entries.count { !it.sessionExpired })
+            .put("expired", ledger.entries.count { it.sessionExpired })
             .put(
                 "tasks",
                 JSONArray().also { array ->
@@ -769,6 +772,7 @@ internal class AgentLocalTools(
                     }
                 },
             )
+            .put("resume_note", ledger.resumeNote())
             .toString()
     }
 

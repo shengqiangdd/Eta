@@ -90,6 +90,41 @@ class AgentTaskLedgerStoreTest {
         assertEquals("完成", entry.summary)
     }
 
+    /**
+     * 跨进程后连「已完成」也不能 resume：状态没变，但子代理上下文（纯内存）已经没了。
+     * 不标这一位的话，模型看到一条 completed 记录就会去 resume，拿到 SUBAGENT_NOT_FOUND。
+     */
+    @Test
+    fun completedEntriesFromAnotherProcessAreMarkedNotResumable() {
+        val before = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+        before.recordStarted("c", record("sub-a"))
+        before.recordFinished("c", "sub-a", AgentTaskStatus.COMPLETED, "完成", 2_000L)
+
+        val restarted = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b").load("c")
+        val entry = restarted.entries.single()
+        assertTrue("上一进程的子代理上下文不可能还原", entry.sessionExpired)
+        assertEquals(0, restarted.resumableCount)
+        assertEquals(AgentTaskStatus.COMPLETED, entry.status)
+    }
+
+    /**
+     * 修一个真实的坑：进程重启后，一旦有人写盘，文件 owner 就变成新进程了；
+     * 只看文件级 owner 的话，重启前派过的旧条目会重新显得「可以 resume」。
+     * 条目上的标记必须能跨过这次写盘活下来。
+     */
+    @Test
+    fun expiredFlagSurvivesANewProcessWritingTheSameFile() {
+        AgentTaskLedgerStore(temporaryFolder.root, owner = "process-a")
+            .recordStarted("c", record("sub-a"))
+
+        val after = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b")
+        after.recordStarted("c", record("sub-b", startedAt = 2_000L))
+
+        val entries = AgentTaskLedgerStore(temporaryFolder.root, owner = "process-b").load("c").entries
+        assertTrue("重启前那条必须仍标记为失效", entries.first { it.id == "sub-a" }.sessionExpired)
+        assertFalse("本进程刚派的那条还能接着用", entries.first { it.id == "sub-b" }.sessionExpired)
+    }
+
     @Test
     fun successfulWritesBumpTheChangeSignalSoTheCardRefreshes() {
         val before = AgentTaskLedgerStore.changes.value

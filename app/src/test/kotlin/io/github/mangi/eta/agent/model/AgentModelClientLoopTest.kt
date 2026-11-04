@@ -1025,6 +1025,65 @@ class AgentModelClientLoopTest {
         assertTrue(provider.requests.last().toString().contains("sub-b"))
     }
 
+    /**
+     * 一个子代理抛异常不能连坐整批：其它子代理已经真实跑完（台账也记了），
+     * 整批抛出会让它们的 ToolResult 全丢，模型只能重新派一遍。
+     */
+    @Test
+    fun oneFailingSubagentInAParallelBatchDoesNotDropTheOthers() {
+        val provider = ScriptedProvider(
+            assistant(
+                finishReason = "tool_calls",
+                toolCalls = listOf(
+                    toolCall("sub-ok", "subagent", """{"description":"A","prompt":"do A"}"""),
+                    toolCall("sub-bad", "subagent", """{"description":"B","prompt":"do B"}"""),
+                ),
+            ),
+            assistant(content = "汇总完成", finishReason = "stop"),
+        )
+        val events = java.util.Collections.synchronizedList(mutableListOf<AgentEvent>())
+        val loop = AgentLoop(
+            config = modelConfig(),
+            messages = JSONArray().put(JSONObject().put("role", "user").put("content", "并行")),
+            tools = JSONArray().put(subagentSchema()),
+            provider = provider,
+            toolExecutor = AgentModelClient.ToolExecutor { call ->
+                // 用 Error 而不是 Exception：本地工具的普通异常已被 executeTool 折成 TOOL_ERROR，
+                // 能穿过单次调用边界到达批次层的只有 Error（断言失败、OOM）这类。
+                if (call.id == "sub-bad") throw AssertionError("boom from sub-bad")
+                AgentModelClient.ToolResult("""{"ok":true,"summary":"A done"}""")
+            },
+            runController = AgentRunController(),
+            traceFormatter = AgentTraceFormatter(),
+            onEvent = events::add,
+        )
+        try {
+            val result = loop.run()
+            assertEquals("汇总完成", result.content)
+        } catch (error: Throwable) {
+            throw AssertionError("单个子代理异常不该让整轮失败：${error.message}", error)
+        }
+
+        val followUp = provider.requests.last().toString()
+        assertTrue("成功的那个子代理结果必须留在上下文里", followUp.contains("A done"))
+        assertTrue("失败的那个要有可识别的错误码", followUp.contains("SUBAGENT_BATCH_ERROR"))
+        assertEquals(
+            "两个调用都要有终态，避免界面留一张永远转圈的工具卡",
+            2,
+            events.filterIsInstance<AgentEvent.ToolFinished>().size,
+        )
+    }
+
+    private fun subagentSchema(): JSONObject = JSONObject()
+        .put("type", "function")
+        .put(
+            "function",
+            JSONObject()
+                .put("name", "subagent")
+                .put("description", "fake")
+                .put("parameters", JSONObject().put("type", "object")),
+        )
+
     private fun modelConfig(terminalTools: Boolean = false): AgentModelClient.ModelConfig =
         AgentModelClient.ModelConfig(
             baseUrl = "https://example.invalid/v1",

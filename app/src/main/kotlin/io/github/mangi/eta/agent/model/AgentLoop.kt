@@ -396,23 +396,55 @@ internal class AgentLoop(
         }
         return try {
             val futures = toolCalls.map { call -> pool.submit(Callable { outcomeFor(call) }) }
-            futures.map { future ->
+            futures.mapIndexed { index, future ->
                 try {
                     future.get()
                 } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw AgentRunCancelledException()
                 } catch (failed: ExecutionException) {
-                    when (val cause = failed.cause) {
-                        is AgentRunCancelledException -> throw cause
-                        is Throwable -> throw cause
-                        else -> throw failed
-                    }
+                    val cause = failed.cause ?: failed
+                    // 取消是终止信号，必须往外抛；其它异常只影响它自己那一个子代理。
+                    if (cause is AgentRunCancelledException) throw cause
+                    runController.throwIfCancelled()
+                    failedBatchOutcome(round, toolCalls[index], cause)
                 }
             }
         } finally {
             pool.shutdownNow()
         }
+    }
+
+    /**
+     * 把一个并行子代理的意外异常折成**它自己**的失败结果。
+     *
+     * 为什么不能整批抛出：这几个子代理都已经在跑，各自的结果都真实存在（台账里也已经记了完成
+     * 或失败）；整批抛会让父 loop 提前失败，其它子代理的结果全部丢掉，而台账说它们完成了 ——
+     * 界面、台账、模型三方各说一套。逐个折叠后：成功的仍是成功结果，失败的只有一个，
+     * 模型能看见剩下的部分并重新规划。
+     *
+     * 只发 ToolFinished，不补 ToolStarted：异常可能发生在开始事件之后（那时再发一次
+     * 会让同一次调用出现两个开始）。投影层按 toolCallId 找现有卡片，找不到就跳过，两边都安全。
+     */
+    private fun failedBatchOutcome(
+        round: Int,
+        toolCall: AgentModelClient.ToolCall,
+        cause: Throwable,
+    ): ToolOutcome {
+        val result = AgentModelClient.ToolResult(
+            content = JSONObject()
+                .put("ok", false)
+                .put("code", "SUBAGENT_BATCH_ERROR")
+                .put("message", "这个子代理执行时抛出异常：${cause.message ?: cause.javaClass.simpleName}")
+                .put("tool_call_id", toolCall.id)
+                .toString(),
+        )
+        val elapsedMs = 0L
+        synchronized(toolFinalizeLock) {
+            emitToolFinished(round, toolCall, result, elapsedMs)
+            onToolTrace(round, toolCall, result, elapsedMs)
+        }
+        return ToolOutcome(toolCall, result)
     }
 
     private fun executeTool(

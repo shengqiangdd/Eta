@@ -40,6 +40,10 @@ internal class SubagentExecutor(
     private val taskScopeId: String = "",
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val nanoTime: () -> Long = System::nanoTime,
+    /** 子代理无进展多久后自动收尾；<= 0 关闭（纯单测可缩短，真实运行用默认 10 分钟）。 */
+    private val stallIdleTimeoutMs: Long = SubagentStallWatch.DEFAULT_IDLE_TIMEOUT_MS,
+    /** 子代理总时长上限；<= 0 关闭。 */
+    private val stallMaxRuntimeMs: Long = SubagentStallWatch.DEFAULT_MAX_RUNTIME_MS,
 ) {
     private val latestSnapshots = ConcurrentHashMap<String, String>()
 
@@ -81,7 +85,9 @@ internal class SubagentExecutor(
             val existing = SubagentSessionStore.get(conversationKey, resumeId)
                 ?: return errorResult(
                     "SUBAGENT_NOT_FOUND",
-                    "未找到可续接的 Subagent：$resumeId（可能已过期或不属于当前会话）",
+                    "未找到可续接的 Subagent：$resumeId。子代理上下文只存在内存里，进程重启后不会保留；" +
+                        "如果这个 id 来自上一轮（或重启前），那段上下文已经失效，不能用 resume 恢复。" +
+                        "请直接用新的 prompt 重新派发一个子代理（不要传 resume），把需要的背景重述一遍。",
                 )
             if (!existing.running.compareAndSet(false, true)) {
                 return errorResult(
@@ -173,6 +179,16 @@ internal class SubagentExecutor(
             hasPendingSteering = { parentController.hasPendingSteering },
             cancelChild = { childController.cancel() },
         )
+        // 停滞收尾：界面早就提示「可能卡住」，但那只是文案 —— 真正卡死的子代理会把父 run 一起挂住。
+        // 按「最后一次真实事件」判，超过阈值就取消子控制器，让工具带部分结果尽快返回。
+        val stallWatch = SubagentStallWatch(
+            cancelChild = { childController.cancel() },
+            lastActivityAtMs = tracker::lastActivityAtMs,
+            startedAtMs = startedAt,
+            now = nowMillis,
+            idleTimeoutMs = stallIdleTimeoutMs,
+            maxRuntimeMs = stallMaxRuntimeMs,
+        )
 
         val childToolExecutor = AgentModelClient.ToolExecutor { subCall ->
             childController.throwIfCancelled()
@@ -257,16 +273,22 @@ internal class SubagentExecutor(
 
             val parentCancelled = parentController.isCancelled
             val steered = steeringWatch.wasSteered && !parentCancelled
+            val stalled = stallWatch.reason?.takeIf { !parentCancelled && !steered }
             val cancelled = parentCancelled ||
                 childController.isCancelled ||
                 throwable is AgentRunCancelledException
             val errorMessage = when {
                 steered -> "用户插话，已中断当前子代理"
+                stalled != null && stalled == SubagentStallWatch.Reason.NO_PROGRESS ->
+                    "子代理 ${stallIdleTimeoutMs / 60_000} 分钟没有任何新进展，已自动停止并保留已有结果"
+                stalled != null ->
+                    "子代理已运行 ${stallMaxRuntimeMs / 60_000} 分钟，超过单次上限，已自动停止并保留已有结果"
                 cancelled -> "已停止"
                 else -> throwable.message ?: throwable.javaClass.simpleName
             }
             when {
                 steered -> tracker.markInterrupted(partial)
+                stalled != null -> tracker.markStalled(errorMessage, partial)
                 cancelled -> tracker.markCancelled(partial)
                 else -> tracker.markFailed(errorMessage, partial)
             }
@@ -291,6 +313,7 @@ internal class SubagentExecutor(
                         "code",
                         when {
                             interruptedStatus -> "SUBAGENT_INTERRUPTED"
+                            stalled != null -> "SUBAGENT_STALLED"
                             cancelled -> "SUBAGENT_CANCELLED"
                             else -> "SUBAGENT_FAILED"
                         },
@@ -303,6 +326,7 @@ internal class SubagentExecutor(
                         "status",
                         when {
                             interruptedStatus -> SubagentActivitySnapshot.STATUS_INTERRUPTED
+                            stalled != null -> SubagentActivitySnapshot.STATUS_STALLED
                             cancelled -> SubagentActivitySnapshot.STATUS_CANCELLED
                             else -> SubagentActivitySnapshot.STATUS_FAILED
                         },
@@ -316,7 +340,17 @@ internal class SubagentExecutor(
                                 "用户已经插话。请先按用户的新指令处理；需要继续原子任务时再调用 subagent(resume=\"$subagentId\", ...)。",
                             )
                         }
-                        if (!cancelled) {
+                        if (stalled != null) {
+                            put("stall_reason", stalled.wire)
+                            put("elapsed_ms", nowMillis() - startedAt)
+                            put("idle_ms", nowMillis() - tracker.lastActivityAtMs())
+                            put(
+                                "next_step",
+                                "这个子代理已经自动收尾，不要原样重派同一个超大任务：把剩下的部分拆小" +
+                                    "（一次只要一个可验证的结果），或由主 Agent 直接接手已完成的部分。",
+                            )
+                        }
+                        if (!cancelled && stalled == null) {
                             put(
                                 "resume_hint",
                                 "可调用 subagent(resume=\"$subagentId\", prompt=\"继续完成未完部分\", description=\"$description\") 恢复执行，或由主 Agent 直接接手。",
@@ -327,6 +361,7 @@ internal class SubagentExecutor(
                 command = latestSnapshots[toolCall.id],
             )
         } finally {
+            stallWatch.close()
             steeringWatch.close()
             controllerBinding.close()
         }
@@ -645,6 +680,16 @@ internal class SubagentExecutor(
             currentAction = error.lineSequence().firstOrNull()?.take(80) ?: "执行失败"
         }
 
+        /** 停滞自动收尾：保留部分输出，但状态是「已自动结束」而不是「失败」。 */
+        fun markStalled(error: String, partial: String) = synchronized(lock) {
+            finishAllRunningSteps(SubagentStepSnapshot.STATUS_FAILED)
+            lastActivityAtMs = System.currentTimeMillis()
+            status = SubagentActivitySnapshot.STATUS_STALLED
+            errorText = error.take(1_000)
+            if (partial.isNotBlank()) finalOutput = partial.take(MAX_OUTPUT_CHARS)
+            currentAction = "长时间无进展，已自动收尾"
+        }
+
         fun markCancelled(partial: String) = synchronized(lock) {
             finishAllRunningSteps(SubagentStepSnapshot.STATUS_FAILED)
             lastActivityAtMs = System.currentTimeMillis()
@@ -675,6 +720,14 @@ internal class SubagentExecutor(
         fun toolCount(): Int = synchronized(lock) {
             steps.count { it.kind == SubagentStepSnapshot.KIND_TOOL }
         }
+
+        /**
+         * 最后一次真实事件的时间；停滞看门狗据此判断「是不是真的不动了」。
+         *
+         * 必须走锁：事件在模型线程上写，看门狗在另一个线程上读。读到一个半新不旧的值并不致命，
+         * 但并发读写一个 Long 在 JVM 上不保证原子。
+         */
+        fun lastActivityAtMs(): Long = synchronized(lock) { lastActivityAtMs }
 
         fun snapshot(): SubagentActivitySnapshot = synchronized(lock) {
             val liveOutput = if (finalOutput.isNotBlank()) {

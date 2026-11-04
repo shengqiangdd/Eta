@@ -45,10 +45,14 @@ internal class AgentTaskLedgerStore(
             ?: return AgentTaskLedger()
         val stored = runCatching { JSONObject(text) }.getOrNull() ?: return AgentTaskLedger()
         val ledger = AgentTaskLedger.fromStoredJson(stored) ?: return AgentTaskLedger()
-        // 写者身份不同 = 这份记录来自上一个进程；那时的「运行中」不可能还在跑。
+        // 写者身份不同 = 这份记录来自上一个进程。两件事同时成立：
+        // 1) 那时的「运行中」不可能还在跑 → 判成已停止；
+        // 2) 那时的子代理历史也不存在了（SubagentSessionStore 是纯内存）→ 整份台账标成不能 resume。
+        // 只看 1) 会留下一个更隐蔽的坑：文件级 owner 会在下一次写盘时变成当前进程，
+        // 于是「重启前派过的已完成任务」看上去又能 resume 了，而 resume 必然失败。
         // 只在内存里修正、不在这里写盘：读路径要快，修正会在下一次 start/finish 落盘。
         if (stored.optString("owner") == owner) return ledger
-        return ledger.abandonRunning() ?: ledger
+        return ledger.abandonRunning(expireSessions = true) ?: ledger
     }
 
     /** 记一条"开始了"；同 id 覆盖（resume 同一个子代理时保持台账只有一条）。 */

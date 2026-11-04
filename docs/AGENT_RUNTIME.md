@@ -722,6 +722,42 @@ revision 乐观并发 + 空闲时自动续接轮次」；Eta 取前半段，明�
 
 后台任务卡也补了只读日志详情：点任意任务行打开 `BackgroundTaskLogSheet`，显示命令与日志尾部（最多 16 KB，运行中每秒刷新），不再需要让用户去终端页翻。
 
+#### 第一批补强：卡死收尾 + 重启后不再教模型去 resume（2026-11-03）
+
+上一轮把「能跑」补齐了，这一轮把「跑坏了会怎样」补齐。三处都是真实会把人坑在里面的路径：
+
+1. **停滞的子代理自己收尾**：新增 `SubagentStallWatch`（2 秒轮询，纯函数 `evaluate` 便于单测）。
+   两条判据：**无进展**（默认 10 分钟没有任何子代理事件）与**总时长**（默认 45 分钟）。
+   命中即取消子控制器，`SubagentExecutor` 捕获取消后写 `STATUS_STALLED` / `SUBAGENT_STALLED`，
+   带 `stall_reason`（`no_progress` / `max_runtime`）、`elapsed_ms`、`idle_ms`、`next_step`，
+   **保留 partial**。10 分钟这个数不是拍脑袋：必须比模型单次请求的读取超时宽，
+   否则一次正常的长请求就会被当成卡住（`SubagentStallWatchTest` 有用例守着这条不变量）。
+   两个阈值都 ≤ 0 时判据全关（测试或显式关闭时不能凭空收尾）。
+2. **重启后不再提醒 resume**：`SubagentSessionStore` 只活在内存里，进程重启后被 resume 必然
+   `SUBAGENT_NOT_FOUND`。台账因此新增 `sessionExpired`：`AgentTaskLedgerStore.load()` 发现
+   `owner` 不是当前进程时，连同 RUNNING 修正一起给所有条目打上这个标记；`promptSection()` 与
+   `tasks` 的 `resume_note` 两边同一口径 —— 全部失效时明确写「不能 resume，请不带 resume 重新派发」，
+   行尾也标「（上下文已失效，不能 resume）」。仍然列出 id（那是执行痕迹，有用），
+   只是不再教模型犯一次必然失败的错。已标过的条目不会重复产生新对象（读路径每轮都跑，不该无谓写盘）。
+3. **并行批次里一个炸了不连坐**：`AgentLoop` 原来的 `futures.map { it.get() }` 会让第一个异常直接冲出整批，
+   已经真实跑完、台账也记了的其它子代理结果全丢，模型只能重新派一遍。现在逐项取结果：
+   `ExecutionException` 转成**那一个调用**的失败结果（code `SUBAGENT_BATCH_ERROR`），保留其它成功结果；
+   取消仍然立刻外抛（那是父 run 的共同终态，不能降级成一个工具结果）。
+
+验证（本机）：`SubagentStallWatchTest` 5 例（无进展收尾／有进展活到硬上限／close 不误杀／
+硬上限优先且非正阈值关闭／默认 idle 宽于模型读取超时）；`AgentTaskLedgerTest` +2
+（失效前后 promptSection 与 resumeNote 口径、只打标记不重复产生新对象）；
+`AgentTaskLedgerStoreTest` +2（跨进程已完成条目也标失效、标记能跨进程落盘）；
+`AgentModelClientLoopTest` +1（并行批次里一个抛 `Error` 不影响另一个，两个调用都有终态）。
+`STAGES=test` **1211／0**（新类已进 `gate.sh` fast 名单，`check_test_subset.py` 绿）；
+`STAGES=lint` 无新增问题（baseline 155 条命中）；`STAGES=assemble` 成功，
+APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
+
+值得记一笔的测试坑：用 `error()`（`IllegalStateException`）造批次失败是**测不到的** ——
+单次调用边界会把普通异常折成 `TOOL_ERROR` 工具结果，根本到不了批次层；只有 `Error`
+（断言失败、OOM 这类）才会穿过去。第一版用例就是这么「绿」的，已改成 `AssertionError`。
+
+
 验证计划（本机）：`AgentRunControllerTest` 新增父子暂停/取消 2 例，`SubagentSteeringWatchTest` 2 例，`AgentTaskLedgerTest` 进度覆盖 1 例，`AgentModelClientLoopTest` 并行启动 1 例；全量单测与 lint 门禁见本轮结果。
 
 ### 第五批：后台任务上提示（2026-11-01）

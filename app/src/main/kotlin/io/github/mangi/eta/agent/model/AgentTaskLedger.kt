@@ -112,6 +112,9 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
         val settled = entries.filterNot { it.status == AgentTaskStatus.RUNNING }
         // entries 已按 startedAt 倒序，两组各自保序；运行中的先占名额，避免被一串刚收尾的任务挤出视野。
         val shown = (running + settled).take(maxLines)
+        // 跨进程后子代理历史就没了：这一段必须按条目实际状态给提示，
+        // 全部失效时还写「调用 resume 接着用」等于让模型去撞一次必然失败的工具调用。
+        val resumeable = entries.any { !it.sessionExpired }
         return buildString {
             appendLine("<subagent_tasks>")
             appendLine("本会话已派出的子代理及其当前状态（跨轮保留；这是执行痕迹，不是待办清单）：")
@@ -120,10 +123,30 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
             if (shown.size < entries.size) {
                 appendLine("另有 ${entries.size - shown.size} 条更早的任务未列出，需要完整列表时调用 tasks。")
             }
-            append("需要接着用其中某个子代理的上下文时，调用 subagent(resume=\"<上面那一行末尾的 id>\", ...)，不要从头再派一个。")
-            appendLine()
+            if (resumeable) {
+                append("需要接着用其中某个子代理的上下文时，调用 subagent(resume=\"<上面那一行末尾的 id>\", ...)，不要从头再派一个；")
+                appendLine("标了「上下文已失效」的条目不能 resume，那部分工作需要重新派发。")
+            } else {
+                appendLine("这些条目的上下文都已经失效（进程重启后子代理历史不会保留），不能 resume；需要继续时重新派发一个子代理。")
+            }
             append("</subagent_tasks>")
         }
+    }
+
+    /** 还能被 resume 的条目数；0 表示整份台账的上下文都已失效。 */
+    val resumableCount: Int get() = entries.count { !it.sessionExpired }
+
+    /**
+     * `tasks` 工具里的一句总说明，与 [promptSection] 同一口径。
+     *
+     * 两处必须一致：系统提示说「不能 resume」而工具输出不表态时，模型会以工具输出为准，
+     * 然后又去撞一次失败；反过来也一样。
+     */
+    fun resumeNote(): String = when {
+        entries.isEmpty() -> "本会话没有可续接的子代理。"
+        resumableCount == 0 -> "这些子代理的上下文都已失效（进程重启后不会保留），不能 resume；需要继续时重新派发一个子代理。"
+        resumableCount == entries.size -> "以上子代理都可以用 subagent(resume=\"<id>\", ...) 接着用它的上下文。"
+        else -> "共 ${entries.size} 条，其中 ${resumableCount} 条可以 resume；“session_expired=true” 的条目上下文已失效，不能 resume。"
     }
 
     /**
@@ -134,17 +157,28 @@ internal data class AgentTaskLedger(val entries: List<AgentTaskRecord> = emptyLi
      * 不修正的后果是 `tasks` 永远报「运行中」，用户等一个不会再更新的结果。
      *
      * 已有摘要不覆盖：那条摘要可能是上一轮真实写下的进度，只在没有摘要时补一句说明。
+     *
+     * [expireSessions] 为 true 时额外把**每一条**标成「上下文已失效」：子代理历史只活在内存里，
+     * 进程一变就全没了，这跟「还在不在跑」是两件独立的事 —— 一条已完成的记录同样不能 resume。
+     *
+     * 返回 null 表示没有任何需要修正的地方，调用方据此省一次写盘。
      */
-    fun abandonRunning(note: String = ORPHAN_NOTE): AgentTaskLedger? {
-        if (entries.none { it.status == AgentTaskStatus.RUNNING }) return null
+    fun abandonRunning(
+        note: String = ORPHAN_NOTE,
+        expireSessions: Boolean = false,
+    ): AgentTaskLedger? {
+        val needsFix = entries.any { it.status == AgentTaskStatus.RUNNING || (expireSessions && !it.sessionExpired) }
+        if (!needsFix) return null
         return AgentTaskLedger(
             entries.map { entry ->
+                val expired = entry.sessionExpired || expireSessions
                 if (entry.status != AgentTaskStatus.RUNNING) {
-                    entry
+                    entry.copy(sessionExpired = expired)
                 } else {
                     entry.copy(
                         status = AgentTaskStatus.CANCELLED,
                         summary = entry.summary?.takeIf { it.isNotBlank() } ?: note,
+                        sessionExpired = expired,
                     )
                 }
             },

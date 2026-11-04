@@ -108,7 +108,7 @@ internal fun ToolActivityRow(
     val elapsedSeconds = rememberRunningSeconds(message.id, running, message.startedAtMs)
     if (message.toolName == AgentSubagentToolCatalog.TOOL_NAME) {
         val snapshot = remember(message.command, message.argumentsSummary, message.resultSummary, message.status) {
-            SubagentActivitySnapshot.decode(message.command) ?: SubagentActivitySnapshot(
+            val fallback = SubagentActivitySnapshot(
                 subagentType = message.argumentsSummary.substringBefore(" · ").ifBlank { "subagent" },
                 description = message.argumentsSummary.substringAfter(" · ", message.argumentsSummary),
                 status = when (message.status) {
@@ -118,6 +118,19 @@ internal fun ToolActivityRow(
                 },
                 output = message.resultSummary.orEmpty(),
             )
+            // 归档回看时没有实时快照：从结果里把「自动收尾」认出来。
+            // 只看 ToolActivityStatusUi 的话，一个已经自动放弃的子代理会被画成普通失败。
+            SubagentActivitySnapshot.decode(message.command) ?: if (
+                fallback.status == SubagentActivitySnapshot.STATUS_FAILED &&
+                message.resultSummary.orEmpty().contains("SUBAGENT_STALLED")
+            ) {
+                fallback.copy(
+                    status = SubagentActivitySnapshot.STATUS_STALLED,
+                    error = "长时间无进展，已自动收尾",
+                )
+            } else {
+                fallback
+            }
         }
         SubagentActivityRow(
             message = message,

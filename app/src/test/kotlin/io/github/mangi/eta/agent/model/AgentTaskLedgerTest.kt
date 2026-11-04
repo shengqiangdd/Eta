@@ -199,6 +199,37 @@ class AgentTaskLedgerTest {
         assertFalse(line.contains("（subagent）"))
     }
 
+    /**
+     * 跨进程后台账仍会把旧 id 列出来（那是执行痕迹，有用的），但不能还教模型去 resume：
+     * 系统提示与 `tasks` 两边必须同一口径，否则模型会去调一个必然失败的工具。
+     */
+    @Test
+    fun sectionAndToolNoteStopPointingAtResumeOnceSessionsExpire() {
+        val live = AgentTaskLedger().upsert(record("a", status = AgentTaskStatus.COMPLETED, startedAt = 100))
+        assertTrue(live.promptSection().contains("subagent(resume="))
+        // 未失效时那段只是一句「标了失效的条目不能 resume」的提醒，不能出现「这些条目都已经失效」。
+        assertFalse(live.promptSection().contains("这些条目的上下文都已经失效"))
+        assertTrue(live.resumeNote().contains("都可以"))
+
+        val expired = live.abandonRunning(expireSessions = true)!!
+        val section = expired.promptSection()
+        assertFalse("全部失效时不该再指向 resume", section.contains("subagent(resume="))
+        assertTrue(section.contains("这些条目的上下文都已经失效"))
+        assertTrue(expired.entries.single().renderLine().contains("不能 resume"))
+        assertTrue(expired.resumeNote().contains("不能 resume"))
+    }
+
+    @Test
+    fun expiringOnlyTouchesTheFlagWhenNothingIsRunning() {
+        val settled = AgentTaskLedger().upsert(record("a", status = AgentTaskStatus.COMPLETED, startedAt = 100))
+        // 没有运行中的条目、且全部仍未标记 → 仍要返回一个新台账（否则标记就写不进去）。
+        val expired = settled.abandonRunning(expireSessions = true)!!
+        assertTrue(expired.entries.single().sessionExpired)
+        assertEquals(AgentTaskStatus.COMPLETED, expired.entries.single().status)
+        // 已经标过的不再重复产生新对象：读路径每轮都跑，不该无谓写盘。
+        assertNull(expired.abandonRunning(expireSessions = true))
+    }
+
     @Test
     fun progressOnlyTouchesRunningEntriesAndFinishClearsIt() {
         val ledger = AgentTaskLedger()

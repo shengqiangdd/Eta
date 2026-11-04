@@ -37,6 +37,17 @@ internal data class AgentTaskRecord(
     val progress: String? = null,
     /** 最后一次进度更新的 wall clock；结束态为收尾时间。 */
     val updatedAt: Long? = null,
+    /**
+     * 这条记录所属的子代理上下文已经不存在（进程重启），**不能再 resume**。
+     *
+     * 为什么记在条目上而不是只看文件级 owner：写盘会把整个文件标成新进程，只看 owner 的话，
+     * 「重启前派过、重启后又派了一个新的」这条旧记录会被当成可以续接，模型照着 resume
+     * 只会拿到一个失败。
+     *
+     * 一旦置位就保留到被 [AgentTaskLedger.MAX_ENTRIES] 挤掉：子代理历史只活在内存里，
+     * 重启后不会恢复，这一点不会随时间改变。
+     */
+    val sessionExpired: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -49,6 +60,7 @@ internal data class AgentTaskRecord(
         .put("ended_at", endedAt ?: JSONObject.NULL)
         .put("progress", progress ?: JSONObject.NULL)
         .put("updated_at", updatedAt ?: JSONObject.NULL)
+        .put("session_expired", sessionExpired)
 
     /** 给模型看的一行；摘要另起，不拼进同一行。id 放最后，方便直接拿去 resume。 */
     fun renderLine(): String = buildString {
@@ -56,6 +68,7 @@ internal data class AgentTaskRecord(
         append(title)
         if (kind.isNotBlank() && kind != KIND_SUBAGENT) append("（").append(kind).append("）")
         append(" · ").append(id)
+        if (sessionExpired) append("（上下文已失效，不能 resume）")
         summary?.takeIf { it.isNotBlank() }?.lineSequence()?.firstOrNull()?.let { first ->
             append(" — ").append(first.take(80))
         }
@@ -96,6 +109,7 @@ internal data class AgentTaskRecord(
                 endedAt = endedAt,
                 progress = raw.optString("progress").trim().takeIf { it.isNotEmpty() }?.take(MAX_PROGRESS_CHARS),
                 updatedAt = updatedAt,
+                sessionExpired = raw.optBoolean("session_expired", false),
             )
         }
     }

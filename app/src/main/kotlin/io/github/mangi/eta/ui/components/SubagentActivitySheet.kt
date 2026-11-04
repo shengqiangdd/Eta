@@ -66,8 +66,10 @@ internal fun SubagentActivityRow(
     val failed = message.status == ToolActivityStatusUi.Failed ||
         snapshot.status == SubagentActivitySnapshot.STATUS_FAILED
     val interrupted = snapshot.status == SubagentActivitySnapshot.STATUS_INTERRUPTED
+    // 停滞自动收尾与失败分开：工具结果是 ok=false，但用户该看到「已自动收尾」而不是一个红色错误。
+    val stalled = snapshot.status == SubagentActivitySnapshot.STATUS_STALLED
     // 插话中断的工具结果也是 ok=false，界面层必须把“中断”从“失败”里摘出来，否则会被画成红色错误。
-    val hardFailed = failed && !interrupted
+    val hardFailed = failed && !interrupted && !stalled
     // 用「最后一次真实事件」而不是当前时间算停滞：子代理在长工具调用里没有输出时，
     // 界面要能明确告诉用户“不是我没刷新，是它真的很久没动了”。
     val idleSeconds = rememberRunningSeconds(
@@ -85,6 +87,8 @@ internal fun SubagentActivityRow(
                 ?: if (snapshot.toolStepCount > 0) "已执行 ${snapshot.toolStepCount} 步" else "正在运行…"
         }
         interrupted -> stringResource(R.string.subagent_interrupted)
+        stalled -> snapshot.error?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: "长时间无进展，已自动收尾"
         failed -> snapshot.error?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
             ?: message.outcomeLine()
             ?: "执行未完成"
@@ -164,6 +168,7 @@ internal fun SubagentActivityRow(
             running = running,
             failed = hardFailed,
             interrupted = interrupted,
+            stalled = stalled,
         )
     }
 }
@@ -211,6 +216,7 @@ private fun SubagentInspectorContent(
     running: Boolean,
     failed: Boolean,
     interrupted: Boolean,
+    stalled: Boolean,
 ) {
     val density = LocalDensity.current
     val maxSheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.76f
@@ -356,7 +362,7 @@ private fun SubagentInspectorContent(
         }
 
         // 错误信息；插话中断不是错误，用中性色单独说明，避免用户误以为子代理崩了。
-        val error = snapshot.error?.takeIf { it.isNotBlank() && (failed || interrupted) }
+        val error = snapshot.error?.takeIf { it.isNotBlank() && (failed || interrupted || stalled) }
         if (error != null) {
             val errorColor = if (failed) StatusError else MiuixTheme.colorScheme.onSurfaceVariantSummary
             Text(
