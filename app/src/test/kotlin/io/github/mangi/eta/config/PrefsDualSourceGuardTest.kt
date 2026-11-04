@@ -59,6 +59,26 @@ class PrefsDualSourceGuardTest {
         assertTrue("同一个开关不能既写本地又写 remote，否则两边互相覆盖：$both", both.isEmpty())
     }
 
+    @Test
+    fun hookReadKeysMustBeVisibleToHookProcess() {
+        val hookKeys = hookReadKeys()
+        val local = localAgentKeyNames()
+        val visible = hookVisibleLocalKeyNames()
+        assertTrue("LOCAL_AGENT_KEYS 解析为空，正则可能失效", local.isNotEmpty())
+        assertTrue(
+            "HOOK_VISIBLE_LOCAL_KEYS 必须是 LOCAL_AGENT_KEYS 的子集，多出：${visible - local}",
+            visible.all { it in local },
+        )
+        val risky = hookKeys.filter { it in local && it !in visible }
+        assertTrue(
+            "这些键在 hook 里被读取，却既是「本地键」又不在 HOOK_VISIBLE_LOCAL_KEYS 里：$risky\n" +
+                "hook 进程读不到 App 私有 prefs，会拿到默认值 —— 界面开关对系统层无效。" +
+                "要么把它移出 LOCAL_AGENT_KEYS（设置页改用 prefs 写 remote），" +
+                "要么确认 reconcile 覆盖它之后登记进 HOOK_VISIBLE_LOCAL_KEYS。",
+            risky.isEmpty(),
+        )
+    }
+
     // ---- 源码解析 ----
 
     private fun findMainKotlin(): File {
@@ -87,6 +107,41 @@ class PrefsDualSourceGuardTest {
             .toList()
     }
 
+    /** `LOCAL_AGENT_KEYS` 里的键常量名（不是字符串值）。 */
+    private fun localAgentKeyNames(): Set<String> = keyNamesIn("LOCAL_AGENT_KEYS")
+
+    /** `HOOK_VISIBLE_LOCAL_KEYS` 里的键常量名。 */
+    private fun hookVisibleLocalKeyNames(): Set<String> = keyNamesIn("HOOK_VISIBLE_LOCAL_KEYS")
+
+    private fun keyNamesIn(collectionName: String): Set<String> {
+        val text = prefsFile.readText()
+        // 集合里只有常量名，没有嵌套括号，所以用 `[^)]*` 精确停在最近的一个 `)`。
+        // 不能用「一直吃到某个缩进的 `)`」：集合写成单行 `setOf()` 时它会睡过后面两个集合，
+        // 把无关常量也吃进来（注入实验真实踩到过，报出来的键名全是假的）。
+        val block = Regex(
+            "val $collectionName: Set<String> = setOf\\(([^)]*)\\)",
+            RegexOption.DOT_MATCHES_ALL,
+        ).find(text)?.groupValues?.get(1)
+            ?: error("找不到 $collectionName 定义，解析或代码结构变了")
+        return Regex("\\b([A-Z][A-Z0-9_]+)\\b")
+            .findAll(block)
+            .map { it.groupValues[1] }
+            .toSet()
+    }
+
+    /** hook 目录里用到的所有 `Prefs.Keys.XXX`（读取、比较、传参都算「hook 消费」）。 */
+    private fun hookReadKeys(): Set<String> {
+        val hookDir = File(mainKotlin, "io/github/mangi/eta/hook")
+        assertTrue("hook 源码目录不存在：$hookDir", hookDir.isDirectory)
+        val pattern = Regex("""Prefs\.Keys\.([A-Z][A-Z0-9_]*)""")
+        val keys = hookDir.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file -> pattern.findAll(file.readText()).map { it.groupValues[1] } }
+            .toSet()
+        assertTrue("没有解析到 hook 使用的配置键（只解析到 ${keys.size} 个），正则可能失效", keys.isNotEmpty())
+        return keys
+    }
+
     /** 所有 `localSwitch(context, Prefs.Keys.XXX)` 用到的键常量名。 */
     private fun localSwitchKeys(): Set<String> {
         val pattern = Regex("""localSwitch\(\s*context\s*,\s*Prefs\.Keys\.(\w+)""")
@@ -112,7 +167,7 @@ class PrefsDualSourceGuardTest {
     private fun localAgentKeys(): Set<String> {
         val text = prefsFile.readText()
         val block = Regex(
-            """val LOCAL_AGENT_KEYS: Set<String> = setOf\((.*?)\n\s*\)""",
+            "val LOCAL_AGENT_KEYS: Set<String> = setOf\\(([^)]*)\\)",
             RegexOption.DOT_MATCHES_ALL,
         ).find(text)?.groupValues?.get(1) ?: error("找不到 LOCAL_AGENT_KEYS 定义，解析或代码结构变了")
         val values = constantValues()

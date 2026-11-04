@@ -167,7 +167,24 @@ internal object Prefs {
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
         )
 
-        /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
+        /**
+         * 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。
+         *
+         * **跨进程可见性**（改键之前请读完，这里踩过坑）：
+         * - 这些键的事实源是本地 prefs（App 私有目录），**只有 App 进程能读**。
+         * - hook 进程（LSPosed 注入到别的应用里）没有 Eta 的 uid，`localAgent` 永远是 null，
+         *   所以 [isEnabled] 里会回退到 remote（见 `localAgent ?: remote`）。
+         * - 因此**被 hook 消费的键不能只留在本地**：必须由 `reconcileAgentPreferences`
+         *   把值回写 remote，否则 hook 侧读到的是默认值 —— 界面开关打开了，系统层毫无反应。
+         * - 当前唯一同时被 hook 读取的本地键是 [AGENT_VIRTUAL_DISPLAY_ENABLED]
+         *   （`VirtualDisplaySystemHooks`）。它能成立，是因为设置页改它时会调用
+         *   `reconcileAgentPreferences`，且 App 连上 XposedService 时还会再同步一次。
+         *   要加这类键，先确认这条同步链真的覆盖它，或者干脆别登记进来。
+         * - 另外 6 个 hook 读取的键（AGENT_CUSTOM_MODEL / AGENT_REQUIRE_PREFIX /
+         *   ASSISTANT_AUTO_CONFIG / GESTURE_BAR_CIRCLE_TO_SEARCH /
+         *   DOUBLE_FINGER_CIRCLE_TO_SEARCH / HOTWORD_SELF_HEAL）**故意不**登记：
+         *   设置页用 `prefs`（remote）写入，hook 直接读 remote，两造同一个事实源。
+         */
         val LOCAL_AGENT_KEYS: Set<String> = setOf(
             AGENT_TERMINAL_TOOLS,
             AGENT_BROWSER_TOOLS,
@@ -185,6 +202,18 @@ internal object Prefs {
             AGENT_BACKGROUND_RESUME_BUTTON,
             AGENT_BACKGROUND_RESUME_AUTO,
             AGENT_BACKGROUND_RESUME_WINDOW_LONG,
+            AGENT_VIRTUAL_DISPLAY_ENABLED,
+        )
+
+        /**
+         * 允许被 hook 进程读取的本地键（[LOCAL_AGENT_KEYS] 的子集）。
+         *
+         * hook 读不到 App 私有 prefs，这些键能成立**完全依赖** `reconcileAgentPreferences`
+         * 把值回写 remote。所以这份清单越短越好：每加一个都要先确认同步链真的覆盖它，
+         * 说明写进 [LOCAL_AGENT_KEYS] 的注释里。`PrefsCrossProcessGuardTest` 守着这条边界 ——
+         * hook 里读了本地键却没登记，测试就红。
+         */
+        val HOOK_VISIBLE_LOCAL_KEYS: Set<String> = setOf(
             AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
 
@@ -251,6 +280,9 @@ internal object Prefs {
      */
     fun isEnabled(key: String): Boolean {
         val default = Keys.BOOLEAN_DEFAULTS[key] ?: true
+        // 注意两个进程的差别：App 进程里 localAgent 已初始化，LOCAL 键读本地；
+        // hook 进程里 localAgent 为 null，同一个键会回退 remote —— 所以 hook 消费的键
+        // 必须在 remote 里有值，详见 [Keys.LOCAL_AGENT_KEYS] 的「跨进程可见性」。
         val preferences = if (key in Keys.LOCAL_AGENT_KEYS) localAgent ?: remote else remote
         return preferences?.getBoolean(key, default) ?: default
     }
