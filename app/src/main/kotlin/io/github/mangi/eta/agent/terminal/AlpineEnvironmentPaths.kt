@@ -12,8 +12,10 @@ internal object AlpineEnvironmentPaths {
     const val NODE_TOOLS_MARKER = ".eta-node-tools-ready"
     const val SSH_TOOLS_MARKER = ".eta-ssh-tools-ready"
     const val KIMI_TOOLS_MARKER = ".eta-kimi-tools-ready"
-    /** ACP 编码代理（codex-acp / claude-code-acp）共用同一个标记。 */
-    const val ACP_AGENTS_MARKER = ".eta-acp-agents-ready"
+    /** ACP 编码代理（Codex）就绪标记。 */
+    const val ACP_CODEX_MARKER = ".eta-acp-codex-ready"
+    /** ACP 编码代理（Claude）就绪标记。拆开是为了让体积与失败互不牵连。 */
+    const val ACP_CLAUDE_MARKER = ".eta-acp-claude-ready"
     const val TOOLSET_REVISION = 1
     const val APK_ANALYSIS_REVISION = 1
     const val PYTHON_TOOLS_REVISION = 1

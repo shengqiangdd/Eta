@@ -77,7 +77,8 @@ private enum class InstallTarget {
     NODE,
     SSH,
     KIMI,
-    ACP_AGENTS,
+    ACP_CODEX,
+    ACP_CLAUDE,
 }
 
 private data class PackageProfileUi(
@@ -122,11 +123,18 @@ private val packageProfileUis = listOf(
         readyRes = R.string.linux_kimi_tools_ready,
     ),
     PackageProfileUi(
-        target = InstallTarget.ACP_AGENTS,
-        profile = LinuxPackageProfiles.ACP_AGENTS,
-        titleRes = R.string.linux_acp_agents_tools,
-        summaryRes = R.string.linux_acp_agents_tools_summary,
-        readyRes = R.string.linux_acp_agents_tools_ready,
+        target = InstallTarget.ACP_CODEX,
+        profile = LinuxPackageProfiles.ACP_CODEX,
+        titleRes = R.string.linux_acp_codex_tools,
+        summaryRes = R.string.linux_acp_codex_tools_summary,
+        readyRes = R.string.linux_acp_codex_tools_ready,
+    ),
+    PackageProfileUi(
+        target = InstallTarget.ACP_CLAUDE,
+        profile = LinuxPackageProfiles.ACP_CLAUDE,
+        titleRes = R.string.linux_acp_claude_tools,
+        summaryRes = R.string.linux_acp_claude_tools_summary,
+        readyRes = R.string.linux_acp_claude_tools_ready,
     ),
 )
 

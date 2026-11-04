@@ -129,61 +129,77 @@ internal object LinuxPackageProfiles {
      * `AcpClient.BUILTIN_AGENTS` 的候选里有 `/opt/eta/node/<版本>/bin/codex-acp`，
      * 而 `/opt/eta/node/<版本>/bin` 是 Node 归档自带的 prefix；把包装到这里，
      * 升级 Node（换版本目录）就会把它们一并弄丢。装在 `/opt/eta` 下则与 Node 版本解耦，
-     * 再软链到 `/usr/local/bin`（[ACP_LINK_COMMAND]），探测能直接命中。
+     * 再软链到 `/usr/local/bin`，探测能直接命中。
      *
-     * 为什么两个包不分开：它们共用同一个 Node，体量差异大但失败原因一样（网络/registry），
-     * 分两个 profile 只会让用户多点一次且更容易装到一半。一个 profile = 一次决策。
+     * **为什么拆成两个 profile（Codex / Claude 各一个）**：
+     * 两个包实测共 526MB（`@agentclientprotocol` 403M 含 `@openai/codex` 本体 +
+     * `@zed-industries` 124M）。合在一起装 = 用户想用其中一个也必须付出全部体积；
+     * 而且任一包网络失败会让整次安装失败，连已经装好的那个也要重来。
+     * 拆开后：体积如实可见、失败互不牵连、用户能只装自己要用的那个。
      */
+    private const val ACP_MKDIR = "mkdir -p /opt/eta/lib "
+
     /**
      * 注意 `mkdir -p /opt/eta/lib`：`npm install --prefix` **不会自己建目录**，
      * 它直接 lstat `<prefix>/lib` 就报 ENOENT。实测两种都不行：不建 prefix、
      * 只建 prefix 而没建 `lib`。必须两个都建，否则安装第一步就挂。
      */
-    private const val ACP_INSTALL_SCRIPT =
-        "mkdir -p /opt/eta/lib " +
+    private fun acpInstallScript(packages: String): String =
+        ACP_MKDIR +
             "&& (npm install -g --prefix /opt/eta --registry=https://registry.npmmirror.com " +
-            "@agentclientprotocol/codex-acp@latest @zed-industries/claude-code-acp@latest || " +
-            "npm install -g --prefix /opt/eta " +
-            "@agentclientprotocol/codex-acp@latest @zed-industries/claude-code-acp@latest)"
+            "$packages || " +
+            "npm install -g --prefix /opt/eta $packages)"
 
     /**
-     * npm 装完后的收尾：把 `/opt/eta/bin/<name>` 链到 `/usr/local/bin/<name>`。
+     * npm 装完后的收尾：把 `binName` 从 `/opt/eta/bin` 链到 `/usr/local/bin`。
      *
      * 为什么用软链而不是写 profile.d：这跟 [PinnedLinuxToolInstaller] 装 node 的做法一致
      * ——环境的 PATH 里本来就有 `/usr/local/bin`，不需要新变量、不需要 source，
      * 也不会因为用户拿到一个非登录 shell 而失效。
      *
-     * 为什么不用 shell 循环：字符串里不用 `$`，就不会碰上 Kotlin 模板与 shell 展开的双重转义
-     * （本轮在这上面踩过一次，写出来的文件里多了反斜杠）。两条命令直接展开。
-     *
-     * `npm install -g` 会把包装在 `/opt/eta/lib/node_modules` 并在 `/opt/eta/bin` 建软链；
-     * 再把它们链到 `/usr/local/bin`。
-     *
      * **最后一行的验证不能省**：`npm` 返回 0 不等于产物真在。原样照搬 Kimi 的做法
      * （`kimi --version` 自检）——若 bin 缺失就非 0 退出，marker 不写，
      * 界面就不会把「装坏了」报成「已安装」。
      */
-    private const val ACP_LINK_COMMAND =
-        "ln -sfn /opt/eta/bin/codex-acp /usr/local/bin/codex-acp " +
-            "&& ln -sfn /opt/eta/bin/claude-code-acp /usr/local/bin/claude-code-acp " +
-            "&& test -x /usr/local/bin/codex-acp && test -x /usr/local/bin/claude-code-acp"
+    private fun acpLinkCommand(binName: String): String =
+        "ln -sfn /opt/eta/bin/$binName /usr/local/bin/$binName " +
+            "&& test -x /usr/local/bin/$binName"
 
-    val ACP_AGENTS = LinuxPackageProfile(
-        id = "acp-agents",
-        markerName = AlpineEnvironmentPaths.ACP_AGENTS_MARKER,
+    val ACP_CODEX = LinuxPackageProfile(
+        id = "acp-codex",
+        markerName = AlpineEnvironmentPaths.ACP_CODEX_MARKER,
         revision = AlpineEnvironmentPaths.ACP_AGENTS_REVISION,
         dependsOn = NODE,
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(
-                setupScript = ACP_INSTALL_SCRIPT + "\n" + ACP_LINK_COMMAND,
+                setupScript = acpInstallScript("@agentclientprotocol/codex-acp@latest") + "\n" +
+                    acpLinkCommand("codex-acp"),
             ),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(
-                setupScript = ACP_INSTALL_SCRIPT + "\n" + ACP_LINK_COMMAND,
+                setupScript = acpInstallScript("@agentclientprotocol/codex-acp@latest") + "\n" +
+                    acpLinkCommand("codex-acp"),
             ),
         ),
     )
 
-    val ALL = listOf(PYTHON, NODE, SSH, KIMI, ACP_AGENTS)
+    val ACP_CLAUDE = LinuxPackageProfile(
+        id = "acp-claude",
+        markerName = AlpineEnvironmentPaths.ACP_CLAUDE_MARKER,
+        revision = AlpineEnvironmentPaths.ACP_AGENTS_REVISION,
+        dependsOn = NODE,
+        specs = mapOf(
+            LinuxDistribution.ALPINE to LinuxPackageSpec(
+                setupScript = acpInstallScript("@zed-industries/claude-code-acp@latest") + "\n" +
+                    acpLinkCommand("claude-code-acp"),
+            ),
+            LinuxDistribution.DEBIAN to LinuxPackageSpec(
+                setupScript = acpInstallScript("@zed-industries/claude-code-acp@latest") + "\n" +
+                    acpLinkCommand("claude-code-acp"),
+            ),
+        ),
+    )
+
+    val ALL = listOf(PYTHON, NODE, SSH, KIMI, ACP_CODEX, ACP_CLAUDE)
 }
 
 internal fun linuxPackageProfileReady(rootfs: File, profile: LinuxPackageProfile): Boolean {

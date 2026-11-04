@@ -929,9 +929,12 @@
   <string name="linux_kimi_tools">Kimi Code</string>
   <string name="linux_kimi_tools_summary">通过 npm 安装最新正式版 Kimi Code；需要先安装 Node.js 环境</string>
   <string name="linux_kimi_tools_ready">Kimi Code 已就绪，在终端运行 kimi 即可开始</string>
-  <string name="linux_acp_agents_tools">编码代理（Codex / Claude）</string>
-  <string name="linux_acp_agents_tools_summary">安装 codex-acp 与 claude-code-acp，委派才能找到它们；需先装好 Node.js 环境。这里只装程序本体，登录状态需另外配置。</string>
-  <string name="linux_acp_agents_tools_ready">已安装，委派可以用这两个代理了</string>
+  <string name="linux_acp_codex_tools">Codex 代理</string>
+  <string name="linux_acp_codex_tools_summary">安装 codex-acp，委派才能找到它；需先装好 Node.js 环境。约 400 MB，大头是 Codex 本体。登录状态需另外配置。</string>
+  <string name="linux_acp_codex_tools_ready">已安装，委派可以用 Codex 了</string>
+  <string name="linux_acp_claude_tools">Claude 代理</string>
+  <string name="linux_acp_claude_tools_summary">安装 claude-code-acp，委派才能找到它；需先装好 Node.js 环境。约 125 MB。登录状态需另外配置。</string>
+  <string name="linux_acp_claude_tools_ready">已安装，委派可以用 Claude 了</string>
   <string name="linux_profile_dependency_missing">需要先安装 %1$s</string>
   <string name="linux_kimi_web_launch">启动 Web UI</string>
   <string name="linux_kimi_web_starting">正在启动…</string>

@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.terminal
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -133,27 +134,46 @@ class AlpineEnvironmentInstallerTest {
         }
         // ACP 编码代理：acp_delegate 真正启动的就是这两个可执行文件，
         // 它们曾经只能靠手工 npm i -g，新设备上根本不存在。
-        val acp = LinuxPackageProfiles.ACP_AGENTS
-        assertEquals(LinuxPackageProfiles.NODE, acp.dependsOn)
+        //
+        // 拆成两个 profile 的理由：两个包合计实测 526MB（Codex 403M + Claude 124M）。
+        // 合着装 = 想用其中一个也得付全部体积，且任一包失败会拖垮整次安装。
+        val acpCodex = LinuxPackageProfiles.ACP_CODEX
+        val acpClaude = LinuxPackageProfiles.ACP_CLAUDE
+        assertEquals(LinuxPackageProfiles.NODE, acpCodex.dependsOn)
+        assertEquals(LinuxPackageProfiles.NODE, acpClaude.dependsOn)
+        assertNotEquals(acpCodex.id, acpClaude.id)
+        // 各自一个 marker：装好一个不能把另一个也报成已就绪。
+        assertNotEquals(acpCodex.markerName, acpClaude.markerName)
         LinuxDistribution.entries.forEach { distribution ->
-            val acpScript = acp.spec(distribution).setupScript.orEmpty()
-            assertTrue(acpScript.contains("@agentclientprotocol/codex-acp@latest"))
-            assertTrue(acpScript.contains("@zed-industries/claude-code-acp@latest"))
-            assertTrue(acpScript.contains("registry.npmmirror.com"))
-            // 官方 registry 兜底：镜像挂了不能直接装不了。
-            assertTrue(acpScript.contains("||"))
-            // npm install --prefix **不会自己建目录**，它直接 lstat <prefix>/lib（实测）。
-            assertTrue(acpScript.contains("mkdir -p /opt/eta/lib"))
+            val codexScript = acpCodex.spec(distribution).setupScript.orEmpty()
+            val claudeScript = acpClaude.spec(distribution).setupScript.orEmpty()
+
+            assertTrue(codexScript.contains("@agentclientprotocol/codex-acp@latest"))
+            assertTrue(claudeScript.contains("@zed-industries/claude-code-acp@latest"))
+            // 关键：不能互相夹带。否则「拆开」只是名字拆了，体积照旧。
+            assertFalse(codexScript.contains("claude-code-acp"))
+            assertFalse(claudeScript.contains("codex-acp"))
+
+            listOf(codexScript, claudeScript).forEach { script ->
+                assertTrue(script.contains("registry.npmmirror.com"))
+                // 官方 registry 兜底：镜像挂了不能直接装不了。
+                assertTrue(script.contains("||"))
+                // npm install --prefix **不会自己建目录**，它直接 lstat <prefix>/lib（实测）。
+                assertTrue(script.contains("mkdir -p /opt/eta/lib"))
+            }
             // 产物必须落到 /usr/local/bin：那是探测候选里已有的位置，
             // 而且不随 node 版本目录变动而失效。
-            assertTrue(acpScript.contains("ln -sfn /opt/eta/bin/codex-acp /usr/local/bin/codex-acp"))
-            assertTrue(acpScript.contains("ln -sfn /opt/eta/bin/claude-code-acp /usr/local/bin/claude-code-acp"))
+            assertTrue(codexScript.contains("ln -sfn /opt/eta/bin/codex-acp /usr/local/bin/codex-acp"))
+            assertTrue(claudeScript.contains(
+                "ln -sfn /opt/eta/bin/claude-code-acp /usr/local/bin/claude-code-acp",
+            ))
             // npm 返回 0 不等于产物真在。没这句，装坏了也会写 marker，
             // 界面就会把「装坏了」报成「已安装」。
-            assertTrue(acpScript.contains("test -x /usr/local/bin/codex-acp"))
-            assertTrue(acpScript.contains("test -x /usr/local/bin/claude-code-acp"))
+            assertTrue(codexScript.contains("test -x /usr/local/bin/codex-acp"))
+            assertTrue(claudeScript.contains("test -x /usr/local/bin/claude-code-acp"))
         }
-        assertTrue(LinuxPackageProfiles.ALL.contains(acp))
+        assertTrue(LinuxPackageProfiles.ALL.contains(acpCodex))
+        assertTrue(LinuxPackageProfiles.ALL.contains(acpClaude))
         LinuxPackageProfiles.ALL.forEach { profile ->
             assertTrue(profile.markerName.startsWith(".eta-"))
             profile.specs.values.forEach { spec ->
