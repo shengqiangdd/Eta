@@ -1496,7 +1496,9 @@ internal class AgentAppState(
         if (state.isStreaming || state.messageEdit != null || state.isCompacting) return
         val releaseMessages = shouldReleaseBackgroundMessages(
             isStreaming = state.isStreaming,
-            isEditing = state.messageEdit != null,
+            // 上面已对「编辑中」提前返回：messageEdit 必为 null。
+            // 显式写 false 而不是再比一次，否则编译器报「Condition is always 'false'」。
+            isEditing = false,
             isCompacting = state.isCompacting,
             messagesDeferred = state.messagesDeferred,
             messageCount = state.messages.size,
@@ -2693,7 +2695,8 @@ internal class AgentAppState(
             if (shouldReleaseConversationMessages(
                     isActive = id == activeId,
                     isStreaming = state.isStreaming,
-                    isEditing = state.messageEdit != null,
+                    // 同上：forEach 开头已对「编辑中」提前跳过，messageEdit 必为 null。
+                    isEditing = false,
                     isCompacting = state.isCompacting,
                     messagesDeferred = state.messagesDeferred,
                     messageCount = state.messages.size,
