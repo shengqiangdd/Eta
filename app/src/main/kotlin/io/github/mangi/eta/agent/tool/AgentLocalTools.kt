@@ -2428,7 +2428,11 @@ internal class AgentLocalTools(
                                             .put("installed", agent.installed)
                                             .put(
                                                 "credential_present",
-                                                agent.credentialPresent || (agent.id == "codex" && providerReady),
+                                                acpCredentialUsable(
+                                                    agentId = agent.id,
+                                                    ownCredentialPresent = agent.credentialPresent,
+                                                    providerReady = providerReady,
+                                                ),
                                             )
                                             .put("credential_env_keys", JSONArray(agent.credentialEnvKeys))
                                             .put(
@@ -2437,7 +2441,9 @@ internal class AgentLocalTools(
                                                     !agent.installed ->
                                                         "在 Linux 工具环境内没找到可执行文件（已按显式路径、" +
                                                             "通配目录与 PATH 依次查找），请先在该环境安装"
-                                                    agent.id == "codex" && providerReady ->
+                                                    acpCredentialUsable(
+                                                        agent.id, agent.credentialPresent, providerReady,
+                                                    ) && !agent.credentialPresent ->
                                                         "可用（使用 Eta 模型提供商）"
                                                     !agent.credentialPresent -> "缺少供应商凭证，需要 " + agent.credentialEnvKeys.joinToString(" 或 ")
                                                     else -> "可用"
@@ -2477,7 +2483,7 @@ internal class AgentLocalTools(
                 val agent = request.agent.ifBlank { acpClient.defaultAgentId() }
                 // 两个代理都支持走 Eta 提供商，但接法不同（codex 写 config.toml，
                 // Claude 用 ANTHROPIC_* 环境变量），差异收在 AcpClient 里。
-                val providerAwareAgent = agent == "codex" || agent == AGENT_CLAUDE
+                val providerAwareAgent = agent in PROVIDER_CAPABLE_AGENTS
                 if (request.provider != null && !providerAwareAgent) {
                     return textResult(
                         errorResult(
@@ -4138,6 +4144,29 @@ private const val TYPE_TEXT_INCREMENTAL_CHARS = 200
  * 旧预算会把这种半成品树当成首屏交出去（真机上随即拿它做过一次盲点）。
  * 就绪时照样提前返回，常态没有额外成本。
  */
+/**
+ * 能走 Eta 模型提供商的 ACP 代理。
+ *
+ * 抽成一处是因为它有两个使用点（`acp_agent_list` 的可用性判定、`acp_delegate` 的
+ * provider 参数校验），两处写死不同内容时行为会自相矛盾 —— 2026-11-04 就是这样：
+ * 委派侧允许 Claude 用提供商，而列表侧仍报「缺少供应商凭证」。
+ */
+private val PROVIDER_CAPABLE_AGENTS = setOf("codex", AGENT_CLAUDE)
+
+/**
+ * 代理是否**实际可用**（自带凭据，或能用 Eta 的模型提供商顶上）。
+ *
+ * 抽成顶层纯函数的原因：这段判据原先在 `acp_agent_list` 的 JSON 组装里写了两遍，
+ * 2026-11-04 就漂了 —— 委派侧允许 Claude 走提供商，列表侧仍只认 codex，
+ * 于是配好了 sq6 的 Claude 却被报「缺少供应商凭证」，
+ * 用户照提示去配 ANTHROPIC_API_KEY，其实根本不需要。
+ */
+internal fun acpCredentialUsable(
+    agentId: String,
+    ownCredentialPresent: Boolean,
+    providerReady: Boolean,
+): Boolean = ownCredentialPresent || (agentId in PROVIDER_CAPABLE_AGENTS && providerReady)
+
 private const val LAUNCH_OBSERVE_TIMEOUT_MS = 8_000L
 
 /** 自动观察的轮询间隔；比无障碍整树 dump 一次（约 300ms）略短，避免白等。 */

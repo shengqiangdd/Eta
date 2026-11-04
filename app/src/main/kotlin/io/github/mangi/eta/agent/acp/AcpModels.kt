@@ -46,6 +46,20 @@ internal object AcpModels {
     }
 
     /**
+     * 这个代理是否会把模型**写进配置文件**（从而不必再走 `session/set_model`）。
+     *
+     * 只有 codex 成立：它读临时 `CODEX_HOME/config.toml` 的 `model`。
+     * Claude **没有这一层** —— `ANTHROPIC_MODEL` 是 Claude Code（CLI）自己的变量，
+     * `claude-code-acp` 适配器根本不读它。2026-11-04 实测：设了
+     * `ANTHROPIC_MODEL=claude-sonnet-5`，代理仍去请求内置的
+     * `claude-sonnet-4-5-20250929`，然后回 Internal error。
+     *
+     * 为什么单独抽出来：这个判断错了不会报「配置有问题」，只会表现成
+     * 「指定了模型却报另一个模型不存在」—— 排查成本极高。
+     */
+    fun modelComesFromConfig(agentId: String): Boolean = agentId == "codex"
+
+    /**
      * 决定「要不要设置模型」：null = 不指定（用代理默认）。
      *
      * 为什么必须本地校验：真机实测（PKX110，2026-10-27）codex-acp 的 `session/set_model`

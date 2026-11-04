@@ -753,7 +753,18 @@ internal class AcpClient(
         )
         live[sessionId] = live_
         live_.requestedModel = model?.trim()?.takeIf { it.isNotEmpty() }
-        live_.configModel = provider?.let { effectiveModel }
+        // configModel 的含义是「已经写进代理配置文件的模型」，有了它就不必再走 set_model。
+        // codex 写的是临时 config.toml，成立；Claude **没有配置文件这一层** ——
+        // `export ANTHROPIC_MODEL` 是 Claude Code（CLI）自己的变量，
+        // claude-code-acp 适配器不读它（2026-11-04 实测：设了 ANTHROPIC_MODEL=claude-sonnet-5，
+        // 代理仍去请求它内置的 claude-sonnet-4-5-20250929，然后 Internal error）。
+        // 所以对 Claude 必须让 configModel 保持 null，逼它走 session/set_model ——
+        // 那才是 ACP 协议里唯一真正生效的切换方式。
+        // 此前两者都设，导致 chooseWithConfig 判定「wanted == configModel，不用切」，
+        // 于是模型从来没被设置过，表现为「指定了模型却报另一个模型不存在」。
+        live_.configModel = provider?.let {
+            if (AcpModels.modelComesFromConfig(spec.id)) effectiveModel else null
+        }
         live_.providerId = provider?.id
         // stderr 必须持续读走：管道缓冲区（常见 64KB）写满后代理会卡在 write 上，
         // 表现为「initialize 之后一个字都不回」，而且看不出原因。只留尾部用于报错。

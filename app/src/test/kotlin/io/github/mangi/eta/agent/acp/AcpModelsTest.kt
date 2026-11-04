@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.acp
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -136,5 +137,41 @@ class AcpModelsTest {
         val described = AcpModels.describe(AcpModels.parse(sessionNew("model-1", many)))
         assertEquals(40, described.optInt("available_count"))
         assertEquals(AcpModels.MAX_LISTED_MODELS, described.optJSONArray("available_models")?.length())
+    }
+
+    @Test
+    fun onlyCodexWritesTheModelIntoAConfigFile() {
+        // Claude 没有配置文件这一层：ANTHROPIC_MODEL 是 Claude Code（CLI）自己的变量，
+        // claude-code-acp 适配器不读。判成「已写进配置」就会跳过 session/set_model，
+        // 结果模型从来没被设置过 —— 2026-11-04 实测就是这样去请求了内置的
+        // claude-sonnet-4-5-20250929，然后 Internal error。
+        assertTrue(AcpModels.modelComesFromConfig("codex"))
+        assertFalse(AcpModels.modelComesFromConfig("claude"))
+    }
+
+    @Test
+    fun unknownAgentDefaultsToNeedingExplicitModelSwitch() {
+        // 未来新增的代理：默认它**不能**靠配置文件带上模型。
+        // 方向选错（默认 true）会让新代理静默用错模型；选 false 最多多发一次
+        // session/set_model —— 代价小得多。
+        assertFalse(AcpModels.modelComesFromConfig("gemini"))
+    }
+
+    @Test
+    fun claudeModelIsSwitchedViaProtocolNotSkipped() {
+        // 端到端含义：Claude 走 set_model 路径时，请求的模型必须真的被发出去。
+        val info = AcpModels.Info(
+            currentModelId = "default",
+            available = listOf("default", "claude-sonnet-5"),
+        )
+        // configModel 为 null（Claude 的正确取值）→ 必须给出 Use，而不是 null。
+        val choice = AcpModels.chooseWithConfig("claude-sonnet-5", null, info)
+        assertTrue("Claude 的模型必须走 set_model，不能被跳过", choice is AcpModels.Choice.Use)
+        assertEquals("claude-sonnet-5", (choice as AcpModels.Choice.Use).modelId)
+        // 反过来：如果把 configModel 也设成同一个值（旧 bug），就会返回 null → 不切。
+        assertNull(
+            "旧行为（configModel 与请求值相同）会跳过切换 —— 这正是缺陷本身",
+            AcpModels.chooseWithConfig("claude-sonnet-5", "claude-sonnet-5", info),
+        )
     }
 }

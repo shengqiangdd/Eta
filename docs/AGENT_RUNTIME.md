@@ -900,6 +900,50 @@ APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
 故用 `@Suppress("UseKtx")` 并写明理由。`AcpDelegationPreference` 的链式写法没被这条规则命中，
 但语义相同，一并标注，避免以后换 lint 版本时只报一处。
 
+#### 第四批：真机跑通挖出的两个缺陷（2026-11-04）
+
+装到本机用真实凭据跑委派，挖出两个**单测、编译、代码审读全绿时发现不了**的缺陷。
+
+**缺陷一：Claude 被误报「缺少供应商凭证」。**
+`acp_agent_list` 的可用性判定是 `agents.credentialPresent || (agent.id == "codex" && providerReady)`
+—— 只在 codex 分支上考虑了「用 Eta 提供商顶上」。而启动路径里 Claude 明明会注入
+`ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY`。后果不只是显示难看：模型看到
+`credential_present:false` 会按 note 里的话放弃委派、告诉用户「缺凭据」，
+这个能力对用户就等于关闭了。
+修：抽出 `acpCredentialUsable(agentId, ownCredentialPresent, providerReady)` 纯函数与
+`PROVIDER_CAPABLE_AGENTS` 常量，`acp_agent_list` 与 `acp_delegate` 的参数校验共用同一份清单
+（此前两处各写一遍，正是它漂移的原因）。
+
+**缺陷二：给 Claude 指定模型从来没生效过。**
+`live_.configModel = provider?.let { effectiveModel }` 对 Claude 也赋值了。`configModel`
+的语义是「已经写进代理配置文件的模型，不必再走 `session/set_model`」——codex 成立
+（临时 `config.toml`），Claude **没有这一层**：`ANTHROPIC_MODEL` 是 Claude Code（CLI）
+自己的变量，`claude-code-acp` 适配器不读（实测 grep 整个 dist 没有任何 `ANTHROPIC_MODEL`）。
+于是 `chooseWithConfig` 判定「wanted == configModel，不用切」→ 跳过 `set_model` →
+模型从未被设置。表现是：请求 `claude-sonnet-5`，代理却去请求内置的
+`claude-sonnet-4-5-20250929`，报「There's an issue with the selected model」。
+修：`AcpModels.modelComesFromConfig(agentId)` 白名单（只有 codex），Claude 让
+`configModel` 保持 null，强制走 `session/set_model`。
+白名单方向很重要：默认 true 会让新代理静默用错模型，默认 false 最多多发一次
+`set_model`——代价小得多。
+
+**修复后实测（本机 PKX110/A16，sq6 提供商）**：
+- 报错里的模型名从 `claude-sonnet-4-5-20250929` 变成 `claude-sonnet-5`
+  —— 证明 `set_model` 真的发出去了，链路通了。
+- `acp_agent_list`：Claude 变成 `credential_present:true` /「可用（使用 Eta 模型提供商）」。
+- **端到端委派跑通**（codex 代理 + sq6 的 `claude-sonnet-5`）：读文件 → 改文件 →
+  跑断言，`ok:true`、`stop_reason:end_turn`、usage 15636。**独立复核**：`calc.py` 里
+  `mul` 确实新增、`add` 未被改动，`python3 -c` 断言 `add(2,3)==5 and mul(2,3)==6` 通过。
+  注意它先试了 `Read file` 失败、再用 `cat` 才成功，说明工具降级链也在工作。
+
+**仍未解决（真机结论，非猜测）**：Claude **代理本身**对这个 provider 跑不通。
+sq6/apigoto 走 Anthropic 原生 `/v1/messages`，但它们不认 SDK 内置的
+`claude-sonnet-4-5-20250929`；而 `claude-sonnet-5` / `default` 经代理映射后仍指向那个内置 ID。
+换 apigoto 时不再报模型错、改成 126 秒后进程退出（另一类失败）。
+这是**第三方供应商与 Claude Agent SDK 的模型名不兼容**，不是 Eta 的接线问题 ——
+同一套接线用 codex 代理 + 同一个模型是通的。可行的规避：用 codex 代理配 Claude 模型，
+或用与 Anthropic 官方模型名对齐的供应商。
+
 **未验证（如实）**：
 - 没有真跑一轮「复杂任务自动委派给 Claude」的完整链路（需要可用的 Anthropic 凭据）。
   模型是否真的按这段指导行事，只有在真实复杂任务上才能观察到。
