@@ -365,6 +365,15 @@ run_ui_actions() {
   python3 tools/ui_action_wiring.py || fail=1
 }
 
+# ---- 占位符漏参（与 STAGES 无关，始终执行）-----------------------------
+# 为什么需要它：`stringResource(R.string.x)` 少传 formatArgs 时，**编译、lint、单测全部通过**，
+# 只有真机上能看到标题变成「其他会话执行中 %1$d 1」。2026-11-04 就是这么漏出来的。
+# 秒级静态扫描，没有理由等一次完整构建才发现。
+run_string_format() {
+  echo "==== 占位符漏参 ===="
+  python3 tools/string_format_args.py || fail=1
+}
+
 # ---- 死文案（与 STAGES 无关，始终执行）-----------------------------
 # 为什么紧跟动作接线：删代码 → 引用消失 → 文案变死，这三件事总是一起发生。
 # 等 lint 发现要十几分钟，而且那时已经很难想起是哪次改动造成的（§32.41 踩过）。
@@ -375,6 +384,7 @@ run_dead_strings() {
 }
 
 run_ui_actions
+run_string_format
 run_dead_strings
 
 if has_stage test || has_stage test-all || has_stage test-wide; then run_test; fi

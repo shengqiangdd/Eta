@@ -10395,3 +10395,49 @@ STEP9d 与 STEP8b 共用。
 
 - 60 秒保护期本身没动：它是自动续跑的事件源，删早了会丢一次续跑；这一轮只把「删不掉」如实显示。
 - 「其他会话」仍然只读：`terminal_job` 的 stop/wait 只作用于本会话，卡片也不给停止入口。
+
+## 真机复核又抓到一处「界面在说假话」：模板字符串被当标签用（2026-11-04，PKX110/A16）
+
+### 现象
+
+上一节的三处改完、门禁全绿、装到真机，卡片标题显示成：
+
+    后台任务 · 其他会话执行中 %1$d 1 · 其他会话已结束 %1$d 1
+
+代码是 `append(" · $foreignRunningLabel ${view.foreignRunning}")`，而
+`foreignRunningLabel = stringResource(R.string.background_tasks_foreign_running)` ——
+这条资源本身是**带占位符的完整句子**（`其他会话执行中 %1$d`），少传 formatArgs 就把模板原样搬上屏。
+
+**为什么三道门都没拦住**：编译不校验 formatArgs；lint 不检查；单测断言的是
+`summarizeBackgroundTasks` 的结构体字段，根本没渲染文本。这类 bug 只有真机截图能看见。
+
+### 实现
+
+- 标题改成先用 `stringResource(res, count)` 渲染整句，再 append：
+  `foreignRunningText?.let { append(" · $it") }`。数字为 0 时不显示。
+  注意 `buildAnnotatedString { }` 的 lambda **不是 @Composable 作用域**，里面不能调
+  `stringResource`，所以必须在外面拼好。
+
+### 新增门禁：`tools/string_format_args.py`（秒级，与 STAGES 无关）
+
+- 基准取 `values/strings.xml`（默认语言）里带 `%N$d` / `%N$s` 的 string（本仓 **198 条**）；
+- 扫 `app/src/main/kotlin` 里 `stringResource(R.string.X)` **单参数**调用；
+- 命中且不在白名单 → 红。白名单只放一条 `background_tasks_resume_prompt`：
+  它在 `backgroundResumePrompt(template, task)` 里自己 `String.format`，是合法用法。
+- **注入实验**：把上面那行改回单参数 → 立刻红并指出行号；还原 → 绿。证明它不是「写了但永远绿」。
+
+### 验证
+
+- 真机（canary，虚拟屏，不碰主屏）逐场景走：
+  1. 造「外会话 1 在跑 + 1 已结束」→ 标题「后台任务 · 其他会话执行中 1 · 其他会话已结束 1」✓
+  2. 造「本会话刚结束 25 秒（保护期内）」→ 明细行变成不可点提示
+     「还有 1 条在保护期（刚结束不满 1 分钟，或结果还没通知）」✓
+  3. 造「本会话 2 分钟前结束」→ 出现「清除已结束（1）」→ 点击 → 确认框（文案与行为一致）
+     → 确认后记录文件里只剩别的会话那条、它的日志文件已删、卡片标题变
+     「后台任务 · 其他会话已结束 1」**且卡片留存** ✓
+- 收尾：记录文件恢复成空数组、属主 10619、`diff` 无差异；临时 json 与日志已删。
+
+### 教训
+
+「界面显示的状态」与「记录里的状态」是两套东西：前者只有真机渲染才可见。
+结构体字段全对、单测全绿，屏幕上的字仍可能是错的。

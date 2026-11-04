@@ -183,8 +183,20 @@ internal fun BackgroundTasksCard(
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
     val finishedLabel = stringResource(R.string.background_tasks_finished)
-    val foreignRunningLabel = stringResource(R.string.background_tasks_foreign_running)
-    val foreignFinishedLabel = stringResource(R.string.background_tasks_foreign_finished)
+    // 这两条是**带占位符的完整句子**（"其他会话执行中 %1$d"），必须用 formatArgs 渲染。
+    // 当成标签用的事件真的发生了：标题里直接漏出字面量「其他会话执行中 %1$d 1」（真机截图）。
+    // 数字为 0 时不显示，所以这里先整句拼好；buildAnnotatedString 的 lambda 不是 @Composable
+    // 作用域，里面不能调 stringResource。
+    val foreignRunningText = if (view.foreignRunning > 0) {
+        stringResource(R.string.background_tasks_foreign_running, view.foreignRunning)
+    } else {
+        null
+    }
+    val foreignFinishedText = if (view.foreignFinished > 0) {
+        stringResource(R.string.background_tasks_foreign_finished, view.foreignFinished)
+    } else {
+        null
+    }
     val primary = MiuixTheme.colorScheme.primary
     // 计数全拼进同一个 Text：Row 里并排几个 Text 时，后面的会被挤成零宽（台账卡踩过）。
     val header = buildAnnotatedString {
@@ -196,8 +208,8 @@ internal fun BackgroundTasksCard(
         // 别的会话的任务不列出来（口径要跟 terminal_job list 一致），但必须让人知道还有几条，
         // 而且要说清是「在跑」还是「已结束」：旧版一律写「其他会话 N」，真机上把一条
         // 早就停掉的记录读成了「别的会话正在占资源」。
-        if (view.foreignRunning > 0) append(" · $foreignRunningLabel ${view.foreignRunning}")
-        if (view.foreignFinished > 0) append(" · $foreignFinishedLabel ${view.foreignFinished}")
+        foreignRunningText?.let { append(" · $it") }
+        foreignFinishedText?.let { append(" · $it") }
     }
 
     Column(
