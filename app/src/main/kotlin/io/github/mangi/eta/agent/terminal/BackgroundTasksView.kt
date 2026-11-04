@@ -39,13 +39,12 @@ internal data class BackgroundTasksView(
     val foreignFinished: Int get() = (foreignTotal - foreignRunning).coerceAtLeast(0)
 
     /**
-     * 没有任何记录时卡片不出现，避免给空状态加一行常驻噪音。
+     * 本会话没有任何记录时卡片不出现，避免给空状态加一行常驻噪音。
      *
-     * 别的会话的任务也算「有记录」：本会话刚点完「清除已结束」、而其他会话手里还有任务时，
-     * 若这里只按本会话判空，整张卡会连「其他会话 N」一起消失 —— 用户很自然会怀疑
-     * 刚才那一下把别人的任务也删了（真机实测就是这么消失的）。
+     * 只看本会话：别的会话在跑什么是它们的事，本会话不该因此多出一张卡，
+     * 面板也不再展示「其他会话 N」。foreign* 字段仍保留给工具口径与测试，不参与可见性。
      */
-    val isEmpty: Boolean get() = runningTotal == 0 && finished == 0 && foreignTotal == 0
+    val isEmpty: Boolean get() = runningTotal == 0 && finished == 0
 }
 
 /** 展开后最多列几条运行中；再多用一行 `+N` 收尾。 */

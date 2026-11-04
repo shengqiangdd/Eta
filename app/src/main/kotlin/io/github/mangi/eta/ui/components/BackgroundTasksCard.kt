@@ -119,21 +119,14 @@ internal fun BackgroundTasksCard(
         summarizeBackgroundTasks(records, scopeId, scopePending)
     }
     if (view.isEmpty) return
-    // 全部结束之后没必要继续占位：这张卡回答的是「还有什么在跑」，
-    // 没有在跑的就只剩「上次跑过什么」，点开终端页一样看得到。
-    // 例外是用户开了「结束后保留继续按钮」—— 那时这一行本身就是入口。
+    val context = LocalContext.current
+    // 全部结束之后不再占位：这张卡回答的是「还有什么在跑」。
+    // 只留一个短窗口给「继续」入口（见下方 resumableRecently），窗口过后整卡消失。
     val collapseIdleCards = remember { Prefs.isEnabled(Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE) }
-    val keepResume = remember {
-        Prefs.isEnabled(Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
-    }
-    if (collapseIdleCards &&
-        !ChatStatusCards.backgroundVisible(
-            hasRecords = true,
-            runningTotal = view.runningTotal,
-            keepResumeAfterFinish = keepResume,
-        )
-    ) {
-        return
+    // 与设置页（`Prefs.localAgentPreferences()`）读同一份：这个键不在 LOCAL_AGENT_KEYS 里，
+    // 用 `Prefs.isEnabled` 会去读 remote —— 设置里关掉开关后卡片照样显示（开关看起来没反应）。
+    val resumeButtonEnabled = remember(context) {
+        localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
     }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inspectedTask by remember { mutableStateOf<DetachedTask?>(null) }
@@ -144,27 +137,38 @@ internal fun BackgroundTasksCard(
     // 静止的 00:05 挂十分钟就是界面在说假话（与 `rememberRunningSeconds` 同一条教训）。
     // 因此展开期间按秒重算；只剩已结束的行时改成 30 秒（那里是「多久以前」，一秒一跳纯属白重组）。
     var now by remember(records) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(records, expanded, view.runningTotal) {
-        if (!expanded) return@LaunchedEffect
-        val step = if (view.runningTotal > 0) 1_000L else 30_000L
+    // 已结束的任务不再常驻：只在「刚结束、还能点继续」的短窗口内留一下，过后整卡消失。
+    // 判据只认本会话（view.recentFinished 已按会话过滤）—— 别的会话在跑什么与本会话无关。
+    val resumableRecently = resumeButtonEnabled && view.recentFinished.any { task ->
+        val done = task.completedAt ?: return@any false
+        now - done <= BACKGROUND_RESUME_ENTRY_WINDOW_MS
+    }
+    if (collapseIdleCards &&
+        !ChatStatusCards.backgroundVisible(
+            hasRecords = true,
+            runningTotal = view.runningTotal,
+            resumableRecently = resumableRecently,
+        )
+    ) {
+        return
+    }
+    LaunchedEffect(records, expanded, view.runningTotal, resumableRecently) {
+        // 窗口计时也要走：全部结束但还能「继续」时每 5 秒重算一次剩余窗口，
+        // 到点后 resumableRecently 变 false，卡片自己收掉。
+        if (!expanded && !resumableRecently) return@LaunchedEffect
+        val step = if (view.runningTotal > 0) 1_000L else 5_000L
         while (true) {
             now = System.currentTimeMillis()
             delay(step)
         }
     }
 
-    val context = LocalContext.current
     // 读字符串一律走 LocalResources：用 LocalContext.current.getString 会被 lint 判
     // 「不随 Configuration 变化、可能拿到旧值」（LocalContextGetResourceValueCall）。
     val resources = LocalResources.current
     // 清理走 IO，不能卡在点击帧上：dismissFinished 会写记录文件，并按身份起一次 shell 删日志。
     val dismissScope = rememberCoroutineScope()
-    // 两个开关在设置页里改（写的是**本地** Agent prefs）；这里按组合时读一次，回到本页会重新读。
-    // 注意不能用 `Prefs.isEnabled`：它只对 `LOCAL_AGENT_KEYS` 里的键读本地，其余键一律读 remote，
-    // 而这两个键属于界面行为、不在那份名单里 —— 用错就会永远读成默认值（开关看起来没反应）。
-    val resumeButtonEnabled = remember(context) {
-        localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
-    }
+    // 这个开关同样读本地：理由见上方 resumeButtonEnabled。
     val autoResumeEnabled = remember(context) {
         localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_AUTO)
     }
@@ -183,20 +187,6 @@ internal fun BackgroundTasksCard(
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
     val finishedLabel = stringResource(R.string.background_tasks_finished)
-    // 这两条是**带占位符的完整句子**（"其他会话执行中 %1$d"），必须用 formatArgs 渲染。
-    // 当成标签用的事件真的发生了：标题里直接漏出字面量「其他会话执行中 %1$d 1」（真机截图）。
-    // 数字为 0 时不显示，所以这里先整句拼好；buildAnnotatedString 的 lambda 不是 @Composable
-    // 作用域，里面不能调 stringResource。
-    val foreignRunningText = if (view.foreignRunning > 0) {
-        stringResource(R.string.background_tasks_foreign_running, view.foreignRunning)
-    } else {
-        null
-    }
-    val foreignFinishedText = if (view.foreignFinished > 0) {
-        stringResource(R.string.background_tasks_foreign_finished, view.foreignFinished)
-    } else {
-        null
-    }
     val primary = MiuixTheme.colorScheme.primary
     // 计数全拼进同一个 Text：Row 里并排几个 Text 时，后面的会被挤成零宽（台账卡踩过）。
     val header = buildAnnotatedString {
@@ -205,11 +195,6 @@ internal fun BackgroundTasksCard(
             withStyle(SpanStyle(color = primary)) { append(" · $runningLabel ${view.runningTotal}") }
         }
         if (view.finished > 0) append(" · $finishedLabel ${view.finished}")
-        // 别的会话的任务不列出来（口径要跟 terminal_job list 一致），但必须让人知道还有几条，
-        // 而且要说清是「在跑」还是「已结束」：旧版一律写「其他会话 N」，真机上把一条
-        // 早就停掉的记录读成了「别的会话正在占资源」。
-        foreignRunningText?.let { append(" · $it") }
-        foreignFinishedText?.let { append(" · $it") }
     }
 
     Column(
@@ -318,14 +303,6 @@ internal fun BackgroundTasksCard(
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.padding(top = 6.dp, start = 14.dp),
-                    )
-                }
-                if (view.foreignTotal > 0) {
-                    Text(
-                        text = stringResource(R.string.background_tasks_foreign_hint),
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(top = 4.dp, start = 14.dp),
                     )
                 }
                 // 没有本会话的行时别提示「点任务查看输出」—— 一行都没有，那句话只会误导。
@@ -564,6 +541,15 @@ private fun readLogTail(file: File, maxBytes: Int): Pair<String, Boolean> {
 }
 
 private const val MAX_LOG_BYTES = 16 * 1024
+
+/**
+ * 「继续」入口在任务结束后保留多久。
+ *
+ * 不是一个常驻开关：全部结束后卡片只在这段时间内还画得出来，过后自动消失。
+ * 选 2 分钟是因为它比 `PruneGraceMs`（1 分钟，保护自动续跑的事件源）稍长：
+ * 记录还能点「继续」，只是不再长期占着输入框上方。
+ */
+private const val BACKGROUND_RESUME_ENTRY_WINDOW_MS = 2 * 60_000L
 
 /**
  * 读一个本地 Agent 开关。

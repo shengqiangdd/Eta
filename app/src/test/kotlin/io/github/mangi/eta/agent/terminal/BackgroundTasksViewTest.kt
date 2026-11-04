@@ -190,9 +190,9 @@ class BackgroundTasksViewTest {
     }
 
     @Test
-    fun foreignOnlyViewStillShowsUp() {
-        // 真机踩到的就是这条：本会话清空「已结束」后只剩别的会话的记录，
-        // 卡片整张消失，连「其他会话 1」也没了 —— 看着像刚才那下把人家的也删了。
+    fun foreignOnlyViewDoesNotKeepTheCard() {
+        // 面板不展示别的会话的任务（用户明确不需要），所以只剩别的会话的记录时卡片应该消失。
+        // 这不是「把人家的也删了」：记录、`terminal_job list` 都不受影响，只是本会话不显示。
         val view = summarizeBackgroundTasks(
             listOf(task("theirs", 1_000L, commandTask = true, sessionScope = "scope-b")),
             viewerScope = "scope-a",
@@ -201,7 +201,7 @@ class BackgroundTasksViewTest {
         assertEquals(0, view.runningTotal)
         assertEquals(0, view.finished)
         assertEquals(1, view.foreignTotal)
-        assertFalse("只剩别的会话的记录时卡片也要留着", view.isEmpty)
+        assertTrue("只剩别的会话的记录时本会话卡片不该出现", view.isEmpty)
     }
 
     @Test

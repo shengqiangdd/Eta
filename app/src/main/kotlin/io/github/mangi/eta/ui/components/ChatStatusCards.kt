@@ -49,13 +49,14 @@ internal object ChatStatusCards {
     /**
      * 后台任务卡是否该出现。
      *
-     * 与台账不同：后台任务**没有「完成」这个概念**给用户看 —— 它跑完了就是跑完了，
-     * 记录留着是为了「继续」。所以判据是「有没有在跑的」；全部结束时
-     * 只在用户开了「结束后保留继续按钮」时才留一行。
+     * 它回答的是「现在还有什么在跑」：有运行中的任务就画。
+     * 全部结束时**不再常驻** —— 一条已经跑完的记录留在输入框上方，读起来像「还有事没完」，
+     * 而实际什么都没在做。只保留一个短窗口：刚结束、用户还可能点「继续」的那一小段时间
+     * （[resumableRecently]），窗口一过卡片自动消失。
      */
     fun backgroundVisible(
         hasRecords: Boolean,
         runningTotal: Int,
-        keepResumeAfterFinish: Boolean,
-    ): Boolean = hasRecords && (runningTotal > 0 || keepResumeAfterFinish)
+        resumableRecently: Boolean,
+    ): Boolean = hasRecords && (runningTotal > 0 || resumableRecently)
 }

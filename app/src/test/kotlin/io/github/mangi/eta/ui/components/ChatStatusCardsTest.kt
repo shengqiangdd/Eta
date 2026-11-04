@@ -47,23 +47,30 @@ class ChatStatusCardsTest {
 
     @Test
     fun backgroundCardFollowsRunningTasksNotHistory() {
-        assertTrue(ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 2, keepResumeAfterFinish = false))
+        assertTrue(
+            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 2, resumableRecently = false),
+        )
         assertFalse(
             "只在「已结束」状态下留着没有任何可做的事",
-            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 0, keepResumeAfterFinish = false),
+            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 0, resumableRecently = false),
         )
     }
 
     @Test
-    fun backgroundCardStaysWhenTheResumeButtonIsThePoint() {
-        // 用户开了「结束后保留继续按钮」时，这一行本身就是入口，不能按「没在跑」收掉。
+    fun backgroundCardStaysOnlyWhileTheResumeEntryIsFresh() {
+        // 「继续」入口只在刚结束的短窗口内有效。窗口一过卡片必须收掉，
+        // 否则只要开关开着就又变回常驻（用户抱怨的就是这个）。
         assertTrue(
-            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 0, keepResumeAfterFinish = true),
+            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 0, resumableRecently = true),
+        )
+        assertFalse(
+            "窗口过期后不该为了「继续」继续占位",
+            ChatStatusCards.backgroundVisible(hasRecords = true, runningTotal = 0, resumableRecently = false),
         )
     }
 
     @Test
     fun backgroundCardWithoutRecordsNeverDraws() {
-        assertFalse(ChatStatusCards.backgroundVisible(hasRecords = false, runningTotal = 0, keepResumeAfterFinish = true))
+        assertFalse(ChatStatusCards.backgroundVisible(hasRecords = false, runningTotal = 0, resumableRecently = true))
     }
 }
