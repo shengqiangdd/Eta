@@ -858,8 +858,10 @@ internal object VirtualDisplayController {
                     "cmd appops set --user $userId ${DeviceToolContract.quote(packageName)} TAKE_AUDIO_FOCUS ignore",
                     timeoutMillis = 3_000L,
                 )
-            } catch (_: Throwable) {
-                // 忽略部分 ROM appops 差异
+            } catch (t: Throwable) {
+                // 部分 ROM 的 appops 没有 TAKE_AUDIO_FOCUS 项，命令失败属预期；记 debug
+                // 便于排查「静音没生效」，但不升为警告（每次创建虚拟屏都可能出现）。
+                AndroidAgentLogger.debug { "静音 TAKE_AUDIO_FOCUS 失败：$packageName（${t.message}）" }
             } finally {
                 exec.close()
             }
@@ -870,26 +872,45 @@ internal object VirtualDisplayController {
         context: Context,
         rootAvailable: () -> Boolean,
     ) {
+        // 先确认 root 可用再取走待恢复列表：原先先 clear 再判断，root 不可用时列表已被清空，
+        // 那些包就再也不会被恢复（表现为某些应用一直没声音）。
+        if (!rootAvailable()) return
         val toRestore = synchronized(lock) {
             val copy = mutedPackages.toList()
             mutedPackages.clear()
             copy
         }
-        if (toRestore.isEmpty() || !rootAvailable()) return
+        if (toRestore.isEmpty()) return
         val userId = DeviceToolContract.appUserId(context)
         thread(name = "eta-vd-audio-restore", isDaemon = true) {
             val exec = BoundedRootCommandExecutor(AndroidAgentLogger, rootAvailable = rootAvailable)
+            // 逐个包恢复：一条失败不能中断其余包。原先 catch 在整个循环外面，第一个包抛异常
+            // 就让后面的包继续被静音，而且异常被完全吞掉，日志里什么都看不到。
+            val failed = mutableListOf<String>()
             try {
                 for (pkg in toRestore) {
                     if (!DeviceToolContract.validPackageName(pkg)) continue
-                    exec.execute(
-                        "cmd appops set --user $userId ${DeviceToolContract.quote(pkg)} TAKE_AUDIO_FOCUS allow",
-                        timeoutMillis = 3_000L,
-                    )
+                    val result = runCatching {
+                        exec.execute(
+                            "cmd appops set --user $userId ${DeviceToolContract.quote(pkg)} TAKE_AUDIO_FOCUS allow",
+                            timeoutMillis = 3_000L,
+                        )
+                    }
+                    if (result.isFailure) {
+                        AndroidAgentLogger.warnThrottled("virtual_display_restore_audio_focus_failed") {
+                            "恢复 TAKE_AUDIO_FOCUS 失败：$pkg（${result.exceptionOrNull()?.message}）"
+                        }
+                        failed += pkg
+                    }
                 }
-            } catch (_: Throwable) {
             } finally {
                 exec.close()
+            }
+            if (failed.isNotEmpty()) {
+                // 放回待恢复集合，下次退出时再试；只保留最近的失败项，避免坏 ROM 上无限累积。
+                synchronized(lock) {
+                    failed.takeLast(MAX_AUDIO_FOCUS_RESTORE_RETRY).forEach { mutedPackages.add(it) }
+                }
             }
         }
     }
@@ -912,3 +933,6 @@ internal object VirtualDisplayController {
         return Triple(width, height, density)
     }
 }
+
+/** 恢复失败的包最多保留多少条等下次重试；避免一直失败的 ROM 上待恢复集合无限累积。 */
+private const val MAX_AUDIO_FOCUS_RESTORE_RETRY = 20

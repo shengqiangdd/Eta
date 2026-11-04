@@ -91,7 +91,7 @@ internal object BrowserDomScripts {
             if (!element || !(element instanceof Element)) return null;
             if (element.id) {
               var byId = '#' + cssEscape(element.id);
-              try { if (document.querySelectorAll(byId).length === 1) return byId; } catch (_) {}
+              try { if (document.querySelectorAll(byId).length === 1) return byId; } catch (_) { /* 非法 id 选择器：退回逐级推导 */ }
             }
             var parts = [];
             var node = element;
@@ -114,7 +114,7 @@ internal object BrowserDomScripts {
               parts.unshift(part);
               var candidate = parts.join(' > ');
               if (candidate.length > MAX_SELECTOR_CHARS) break;
-              try { if (document.querySelectorAll(candidate).length === 1) return candidate; } catch (_) {}
+              try { if (document.querySelectorAll(candidate).length === 1) return candidate; } catch (_) { /* 非法候选选择器：忽略本次校验，继续往上层拼 */ }
               node = parent;
               depth++;
             }
