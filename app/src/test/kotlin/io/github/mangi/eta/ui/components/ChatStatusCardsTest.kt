@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.components
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -72,5 +73,31 @@ class ChatStatusCardsTest {
     @Test
     fun backgroundCardWithoutRecordsNeverDraws() {
         assertFalse(ChatStatusCards.backgroundVisible(hasRecords = false, runningTotal = 0, resumableRecently = true))
+    }
+
+    @Test
+    fun resumeEntryWindowHasTwoTiers() {
+        // 默认档与「保留更久」档都必须钉住：数字变了要有人被提醒。
+        val normal = ChatStatusCards.resumeEntryWindowMs(extended = false)
+        val extended = ChatStatusCards.resumeEntryWindowMs(extended = true)
+        assertEquals(2 * 60_000L, normal)
+        assertEquals(10 * 60_000L, extended)
+        assertTrue("延长档必须更长", extended > normal)
+    }
+
+    @Test
+    fun resumableRecentlyRespectsWindow() {
+        val now = 1_000_000L
+        val normal = ChatStatusCards.resumeEntryWindowMs(extended = false)
+        val extended = ChatStatusCards.resumeEntryWindowMs(extended = true)
+        // 5 分钟前结束：默认档已过期，延长档仍在窗口内 —— 这就是新开关的意义。
+        val fiveMinutesAgo = now - 5 * 60_000L
+        assertFalse(ChatStatusCards.resumableRecently(listOf(fiveMinutesAgo), now, normal))
+        assertTrue(ChatStatusCards.resumableRecently(listOf(fiveMinutesAgo), now, extended))
+        // 边界：正好等于窗口仍显示，多 1ms 就不显示。
+        assertTrue(ChatStatusCards.resumableRecently(listOf(now - normal), now, normal))
+        assertFalse(ChatStatusCards.resumableRecently(listOf(now - normal - 1), now, normal))
+        // 没有结束时间（null）的记录不能算「刚结束」。
+        assertFalse(ChatStatusCards.resumableRecently(listOf(null), now, extended))
     }
 }

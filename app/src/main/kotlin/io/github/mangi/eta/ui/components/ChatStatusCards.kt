@@ -59,4 +59,24 @@ internal object ChatStatusCards {
         runningTotal: Int,
         resumableRecently: Boolean,
     ): Boolean = hasRecords && (runningTotal > 0 || resumableRecently)
+
+    /**
+     * 「继续」入口在任务结束后保留多久。
+     *
+     * 默认 2 分钟；设置里开启「保留更久」后 10 分钟。
+     * 抽成纯函数是为了单测能钉住两档，而不是把数字散在 Compose 里。
+     */
+    fun resumeEntryWindowMs(extended: Boolean): Long = if (extended) 10 * 60_000L else 2 * 60_000L
+
+    /**
+     * 有没有「刚结束、还值得给继续入口」的任务。
+     *
+     * 把判据从 Compose 里抽出来单测：[completedAt] 为 null 的记录不算（没有结束时间就不确定
+     * 是否刚刚结束），边界含等号（正好窗口时仍显示）。
+     */
+    fun resumableRecently(
+        completedAt: List<Long?>,
+        now: Long,
+        windowMs: Long,
+    ): Boolean = completedAt.any { done -> done != null && now - done <= windowMs }
 }

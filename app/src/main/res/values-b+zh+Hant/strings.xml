@@ -1076,7 +1076,9 @@
   <string name="background_tasks_auto_resume_paused">自動續跑已暫停，發一則訊息後恢復</string>
   <string name="background_tasks_resume_prompt">後台任務 %1$s（%2$s）已結束。請用 terminal_job / terminal_daemon 的 logs 讀取它的輸出，然後把還沒做完的事接著做完；不需要繼續就直接說明原因。</string>
   <string name="setting_background_resume_button_title">後台任務結束後在卡片上提供「繼續」</string>
-  <string name="setting_background_resume_button_summary">只有你點一下才會發出下一輪，預設開。</string>
+  <string name="setting_background_resume_button_summary">只有你點一下才會發出下一輪，預設開。關閉後任務一結束卡片就會收起，不再提供「繼續」入口。</string>
+  <string name="setting_background_resume_window_long_title">「繼續」入口保留更久</string>
+  <string name="setting_background_resume_window_long_summary">任務結束後保留 10 分鐘（預設 2 分鐘），預設關。</string>
   <string name="setting_background_resume_auto_title">後台任務結束後自動繼續</string>
   <string name="setting_background_resume_auto_summary">僅在應用執行且工作階段閒置時生效，一輪對話最多自動續 2 次（會消耗額度）。</string>
   <string name="chat_send">傳送</string>

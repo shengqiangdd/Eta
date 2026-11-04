@@ -1108,7 +1108,9 @@
   <string name="background_tasks_auto_resume_paused">Auto-resume paused until you send a message</string>
   <string name="background_tasks_resume_prompt">Background task %1$s (%2$s) has finished. Read its output with terminal_job / terminal_daemon logs, then finish whatever is still unfinished; if nothing needs continuing, just say why.</string>
   <string name="setting_background_resume_button_title">Offer “Resume” on the background-task card</string>
-  <string name="setting_background_resume_button_summary">Sends the next turn only when you tap it. Default on.</string>
+  <string name="setting_background_resume_button_summary">Sends the next turn only when you tap it. Default on. When off, the card collapses as soon as tasks finish, so there is no resume entry.</string>
+  <string name="setting_background_resume_window_long_title">Keep the “Resume” entry longer</string>
+  <string name="setting_background_resume_window_long_summary">Keep it for 10 minutes after a task finishes instead of 2 minutes. Default off.</string>
   <string name="setting_background_resume_auto_title">Continue automatically when a background task finishes</string>
   <string name="setting_background_resume_auto_summary">Only while the app is running and the chat is idle; at most 2 automatic continuations per chat (it spends quota).</string>
   <string name="chat_send">Send</string>

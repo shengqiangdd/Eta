@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Flare
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
@@ -618,6 +619,17 @@ private fun SettingsPageContent(
                         summary = stringResource(R.string.setting_background_resume_button_summary),
                         key = Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON,
                         icon = Icons.Rounded.Checklist,
+                        iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.setting_background_resume_window_long_title),
+                        summary = stringResource(R.string.setting_background_resume_window_long_summary),
+                        key = Prefs.Keys.AGENT_BACKGROUND_RESUME_WINDOW_LONG,
+                        icon = Icons.Rounded.Timer,
                         iconTint = EtaPreferenceColors.Blue,
                     )
 

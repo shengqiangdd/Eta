@@ -118,6 +118,13 @@ internal object Prefs {
         /** 后台任务结束后，在聊天页的任务卡上给出「继续」（默认开；点一下才会发出）。 */
         const val AGENT_BACKGROUND_RESUME_BUTTON = "agent_background_resume_button"
         /**
+         * 「继续」入口保留更久（10 分钟而非默认 2 分钟，默认关）。
+         *
+         * 卡片只在任务结束后的短窗口内出现，窗口一过整卡消失。这个开关只改窗口长度，
+         * 不把卡片变回常驻 —— 「结束了不占位」的前提不变。
+         */
+        const val AGENT_BACKGROUND_RESUME_WINDOW_LONG = "agent_background_resume_window_long"
+        /**
          * 后台任务结束后**自动**发起下一轮（默认关）。
          *
          * 它会在没人看着的时候花掉额度，所以默认关，且另有硬上限
@@ -155,6 +162,7 @@ internal object Prefs {
             AGENT_SUBAGENT_ENABLED to true,
             AGENT_CHAT_CARDS_AUTO_COLLAPSE to true,
             AGENT_BACKGROUND_RESUME_BUTTON to true,
+            AGENT_BACKGROUND_RESUME_WINDOW_LONG to false,
             AGENT_BACKGROUND_RESUME_AUTO to false,
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
         )
@@ -174,6 +182,7 @@ internal object Prefs {
             AGENT_PLAN_MODE,
             AGENT_SUBAGENT_ENABLED,
             AGENT_CHAT_CARDS_AUTO_COLLAPSE,
+            AGENT_BACKGROUND_RESUME_WINDOW_LONG,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
 

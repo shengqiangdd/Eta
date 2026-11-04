@@ -128,6 +128,10 @@ internal fun BackgroundTasksCard(
     val resumeButtonEnabled = remember(context) {
         localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
     }
+    // 「继续」入口保留多久：默认 2 分钟，设置里开启「保留更久」后 10 分钟。
+    val resumeWindowExtended = remember(context) {
+        localSwitch(context, Prefs.Keys.AGENT_BACKGROUND_RESUME_WINDOW_LONG)
+    }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inspectedTask by remember { mutableStateOf<DetachedTask?>(null) }
     // 「清除已结束」要和用户说清后果再动手：删掉的是记录与日志文件，之后 terminal_job list
@@ -139,10 +143,11 @@ internal fun BackgroundTasksCard(
     var now by remember(records) { mutableLongStateOf(System.currentTimeMillis()) }
     // 已结束的任务不再常驻：只在「刚结束、还能点继续」的短窗口内留一下，过后整卡消失。
     // 判据只认本会话（view.recentFinished 已按会话过滤）—— 别的会话在跑什么与本会话无关。
-    val resumableRecently = resumeButtonEnabled && view.recentFinished.any { task ->
-        val done = task.completedAt ?: return@any false
-        now - done <= BACKGROUND_RESUME_ENTRY_WINDOW_MS
-    }
+    val resumableRecently = resumeButtonEnabled && ChatStatusCards.resumableRecently(
+        completedAt = view.recentFinished.map { it.completedAt },
+        now = now,
+        windowMs = ChatStatusCards.resumeEntryWindowMs(resumeWindowExtended),
+    )
     if (collapseIdleCards &&
         !ChatStatusCards.backgroundVisible(
             hasRecords = true,
@@ -541,15 +546,6 @@ private fun readLogTail(file: File, maxBytes: Int): Pair<String, Boolean> {
 }
 
 private const val MAX_LOG_BYTES = 16 * 1024
-
-/**
- * 「继续」入口在任务结束后保留多久。
- *
- * 不是一个常驻开关：全部结束后卡片只在这段时间内还画得出来，过后自动消失。
- * 选 2 分钟是因为它比 `PruneGraceMs`（1 分钟，保护自动续跑的事件源）稍长：
- * 记录还能点「继续」，只是不再长期占着输入框上方。
- */
-private const val BACKGROUND_RESUME_ENTRY_WINDOW_MS = 2 * 60_000L
 
 /**
  * 读一个本地 Agent 开关。

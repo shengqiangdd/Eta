@@ -1093,7 +1093,9 @@
   <string name="background_tasks_auto_resume_paused">自动续跑已暂停，发一条消息后恢复</string>
   <string name="background_tasks_resume_prompt">后台任务 %1$s（%2$s）已结束。请用 terminal_job / terminal_daemon 的 logs 读取它的输出，然后把还没做完的事接着做完；不需要继续就直接说明原因。</string>
   <string name="setting_background_resume_button_title">后台任务结束后在卡片上提供「继续」</string>
-  <string name="setting_background_resume_button_summary">只有你点一下才会发出下一轮，默认开。</string>
+  <string name="setting_background_resume_button_summary">只有你点一下才会发出下一轮，默认开。关闭后任务一结束卡片就会收起，不再提供「继续」入口。</string>
+  <string name="setting_background_resume_window_long_title">「继续」入口保留更久</string>
+  <string name="setting_background_resume_window_long_summary">任务结束后保留 10 分钟（默认 2 分钟），默认关。</string>
   <string name="setting_background_resume_auto_title">后台任务结束后自动继续</string>
   <string name="setting_background_resume_auto_summary">仅在应用运行且会话空闲时生效，一轮对话最多自动续 2 次（会消耗额度）。</string>
   <string name="chat_send">发送</string>
