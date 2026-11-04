@@ -60,6 +60,75 @@ class VirtualDisplayTasksTest {
         assertEquals(emptySet<Int>(), VirtualDisplayTasks.displaysHosting(tasks, "com.example.absent"))
     }
 
+    // ---- 启动前判定：每一条都对应一次真实的「动了用户的屏」 ----
+
+    @Test
+    fun alreadyOnTargetDisplayMeansObserveInsteadOfLaunch() {
+        // 目标应用就在这块虚拟屏上：启动是多余的，只会把任务再挪一遍。
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.AlreadyHere,
+            VirtualDisplayTasks.decideLaunch(hosting = setOf(10), targetDisplayId = 10, force = false),
+        )
+        // 即使带了 force 也不应该真去启动 —— 「已到位」跟「允许搬」是两件事。
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.AlreadyHere,
+            VirtualDisplayTasks.decideLaunch(hosting = setOf(10), targetDisplayId = 10, force = true),
+        )
+    }
+
+    @Test
+    fun notRunningAnywhereProceeds() {
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.Proceed,
+            VirtualDisplayTasks.decideLaunch(hosting = emptySet(), targetDisplayId = 10, force = false),
+        )
+    }
+
+    @Test
+    fun runningOnMainScreenIsBlockedAndFlaggedAsMainScreen() {
+        // 回归（2026-11-04）：我用 force=true 把用户主屏上的 Eta 搬到了虚拟屏，
+        // 用户手上的界面当场被划掉。未给 force 时必须拦住，并且**要标明它在主屏** ——
+        // “在某块屏上”和“用户正看着它”是完全不同的严重程度。
+        val verdict = VirtualDisplayTasks.decideLaunch(
+            hosting = setOf(0), targetDisplayId = 10, force = false, mainDisplayId = 0,
+        )
+        assertEquals(VirtualDisplayTasks.LaunchVerdict.Occupied(setOf(0), onMainScreen = true), verdict)
+    }
+
+    @Test
+    fun runningOnlyOnAnotherVirtualDisplayIsBlockedButNotFlaggedAsMainScreen() {
+        val verdict = VirtualDisplayTasks.decideLaunch(
+            hosting = setOf(10), targetDisplayId = 11, force = false, mainDisplayId = 0,
+        )
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.Occupied(setOf(10), onMainScreen = false),
+            verdict,
+        )
+    }
+
+    @Test
+    fun forceStillProceedsWhenOccupied() {
+        // force 是用户明确接受后果才该走的选项，所以它必须真的能过 ——
+        // 否则用户授权了却还是不能用，等于把功能锁死。
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.Proceed,
+            VirtualDisplayTasks.decideLaunch(hosting = setOf(0), targetDisplayId = 10, force = true),
+        )
+    }
+
+    @Test
+    fun taskOnBothTargetAndElsewhereIsNotTreatedAsReady() {
+        // 同时在目标屏和别处，说明状态本就混乱，不能当作「已就绪」放过去；
+        // 但也不该因为目标屏上有一份就当成“没在运行”。
+        val verdict = VirtualDisplayTasks.decideLaunch(
+            hosting = setOf(0, 10), targetDisplayId = 10, force = false, mainDisplayId = 0,
+        )
+        assertEquals(
+            VirtualDisplayTasks.LaunchVerdict.Occupied(setOf(0, 10), onMainScreen = true),
+            verdict,
+        )
+    }
+
     @Test
     fun foregroundPrefersTheVisibleTask() {
         val tasks = VirtualDisplayTasks.parse(real)

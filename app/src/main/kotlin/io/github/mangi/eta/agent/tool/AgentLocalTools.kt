@@ -2929,19 +2929,43 @@ internal class AgentLocalTools(
                     component = parsed
                 }
                 // 预检必须在启动**之前**：命令一执行，用户的主屏就已经被改动了。
-                val hosting = VirtualDisplayTasks.displaysHosting(
-                    deviceController.tasksNow(),
-                    request.packageName,
-                )
-                if (hosting.isNotEmpty() && !request.force) {
-                    return@use errorResult(
-                        "APP_ALREADY_RUNNING",
-                        "「${request.packageName}」已有任务在 display " +
-                            hosting.sorted().joinToString("、") +
-                            "。在虚拟屏上启动会把它从那里搬走（主屏上的实例会被挪走或顶到前台），" +
-                            "等于动了用户的屏，所以本次未启动。请先让该应用退出；" +
-                            "确实接受这个后果时传 force=true。",
+                val tasks = deviceController.tasksNow()
+                val hosting = VirtualDisplayTasks.displaysHosting(tasks, request.packageName)
+
+                // 判定抽在 VirtualDisplayTasks.decideLaunch 里（可单测）：
+                // 这里每一条都对应一次真实的「动了用户的屏」。
+                when (
+                    val verdict = VirtualDisplayTasks.decideLaunch(
+                        hosting = hosting,
+                        targetDisplayId = session.displayId,
+                        force = request.force,
+                        mainDisplayId = Display.DEFAULT_DISPLAY,
                     )
+                ) {
+                    VirtualDisplayTasks.LaunchVerdict.Proceed -> Unit
+                    VirtualDisplayTasks.LaunchVerdict.AlreadyHere -> {
+                        return@use errorResult(
+                            "ALREADY_ON_TARGET_DISPLAY",
+                            "「${request.packageName}」已经在这块虚拟屏（display ${session.displayId}）上，" +
+                                "无需启动。直接用 observe_screen(display_id=${session.displayId}) 观察即可。",
+                        )
+                    }
+                    is VirtualDisplayTasks.LaunchVerdict.Occupied -> {
+                        return@use errorResult(
+                            "APP_ALREADY_RUNNING",
+                            "「${request.packageName}」已有任务在 display " +
+                                verdict.displays.sorted().joinToString("、") +
+                                "。" +
+                                if (verdict.onMainScreen) {
+                                    "它现在就在主屏上，用户正用着 —— " +
+                                        "强制搬到虚拟屏会让用户手上的界面当场消失。" +
+                                        "先请用户切走，或换一个当前没在运行的应用。"
+                                } else {
+                                    "强制搬到虚拟屏会把它从原来的位置移走。"
+                                } +
+                                "确实接受这个后果时才传 force=true。",
+                        )
+                    }
                 }
                 null
             }

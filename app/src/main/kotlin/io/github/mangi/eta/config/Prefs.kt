@@ -174,9 +174,24 @@ internal object Prefs {
             AGENT_PLAN_MODE,
             AGENT_SUBAGENT_ENABLED,
             AGENT_CHAT_CARDS_AUTO_COLLAPSE,
+            AGENT_VIRTUAL_DISPLAY_ENABLED,
+        )
+
+        /**
+         * 与 [LOCAL_AGENT_KEYS] 同属「本地为事实源」的**字符串**键。
+         *
+         * 必须单独一张表：`reconcileAgentPreferences` 用
+         * `BOOLEAN_DEFAULTS.getValue(key)` 取默认值，把字符串键塞进
+         * `LOCAL_AGENT_KEYS` 会在打设置页时抛
+         * `NoSuchElementException: Key ... is missing in the map` ——
+         * 一次真实的闪退（2026-11-04，我自己引入的）。
+         *
+         * 值的语义是「空串 = 未设置 / 自动」，迁移时按原样搬运，
+         * 不做布尔转换。
+         */
+        val LOCAL_AGENT_STRING_KEYS: Set<String> = setOf(
             AGENT_ACP_DELEGATION_MODE,
             AGENT_ACP_DEFAULT_AGENT,
-            AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
     }
 
@@ -288,6 +303,20 @@ internal object Prefs {
                 }
                 remotePreferences.contains(key) -> {
                     localEditor.putBoolean(key, remotePreferences.getBoolean(key, default))
+                    updateLocal = true
+                }
+            }
+        }
+        // 字符串键单独一轮：它们没有布尔默认值，且值可能是空串（= 未设置），
+        // 所以判据只能是 contains，不能按「值非空」判断有没有设置过。
+        Keys.LOCAL_AGENT_STRING_KEYS.forEach { key ->
+            when {
+                local.contains(key) -> {
+                    remoteEditor.putString(key, local.getString(key, null))
+                    updateRemote = true
+                }
+                remotePreferences.contains(key) -> {
+                    localEditor.putString(key, remotePreferences.getString(key, null))
                     updateLocal = true
                 }
             }

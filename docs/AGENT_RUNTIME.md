@@ -955,6 +955,40 @@ APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
 判断要读 DataStore（挂起），所以 `providerReady` 由调用方传入，
 `AcpClient.defaultAgentId` 保持同步。
 
+**缺陷四：我自己引入的闪退 —— 一进设置页就崩。**
+
+真机日志（crash buffer）：
+
+```
+FATAL EXCEPTION: main
+java.util.NoSuchElementException: Key agent_acp_delegation_mode is missing in the map.
+  at io.github.mangi.eta.config.Prefs.reconcileAgentPreferences(Prefs.kt:283)
+  at SettingsScreenKt$SettingsPageContent$...onServiceStateChanged(SettingsScreen.kt:267)
+```
+
+根因：`LOCAL_AGENT_KEYS` 的语义是「**布尔**键，本地为事实源」，
+`reconcileAgentPreferences` 对它逐个做 `BOOLEAN_DEFAULTS.getValue(key)`。
+我把两个**字符串**键（委派模式、默认代理）加进了这个集合 ——
+`getValue` 取不到就直接抛，且是在 `DisposableEffect` 的
+`onServiceStateChanged` 里抛的，**每次打开设置页必崩**。
+
+修：拆出 `LOCAL_AGENT_STRING_KEYS`，迁移时按 `contains` 判断、原样搬运字符串
+（不能用「值非空」判断 —— 空串正是「未设置」的合法表示）。
+
+**为什么单测没抓到**：我加键时改的是产品代码，没有同步 `PrefsDefaultsTest`
+里的精确集合断言 —— 那条测试**本来会红**，但我没跑就提交了。
+教训不是「再加一条测试」，而是「改集合类常量必须跑那个测试」。
+话虽如此，精确集合断言有个弱点：它只报「集合变了」，
+很容易被顺手把新键补进期望集合里改绿，然后闪退照旧。
+所以另加两条**结构不变量**：
+
+| 测试 | 卡住什么 |
+|---|---|
+| `everyLocalAgentBooleanKeyHasADefault` | `LOCAL_AGENT_KEYS` 里每个键必须有布尔默认值 |
+| `stringKeysAndBooleanKeysAreDisjoint` | 两个集合不能重叠 |
+
+注入实验：把字符串键塞回布尔集合 → **3 个测试同时变红**。
+
 **仍未解决（真机结论，非猜测）**：Claude **代理本身**对这个 provider 跑不通。
 sq6/apigoto 走 Anthropic 原生 `/v1/messages`，但它们不认 SDK 内置的
 `claude-sonnet-4-5-20250929`；而 `claude-sonnet-5` / `default` 经代理映射后仍指向那个内置 ID。

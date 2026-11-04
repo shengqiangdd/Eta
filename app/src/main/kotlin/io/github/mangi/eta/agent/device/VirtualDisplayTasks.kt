@@ -88,6 +88,40 @@ internal object VirtualDisplayTasks {
             .mapTo(mutableSetOf()) { it.displayId }
 
     /**
+     * 启动前的处置决定：能不能在这块虚拟屏上启动，还是应该直接观察/拒绝。
+     *
+     * 抽成纯函数是因为这里每一条都对应一次真实的「动了用户的屏」：
+     * 2026-11-04 我用 force=true 把用户主屏上的 Eta 搬到了虚拟屏，
+     * 用户手上的界面当场被划掉。判据本身不难，难的是**没人测它**。
+     */
+    sealed interface LaunchVerdict {
+        /** 直接启动（目标没在运行，或在别的虚拟屏上）。 */
+        data object Proceed : LaunchVerdict
+
+        /** 已经在这块屏上，启动是多余的，观察即可。 */
+        data object AlreadyHere : LaunchVerdict
+
+        /** 已有任务在别处，且没给 force。 */
+        data class Occupied(val displays: Set<Int>, val onMainScreen: Boolean) : LaunchVerdict
+    }
+
+    fun decideLaunch(
+        hosting: Set<Int>,
+        targetDisplayId: Int,
+        force: Boolean,
+        mainDisplayId: Int = 0,
+    ): LaunchVerdict {
+        // 只在这一块屏上 → 不用启动。
+        // 注意判据是「唯一且等于目标」：若同时在主屏和目标屏都有任务，
+        // 说明状态本就混乱，不该当作「已就绪」放过去。
+        if (hosting.size == 1 && hosting.first() == targetDisplayId) return LaunchVerdict.AlreadyHere
+        val others = hosting - targetDisplayId
+        if (others.isEmpty()) return LaunchVerdict.Proceed
+        if (force) return LaunchVerdict.Proceed
+        return LaunchVerdict.Occupied(displays = hosting, onMainScreen = mainDisplayId in hosting)
+    }
+
+    /**
      * 某块屏当前可见任务对应的包；没有可见任务时退回任一任务。
      *
      * 只信 `visible=true` 的那条：`am stack list` 里同一块屏可能挂着多个后台任务，

@@ -311,7 +311,7 @@
   <string name="settings_acp_default_agent_title">預設編碼代理</string>
   <string name="settings_acp_default_agent_summary">委派時把任務交給哪一個代理。</string>
   <string name="acp_agent_auto_title">自動</string>
-  <string name="acp_agent_auto_summary">使用第一個已安裝的代理</string>
+  <string name="acp_agent_auto_summary">用第一個「裝好且有憑據」的代理；設定裡選的那個暫時用不了時才落到這裡</string>
   <string name="acp_agent_codex_title">Codex</string>
   <string name="acp_agent_codex_summary">OpenAI Codex 命令列（codex-acp）</string>
   <string name="acp_agent_claude_title">Claude</string>
