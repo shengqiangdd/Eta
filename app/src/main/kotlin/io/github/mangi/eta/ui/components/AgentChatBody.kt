@@ -1926,6 +1926,8 @@ private fun AgentChatBottomBar(
                 // 与台账 / 目标 / 待办同一个作用域键：续跑记忆按会话分开，别让 A 会话的点击
                 // 把 B 会话的按钮藏起来。
                 scopeId = goalScopeId,
+                // 空对话还没有会话 id：它名下不可能有任务，不能把别的会话的任务算成自己的。
+                scopePending = goalScopeId.isNullOrBlank(),
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             pendingAsk?.let { ask ->

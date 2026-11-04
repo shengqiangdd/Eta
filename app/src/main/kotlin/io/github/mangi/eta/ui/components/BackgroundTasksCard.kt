@@ -2,6 +2,7 @@ package io.github.mangi.eta.ui.components
 
 import android.content.Context
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -49,6 +51,7 @@ import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.backgroundTaskLine
 import io.github.mangi.eta.agent.terminal.backgroundResumePrompt
 import io.github.mangi.eta.agent.terminal.canOfferManualResume
+import io.github.mangi.eta.agent.terminal.pickDismissVictims
 import io.github.mangi.eta.agent.terminal.summarizeBackgroundTasks
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
@@ -107,9 +110,14 @@ internal fun BackgroundTasksCard(
     modifier: Modifier = Modifier,
     // Compose 约定 Modifier 必须是第一个可选参数（lint `ModifierParameter`），所以作用域键排在它后面。
     scopeId: String? = null,
+    // 新对话在发出第一条消息前还没有会话 id（`goalScopeId` 为空）：这时它名下不可能有任务。
+    // 不能拿它当「没有会话概念」的老调用方 —— 那样别的会话的任务会被算成自己的（真机实测）。
+    scopePending: Boolean = false,
 ) {
     val records = rememberDetachedTasks() ?: return
-    val view = remember(records, scopeId) { summarizeBackgroundTasks(records, scopeId) }
+    val view = remember(records, scopeId, scopePending) {
+        summarizeBackgroundTasks(records, scopeId, scopePending)
+    }
     if (view.isEmpty) return
     // 全部结束之后没必要继续占位：这张卡回答的是「还有什么在跑」，
     // 没有在跑的就只剩「上次跑过什么」，点开终端页一样看得到。
@@ -146,6 +154,9 @@ internal fun BackgroundTasksCard(
     }
 
     val context = LocalContext.current
+    // 读字符串一律走 LocalResources：用 LocalContext.current.getString 会被 lint 判
+    // 「不随 Configuration 变化、可能拿到旧值」（LocalContextGetResourceValueCall）。
+    val resources = LocalResources.current
     // 清理走 IO，不能卡在点击帧上：dismissFinished 会写记录文件，并按身份起一次 shell 删日志。
     val dismissScope = rememberCoroutineScope()
     // 两个开关在设置页里改（写的是**本地** Agent prefs）；这里按组合时读一次，回到本页会重新读。
@@ -172,7 +183,8 @@ internal fun BackgroundTasksCard(
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
     val finishedLabel = stringResource(R.string.background_tasks_finished)
-    val foreignLabel = stringResource(R.string.background_tasks_foreign)
+    val foreignRunningLabel = stringResource(R.string.background_tasks_foreign_running)
+    val foreignFinishedLabel = stringResource(R.string.background_tasks_foreign_finished)
     val primary = MiuixTheme.colorScheme.primary
     // 计数全拼进同一个 Text：Row 里并排几个 Text 时，后面的会被挤成零宽（台账卡踩过）。
     val header = buildAnnotatedString {
@@ -181,8 +193,11 @@ internal fun BackgroundTasksCard(
             withStyle(SpanStyle(color = primary)) { append(" · $runningLabel ${view.runningTotal}") }
         }
         if (view.finished > 0) append(" · $finishedLabel ${view.finished}")
-        // 别的会话的任务不列出来（口径要跟 terminal_job list 一致），但必须让人知道还有几条。
-        if (view.foreignTotal > 0) append(" · $foreignLabel ${view.foreignTotal}")
+        // 别的会话的任务不列出来（口径要跟 terminal_job list 一致），但必须让人知道还有几条，
+        // 而且要说清是「在跑」还是「已结束」：旧版一律写「其他会话 N」，真机上把一条
+        // 早就停掉的记录读成了「别的会话正在占资源」。
+        if (view.foreignRunning > 0) append(" · $foreignRunningLabel ${view.foreignRunning}")
+        if (view.foreignFinished > 0) append(" · $foreignFinishedLabel ${view.foreignFinished}")
     }
 
     Column(
@@ -270,14 +285,27 @@ internal fun BackgroundTasksCard(
                         )
                     }
                 }
-                if (view.finished > 0) {
+                // 按钮上写几条就必须真能删几条：还在保护期（刚结束不满 1 分钟、或结果还没通知）的
+                // 记录旧版也计入数字，点下去一条都不删、也没有任何反馈 —— 真机上就是这样“按钮坏了”。
+                val dismissible = remember(records, scopeId, scopePending, now) {
+                    pickDismissVictims(records, now, scopeId, scopePending).size
+                }
+                if (dismissible > 0) {
                     Text(
-                        text = stringResource(R.string.background_tasks_dismiss_finished, view.finished),
+                        text = stringResource(R.string.background_tasks_dismiss_finished, dismissible),
                         style = MiuixTheme.textStyles.footnote2,
                         color = primary,
                         modifier = Modifier
                             .padding(top = 6.dp, start = 14.dp)
                             .clickable { showDismissConfirm = true },
+                    )
+                } else if (view.finished > 0) {
+                    // 不能当成“没有已结束的任务”：它确实在，只是暂时不能删。
+                    Text(
+                        text = stringResource(R.string.background_tasks_dismiss_grace, view.finished),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(top = 6.dp, start = 14.dp),
                     )
                 }
                 if (view.foreignTotal > 0) {
@@ -315,11 +343,20 @@ internal fun BackgroundTasksCard(
             onConfirm = {
                 showDismissConfirm = false
                 dismissScope.launch {
-                    withContext(Dispatchers.IO) {
-                        // 失败不派弹窗：卡片靠 changes 自增刷新，没变就说明一条没清；
-                        // 真出错时下次打开仍看得到记录，不会把用户的记录默默吃掉。
-                        runCatching { TerminalRuntime.backgroundJobs(context).dismissFinished(scopeId) }
+                    val removed = withContext(Dispatchers.IO) {
+                        // 写盘失败时返回 0：记录还在，用户下次还能再清，不会默默吃掉。
+                        runCatching {
+                            TerminalRuntime.backgroundJobs(context).dismissFinished(scopeId, scopePending)
+                        }.getOrNull()
                     }
+                    // 必须要回一句：旧实现清 0 条时界面完全无变化，用户只能反复点，
+                    // 甚至怀疑是不是把别人会话的记录删掉了（真机实测）。
+                    val message = when {
+                        removed == null -> resources.getString(R.string.background_tasks_dismiss_failed)
+                        removed == 0 -> resources.getString(R.string.background_tasks_dismiss_none)
+                        else -> resources.getString(R.string.background_tasks_dismiss_done, removed)
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
             },
         )

@@ -673,14 +673,16 @@ internal class DetachedTaskSupervisor(
      *
      * @param viewerScope 当前会话；与面板、`terminal_job list` 同一口径，只清它看得见的那些。
      *   null 表示调用方没有会话概念（语音入口、外部直调），此时按旧行为清全局。
+     * @param scopePending 当前会话还没拿到 id（新对话发第一条消息前）：它名下不可能有任务，
+     *   只清无归属的旧记录。否则空对话里点一下「清除」会把别的会话的记录静默删掉。
      * @return 真正清掉的条数；0 表示没有可清的（全在保护期里），或落盘失败。
      */
-    fun dismissFinished(viewerScope: String? = null): Int {
+    fun dismissFinished(viewerScope: String? = null, scopePending: Boolean = false): Int {
         val now = System.currentTimeMillis()
         val victims: List<DetachedTask>
         synchronized(RECORDS_LOCK) {
             val tasks = loadTasksLocked()
-            victims = pickDismissVictims(tasks, now, viewerScope)
+            victims = pickDismissVictims(tasks, now, viewerScope, scopePending)
             if (victims.isEmpty()) return 0
             val victimIds = victims.mapTo(mutableSetOf()) { it.id }
             // 先落盘再删文件：写失败时记录还在，用户下次还能再清一次；
@@ -763,15 +765,24 @@ internal fun pickDismissVictims(
     tasks: List<DetachedTask>,
     nowMs: Long,
     viewerScope: String? = null,
+    scopePending: Boolean = false,
 ): List<DetachedTask> =
-    tasks.filter {
-        it.completedAt != null &&
-            (!it.commandTask || it.completionNotified) &&
-            (it.completedAt ?: 0L) <= nowMs - PruneGraceMs &&
+    tasks.filter { task ->
+        // 先解出结束时间：后面的归属判断写成 if 表达式后，`?: 0L` 会变成
+        // 「Elvis 永远返回左边」的编译告警（构建门禁零告警）。
+        val finishedAt = task.completedAt ?: return@filter false
+        (!task.commandTask || task.completionNotified) &&
+            finishedAt <= nowMs - PruneGraceMs &&
             // 与面板、`terminal_job list` 同一口径：按钮上写几条，就只删几条。
             // 不按会话过滤的话，A 会话点一下会把 B 会话的已结束记录连带删掉，
             // 而按钮数字里根本没算那几条 —— 典型的「界面说 2、实际删 3」。
-            BackgroundTaskOwnership.visible(it.sessionScope, viewerScope, includeOther = false)
+            if (scopePending) {
+                // 新会话还没有 id，它名下本来就不该有任务；只清无归属的旧记录，
+                // 与面板「mine = 无归属」的判断保持同一套。
+                task.sessionScope.isNullOrBlank()
+            } else {
+                BackgroundTaskOwnership.visible(task.sessionScope, viewerScope, includeOther = false)
+            }
     }
 
 /**

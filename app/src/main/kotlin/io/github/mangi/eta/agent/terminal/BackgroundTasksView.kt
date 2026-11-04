@@ -24,8 +24,19 @@ internal data class BackgroundTasksView(
      * 否则「我明明在别的会话里开着东西」会变成「它去哪了」。
      */
     val foreignTotal: Int = 0,
+
+    /**
+     * 其中**还在跑**的外会话条数。
+     *
+     * 只说「其他会话 1」是不够的：那条可能早就结束了，用户却会读成「别的会话正在干活」，
+     * 于是去找一个根本不存在的负载来源（真机就是这么误读的）。
+     */
+    val foreignRunning: Int = 0,
 ) {
     val runningTotal: Int get() = runningJobs + runningDaemons
+
+    /** 外会话里已经结束的条数；不单列时它们只是历史噪音。 */
+    val foreignFinished: Int get() = (foreignTotal - foreignRunning).coerceAtLeast(0)
 
     /**
      * 没有任何记录时卡片不出现，避免给空状态加一行常驻噪音。
@@ -46,16 +57,27 @@ internal const val BACKGROUND_TASKS_MAX_FINISHED_ROWS = 3
 internal fun summarizeBackgroundTasks(
     records: List<DetachedTask>,
     viewerScope: String? = null,
+    scopePending: Boolean = false,
 ): BackgroundTasksView {
     // 归属规则只认 BackgroundTaskOwnership 一处：面板、list、read/stop 各写一套必然漂移，
     // 而漂移的表现是「界面看得见却操作不了」这种最难解释的样子。
     val mine = records.filter {
-        BackgroundTaskOwnership.visible(
-            taskScope = it.sessionScope,
-            viewerScope = viewerScope,
-            includeOther = false,
-        )
+        if (scopePending) {
+            // 新会话还没拿到 id（第一条消息发出前）：它名下不可能有任何任务。
+            // 不能沿用「null = 没有会话概念」那条旧分支 —— 那会让别的会话的任务被算成
+            // 本会话「执行中 1」，用户会以为自己在跑一个根本没派过的任务。
+            // 无归属的旧记录照旧可见（与 BackgroundTaskOwnership 的第三条一致）。
+            it.sessionScope.isNullOrBlank()
+        } else {
+            BackgroundTaskOwnership.visible(
+                taskScope = it.sessionScope,
+                viewerScope = viewerScope,
+                includeOther = false,
+            )
+        }
     }
+    val mineIds = mine.mapTo(HashSet()) { it.id }
+    val foreign = records.filterNot { it.id in mineIds }
     val running = mine.filter { it.completedAt == null }.sortedBy { it.startedAt }
     val finished = mine.filter { it.completedAt != null }.sortedByDescending { it.completedAt }
     return BackgroundTasksView(
@@ -64,7 +86,8 @@ internal fun summarizeBackgroundTasks(
         finished = finished.size,
         running = running.take(BACKGROUND_TASKS_MAX_RUNNING_ROWS),
         recentFinished = finished.take(BACKGROUND_TASKS_MAX_FINISHED_ROWS),
-        foreignTotal = records.size - mine.size,
+        foreignTotal = foreign.size,
+        foreignRunning = foreign.count { it.completedAt == null },
     )
 }
 

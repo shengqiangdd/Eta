@@ -203,4 +203,40 @@ class BackgroundTasksViewTest {
         assertEquals(1, view.foreignTotal)
         assertFalse("只剩别的会话的记录时卡片也要留着", view.isEmpty)
     }
+
+    @Test
+    fun pendingScopeDoesNotClaimOtherSessionsTasks() {
+        // 新建对话在发出第一条消息前没有会话 id（goalScopeId 为空）。旧行为把它当成
+        // 「没有会话概念」的老调用方，于是别的会话的任务变成本会话「执行中 1」——
+        // 真机上就是这么显示一个自己根本没派过的任务的。
+        val view = summarizeBackgroundTasks(
+            records = listOf(
+                task("theirs", 1_000L, commandTask = true, sessionScope = "scope-b"),
+                task("legacy", 2_000L, commandTask = true),
+            ),
+            viewerScope = null,
+            scopePending = true,
+        )
+
+        assertEquals("只认无归属的旧记录", listOf("legacy"), view.running.map { it.id })
+        assertEquals(1, view.foreignRunning)
+        assertEquals(0, view.foreignFinished)
+    }
+
+    @Test
+    fun foreignCountsSayWhetherOtherSessionsAreStillRunning() {
+        // 「其他会话 1」不够：那条可能早就结束了。旧版一律这么写，真机上被读成
+        // 「别的会话正在占资源」。执行中与已结束必须分开数。
+        val view = summarizeBackgroundTasks(
+            listOf(
+                task("live", 1_000L, commandTask = true, sessionScope = "scope-b"),
+                task("done", 500L, completedAt = 9_000L, commandTask = true, sessionScope = "scope-b"),
+            ),
+            viewerScope = "scope-a",
+        )
+
+        assertEquals(2, view.foreignTotal)
+        assertEquals(1, view.foreignRunning)
+        assertEquals(1, view.foreignFinished)
+    }
 }

@@ -1059,7 +1059,12 @@
   <string name="background_tasks_dismiss_finished_title">清除已結束的任務記錄？</string>
   <string name="background_tasks_dismiss_finished_summary">將刪除這些已結束任務的記錄與日誌。進行中的任務不受影響；剛結束不到一分鐘、或結果還沒通知過的會保留。</string>
   <string name="background_tasks_dismiss_finished_confirm">清除</string>
-  <string name="background_tasks_foreign">其他工作階段</string>
+  <string name="background_tasks_foreign_running">其他工作階段執行中 %1$d</string>
+  <string name="background_tasks_foreign_finished">其他工作階段已結束 %1$d</string>
+  <string name="background_tasks_dismiss_grace">還有 %1$d 筆在保護期（剛結束不滿 1 分鐘，或結果還沒通知）</string>
+  <string name="background_tasks_dismiss_done">已清除 %1$d 筆記錄</string>
+  <string name="background_tasks_dismiss_none">沒有可清除的記錄：剛結束不滿 1 分鐘、或結果還沒通知的會保留</string>
+  <string name="background_tasks_dismiss_failed">清除失敗，記錄仍在</string>
   <string name="background_tasks_foreign_hint">其他工作階段開的任務，要在那個工作階段裡停止。</string>
   <string name="background_tasks_card_hint">點任務查看最新輸出；停止任務請用 terminal_job / terminal_daemon</string>
   <string name="background_tasks_command">命令</string>

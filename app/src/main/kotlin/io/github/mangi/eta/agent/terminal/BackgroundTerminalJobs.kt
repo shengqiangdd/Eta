@@ -245,11 +245,13 @@ internal class BackgroundTerminalJobs(
      * 保护条件在 [DetachedTaskSupervisor.dismissFinished] 里，与自动淘汰共用同一套：
      * 没通知过结果的命令任务、刚结束不足一分钟的记录都会留下。
      *
+     * @param scopeId 当前会话；只清它看得见的那些。
+     * @param scopePending 当前会话还没拿到 id（新对话发第一条消息前），只能清无归属的旧记录。
      * @return 真正清掉的条数；0 表示没有可清的。
      */
     @Synchronized
-    fun dismissFinished(scopeId: String? = null): Int {
-        val removed = supervisor.dismissFinished(scopeId)
+    fun dismissFinished(scopeId: String? = null, scopePending: Boolean = false): Int {
+        val removed = supervisor.dismissFinished(scopeId, scopePending)
         if (removed > 0) refresh()
         return removed
     }

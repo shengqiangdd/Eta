@@ -148,4 +148,21 @@ class DismissFinishedTest {
 
         assertEquals(setOf("mine", "theirs"), victims.map { it.id }.toSet())
     }
+
+    @Test
+    fun pendingScopeClearsOnlyUnscopedLegacyRecords() {
+        // 新对话在发出第一条消息前没有会话 id。若拿它当「没有会话概念」的老调用方，
+        // 空对话里点一下「清除」就会把别人的记录删掉 —— 而卡片上根本没列出那几条。
+        val victims = pickDismissVictims(
+            listOf(
+                task("legacy", completedAt = now - 600_000),
+                task("theirs", completedAt = now - 600_000, sessionScope = "scope-b"),
+            ),
+            now,
+            viewerScope = null,
+            scopePending = true,
+        )
+
+        assertEquals(listOf("legacy"), victims.map { it.id })
+    }
 }

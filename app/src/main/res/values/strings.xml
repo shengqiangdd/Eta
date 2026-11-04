@@ -1091,7 +1091,12 @@
   <string name="background_tasks_dismiss_finished_title">Clear finished task records?</string>
   <string name="background_tasks_dismiss_finished_summary">Deletes these finished tasks and their logs. Running tasks are not touched; ones that finished under a minute ago, or whose result has not been reported yet, are kept.</string>
   <string name="background_tasks_dismiss_finished_confirm">Clear</string>
-  <string name="background_tasks_foreign">Other sessions</string>
+  <string name="background_tasks_foreign_running">Other sessions running %1$d</string>
+  <string name="background_tasks_foreign_finished">Other sessions finished %1$d</string>
+  <string name="background_tasks_dismiss_grace">Still kept (under a minute, or the result has not been reported yet): %1$d</string>
+  <string name="background_tasks_dismiss_done">Cleared: %1$d</string>
+  <string name="background_tasks_dismiss_none">Nothing to clear: records that finished under a minute ago, or whose result has not been reported yet, are kept</string>
+  <string name="background_tasks_dismiss_failed">Failed to clear, records are kept</string>
   <string name="background_tasks_foreign_hint">Tasks started in another session can only be stopped there.</string>
   <string name="background_tasks_card_hint">Tap a task to view its latest output; use terminal_job / terminal_daemon to stop it</string>
   <string name="background_tasks_command">Command</string>

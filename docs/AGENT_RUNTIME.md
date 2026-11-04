@@ -10355,3 +10355,43 @@ STEP9d 与 STEP8b 共用。
   默认配置下清空后卡片会留着。
 - 未在真实多会话并发（两个会话各自的 job 同时跑）下核对面板；本轮用注入记录模拟归属。
 
+
+## 多会话实测后倒查出的三处「界面在说假话」（2026-11-04，PKX110/A16）
+
+### 现象
+
+这一轮是拿着真机、按用户路径一条条走出来的，三处都是「界面显示的和实际状态对不上」：
+
+1. **空对话把别人的任务认成自己的**。点「新建对话」时还没有会话 id（`goalScopeId=null`），
+   旧逻辑把它当成「没有会话概念」的老调用方，于是另一会话正在跑的任务在本会话卡片里显示成
+   「执行中 1」。用户会以为任务是自己刚派出去的。
+2. **「其他会话 1」分不清在跑还是已结束**。A 会话的任务早已结束，B 会话卡片仍写「其他会话 1」，
+   读起来像「别的会话还在占资源」。
+3. **「清除已结束（1）」点下去什么都不发生**。那条记录刚结束不满 `PruneGraceMs`（60 s），
+   `dismissFinished` 返回 0，界面没有任何反馈 —— 只能去读记录文件才知道一条都没删。
+
+### 实现
+
+- 卡片新增 `scopePending`（`AgentChatBody` 传 `goalScopeId.isNullOrBlank()`）：会话还没建时，
+  「本会话」只认无归属的旧记录，其余一律计入外会话；`dismissFinished` 同参数，保证空对话里
+  点「清除」不会删到别人的记录。
+- `BackgroundTasksView` 增加 `foreignRunning` / `foreignFinished`，标题拆成
+  「其他会话执行中 N」「其他会话已结束 N」，不再用一个含混的总数。
+- 「清除已结束」的数字改成**当前真正可清**的条数；一条都清不了时按钮变成不可点的
+  「还有 N 条在保护期（…）」，确认后一律用 Toast 回报「已清除 N / 没有可清除 / 清除失败」。
+  资源读取改走 `LocalResources`（`LocalContext.getString` 会被 Compose lint 判
+  `LocalContextGetResourceValueCall`），默认语言的两条计数文案改成数字结尾，避开
+  `PluralsCandidate`。
+
+### 验证
+
+- 单测：`BackgroundTasksViewTest` 15（新增 2）、`DismissFinishedTest` 10（新增 1）；门禁
+  `STAGES=test,lint,assemble`（canary）：**1311 用例 0 失败**、打包成功。
+- lint 第一轮在 `BackgroundTasksCard.kt` 抓到 3 条 `LocalContextGetResourceValueCall`、在
+  `values/strings.xml` 抓到 2 条 `PluralsCandidate`（都是这轮新代码引入，基线外 5 条 error）。
+  改完复跑 `lintDebug` 通过，基线 error 仍为 155 条（无新增）。
+
+### 边界
+
+- 60 秒保护期本身没动：它是自动续跑的事件源，删早了会丢一次续跑；这一轮只把「删不掉」如实显示。
+- 「其他会话」仍然只读：`terminal_job` 的 stop/wait 只作用于本会话，卡片也不给停止入口。
