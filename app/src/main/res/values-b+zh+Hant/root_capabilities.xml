@@ -74,6 +74,10 @@
     <string name="capability_workspace_pick_current">目前目錄</string>
     <string name="capability_workspace_pick_unavailable">無法列出該目錄</string>
     <string name="capability_workspace_pick_unavailable_summary">目錄不存在或無法讀取：可能已被移動、刪除，或本應用程式沒有讀取權限。請返回上層目錄重新選擇。</string>
+    <string name="capability_workspace_global_folder">工作區資料夾</string>
+    <string name="capability_workspace_global_folder_default">App 私有目錄（所有對話共用）</string>
+    <string name="capability_workspace_quick_shared">共享儲存</string>
+    <string name="capability_workspace_quick_private">App 私有目錄</string>
     <string name="capability_workspace_public_other_display">目前不在主螢幕，開啟系統設定會把整個介面切到主螢幕。請回到主螢幕後再操作，或手動前往「設定 → 應用程式 → 特殊權限」開啟。</string>
     <string name="capability_workspace_directory">資料夾</string>
     <string name="capability_workspace_custom">自訂資料夾</string>

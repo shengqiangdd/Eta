@@ -88,6 +88,11 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
     val sessionRoot = remember(sessionId, workspaceRevision) {
         sessionId?.let { File(SessionWorkspaceStore.resolve(context, it)) }
     }
+    // 无会话时页面只有全局工作区，它同样可以指向共享存储里的项目；
+    // 否则用户从首页进入「工作区与文件」时根本没有选择文件夹的入口（只能去设置里手输）。
+    val globalWorkspace = remember(workspaceRevision) {
+        io.github.mangi.eta.agent.terminal.TerminalRuntime.customWorkspacePath
+    }
     // 只有有会话时才显示范围切换；无会话时固定全局工作区。
     var useSession by rememberSaveable(conversationId) { mutableStateOf(sessionRoot != null) }
     val activeRoot = if (useSession) sessionRoot else null
@@ -180,16 +185,41 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
                         }
                     }
                     is WorkspaceFolderCheck.Rejected -> message = WorkspaceMessage(
-                        resources.getString(
-                            when (check.problem) {
-                                WorkspaceFolderProblem.BLOCKED -> R.string.capability_workspace_folder_blocked
-                                WorkspaceFolderProblem.RESTRICTED -> R.string.capability_workspace_folder_restricted
-                                WorkspaceFolderProblem.NO_APP_ACCESS -> R.string.capability_workspace_folder_no_access
-                                WorkspaceFolderProblem.NOT_DIRECTORY -> R.string.capability_workspace_folder_not_directory
-                                WorkspaceFolderProblem.NOT_WRITABLE -> R.string.capability_workspace_folder_not_writable
-                                WorkspaceFolderProblem.UNAVAILABLE -> R.string.capability_workspace_failed
-                            },
-                        ),
+                        resources.getString(check.problem.messageRes()),
+                        isError = true,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                message = WorkspaceMessage(resources.getString(R.string.capability_workspace_failed), isError = true)
+            } finally {
+                busy = false
+            }
+        }
+    }
+    // 无会话时选中的目录写入全局工作区（设置页的「终端工作区」用的是同一份设置）。
+    // 校验与提示必须和会话工作区完全一致，否则会出现「这里能选、那里报错」。
+    val applyGlobalFolder: (String) -> Unit = applyGlobalFolder@{ selected ->
+        scope.launch {
+            busy = true
+            try {
+                when (val check = WorkspaceFolderValidator.check(selected)) {
+                    is WorkspaceFolderCheck.Ready -> {
+                        val error = io.github.mangi.eta.agent.terminal.TerminalRuntime
+                            .applyCustomWorkspace(context, check.path)
+                        if (error == null) {
+                            workspaceRevision++
+                            message = WorkspaceMessage(
+                                resources.getString(R.string.capability_workspace_folder_saved),
+                                isError = false,
+                            )
+                        } else {
+                            message = WorkspaceMessage(error, isError = true)
+                        }
+                    }
+                    is WorkspaceFolderCheck.Rejected -> message = WorkspaceMessage(
+                        resources.getString(check.problem.messageRes()),
                         isError = true,
                     )
                 }
@@ -242,6 +272,9 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
         WorkspacePathPicker(
             initialPath = when (mode) {
                 "folder" -> customWorkspace ?: browseRoot
+                // 全局工作区还没有设置时也优先落在共享存储根：从首页进来想选的
+                // 通常就是公共目录里的项目，而不是 App 私有目录。
+                "folder-global" -> globalWorkspace ?: browseRoot
                 else -> remembered ?: browseRoot
             },
             pickFiles = mode == "import",
@@ -280,6 +313,7 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
                             startExport(source, selected)
                         }
                     }
+                    "folder-global" -> applyGlobalFolder(selected)
                     else -> applyFolder(selected)
                 }
             },
@@ -352,6 +386,16 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
                             },
                         )
                     }
+                } else {
+                    // 无会话时同样要能选文件夹；写入的是全局工作区（所有对话共用）。
+                    EtaArrowPreference(
+                        title = stringResource(R.string.capability_workspace_global_folder),
+                        summary = globalWorkspace
+                            ?: stringResource(R.string.capability_workspace_global_folder_default),
+                        enabled = !busy,
+                        startAction = { EtaPreferenceIcon(Icons.Rounded.Folder, tint = EtaPreferenceColors.Orange) },
+                        onClick = { pickerMode = "folder-global" },
+                    )
                 }
                 EtaArrowPreference(
                     title = stringResource(R.string.capability_workspace_import),
@@ -489,3 +533,13 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
 
 /** 导入导出结果；失败需要醒目区分，不能和成功提示同色。 */
 private data class WorkspaceMessage(val text: String, val isError: Boolean)
+
+/** 文件夹不可用的原因 → 文案。会话与全局工作区共用同一套解释。 */
+private fun WorkspaceFolderProblem.messageRes(): Int = when (this) {
+    WorkspaceFolderProblem.BLOCKED -> R.string.capability_workspace_folder_blocked
+    WorkspaceFolderProblem.RESTRICTED -> R.string.capability_workspace_folder_restricted
+    WorkspaceFolderProblem.NO_APP_ACCESS -> R.string.capability_workspace_folder_no_access
+    WorkspaceFolderProblem.NOT_DIRECTORY -> R.string.capability_workspace_folder_not_directory
+    WorkspaceFolderProblem.NOT_WRITABLE -> R.string.capability_workspace_folder_not_writable
+    WorkspaceFolderProblem.UNAVAILABLE -> R.string.capability_workspace_failed
+}

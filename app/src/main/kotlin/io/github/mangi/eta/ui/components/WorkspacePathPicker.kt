@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.components
 
+import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
@@ -67,6 +69,11 @@ internal fun WorkspacePathPicker(
     var entries by remember { mutableStateOf<List<WorkspaceDirectoryEntry>?>(null) }
     var unavailable by remember { mutableStateOf(false) }
     val browser = remember { WorkspaceDirectoryBrowser() }
+    // 常用位置：没有「所有文件访问」也没有 Root 时，初始落点会退到 App 私有目录，
+    // 而那棵树往上都列不出来 —— 没有快捷入口就等于「选不了安卓路径」。
+    val context = LocalContext.current
+    val sharedRoot = remember { Environment.getExternalStorageDirectory().absolutePath }
+    val privateRoot = remember { context.filesDir.absolutePath }
     // 上一级必须在 content lambda（LazyListScope，非 @Composable）之外算好，
     // 否则 remember 会报 COMPOSABLE_INVOCATION。
     val parent = remember(current) { File(current).parent }
@@ -92,6 +99,35 @@ internal fun WorkspacePathPicker(
                 summary = current,
                 modifier = Modifier.padding(horizontal = EtaPreferenceDefaults.SidePadding),
             )
+        }
+        if (!pickFiles) {
+            item(key = "picker-quick") {
+                EtaPreferenceGroup(
+                    modifier = Modifier
+                        .padding(horizontal = EtaPreferenceDefaults.SidePadding)
+                        .padding(bottom = EtaPreferenceDefaults.GroupSpacing),
+                ) {
+                    EtaArrowPreference(
+                        title = stringResource(R.string.capability_workspace_quick_shared),
+                        summary = sharedRoot,
+                        enabled = sharedRoot != current,
+                        startAction = {
+                            EtaPreferenceIcon(Icons.Rounded.FolderOpen, tint = EtaPreferenceColors.Orange)
+                        },
+                        onClick = { current = sharedRoot },
+                    )
+                    EtaPreferenceDivider(hasLeading = true)
+                    EtaArrowPreference(
+                        title = stringResource(R.string.capability_workspace_quick_private),
+                        summary = privateRoot,
+                        enabled = privateRoot != current,
+                        startAction = {
+                            EtaPreferenceIcon(Icons.Rounded.FolderOpen, tint = EtaPreferenceColors.Orange)
+                        },
+                        onClick = { current = privateRoot },
+                    )
+                }
+            }
         }
         if (!pickFiles) {
             item(key = "picker-confirm") {

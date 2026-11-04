@@ -74,6 +74,10 @@
     <string name="capability_workspace_pick_current">当前目录</string>
     <string name="capability_workspace_pick_unavailable">无法列出该目录</string>
     <string name="capability_workspace_pick_unavailable_summary">目录不存在或无法读取：可能已被移动、删除，或本应用没有读取权限。请返回上级目录重新选择。</string>
+    <string name="capability_workspace_global_folder">工作区文件夹</string>
+    <string name="capability_workspace_global_folder_default">App 私有目录（所有对话共用）</string>
+    <string name="capability_workspace_quick_shared">共享存储</string>
+    <string name="capability_workspace_quick_private">App 私有目录</string>
     <string name="capability_workspace_public_other_display">当前不在主屏，打开系统设置会把整个界面切到主屏。请回到主屏后再操作，或手动前往「设置 → 应用 → 特殊权限」开启。</string>
     <string name="capability_workspace_directory">文件夹</string>
     <string name="capability_workspace_custom">自定义文件夹</string>

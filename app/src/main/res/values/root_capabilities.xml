@@ -74,6 +74,10 @@
     <string name="capability_workspace_pick_current">Current folder</string>
     <string name="capability_workspace_pick_unavailable">Cannot list this folder</string>
     <string name="capability_workspace_pick_unavailable_summary">This folder does not exist or cannot be read. It may have been moved or deleted, or this app may lack permission. Go back to the parent folder and pick another one.</string>
+    <string name="capability_workspace_global_folder">Workspace folder</string>
+    <string name="capability_workspace_global_folder_default">App private folder (shared by all conversations)</string>
+    <string name="capability_workspace_quick_shared">Shared storage</string>
+    <string name="capability_workspace_quick_private">App private folder</string>
     <string name="capability_workspace_public_other_display">This screen is not the main display, and opening system settings would move the whole task to the main display. Return to the main display to continue, or enable it manually in Settings - Apps - Special access.</string>
     <string name="capability_workspace_directory">Folder</string>
     <string name="capability_workspace_custom">Custom folder</string>
