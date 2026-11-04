@@ -174,4 +174,59 @@ class AcpModelsTest {
             AcpModels.chooseWithConfig("claude-sonnet-5", "claude-sonnet-5", info),
         )
     }
+
+    // ---- 默认代理选择：设置页那个选项必须真的生效 ----
+
+    private fun cand(id: String, installed: Boolean = true, credential: Boolean = true) =
+        AcpModels.Candidate(id = id, installed = installed, credentialPresent = credential)
+
+    @Test
+    fun preferredAgentIsActuallyHonoured() {
+        // 回归真实缺陷（2026-11-04）：设置页「默认编码代理」此前只写进提示词，
+        // 执行时完全忽略 —— 用户选 codex，实际按 id 字母序跑 claude。
+        // 两个都可用时，必须优先用户选的那个。
+        assertEquals("codex", AcpModels.pickDefaultAgent(listOf(cand("claude"), cand("codex")), "codex"))
+        assertEquals("claude", AcpModels.pickDefaultAgent(listOf(cand("claude"), cand("codex")), "claude"))
+    }
+
+    @Test
+    fun emptyPreferenceFallsBackToFirstUsable() {
+        assertEquals("claude", AcpModels.pickDefaultAgent(listOf(cand("claude"), cand("codex")), ""))
+    }
+
+    @Test
+    fun preferredButUnusableFallsBackInsteadOfFailing() {
+        // 用户选了没装成的代理：不能让委派彻底不能用，回退到能用的那个。
+        val list = listOf(cand("claude", installed = false), cand("codex"))
+        assertEquals("codex", AcpModels.pickDefaultAgent(list, "claude"))
+        // 选了「装了但没凭据」的也一样。
+        val noCred = listOf(cand("claude", credential = false), cand("codex"))
+        assertEquals("codex", AcpModels.pickDefaultAgent(noCred, "claude"))
+    }
+
+    @Test
+    fun installedWithoutCredentialIsNotTreatedAsUsable() {
+        // 「装了但没凭据」与「没装」对用户是一回事：都会在委派时失败。
+        // 所以默认选择不能跳过后面那个真正能用的。
+        val list = listOf(cand("claude", credential = false), cand("codex"))
+        assertEquals("codex", AcpModels.pickDefaultAgent(list, ""))
+    }
+
+    @Test
+    fun whenNothingIsUsablePreferInstalledThenAnything() {
+        // 全都用不了时也要给出一个确定的 id —— 至少报错能指到具体代理。
+        val installedNoCred = listOf(cand("claude", credential = false), cand("codex", installed = false))
+        assertEquals("claude", AcpModels.pickDefaultAgent(installedNoCred, ""))
+        // 连装都没装：退回第一个，绝不返回空串（空 id 会让启动路径拼出不存在的可执行文件）。
+        val none = listOf(cand("claude", installed = false), cand("codex", installed = false))
+        assertEquals("claude", AcpModels.pickDefaultAgent(none, ""))
+        assertEquals("codex", AcpModels.pickDefaultAgent(emptyList(), ""))
+    }
+
+    @Test
+    fun preferenceIsTrimmedAndUnknownIdsAreIgnored() {
+        assertEquals("codex", AcpModels.pickDefaultAgent(listOf(cand("codex")), "  codex  "))
+        // 选了一个清单里根本没有的 id：别让委派挂掉，回退。
+        assertEquals("codex", AcpModels.pickDefaultAgent(listOf(cand("codex")), "gemini"))
+    }
 }

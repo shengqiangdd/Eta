@@ -288,11 +288,55 @@ internal class AcpClient(
         )
     }.sortedBy { it.id }
 
-    /** 默认代理优先选**真的装好了**的：列表里排第一但没装的，不该是默认值。 */
-    fun defaultAgentId(): String {
-        val all = agents()
-        return all.firstOrNull { it.installed }?.id ?: all.firstOrNull()?.id ?: "codex"
-    }
+    /**
+     * 真的可以用来干活的代理：装好了 **且** 有凭据。
+     *
+     * 「装了但没凭据」与「没装」对用户是一回事 —— 都会在委派时失败，
+     * 差别只是报错早一点。所以两者放在同一个判据里。
+     */
+    fun usableAgentIds(): List<String> =
+        agents().filter { it.installed && it.credentialPresent }.map { it.id }
+
+    /**
+     * 默认代理：优先用户设置的那一个，其次第一个真的能用的。
+     *
+     * [preferred] 是用户在设置页选的代理 id（可能为空 = 自动）。
+     *
+     * 为什么必须尊重它：这个设置在旧版里**只写进了提示词，执行时被完全忽略** ——
+     * 用户选了 codex，实际仍按 id 字母序取到 claude。设置页上写着「Codex」，
+     * 跑起来却是另一个代理，属于典型的「界面在说假话」。而且这里不能只在
+     * preferred 存在时无条件返回：用户选的那个可能没装/没凭据，那就得回退，
+     * 否则委派必然失败。
+     */
+    /**
+     * @param preferred 用户在设置页选的代理 id；空 = 自动
+     * @param providerReady Eta 的某个模型提供商是否可用。
+     *   「能借提供商顶上」的代理也算有凭据，与 `acp_agent_list` 同一口径；
+     *   不这样统一会出现「列表说可用、默认选择却跳过它」。
+     *   由调用方传入是因为这个判断要读 DataStore（挂起），
+     *   不适合放进这个同步方法里。
+     */
+    fun defaultAgentId(preferred: String = "", providerReady: Boolean = false): String =
+        AcpModels.pickDefaultAgent(
+            candidates = agents().map { agent ->
+                AcpModels.Candidate(
+                    id = agent.id,
+                    installed = agent.installed,
+                    credentialPresent = agent.credentialPresent ||
+                        (providerReady && agent.id in ACP_PROVIDER_CAPABLE_AGENT_IDS),
+                )
+            },
+            preferred = preferred,
+        )
+
+    /**
+     * 能借 Eta 模型提供商顶上凭据的代理。
+     *
+     * 与 `agents/acp` 之外那份清单保持同源意义：这里只用于**默认选择**，
+     * 权威判定仍在 `acp_agent_list`（那里还会展示来源与原因）。
+     * 两边都列 codex 与 claude，是因为两者的启动路径都支持注入提供商配置。
+     */
+    private val ACP_PROVIDER_CAPABLE_AGENT_IDS = setOf("codex", AGENT_CLAUDE)
 
     fun sessions(): List<Session> = live.values.map { it.session }.sortedBy { it.createdAtMs }
 

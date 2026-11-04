@@ -46,6 +46,40 @@ internal object AcpModels {
     }
 
     /**
+     * 从代理清单里挑默认代理：先看用户设置，再看「真的能用」的。
+     *
+     * [Candidate] 是这一点所需的最小信息，不从 `AcpClient.Agent` 依赖过来，
+     * 是为了让这条决策可单测（真实 Agent 依赖文件系统与 root 探测）。
+     *
+     * 三条规则（都有真实缺陷对应）：
+     * 1. 用户选了 `preferred` 且它**能用** → 用它。
+     *    旧实现完全忽略这个设置，选 codex 却按字母序跑 claude。
+     * 2. 用户选的那个不能用（没装/没凭据）→ 回退到第一个能用的，**不报错**。
+     *    否则用户改了个设置就让委派彻底不可用。
+     * 3. 一个能用的都没有 → 退回「装了的」（至少能给出有意义的报错），
+     *    再不行才退回第一个。绝不返回空串。
+     */
+    data class Candidate(
+        val id: String,
+        val installed: Boolean,
+        val credentialPresent: Boolean,
+    ) {
+        /** 装了且有凭据 —— 两者缺一，委派都会在运行时失败。 */
+        val usable: Boolean get() = installed && credentialPresent
+    }
+
+    fun pickDefaultAgent(candidates: List<Candidate>, preferred: String): String {
+        val wanted = preferred.trim()
+        if (wanted.isNotEmpty()) {
+            candidates.firstOrNull { it.id == wanted && it.usable }?.let { return it.id }
+        }
+        return candidates.firstOrNull { it.usable }?.id
+            ?: candidates.firstOrNull { it.installed }?.id
+            ?: candidates.firstOrNull()?.id
+            ?: "codex"
+    }
+
+    /**
      * 这个代理是否会把模型**写进配置文件**（从而不必再走 `session/set_model`）。
      *
      * 只有 codex 成立：它读临时 `CODEX_HOME/config.toml` 的 `model`。

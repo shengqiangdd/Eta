@@ -2284,6 +2284,21 @@ internal class AgentLocalTools(
         data class Error(val code: String, val message: String) : AcpProviderResolution
     }
 
+    /**
+     * Eta 里是否有任何一个「可用」的模型提供商。
+     *
+     * 用于判断「代理能借提供商拿到凭据」。与 `acp_agent_list` 里算 `providerReady`
+     * 用的是同一个判据，避免两处口径不一致。
+     */
+    private fun providerReadyNow(): Boolean =
+        codexProviders().any { provider -> provider.codexReady() }
+
+    /** 用户在设置页选的默认编码代理；空 = 自动（第一个真正能用的）。 */
+    private fun preferredAcpAgent(): String =
+        runCatching {
+            Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_AGENT).orEmpty()
+        }.getOrDefault("")
+
     private fun codexProviders(): List<ProviderSetting> = runCatching {
         runBlocking { ProviderRepository.allProviders() }
     }.getOrDefault(emptyList())
@@ -2412,7 +2427,10 @@ internal class AgentLocalTools(
                     JSONObject()
                         .put("ok", true)
                         .put("tool", "acp_agent_list")
-                        .put("default_agent", acpClient.defaultAgentId())
+                        .put(
+                            "default_agent",
+                            acpClient.defaultAgentId(preferredAcpAgent(), providerReady),
+                        )
                         .put("providers", acpProvidersJson(providers, settings?.selectedProviderId))
                         .put(
                             "agents",
@@ -2480,7 +2498,13 @@ internal class AgentLocalTools(
                             "task 必填（≤8000 字）；cwd 必须是 Linux 环境内绝对路径；timeout_seconds 范围 30..1800",
                         )
                     )
-                val agent = request.agent.ifBlank { acpClient.defaultAgentId() }
+                // 缺省时用「用户设置的默认代理」。旧实现直接调 defaultAgentId()，
+                // 完全忽略设置页里选的那个 —— 选 codex 却按字母序跑 claude。
+                // providerReady 也要给：本机场景里两个代理都靠 Eta 提供商拿凭据，
+                // 不传的话「自动」会误判成没有可用代理。
+                val agent = request.agent.ifBlank {
+                    acpClient.defaultAgentId(preferredAcpAgent(), providerReadyNow())
+                }
                 // 两个代理都支持走 Eta 提供商，但接法不同（codex 写 config.toml，
                 // Claude 用 ANTHROPIC_* 环境变量），差异收在 AcpClient 里。
                 val providerAwareAgent = agent in PROVIDER_CAPABLE_AGENTS

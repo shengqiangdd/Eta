@@ -936,6 +936,25 @@ APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
   `mul` 确实新增、`add` 未被改动，`python3 -c` 断言 `add(2,3)==5 and mul(2,3)==6` 通过。
   注意它先试了 `Read file` 失败、再用 `cat` 才成功，说明工具降级链也在工作。
 
+**缺陷三：设置页的「默认编码代理」完全没生效。**
+`acp_delegate` 缺省代理时调的是 `acpClient.defaultAgentId()`，而该方法只看
+「谁装好了」，**从不读**用户设置 —— `AGENT_ACP_DEFAULT_AGENT` 在 `AgentModelClient`
+里只被塞进提示词，执行路径一次都没读过。用户选 codex，实际按 id 字母序跑 claude。
+这正是「界面在说假话」：设置页写着 Codex，跑起来是另一个。
+修：`defaultAgentId(preferred, providerReady)` 尊重用户设置，并抽成纯函数
+`AcpModels.pickDefaultAgent`。三条规则各有对应缺陷：
+1. 用户选的且能用 → 用它；
+2. 用户选的不能用（没装/没凭据）→ **回退到能用的，不报错**
+   （否则改一个设置就让委派彻底不可用）；
+3. 一个能用的都没有 → 退回「装了的」→ 再退回第一个，**绝不返回空串**
+   （空 id 会让启动路径拼出不存在的可执行文件）。
+另外「装了但没凭据」不再被当成可用 —— 与「没装」对用户是一回事。
+
+**顺带统一的口径**：默认选择也认「能借 Eta 提供商顶上」的凭据，
+否则会出现「`acp_agent_list` 说可用、默认选择却跳过它」的自相矛盾。
+判断要读 DataStore（挂起），所以 `providerReady` 由调用方传入，
+`AcpClient.defaultAgentId` 保持同步。
+
 **仍未解决（真机结论，非猜测）**：Claude **代理本身**对这个 provider 跑不通。
 sq6/apigoto 走 Anthropic 原生 `/v1/messages`，但它们不认 SDK 内置的
 `claude-sonnet-4-5-20250929`；而 `claude-sonnet-5` / `default` 经代理映射后仍指向那个内置 ID。
