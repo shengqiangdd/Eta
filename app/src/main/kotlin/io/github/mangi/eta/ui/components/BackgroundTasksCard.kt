@@ -109,7 +109,7 @@ internal fun BackgroundTasksCard(
     scopeId: String? = null,
 ) {
     val records = rememberDetachedTasks() ?: return
-    val view = remember(records) { summarizeBackgroundTasks(records) }
+    val view = remember(records, scopeId) { summarizeBackgroundTasks(records, scopeId) }
     if (view.isEmpty) return
     // 全部结束之后没必要继续占位：这张卡回答的是「还有什么在跑」，
     // 没有在跑的就只剩「上次跑过什么」，点开终端页一样看得到。
@@ -172,6 +172,7 @@ internal fun BackgroundTasksCard(
     val title = stringResource(R.string.background_run_channel)
     val runningLabel = stringResource(R.string.tool_status_running)
     val finishedLabel = stringResource(R.string.background_tasks_finished)
+    val foreignLabel = stringResource(R.string.background_tasks_foreign)
     val primary = MiuixTheme.colorScheme.primary
     // 计数全拼进同一个 Text：Row 里并排几个 Text 时，后面的会被挤成零宽（台账卡踩过）。
     val header = buildAnnotatedString {
@@ -180,6 +181,8 @@ internal fun BackgroundTasksCard(
             withStyle(SpanStyle(color = primary)) { append(" · $runningLabel ${view.runningTotal}") }
         }
         if (view.finished > 0) append(" · $finishedLabel ${view.finished}")
+        // 别的会话的任务不列出来（口径要跟 terminal_job list 一致），但必须让人知道还有几条。
+        if (view.foreignTotal > 0) append(" · $foreignLabel ${view.foreignTotal}")
     }
 
     Column(
@@ -277,12 +280,23 @@ internal fun BackgroundTasksCard(
                             .clickable { showDismissConfirm = true },
                     )
                 }
-                Text(
-                    text = stringResource(R.string.background_tasks_card_hint),
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(top = 4.dp, start = 14.dp),
-                )
+                if (view.foreignTotal > 0) {
+                    Text(
+                        text = stringResource(R.string.background_tasks_foreign_hint),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(top = 4.dp, start = 14.dp),
+                    )
+                }
+                // 没有本会话的行时别提示「点任务查看输出」—— 一行都没有，那句话只会误导。
+                if (view.runningTotal > 0 || view.finished > 0) {
+                    Text(
+                        text = stringResource(R.string.background_tasks_card_hint),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(top = 4.dp, start = 14.dp),
+                    )
+                }
             }
         }
     }
@@ -304,7 +318,7 @@ internal fun BackgroundTasksCard(
                     withContext(Dispatchers.IO) {
                         // 失败不派弹窗：卡片靠 changes 自增刷新，没变就说明一条没清；
                         // 真出错时下次打开仍看得到记录，不会把用户的记录默默吃掉。
-                        runCatching { TerminalRuntime.backgroundJobs(context).dismissFinished() }
+                        runCatching { TerminalRuntime.backgroundJobs(context).dismissFinished(scopeId) }
                     }
                 }
             },

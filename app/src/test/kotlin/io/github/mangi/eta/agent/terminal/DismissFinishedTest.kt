@@ -21,6 +21,7 @@ class DismissFinishedTest {
         completedAt: Long? = null,
         commandTask: Boolean = false,
         completionNotified: Boolean = true,
+        sessionScope: String? = null,
     ) = DetachedTask(
         id = id,
         pid = 42L,
@@ -35,6 +36,7 @@ class DismissFinishedTest {
         description = "",
         completedAt = completedAt,
         completionNotified = completionNotified,
+        sessionScope = sessionScope,
     )
 
     @Test
@@ -115,5 +117,35 @@ class DismissFinishedTest {
             now,
         )
         assertEquals(setOf("old-job", "old-daemon"), victims.map { it.id }.toSet())
+    }
+
+    @Test
+    fun dismissOnlyTouchesTheViewersOwnFinishedTasks() {
+        // 按钮上写几条就只删几条：A 会话点一下不能把 B 会话的已结束记录连带清掉。
+        // 那些记录同时是 B 的自动续跑事件源，删了对方就永远不会再被扇到。
+        val victims = pickDismissVictims(
+            listOf(
+                task("mine", completedAt = now - 600_000, sessionScope = "scope-a"),
+                task("theirs", completedAt = now - 600_000, sessionScope = "scope-b"),
+            ),
+            now,
+            viewerScope = "scope-a",
+        )
+
+        assertEquals(listOf("mine"), victims.map { it.id })
+    }
+
+    @Test
+    fun dismissWithoutViewerScopesClearsEverything() {
+        // 没有会话概念的调用方（语音入口、外部直调）保持旧行为。
+        val victims = pickDismissVictims(
+            listOf(
+                task("mine", completedAt = now - 600_000, sessionScope = "scope-a"),
+                task("theirs", completedAt = now - 600_000, sessionScope = "scope-b"),
+            ),
+            now,
+        )
+
+        assertEquals(setOf("mine", "theirs"), victims.map { it.id }.toSet())
     }
 }

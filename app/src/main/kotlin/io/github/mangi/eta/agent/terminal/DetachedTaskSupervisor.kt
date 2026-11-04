@@ -671,14 +671,16 @@ internal class DetachedTaskSupervisor(
      * 刻意**不**复用 [MAX_RETAINED_RECORDS] 上限：那正是本方法存在的理由 ——
      * 记录远没到 32 条时用户也想让 `terminal_job` 的列表干净（系统提示里也少一段噪音）。
      *
+     * @param viewerScope 当前会话；与面板、`terminal_job list` 同一口径，只清它看得见的那些。
+     *   null 表示调用方没有会话概念（语音入口、外部直调），此时按旧行为清全局。
      * @return 真正清掉的条数；0 表示没有可清的（全在保护期里），或落盘失败。
      */
-    fun dismissFinished(): Int {
+    fun dismissFinished(viewerScope: String? = null): Int {
         val now = System.currentTimeMillis()
         val victims: List<DetachedTask>
         synchronized(RECORDS_LOCK) {
             val tasks = loadTasksLocked()
-            victims = pickDismissVictims(tasks, now)
+            victims = pickDismissVictims(tasks, now, viewerScope)
             if (victims.isEmpty()) return 0
             val victimIds = victims.mapTo(mutableSetOf()) { it.id }
             // 先落盘再删文件：写失败时记录还在，用户下次还能再清一次；
@@ -757,11 +759,19 @@ internal class DetachedTaskSupervisor(
  * 三条条件与自动淘汰完全一致（见 [pickPruneVictims] 那三个坑），唯一区别是**不设条数上限**：
  * 用户的诉求正是「记录还没攒到 32 条，也想把列表清干净」。
  */
-internal fun pickDismissVictims(tasks: List<DetachedTask>, nowMs: Long): List<DetachedTask> =
+internal fun pickDismissVictims(
+    tasks: List<DetachedTask>,
+    nowMs: Long,
+    viewerScope: String? = null,
+): List<DetachedTask> =
     tasks.filter {
         it.completedAt != null &&
             (!it.commandTask || it.completionNotified) &&
-            (it.completedAt ?: 0L) <= nowMs - PruneGraceMs
+            (it.completedAt ?: 0L) <= nowMs - PruneGraceMs &&
+            // 与面板、`terminal_job list` 同一口径：按钮上写几条，就只删几条。
+            // 不按会话过滤的话，A 会话点一下会把 B 会话的已结束记录连带删掉，
+            // 而按钮数字里根本没算那几条 —— 典型的「界面说 2、实际删 3」。
+            BackgroundTaskOwnership.visible(it.sessionScope, viewerScope, includeOther = false)
     }
 
 /**

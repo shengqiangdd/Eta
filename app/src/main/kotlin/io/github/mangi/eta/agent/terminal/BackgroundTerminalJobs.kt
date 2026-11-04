@@ -248,8 +248,8 @@ internal class BackgroundTerminalJobs(
      * @return 真正清掉的条数；0 表示没有可清的。
      */
     @Synchronized
-    fun dismissFinished(): Int {
-        val removed = supervisor.dismissFinished()
+    fun dismissFinished(scopeId: String? = null): Int {
+        val removed = supervisor.dismissFinished(scopeId)
         if (removed > 0) refresh()
         return removed
     }

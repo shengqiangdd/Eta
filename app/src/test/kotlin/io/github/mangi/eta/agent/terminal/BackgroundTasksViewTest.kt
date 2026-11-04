@@ -22,6 +22,7 @@ class BackgroundTasksViewTest {
         description: String = "",
         exitCode: Int? = null,
         endReason: String? = null,
+        sessionScope: String? = null,
     ) = DetachedTask(
         id = id,
         pid = 42L,
@@ -37,6 +38,7 @@ class BackgroundTasksViewTest {
         completedAt = completedAt,
         exitCode = exitCode,
         endReason = endReason,
+        sessionScope = sessionScope,
     )
 
     @Test
@@ -130,5 +132,75 @@ class BackgroundTasksViewTest {
         )
         assertFalse(line.toString().contains("super-secret-token"))
         assertFalse(line.toString().contains("私密描述"))
+    }
+
+    @Test
+    fun otherSessionsTasksAreHiddenButCounted() {
+        val view = summarizeBackgroundTasks(
+            listOf(
+                task("mine", 1_000L, commandTask = true, sessionScope = "scope-a"),
+                task("theirs", 2_000L, commandTask = true, sessionScope = "scope-b"),
+                task("theirs_done", 500L, completedAt = 9_000L, commandTask = true, sessionScope = "scope-b"),
+            ),
+            viewerScope = "scope-a",
+        )
+
+        assertEquals("只列本会话", listOf("mine"), view.running.map { it.id })
+        assertEquals(0, view.finished)
+        assertEquals("另有 2 条属于别的会话，得说出来", 2, view.foreignTotal)
+    }
+
+    @Test
+    fun scopedViewMatchesToolListing() {
+        // 面板与 `terminal_job list` 必须同一口径：这条断言就是那个口径本身。
+        // 两边分叉时的表现是「面板显示执行中 2、工具查 0 条」，用户只会以为工具坏了。
+        val records = listOf(
+            task("a", 1_000L, commandTask = true, sessionScope = "scope-a"),
+            task("b", 2_000L, commandTask = true, sessionScope = "scope-b"),
+        )
+
+        assertEquals(1, summarizeBackgroundTasks(records, "scope-a").runningTotal)
+        assertEquals(1, summarizeBackgroundTasks(records, "scope-b").runningTotal)
+    }
+
+    @Test
+    fun noScopedViewerKeepsLegacyBehaviour() {
+        // 语音一次性入口这类调用方没有会话概念，限制它只会让功能坏掉。
+        val records = listOf(
+            task("a", 1_000L, commandTask = true, sessionScope = "scope-a"),
+            task("b", 2_000L, commandTask = true, sessionScope = "scope-b"),
+        )
+
+        val view = summarizeBackgroundTasks(records, viewerScope = null)
+
+        assertEquals(2, view.runningTotal)
+        assertEquals(0, view.foreignTotal)
+    }
+
+    @Test
+    fun unscopedTasksStayVisibleToEveryone() {
+        // 旧记录没有归属；升完级突然消失比偶尔多看到一条难受得多。
+        val view = summarizeBackgroundTasks(
+            listOf(task("legacy", 1_000L, commandTask = true)),
+            viewerScope = "scope-a",
+        )
+
+        assertEquals(listOf("legacy"), view.running.map { it.id })
+        assertEquals(0, view.foreignTotal)
+    }
+
+    @Test
+    fun foreignOnlyViewStillShowsUp() {
+        // 真机踩到的就是这条：本会话清空「已结束」后只剩别的会话的记录，
+        // 卡片整张消失，连「其他会话 1」也没了 —— 看着像刚才那下把人家的也删了。
+        val view = summarizeBackgroundTasks(
+            listOf(task("theirs", 1_000L, commandTask = true, sessionScope = "scope-b")),
+            viewerScope = "scope-a",
+        )
+
+        assertEquals(0, view.runningTotal)
+        assertEquals(0, view.finished)
+        assertEquals(1, view.foreignTotal)
+        assertFalse("只剩别的会话的记录时卡片也要留着", view.isEmpty)
     }
 }
