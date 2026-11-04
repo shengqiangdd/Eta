@@ -282,6 +282,8 @@
   <string name="overlay_stopped">Stopped</string>
   <string name="overlay_hide">Hide capsule</string>
   <string name="overlay_hidden_hint">Capsule hidden. The edge glow still shows the run; turn it off in Settings → LLM providers → Show edge glow.</string>
+  <string name="settings_chat_cards_title">Collapse idle task cards</string>
+  <string name="settings_chat_cards_summary">Hide the subagent and background cards once nothing is running. Failed and stalled results stay visible.</string>
   <string name="settings_keep_screen_on_title">Keep screen on while session runs</string>
   <string name="settings_keep_screen_on_summary">Keeps the screen on while any session is running and not paused, even after switching to another app; pausing or finishing all runs restores the system timeout, and the power button still turns the screen off immediately. Increases screen-on battery use.</string>
   <string name="settings_keep_screen_on_active">Keeping the screen on right now; switching to other apps will not turn it off. Pausing or finishing all runs restores the system timeout.</string>

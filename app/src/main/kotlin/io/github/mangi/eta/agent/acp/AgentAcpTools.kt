@@ -29,8 +29,8 @@ internal object AgentAcpTools {
                 tool(
                     name = "acp_agent_list",
                     description =
-                        "列出已配置的 ACP 编码代理（如 Codex）。返回代理 id、可执行文件路径、" +
-                            "是否具备凭据、当前存活的委派会话，以及 Eta 中可用的 Codex 模型提供商。" +
+                        "列出已配置的 ACP 编码代理（Codex、Claude）。返回代理 id、可执行文件路径、" +
+                            "是否具备凭据、当前存活的委派会话，以及 Eta 中可用的模型提供商。" +
                             "**委派前先调用它**，不要把任务发给一个没有凭据或没装的代理。",
                     parameters = JSONObject().put("type", "object").put("properties", JSONObject()),
                 )
@@ -42,7 +42,9 @@ internal object AgentAcpTools {
                         "把一个**编码/工程任务**委派给 ACP 代理，并等待它完成。" +
                             "适合：跨文件重构、批量改动、跑测试并修失败、按规格写新模块。" +
                             "不适合：需要手机 GUI 操作或访问 Android 系统状态的任务（那些用 Eta 自己的工具）。" +
-                            "任务会在代理的工作目录里执行，默认是当前项目目录；返回代理的最终答复与改动摘要。",
+                            "任务会在代理的工作目录里执行，默认是当前项目目录；返回代理的最终答复与改动摘要。" +
+                            "结果里的 text 与 tool_activity 有长度上限（超出会标 text_truncated）；完整原文落在" +
+                            " transcript_path 指向的 Markdown 文件里，需要全文时读那个文件，不要重新委派一遍。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -92,7 +94,7 @@ internal object AgentAcpTools {
                                         .put("type", "string")
                                         .put(
                                             "description",
-                                            "Eta 中配置的模型提供商 id 或名称（可选，仅 codex 使用）。" +
+                                            "Eta 中配置的模型提供商 id 或名称（可选，codex 与 claude 都支持）。" +
                                                 "用户说「用 lingzhan 跑」时传 lingzhan；留空则用 Eta 当前选中的提供商。" +
                                                 "提供商必须已在 Eta 的模型提供商设置里配置好 API key。",
                                         ),

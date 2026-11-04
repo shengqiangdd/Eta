@@ -297,6 +297,8 @@
   <string name="overlay_stopped">已停止</string>
   <string name="overlay_hide">隱藏膠囊</string>
   <string name="overlay_hidden_hint">已隱藏思考膠囊；邊緣流光仍提示執行中，可在「設定 → LLM 供應商 → 顯示邊緣流光」關閉</string>
+  <string name="settings_chat_cards_title">收起沒有在跑的工作卡</string>
+  <string name="settings_chat_cards_summary">子代理與背景任務都沒在跑時，不再佔著輸入框上方。失敗與被自動收尾的仍會顯示。</string>
   <string name="settings_keep_screen_on_title">工作階段執行中保持螢幕喚醒</string>
   <string name="settings_keep_screen_on_summary">任一回話執行中且未暫停時保持亮屏，切到其他應用程式也不受影響；暫停或全部結束後恢復系統息屏，按電源鍵仍可立即息屏。會增加亮屏耗電。</string>
   <string name="settings_keep_screen_on_active">目前正在保持螢幕喚醒；切到其他應用程式也不受影響，暫停或全部結束會自動恢復系統息屏。</string>

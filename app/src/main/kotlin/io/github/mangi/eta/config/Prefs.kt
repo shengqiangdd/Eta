@@ -89,6 +89,15 @@ internal object Prefs {
          */
         const val AGENT_TRANSCRIPT_VIEW = "agent_transcript_view"
 
+        /**
+         * 聊天页底部常驻卡「没有在跑的就收起」（默认开）。
+         *
+         * 关掉 = 永远显示台账与后台任务卡，包含早就结束的那些。
+         * 默认开是因为原来的行为会让输入框上方长期堆着已完成的任务，
+         * 读起来像「还有事没完」。
+         */
+        const val AGENT_CHAT_CARDS_AUTO_COLLAPSE = "agent_chat_cards_auto_collapse"
+
         /** 允许主 Agent 派发 Subagent 并发执行（上游 3.3.5）。 */
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         /** 后台任务结束后，在聊天页的任务卡上给出「继续」（默认开；点一下才会发出）。 */
@@ -129,6 +138,7 @@ internal object Prefs {
             AGENT_OVERLAY_GLOW_ENABLED to true,
             AGENT_PLAN_MODE to false,
             AGENT_SUBAGENT_ENABLED to true,
+            AGENT_CHAT_CARDS_AUTO_COLLAPSE to true,
             AGENT_BACKGROUND_RESUME_BUTTON to true,
             AGENT_BACKGROUND_RESUME_AUTO to false,
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
@@ -148,6 +158,7 @@ internal object Prefs {
             AGENT_OVERLAY_GLOW_ENABLED,
             AGENT_PLAN_MODE,
             AGENT_SUBAGENT_ENABLED,
+            AGENT_CHAT_CARDS_AUTO_COLLAPSE,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
         )
     }

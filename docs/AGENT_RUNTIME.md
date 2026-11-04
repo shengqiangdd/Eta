@@ -808,6 +808,71 @@ APK 32,329,305 字节（sha256 前缀 `8a94c02e70c07a4c…`）。
 这正是「加状态时不能静默漏分类」的正确做法，`AgentTaskLedgerSummaryTest` 里
 「各桶之和 == total」那条用例是第二道保险。
 
+#### 第二批：任务卡收纳、ACP 全量回传、接入 Claude（2026-11-04）
+
+三个都是用户直接问出来的，问题都在「界面说了什么」而不是「功能能不能跑」：
+
+**1. 任务卡一直占着输入框上方**
+
+闲聊页底部原本是「有数据就画」：目标、待办、子代理台账、后台任务四张卡并排，
+跑过一次任务之后哪怕全都结束了，那几行也一直留着。用户读到的信号是「还有事没完」，
+实际什么都没在做。
+
+判据改成「只有还需要你知道的事才占位」（`ChatStatusCards` 纯函数，8 条用例）：
+
+| 情况 | 台账卡 | 后台卡 |
+| --- | --- | --- |
+| 有在跑的 | 显示 | 显示 |
+| 全结束但有失败/停滞 | 显示（错误不该被静默收掉） | — |
+| 全成功结束 | 收起 | 收起（除非开了「结束后保留继续」） |
+| 台账为空 | 不画（偏好也压不住） | 不画 |
+
+偏好开关 `agent_chat_cards_auto_collapse` 默认开，设置页可关回旧行为。
+判据写成纯函数而不是塞在 Composable 里，是因为「写宽了卡继续堆、写窄了运行中反而看不见」
+这两种错误都只能靠断言钉住。
+
+**2. 委派结果只有一截断尾，没有全文**
+
+`acp_delegate` 的 `text` / `tool_activity` 分别硬截 12,000 / 4,000 字符，
+超出当场丢弃，也没有任何地方能再读到 —— 想看完只能重新委派一遍（再等一次、再花一次钱）。
+
+现在每次委派都会落一份 Markdown：`files/acp-transcripts/<时间>-<代理>-<会话尾号>.md`，
+含任务原文、完整正文、完整工具流水、stderr 尾部。结果 JSON 增加
+`transcript_path` 与 `text_truncated` / `tool_activity_truncated` 两个布尔，
+工具描述里明确写「要全文就读那个文件，不要重新委派」。
+
+写盘通过构造参数注入（`writeTranscript: (AcpTranscript) -> String?`），
+`AcpClient` 依然不依赖 Android Context —— 这样它能被直接单测构造。
+保留 40 条，按文件名（时间戳前缀）淘汰最旧的。
+
+**3. Claude 之前根本没接上**
+
+上一轮回答用户时才发现：`BUILTIN_AGENTS` 里只有 `codex` 一个，Linux 环境里也没有
+`claude` 可执行文件 —— 不是「装了但失败」，是压根没有这个条目。
+
+接法上与 codex 有一处**不能照抄**：codex 靠 `config.toml` 的 `model_provider` 指向
+`env_key`，Claude 的 SDK 只认 `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY`，
+没有「登记 provider」那一层。所以 `acpLaunchEnv` 显式分 `claudeStyle` 两支，
+不靠「反正 key 传进去了」蒙混 —— 传错变量名得到的是 401，而代理不会告诉你原因。
+
+落地：`npm i -g @zed-industries/claude-code-acp`（0.16.2），
+spec 候选给显式路径 + 多版本通配 + PATH 命令名三层，与 codex 同构。
+
+**验证**
+- Claude 的 ACP 握手**真跑过**：向 `claude-code-acp` 发 `initialize`，
+  返回 `agentCapabilities`（image / embeddedContext / mcp http+sse / loadSession）。
+  这是真的协议往返，不是「文件存在就算装了」。
+- 候选探测按实际顺序复刻执行，命中 `/opt/eta/node/26.8.1/bin/claude-code-acp`。
+- 注入实验：把 claude 的 key 塞回 codex 的变量名 → `claudeAndCodexUseDifferentCredentialVariables` 红。
+- 门禁 `STAGES=test` **1235／0**；`STAGES=assemble` 成功，APK 32,338,869 字节
+  （sha256 前缀 `011f77c4f23ed4aa…`）。
+
+**未验证（如实）**
+- 没有真的把任务委派给 Claude 跑完一轮：需要可用的 Anthropic 凭据，
+  本机只验到「能启动 + 握手成功 + 候选能探测到」。
+- 界面上的收纳效果没有截图核对（判据有 8 条单测，但「看起来是否合适」只能真机看）。
+- 委派记录的 40 条淘汰策略只用合成数据推演过，没等它真的攒满。
+
 ### 第五批：后台任务上提示（2026-11-01）
 
 前四批管的是「派出去的子代理」。真正活过更多轮的是另一类：`terminal_job` 起的后台命令、

@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
@@ -1862,8 +1863,21 @@ private fun AgentChatBottomBar(
             todoPlan?.let { plan ->
                 AgentTodoPlanCard(plan = plan, modifier = Modifier.padding(bottom = 8.dp))
             }
+            // 只画「现在还需要看」的卡：跑过的任务全结束之后还常驻一行，
+            // 读起来像「还有事没完」，实际什么都没在做。偏好可在设置里关掉。
+            val collapseIdleCards = remember { Prefs.isEnabled(Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE) }
             taskLedger?.let { ledger ->
-                AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
+                val summary = ledger.cardSummary()
+                if (ChatStatusCards.ledgerVisible(
+                        hasEntries = !ledger.isEmpty,
+                        alwaysShow = !collapseIdleCards,
+                        running = summary.running,
+                        failed = summary.failed,
+                        stalled = summary.stalled,
+                    )
+                ) {
+                    AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
+                }
             }
             // 后台任务回答「这台机器上还有什么在跑」，与台账卡同属「未收尾的东西」，紧跟在它后面。
             // 卡片上的「继续」走 onSubmit，与用户手打一条消息同一条路径。

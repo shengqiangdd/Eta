@@ -24,7 +24,9 @@ import io.github.mangi.eta.agent.device.VirtualDisplayOwnership
 import io.github.mangi.eta.agent.device.VirtualDisplayTasks
 import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
+import io.github.mangi.eta.agent.acp.AGENT_CLAUDE
 import io.github.mangi.eta.agent.acp.AcpClient
+import io.github.mangi.eta.agent.acp.AcpTranscriptStore
 import io.github.mangi.eta.agent.acp.AcpModels
 import io.github.mangi.eta.agent.acp.AcpProvider
 import io.github.mangi.eta.agent.acp.AgentAcpTools
@@ -212,6 +214,7 @@ internal class AgentLocalTools(
             rootAvailable = rootAvailable,
             linuxShell = ::wrapForLinuxEnvironment,
             envScript = ::wrapEnvForLinux,
+            writeTranscript = { transcript -> AcpTranscriptStore.write(context, transcript) },
         )
     }
 
@@ -2472,10 +2475,18 @@ internal class AgentLocalTools(
                         )
                     )
                 val agent = request.agent.ifBlank { acpClient.defaultAgentId() }
-                if (request.provider != null && agent != "codex") {
-                    return textResult(errorResult("ACP_PROVIDER_UNSUPPORTED", "provider 参数目前只支持 codex 代理"))
+                // 两个代理都支持走 Eta 提供商，但接法不同（codex 写 config.toml，
+                // Claude 用 ANTHROPIC_* 环境变量），差异收在 AcpClient 里。
+                val providerAwareAgent = agent == "codex" || agent == AGENT_CLAUDE
+                if (request.provider != null && !providerAwareAgent) {
+                    return textResult(
+                        errorResult(
+                            "ACP_PROVIDER_UNSUPPORTED",
+                            "provider 参数目前只支持 codex 与 claude 代理",
+                        ),
+                    )
                 }
-                val providerResolution = if (agent == "codex") {
+                val providerResolution = if (providerAwareAgent) {
                     resolveAcpProvider(request.provider, request.model)
                 } else {
                     null

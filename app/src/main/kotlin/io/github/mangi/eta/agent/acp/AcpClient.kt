@@ -46,10 +46,25 @@ internal fun acpLaunchEnv(
     provider: AcpProvider.Config?,
     credentialEnvKeys: List<String>,
     env: (String) -> String? = { System.getenv(it) },
+    /**
+     * 是否按 Claude 的口径注入（`ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY`）。
+     *
+     * codex 的 key 走 `ETA_CODEX_API_KEY` + config.toml 里的 `env_key`；Claude 没有这层间接，
+     * 只能写死变量名。两种口径的键名完全不同，混用会得到一个 401 而不是明确报错，
+     * 所以这里显式分支，不靠「反正 key 传进去了」蒙混。
+     */
+    claudeStyle: Boolean = false,
 ): AcpLaunchEnv {
     val secrets = buildList {
-        provider?.apiKey?.takeIf { it.isNotBlank() }
-            ?.let { add(TerminalEnvEntry(AcpProvider.ENV_KEY, it)) }
+        if (claudeStyle) {
+            provider?.apiKey?.takeIf { it.isNotBlank() }
+                ?.let { add(TerminalEnvEntry(AcpProvider.CLAUDE_API_KEY_ENV, it)) }
+            provider?.baseUrl?.takeIf { it.isNotBlank() }
+                ?.let { add(TerminalEnvEntry(AcpProvider.CLAUDE_BASE_URL_ENV, it)) }
+        } else {
+            provider?.apiKey?.takeIf { it.isNotBlank() }
+                ?.let { add(TerminalEnvEntry(AcpProvider.ENV_KEY, it)) }
+        }
         credentialEnvKeys.forEach { key ->
             env(key)?.takeIf { it.isNotBlank() }?.let { add(TerminalEnvEntry(key, it)) }
         }
@@ -64,6 +79,33 @@ internal fun acpLaunchEnv(
 /** 标记内联 + 机密只给脚本路径。 */
 internal fun acpEnvPrefix(marker: TerminalEnvEntry, script: String?): String =
     "export ${marker.key}=${AcpProvider.shellQuote(marker.value)}; " + (script?.let { "$it; " } ?: "")
+
+/** Claude 的代理 id；启动路径与凭据口径都按它分支。 */
+internal const val AGENT_CLAUDE = "claude"
+
+/**
+ * 一次委派的完整记录，交给 [AcpClient.writeTranscript] 落盘。
+ *
+ * 与结果 JSON 的区别：结果里的 `text` / `tool_activity` 是**截断后**给模型看的摘要，
+ * 这里是完整原文。两者都要存在 —— 模型需要短摘要省上下文，用户需要能回看全文。
+ */
+internal data class AcpTranscript(
+    val sessionId: String,
+    val agentId: String,
+    val model: String?,
+    val task: String,
+    val startedAtMs: Long,
+    val elapsedMs: Long,
+    /** 完整正文（含 `[thought]` 标记的思考内容）。 */
+    val text: String,
+    /** 完整的工具调用流水。 */
+    val tools: String,
+    val stderrTail: String,
+    val stopReason: String?,
+    val ok: Boolean,
+    /** 是否因为超过上限被截断后仍写出（用于在文件头注明）。 */
+    val textTruncatedInResult: Boolean,
+)
 
 internal class AcpClient(
     private val logger: AgentLogger,
@@ -83,6 +125,17 @@ internal class AcpClient(
      * 返回 null 表示环境未就绪——调用方必须**中止**，不能回退成拼值。
      */
     private val envScript: (List<TerminalEnvEntry>) -> String? = { null },
+    /**
+     * 把这次委派的**完整**记录写到磁盘，返回宿主侧可读的绝对路径（写不了就返回 null）。
+     *
+     * 为什么需要它：回给模型的结果里 `text` / `tool_activity` 都有硬上限（12k / 4k 字符），
+     * 超出部分当场丢弃。代理跑了半小时、写了一万字说明时，用户拿到的只是一截截断的尾巴，
+     * 而且没有任何地方能再读到全文 —— 只能重新委派一遍。
+     *
+     * 由调用方注入而不是在这里碰 Context：`AcpClient` 刻意保持不依赖 Android 上下文，
+     * 这样才能在单测里直接构造。
+     */
+    private val writeTranscript: (AcpTranscript) -> String? = { null },
 ) {
     data class Agent(
         val id: String,
@@ -308,6 +361,28 @@ internal class AcpClient(
         }
         val elapsed = System.currentTimeMillis() - startedAt
         val ok = handle.finished && handle.error == null
+        val fullText = synchronized(handle.text) { handle.text.toString() }
+        val fullTools = synchronized(handle.tools) { handle.tools.toString() }
+        val tail = stderrTail(handle)
+        // 先落盘再拼结果：写失败不能影响委派本身（那会让「代理跑完了但工具报错」）。
+        val transcriptPath = runCatching {
+            writeTranscript(
+                AcpTranscript(
+                    sessionId = handle.session.id,
+                    agentId = spec.id,
+                    model = handle.activeModel ?: handle.defaultModel,
+                    task = task,
+                    startedAtMs = startedAt,
+                    elapsedMs = elapsed,
+                    text = fullText,
+                    tools = fullTools,
+                    stderrTail = tail,
+                    stopReason = handle.stopReason,
+                    ok = ok,
+                    textTruncatedInResult = fullText.length > MAX_RESULT_CHARS,
+                ),
+            )
+        }.getOrNull()
         val result = JSONObject()
             .put("ok", ok)
             .put("tool", "acp_delegate")
@@ -321,9 +396,13 @@ internal class AcpClient(
             .put("cwd", cwd)
             .put("elapsed_ms", elapsed)
             .put("stop_reason", handle.stopReason ?: JSONObject.NULL)
-            .put("text", handle.text.toString().take(MAX_RESULT_CHARS))
-            .put("tool_activity", handle.tools.toString().take(MAX_TOOL_CHARS))
-            .put("stderr_tail", stderrTail(handle))
+            .put("text", fullText.take(MAX_RESULT_CHARS))
+            .put("tool_activity", fullTools.take(MAX_TOOL_CHARS))
+            .put("stderr_tail", tail)
+            // 正文被截断时必须留下去处：否则用户只能重新委派一遍才能看全文。
+            .put("text_truncated", fullText.length > MAX_RESULT_CHARS)
+            .put("tool_activity_truncated", fullTools.length > MAX_TOOL_CHARS)
+            .put("transcript_path", transcriptPath ?: JSONObject.NULL)
             // 结构化回传：不只给一句正文，而是「跑了哪几步、每步多久、用了多少上下文」。
             // 真机（2026-10-27）：以前 90 秒、两步的委派在界面上只剩「完成」两个字。
             .put("steps", handle.stats.stepsJson())
@@ -404,7 +483,7 @@ internal class AcpClient(
         live.keys.toList().forEach { id -> live.remove(id)?.let { teardown(it) } }
     }
 
-    private data class AgentSpec(
+    internal data class AgentSpec(
         val id: String,
         val title: String,
         val executable: String,
@@ -616,13 +695,26 @@ internal class AcpClient(
             throw IllegalStateException("指定了 Eta 提供商，但该提供商没有可用模型")
         }
         // 代理在 Linux rootfs 里运行：cwd 与可执行路径都按容器内视角给。
+        // Claude 与 codex 的接法不同：codex 读 config.toml 的 model_provider，
+        // Claude 的 SDK 只认 ANTHROPIC_* 环境变量，没有配置文件这一层。
+        val claudeStyle = spec.id == AGENT_CLAUDE
+        // 模型也走环境变量：Claude 没有 config.toml 可写。不设就用代理自己的默认模型。
+        val claudeModel = if (claudeStyle) effectiveModel else null
         val innerScript = buildString {
             // 只有走 Eta 提供商时才生成临时 CODEX_HOME；不碰用户全局 ~/.codex/config.toml。
-            provider?.let { append(AcpProvider.launchScript(sessionId, it, requireNotNull(effectiveModel))) }
+            if (!claudeStyle) {
+                provider?.let { append(AcpProvider.launchScript(sessionId, it, requireNotNull(effectiveModel))) }
+            }
+            claudeModel?.let { append("export ANTHROPIC_MODEL=").append(shellQuote(it)).append("; ") }
             append("cd ").append(shellQuote(cwd)).append(" 2>/dev/null || cd /workspace; ")
             append("exec ").append(shellQuote(executablePath))
         }
-        val launchEnv = acpLaunchEnv(sessionId, provider, spec.credentialEnvKeys)
+        val launchEnv = acpLaunchEnv(
+            sessionId = sessionId,
+            provider = provider,
+            credentialEnvKeys = spec.credentialEnvKeys,
+            claudeStyle = claudeStyle,
+        )
         // 含换行/NUL 的值会被脚本过滤掉（TerminalEnvRules）；那不是「环境没就绪」，
         // 必须指出是哪一项，否则用户会去查 rootfs 而永远修不好。
         launchEnv.secrets.firstOrNull { !TerminalEnvRules.isInjectable(it) }?.let { bad ->
@@ -1103,7 +1195,7 @@ internal class AcpClient(
     private fun shellQuote(value: String): String =
         "'" + value.replace("'", "'\\''") + "'"
 
-    private companion object {
+    internal companion object {
         const val MAX_RESULT_CHARS = 12_000
         const val MAX_TOOL_CHARS = 4_000
 
@@ -1151,6 +1243,20 @@ internal class AcpClient(
                 credentialEnvKeys = listOf("CODEX_API_KEY", "OPENAI_API_KEY"),
                 // 用 `codex login` 登录过就够了，不强制用户再配一遍环境变量。
                 credentialPaths = listOf("/root/.codex/auth.json"),
+            ),
+            AgentSpec(
+                id = "claude",
+                title = "Claude",
+                // 同样只是兜底候选，真正以环境内探测为准。
+                executable = "/opt/eta/node/26.8.1/bin/claude-code-acp",
+                executableGlobs = listOf(
+                    "/opt/eta/node/*/bin/claude-code-acp",
+                    "/usr/local/bin/claude-code-acp",
+                ),
+                commandNames = listOf("claude-code-acp"),
+                // Claude Code 走 `claude` 登录或环境变量；两者任一即可。
+                credentialEnvKeys = listOf("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
+                credentialPaths = listOf("/root/.claude/.credentials.json", "/root/.claude.json"),
             ),
         )
 

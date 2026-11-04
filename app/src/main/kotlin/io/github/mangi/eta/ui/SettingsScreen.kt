@@ -333,6 +333,17 @@ private fun SettingsPageContent(
                     )
 
                     EtaPreferenceDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_chat_cards_title),
+                        summary = stringResource(R.string.settings_chat_cards_summary),
+                        key = Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE,
+                        icon = Icons.Rounded.Compress,
+                        iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
                     // 开关开着也分两种：正在保屏 / 开着但没任务。开关本身看不出区别，
                     // 在说明文字里直接给实况，用户不用去猜功能有没有生效。
                     val keepScreenSummary = when {

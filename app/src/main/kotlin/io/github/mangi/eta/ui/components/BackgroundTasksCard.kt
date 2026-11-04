@@ -106,6 +106,22 @@ internal fun BackgroundTasksCard(
     val records = rememberDetachedTasks() ?: return
     val view = remember(records) { summarizeBackgroundTasks(records) }
     if (view.isEmpty) return
+    // 全部结束之后没必要继续占位：这张卡回答的是「还有什么在跑」，
+    // 没有在跑的就只剩「上次跑过什么」，点开终端页一样看得到。
+    // 例外是用户开了「结束后保留继续按钮」—— 那时这一行本身就是入口。
+    val collapseIdleCards = remember { Prefs.isEnabled(Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE) }
+    val keepResume = remember {
+        Prefs.isEnabled(Prefs.Keys.AGENT_BACKGROUND_RESUME_BUTTON)
+    }
+    if (collapseIdleCards &&
+        !ChatStatusCards.backgroundVisible(
+            hasRecords = true,
+            runningTotal = view.runningTotal,
+            keepResumeAfterFinish = keepResume,
+        )
+    ) {
+        return
+    }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inspectedTask by remember { mutableStateOf<DetachedTask?>(null) }
     // 时间不能只在记录变化时算一次：运行中的任务显示的是「已运行多久」，

@@ -87,6 +87,30 @@ internal object AcpProvider {
     }
 
     /**
+     * Claude Code（经 `claude-code-acp`）读的变量名。
+     *
+     * 与 codex 的差别：codex 靠 `config.toml` 里的 `env_key` 指一个自定义变量名，
+     * Claude 的 SDK 直接认 `ANTHROPIC_*` —— 没有「登记 provider」这一层，
+     * 只能把 base_url 与 key 塞进这两个固定名字里。
+     */
+    const val CLAUDE_BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+
+    /** Claude 的 key 变量；写在这里是为了让「写了哪个」在代码里只有一处。 */
+    const val CLAUDE_API_KEY_ENV = "ANTHROPIC_API_KEY"
+
+    /**
+     * Claude 走 Eta 提供商时需要注入的环境变量。
+     *
+     * 只返回**键名**，值由 `acpLaunchEnv` 与 codex 共用同一条安全通道（rootfs 内一次性 0600 脚本），
+     * 不在这里拼进命令行 —— 那串会出现在 `ps` 里。
+     *
+     * 注意 `ANTHROPIC_AUTH_TOKEN` 与 `ANTHROPIC_API_KEY` 不是一回事：前者是 OAuth，
+     * 这里给的是 provider 的 key，必须用 API_KEY。写错会得到一个 401，
+     * 而错误信息不会告诉你用错了变量。
+     */
+    fun claudeEnvKeys(): List<String> = listOf(CLAUDE_API_KEY_ENV, CLAUDE_BASE_URL_ENV)
+
+    /**
      * 生成启动前的 shell 片段：创建临时 CODEX_HOME 并写入 config.toml。
      *
      * 目录名带 sessionId，多个并发委派不会互相覆盖；/tmp 由系统回收，
