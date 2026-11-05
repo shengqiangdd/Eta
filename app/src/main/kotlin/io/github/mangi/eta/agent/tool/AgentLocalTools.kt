@@ -36,6 +36,7 @@ import io.github.mangi.eta.agent.plugin.AgentPluginTools
 import io.github.mangi.eta.agent.plugin.PluginMcpRegistry
 import io.github.mangi.eta.agent.plugin.PluginRuntime
 import io.github.mangi.eta.agent.plugin.PluginPackageInstaller
+import io.github.mangi.eta.data.model.AnthropicProviderSetting
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.ProviderSetting
@@ -2292,8 +2293,8 @@ internal class AgentLocalTools(
      * 用于判断「代理能借提供商拿到凭据」。与 `acp_agent_list` 里算 `providerReady`
      * 用的是同一个判据，避免两处口径不一致。
      */
-    private fun providerReadyNow(): Boolean =
-        codexProviders().any { provider -> provider.codexReady() }
+    private fun providerReadyFor(agentId: String): Boolean =
+        allProviders().any { provider -> acpProviderReady(provider, agentId) }
 
     /** 用户在设置页选的委派模式（off/ask/auto）；空串按默认 ASK 处理。 */
     private fun preferredAcpDelegationMode(): String =
@@ -2307,41 +2308,64 @@ internal class AgentLocalTools(
             Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_AGENT).orEmpty()
         }.getOrDefault("")
 
-    private fun codexProviders(): List<ProviderSetting> = runCatching {
+    /** 设置页里「委派专用提供商」；空 = 跟随主模型（历史行为）。 */
+    private fun preferredAcpProvider(): String =
+        runCatching {
+            Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER).orEmpty()
+        }.getOrDefault("")
+
+    /** 设置页里「委派专用模型」；空 = 用该提供商第一个启用模型。 */
+    private fun preferredAcpModel(): String =
+        runCatching {
+            Prefs.getLocalAgentString(Prefs.Keys.AGENT_ACP_DEFAULT_MODEL).orEmpty()
+        }.getOrDefault("")
+
+    /**
+     * Eta 里配的全部提供商。
+     *
+     * 名字原先叫 `codexProviders`，但它返回的是**全部** —— 旧名字让下面几处
+     * 把「给 codex 的判据」当成通用判据用，Anthropic 类型就这么被排除了。
+     */
+    private fun allProviders(): List<ProviderSetting> = runCatching {
         runBlocking { ProviderRepository.allProviders() }
     }.getOrDefault(emptyList())
 
-    private fun ProviderSetting.isCodexCompatible(): Boolean =
-        (this is OpenAiCompatibleProviderSetting || this is CustomProviderSetting) &&
-            isEnabled && baseUrl.isNotBlank()
-
-    private fun ProviderSetting.codexReady(): Boolean =
-        isCodexCompatible() && apiKey.isNotBlank() &&
-            models.any { model -> model.isEnabled && model.modelId.isNotBlank() }
-
-    private fun ProviderSetting.codexModelIds(): List<String> =
-        models.filter { model -> model.isEnabled && model.modelId.isNotBlank() }
-            .map { model -> model.modelId }
-
     /**
      * 把用户说的 provider 名 / id / 模型名解析成 Eta 里真实配置的提供商。
+     *
+     * `agentId` 不可省：两个代理认的提供商类型不同（见 [acpProviderSupportsAgent]）。
      * 只有显式指定 provider 时才报错；未指定且没有可用提供商时返回 null，
-     * 保留「用 codex 自己的 ~/.codex/config.toml」这条旧路径。
+     * 保留「用代理自己的登录态/配置文件」这条旧路径。
      */
-    private fun resolveAcpProvider(requested: String?, model: String?): AcpProviderResolution? {
-        val compatible = codexProviders().filter { provider -> provider.isCodexCompatible() }
+    private fun resolveAcpProvider(
+        requested: String?,
+        model: String?,
+        agentId: String,
+    ): AcpProviderResolution? {
+        // 候选 = 这个代理真的能用起来的提供商（类型匹配 + 有 key + 有模型）。
+        val compatible = allProviders().filter { provider -> acpProviderReady(provider, agentId) }
         val wanted = requested?.trim()?.takeIf { it.isNotEmpty() }
         if (wanted == null) {
             val settings = runCatching { runBlocking { ProviderRepository.settings() } }.getOrNull()
-            val chosen = compatible.firstOrNull { provider ->
-                provider.id == settings?.selectedProviderId && provider.codexReady()
-            } ?: compatible.firstOrNull { provider -> provider.codexReady() }
-                ?: return null
+            // 优先级：设置页的委派专用提供商 > 跟随主模型 > 第一个能用的。
+            val chosen = pickAcpProvider(
+                candidates = compatible,
+                preferredId = preferredAcpProvider(),
+                mainSelectedId = settings?.selectedProviderId,
+            )?.provider ?: return null
+            // 模型同理：会话参数 > 设置页的委派专用模型 > 主界面选中 > 第一个。
+            // 中间两档都必须校验「这个模型真属于选中的提供商」——
+            // 否则换了提供商后，旧模型名会被当成有效值塞过去，报一个看不懂的上游 404。
+            val preferredModel = preferredAcpModel().takeIf { id ->
+                id.isNotEmpty() && chosen.models.any { m -> m.modelId == id }
+            }
+            val mainModel = settings?.selectedModelId?.takeIf { id ->
+                settings.selectedProviderId == chosen.id && chosen.models.any { m -> m.modelId == id }
+            }
             val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
-                ?: settings?.selectedModelId?.takeIf { id ->
-                    settings.selectedProviderId == chosen.id && chosen.models.any { it.modelId == id }
-                }
-                ?: chosen.codexModelIds().firstOrNull()
+                ?: preferredModel
+                ?: mainModel
+                ?: acpProviderModelIds(chosen).firstOrNull()
                 ?: return null
             return AcpProviderResolution.Use(
                 config = AcpProvider.Config(
@@ -2358,27 +2382,24 @@ internal class AgentLocalTools(
             )
         }
 
-        val chosen = compatible.firstOrNull { provider -> provider.id.equals(wanted, ignoreCase = true) }
-            ?: compatible.firstOrNull { provider -> provider.name.equals(wanted, ignoreCase = true) }
-            ?: compatible.firstOrNull { provider ->
-                provider.models.any { m ->
-                    m.modelId.equals(wanted, ignoreCase = true) ||
-                        m.displayName.equals(wanted, ignoreCase = true)
-                }
-            }
+        // 点名时在「类型支持这个代理」的**更宽**池子里找：
+        // 用户可能把一个还没填 key 的提供商叫出来，那时应该报“差什么”，
+        // 而不是假装它不存在。
+        val pool = allProviders().filter { provider -> acpProviderSupportsAgent(provider, agentId) }
+        val chosen = matchAcpProvider(pool, wanted)
             ?: return AcpProviderResolution.Error(
                 "ACP_PROVIDER_UNKNOWN",
-                "Eta 中没有提供商「$wanted」。可用：" +
-                    compatible.joinToString("、") { provider -> provider.name }.ifEmpty { "无" },
+                "Eta 中没有能用于 $agentId 的提供商「$wanted」。可用：" +
+                    pool.joinToString("、") { provider -> provider.name }.ifEmpty { "无" },
             )
-        if (!chosen.codexReady()) {
+        if (!acpProviderReady(chosen, agentId)) {
             return AcpProviderResolution.Error(
                 "ACP_PROVIDER_NOT_READY",
-                "提供商「${chosen.name}」还不能用于 Codex：需要启用、填写 API key，并至少有一个模型",
+                "提供商「${chosen.name}」还不能用于 $agentId：需要启用、填写 API key，并至少有一个模型",
             )
         }
         val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
-            ?: chosen.codexModelIds().firstOrNull()
+            ?: acpProviderModelIds(chosen).firstOrNull()
             ?: return AcpProviderResolution.Error(
                 "ACP_PROVIDER_NO_MODEL",
                 "提供商「${chosen.name}」没有可用模型",
@@ -2397,10 +2418,20 @@ internal class AgentLocalTools(
         )
     }
 
+    /**
+     * 提供商清单（给模型看的）。
+     *
+     * 每个提供商要标 `supports`：两个代理认的类型不同，不标的话
+     * 「有这个提供商」与「能给 claude 用」会被混为一谈，模型会拿 codex 的清单去填 claude 的 provider。
+     */
     private fun acpProvidersJson(providers: List<ProviderSetting>, selectedId: String?): JSONArray =
         JSONArray().also { array ->
-            providers.filter { provider -> provider.isCodexCompatible() }.forEach { provider ->
-                val models = provider.codexModelIds()
+            providers.forEach { provider ->
+                val supports = ACP_PROVIDER_AGENT_ORDER.filter { agentId ->
+                    acpProviderSupportsAgent(provider, agentId)
+                }
+                if (supports.isEmpty()) return@forEach
+                val models = acpProviderModelIds(provider)
                 val modelsJson = JSONArray()
                 models.take(AcpModels.MAX_LISTED_MODELS).forEach(modelsJson::put)
                 array.put(
@@ -2411,7 +2442,11 @@ internal class AgentLocalTools(
                         .put("codex_wire_api", AcpProvider.CODEX_WIRE_API)
                         .put("model_count", models.size)
                         .put("models", modelsJson)
-                        .put("ready", provider.codexReady())
+                        .put("supports", JSONArray(supports))
+                        .put(
+                            "ready_for",
+                            JSONArray(supports.filter { agentId -> acpProviderReady(provider, agentId) }),
+                        )
                         .put("selected", provider.id == selectedId),
                 )
             }
@@ -2428,16 +2463,20 @@ internal class AgentLocalTools(
         when (name) {
             "acp_agent_list" -> {
                 val agents = acpClient.agents()
-                val providers = codexProviders()
+                val providers = allProviders()
                 val settings = runCatching { runBlocking { ProviderRepository.settings() } }.getOrNull()
-                val providerReady = providers.any { provider -> provider.codexReady() }
+                // 每个代理各自算。用同一个布尔会把「codex 有 OpenAI 兼容提供商」
+                // 当成「claude 也有」—— 而两者认的类型根本不同。
+                val providerReadyAgents = ACP_PROVIDER_AGENT_ORDER.filterTo(mutableSetOf()) { agentId ->
+                    providers.any { provider -> acpProviderReady(provider, agentId) }
+                }
                 textResult(
                     JSONObject()
                         .put("ok", true)
                         .put("tool", "acp_agent_list")
                         .put(
                             "default_agent",
-                            acpClient.defaultAgentId(preferredAcpAgent(), providerReady),
+                            acpClient.defaultAgentId(preferredAcpAgent(), providerReadyAgents),
                         )
                         .put("providers", acpProvidersJson(providers, settings?.selectedProviderId))
                         .put(
@@ -2457,7 +2496,7 @@ internal class AgentLocalTools(
                                                 acpCredentialUsable(
                                                     agentId = agent.id,
                                                     ownCredentialPresent = agent.credentialPresent,
-                                                    providerReady = providerReady,
+                                                    providerReady = agent.id in providerReadyAgents,
                                                 ),
                                             )
                                             .put("credential_env_keys", JSONArray(agent.credentialEnvKeys))
@@ -2468,7 +2507,8 @@ internal class AgentLocalTools(
                                                         "在 Linux 工具环境内没找到可执行文件（已按显式路径、" +
                                                             "通配目录与 PATH 依次查找），请先在该环境安装"
                                                     acpCredentialUsable(
-                                                        agent.id, agent.credentialPresent, providerReady,
+                                                        agent.id, agent.credentialPresent,
+                                                        agent.id in providerReadyAgents,
                                                     ) && !agent.credentialPresent ->
                                                         "可用（使用 Eta 模型提供商）"
                                                     !agent.credentialPresent -> "缺少供应商凭证，需要 " + agent.credentialEnvKeys.joinToString(" 或 ")
@@ -2535,8 +2575,13 @@ internal class AgentLocalTools(
                 // 完全忽略设置页里选的那个 —— 选 codex 却按字母序跑 claude。
                 // providerReady 也要给：本机场景里两个代理都靠 Eta 提供商拿凭据，
                 // 不传的话「自动」会误判成没有可用代理。
+                // 按代理分开算：Claude 能用 Anthropic 类，Codex 只能用 OpenAI 兼容类。
+                val providerReadyAgents by lazy {
+                    ACP_PROVIDER_AGENT_ORDER
+                        .filterTo(mutableSetOf()) { agentId -> providerReadyFor(agentId) }
+                }
                 val agent = request.agent.ifBlank {
-                    acpClient.defaultAgentId(preferredAcpAgent(), providerReadyNow())
+                    acpClient.defaultAgentId(preferredAcpAgent(), providerReadyAgents)
                 }
                 // 两个代理都支持走 Eta 提供商，但接法不同（codex 写 config.toml，
                 // Claude 用 ANTHROPIC_* 环境变量），差异收在 AcpClient 里。
@@ -2550,7 +2595,7 @@ internal class AgentLocalTools(
                     )
                 }
                 val providerResolution = if (providerAwareAgent) {
-                    resolveAcpProvider(request.provider, request.model)
+                    resolveAcpProvider(request.provider, request.model, agent)
                 } else {
                     null
                 }
@@ -4232,7 +4277,80 @@ private const val TYPE_TEXT_INCREMENTAL_CHARS = 200
  * provider 参数校验），两处写死不同内容时行为会自相矛盾 —— 2026-11-04 就是这样：
  * 委派侧允许 Claude 用提供商，而列表侧仍报「缺少供应商凭证」。
  */
-private val PROVIDER_CAPABLE_AGENTS = setOf("codex", AGENT_CLAUDE)
+private val ACP_PROVIDER_AGENT_ORDER = listOf("codex", AGENT_CLAUDE)
+private val PROVIDER_CAPABLE_AGENTS = ACP_PROVIDER_AGENT_ORDER.toSet()
+
+/**
+ * 某个提供商能不能给指定代理用。
+ *
+ * 这里是 **按代理分开** 的，不能用一个共用的「兼容」判据：
+ * - Codex 只认 OpenAI 兼容接口（写 config.toml，走 `wire_api = responses`）；
+ * - Claude 只需要 baseUrl + apiKey（走 `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY`），
+ *   根本不关心 codex 的 wire_api。
+ *
+ * 2026-11-05 发现：这里原先只有 `isCodexCompatible()`，而它被两个代理共用。
+ * `AnthropicProviderSetting` 是独立类型，于是被整个排除 —— 用户配好了 Anthropic
+ * 官方/中转，Claude 委派却选不到它，只能退回 claude 自己的登录态。
+ * 一个叫 codex 的判据给 claude 用，就是这么出错的。
+ */
+internal fun acpProviderSupportsAgent(provider: ProviderSetting, agentId: String): Boolean =
+    provider.isEnabled && provider.baseUrl.isNotBlank() && when (agentId) {
+        AGENT_CLAUDE -> provider is AnthropicProviderSetting || provider is CustomProviderSetting
+        else -> provider is OpenAiCompatibleProviderSetting || provider is CustomProviderSetting
+    }
+
+/** 提供商能否直接拿来委派：接口认识它、有 key、至少一个启用模型。 */
+internal fun acpProviderReady(provider: ProviderSetting, agentId: String): Boolean =
+    acpProviderSupportsAgent(provider, agentId) && provider.apiKey.isNotBlank() &&
+        provider.models.any { model -> model.isEnabled && model.modelId.isNotBlank() }
+
+/** 提供商里真正可用于委派的模型 id（按配置顺序）。 */
+internal fun acpProviderModelIds(provider: ProviderSetting): List<String> =
+    provider.models.filter { model -> model.isEnabled && model.modelId.isNotBlank() }
+        .map { model -> model.modelId }
+
+/** 按 id、显示名、或模型名匹配一个提供商（用户在对话里点名时用）。 */
+internal fun matchAcpProvider(providers: List<ProviderSetting>, wanted: String): ProviderSetting? =
+    providers.firstOrNull { it.id.equals(wanted, ignoreCase = true) }
+        ?: providers.firstOrNull { it.name.equals(wanted, ignoreCase = true) }
+        ?: providers.firstOrNull { provider ->
+            provider.models.any { model ->
+                model.modelId.equals(wanted, ignoreCase = true) ||
+                    model.displayName.equals(wanted, ignoreCase = true)
+            }
+        }
+
+/** 默认提供商的命中来源，用于在结果里告诉用户「为什么是这个」。 */
+internal enum class AcpProviderSource { PREFERRED, MAIN, FALLBACK }
+
+internal data class AcpProviderPick(val provider: ProviderSetting, val source: AcpProviderSource)
+
+/**
+ * 没有点名时选哪个提供商。
+ *
+ * 顺序：**设置页选的委派专用提供商 > 跟随主模型 > 第一个能用的**。
+ * 中间那一档是历史行为，保留它才能让「没改过设置的用户」察觉不到变化；
+ * 而第一档给了「聊天用便宜模型、委派用正式 API」这种表达能力 ——
+ * 否则换个主模型，委派目标就跟着漂。
+ */
+internal fun pickAcpProvider(
+    candidates: List<ProviderSetting>,
+    preferredId: String?,
+    mainSelectedId: String?,
+): AcpProviderPick? {
+    val preferred = preferredId?.trim()?.takeIf { it.isNotEmpty() }
+    if (preferred != null) {
+        candidates.firstOrNull { it.id.equals(preferred, ignoreCase = true) }
+            ?.let { return AcpProviderPick(it, AcpProviderSource.PREFERRED) }
+    }
+    val main = mainSelectedId?.trim()?.takeIf { it.isNotEmpty() }
+    if (main != null) {
+        candidates.firstOrNull { it.id == main }
+            ?.let { return AcpProviderPick(it, AcpProviderSource.MAIN) }
+    }
+    val first = candidates.firstOrNull() ?: return null
+    return AcpProviderPick(first, AcpProviderSource.FALLBACK)
+}
 
 /**
  * 代理是否**实际可用**（自带凭据，或能用 Eta 的模型提供商顶上）。

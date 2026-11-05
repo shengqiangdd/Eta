@@ -310,33 +310,30 @@ internal class AcpClient(
      */
     /**
      * @param preferred 用户在设置页选的代理 id；空 = 自动
-     * @param providerReady Eta 的某个模型提供商是否可用。
+     * @param providerReadyAgents 哪些代理能借 Eta 的模型提供商顶上凭据。
      *   「能借提供商顶上」的代理也算有凭据，与 `acp_agent_list` 同一口径；
      *   不这样统一会出现「列表说可用、默认选择却跳过它」。
+     *
+     *   这里收一个**集合**而不是单个布尔：两个代理认的提供商类型不同
+     *   （Claude 用 Anthropic 类，Codex 用 OpenAI 兼容类），
+     *   一个布尔会把「codex 有可用提供商」当成「claude 也有」。
      *   由调用方传入是因为这个判断要读 DataStore（挂起），
      *   不适合放进这个同步方法里。
      */
-    fun defaultAgentId(preferred: String = "", providerReady: Boolean = false): String =
+    fun defaultAgentId(
+        preferred: String = "",
+        providerReadyAgents: Set<String> = emptySet(),
+    ): String =
         AcpModels.pickDefaultAgent(
             candidates = agents().map { agent ->
                 AcpModels.Candidate(
                     id = agent.id,
                     installed = agent.installed,
-                    credentialPresent = agent.credentialPresent ||
-                        (providerReady && agent.id in ACP_PROVIDER_CAPABLE_AGENT_IDS),
+                    credentialPresent = agent.credentialPresent || agent.id in providerReadyAgents,
                 )
             },
             preferred = preferred,
         )
-
-    /**
-     * 能借 Eta 模型提供商顶上凭据的代理。
-     *
-     * 与 `agents/acp` 之外那份清单保持同源意义：这里只用于**默认选择**，
-     * 权威判定仍在 `acp_agent_list`（那里还会展示来源与原因）。
-     * 两边都列 codex 与 claude，是因为两者的启动路径都支持注入提供商配置。
-     */
-    private val ACP_PROVIDER_CAPABLE_AGENT_IDS = setOf("codex", AGENT_CLAUDE)
 
     fun sessions(): List<Session> = live.values.map { it.session }.sortedBy { it.createdAtMs }
 

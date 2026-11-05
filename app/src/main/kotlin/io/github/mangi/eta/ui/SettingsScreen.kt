@@ -95,6 +95,8 @@ import io.github.mangi.eta.ui.components.AgentBusySendModePreference
 import io.github.mangi.eta.ui.components.AgentTranscriptViewPreference
 import io.github.mangi.eta.ui.components.AgentWorkCollapseTimingPreference
 import io.github.mangi.eta.ui.components.AcpDefaultAgentPreference
+import io.github.mangi.eta.ui.components.AcpModelPreference
+import io.github.mangi.eta.ui.components.AcpProviderPreference
 import io.github.mangi.eta.ui.components.AcpDelegationPreference
 import io.github.mangi.eta.ui.components.AgentModePreference
 import io.github.mangi.eta.ui.components.EtaArrowPreference
@@ -350,6 +352,24 @@ private fun SettingsPageContent(
                         title = stringResource(R.string.settings_acp_default_agent_title),
                         icon = Icons.Rounded.AccountTree,
                         iconTint = EtaPreferenceColors.Orange,
+                    )
+
+                    EtaPreferenceDivider()
+                    // 委派专用提供商/模型：默认「跟随主模型」，不动设置就看不到行为变化。
+                    // 有了这两项，「聊天用便宜模型、委派用正式 API」才表达得出来。
+                    AcpProviderPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_acp_provider_title),
+                        icon = Icons.Rounded.Cloud,
+                        iconTint = EtaPreferenceColors.Green,
+                    )
+
+                    EtaPreferenceDivider()
+                    AcpModelPreference(
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_acp_model_title),
+                        icon = Icons.Rounded.Flare,
+                        iconTint = EtaPreferenceColors.Yellow,
                     )
 
                     EtaPreferenceDivider()

@@ -105,6 +105,23 @@ internal object Prefs {
         const val AGENT_ACP_DEFAULT_AGENT = "agent_acp_default_agent"
 
         /**
+         * 委派专用的模型提供商 id；空 = 跟随主模型（历史行为）。
+         *
+         * 为什么要单开一个而不是“就用主界面选的那个”：
+         * 聊天可以在便宜模型上跑，而委派出去的编码任务需要能真正顶住长上下文的 API。
+         * 先前只有一个选择，换主模型就把委派目标一起换了；且换后不报错，只是行为变了。
+         */
+        const val AGENT_ACP_DEFAULT_PROVIDER = "agent_acp_default_provider"
+
+        /**
+         * 委派专用的模型 id；空 = 用该提供商第一个启用模型。
+         *
+         * 必须与 [AGENT_ACP_DEFAULT_PROVIDER] 搭配才生效：模型名跨提供商不通用，
+         * 拿一个不属于当前提供商的模型名去跑只会得到上游 404。
+         */
+        const val AGENT_ACP_DEFAULT_MODEL = "agent_acp_default_model"
+
+        /**
          * 聊天页底部常驻卡「没有在跑的就收起」（默认开）。
          *
          * 关掉 = 永远显示台账与后台任务卡，包含早就结束的那些。
@@ -232,6 +249,8 @@ internal object Prefs {
         val LOCAL_AGENT_STRING_KEYS: Set<String> = setOf(
             AGENT_ACP_DELEGATION_MODE,
             AGENT_ACP_DEFAULT_AGENT,
+            AGENT_ACP_DEFAULT_PROVIDER,
+            AGENT_ACP_DEFAULT_MODEL,
         )
     }
 

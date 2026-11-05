@@ -295,6 +295,17 @@
   <string name="acp_delegation_auto_detail">Complex multi-file work goes straight to the chosen agent without an extra question. Delegation starts another process and spends another round of tokens.</string>
   <string name="settings_acp_default_agent_title">Default coding agent</string>
   <string name="settings_acp_default_agent_summary">Which agent receives delegated work.</string>
+  <string name="settings_acp_provider_title">Delegation provider</string>
+  <string name="settings_acp_provider_summary">Which provider delegated tasks use. Default follows your main model.</string>
+  <string name="settings_acp_model_title">Delegation model</string>
+  <string name="settings_acp_model_summary">Which model delegated tasks use. Only available after picking a provider.</string>
+  <string name="acp_follow_main_title">Follow main model</string>
+  <string name="acp_follow_main_summary">Use whichever provider and model are selected in the chat model picker</string>
+  <string name="acp_model_auto_title">Provider default</string>
+  <string name="acp_model_auto_summary">Use the first enabled model of the selected provider</string>
+  <string name="acp_provider_none_title">No provider available</string>
+  <string name="acp_provider_none_summary">Add a provider in model settings; Codex needs an OpenAI-compatible one, Claude needs an Anthropic one</string>
+  <string name="acp_provider_not_ready">not ready</string>
   <string name="acp_agent_auto_title">Automatic</string>
   <string name="acp_agent_auto_summary">Use the first agent that is installed and has credentials; only falls back here when the one you picked is unavailable</string>
   <string name="acp_agent_codex_title">Codex</string>
