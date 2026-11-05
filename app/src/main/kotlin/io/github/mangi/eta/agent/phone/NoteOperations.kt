@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.phone
 
 import android.content.ContentValues
+import androidx.core.net.toUri
 import android.net.Uri
 import java.util.UUID
 import org.json.JSONObject
@@ -13,7 +14,7 @@ internal class NoteOperations(
 ) {
     private val authority = "$userId@com.nearme.note"
 
-    private fun uri(path: String) = Uri.parse("content://$authority/$path")
+    private fun uri(path: String) = "content://$authority/$path".toUri()
 
     fun execute(tool: String, args: JSONObject): JSONObject =
         when (tool) {

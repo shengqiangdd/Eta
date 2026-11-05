@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.components
 
 import android.content.Context
+import androidx.core.content.edit
 import android.content.SharedPreferences
 
 /**
@@ -53,6 +54,6 @@ internal object ChatNoticeDismissalPrefs {
 
     /** 会话被删除时清掉它的忽略记录，避免 prefs 里留下永远不会再读的键。 */
     fun clearScope(context: Context, scopeKey: String) {
-        prefs(context).edit().remove(KEY_SCOPE_PREFIX + scopeKey).apply()
+        prefs(context).edit { remove(KEY_SCOPE_PREFIX + scopeKey) }
     }
 }

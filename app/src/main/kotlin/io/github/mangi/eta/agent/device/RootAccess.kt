@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.device
 
 import android.content.Context
+import androidx.core.content.edit
 import android.content.SharedPreferences
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.io.File
@@ -93,7 +94,7 @@ internal object RootAccess {
                     }
                 }
                 val granted = result.ok && result.stdout.trim() == "0"
-                prefs.edit().putBoolean(LAST_GRANTED, granted).apply()
+                prefs.edit { putBoolean(LAST_GRANTED, granted) }
                 mutableState.value = RootAccessState(
                     status = when {
                         granted -> RootAccessStatus.GRANTED

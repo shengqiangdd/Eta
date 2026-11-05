@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui
 
 import android.content.ComponentName
+import androidx.core.net.toUri
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -180,7 +181,7 @@ private fun SettingsPageContent(
     val appVersionName = appPackageInfo.versionName.orEmpty()
     val appVersionSummary = "${appPackageInfo.versionName} (${appPackageInfo.longVersionCode})"
     val openUrl: (String) -> Unit = { url ->
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     }
     var checkingUpdate by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppLatestRelease?>(null) }

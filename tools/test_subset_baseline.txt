@@ -10,360 +10,359 @@
 #
 # 这份清单只许减少：类被删除或已被过滤列表覆盖时，对应行必须删掉（脚本会报红）。
 
-io.github.mangi.eta.AppProcessPolicyTest
-io.github.mangi.eta.agent.accessibility.AccessibilityPlatformCompatibilityTest
-io.github.mangi.eta.agent.accessibility.AgentAccessibilityKeeperTest
-io.github.mangi.eta.agent.accessibility.MainThreadCallGateTest
-io.github.mangi.eta.agent.accessibility.ScreenshotWindowPolicyTest
-io.github.mangi.eta.agent.accessibility.ScrollEventObservationGateTest
-io.github.mangi.eta.agent.accessibility.TextEditPlannerTest
-io.github.mangi.eta.agent.acp.AcpExecutableResolverTest
-io.github.mangi.eta.agent.acp.AcpProviderTest
-io.github.mangi.eta.agent.acp.AcpStderrTailTest
-io.github.mangi.eta.agent.acp.AgentAcpToolsTest
-io.github.mangi.eta.agent.auth.CodexOAuthFixture
-io.github.mangi.eta.agent.auth.LoopbackAuthorizationReceiverTest
-io.github.mangi.eta.agent.auth.OidcTokenVerifierTest
-io.github.mangi.eta.agent.auth.ProviderCredentialSessionsTest
-io.github.mangi.eta.agent.auth.ProviderOAuthClientTest
-io.github.mangi.eta.agent.browser.BrowserActionArgumentsTest
-io.github.mangi.eta.agent.browser.BrowserDomScriptsTest
-io.github.mangi.eta.agent.browser.BrowserPayloadLimiterTest
-io.github.mangi.eta.agent.browser.BrowserScreenshotTest
-io.github.mangi.eta.agent.browser.BrowserSessionRegistryTest
-io.github.mangi.eta.agent.context.DmpQueryTransportTest
-io.github.mangi.eta.agent.context.DmpSourceResolverTest
-io.github.mangi.eta.agent.context.PersonalContextBillSummaryTest
-io.github.mangi.eta.agent.context.PersonalContextQueryServiceTest
-io.github.mangi.eta.agent.context.PersonalContextRequestTest
-io.github.mangi.eta.agent.context.PersonalContextSourcesTest
-io.github.mangi.eta.agent.device.AgentFileReferenceGatewayTest
-io.github.mangi.eta.agent.device.AndroidDisplaySizeParserTest
-io.github.mangi.eta.agent.device.BoundedFileCopyTest
-io.github.mangi.eta.agent.device.FocusedWindowParserTest
-io.github.mangi.eta.agent.device.GestureFallbackPolicyTest
-io.github.mangi.eta.agent.device.RootAccessPolicyTest
-io.github.mangi.eta.agent.device.RootCommandEnvelopeTest
-io.github.mangi.eta.agent.device.RootScrollMotionContractTest
-io.github.mangi.eta.agent.device.RootShellTextTest
-io.github.mangi.eta.agent.device.ScreenshotOutcomePolicyTest
-io.github.mangi.eta.agent.device.ScrollAxisContractTest
-io.github.mangi.eta.agent.device.ScrollGestureContractTest
-io.github.mangi.eta.agent.device.ShellActionOutcomePolicyTest
-io.github.mangi.eta.agent.device.VirtualDisplayBudgetTest
-io.github.mangi.eta.agent.device.VirtualDisplayImeIdTest
-io.github.mangi.eta.agent.device.VirtualDisplayImePolicyTest
-io.github.mangi.eta.agent.device.VirtualDisplayTasksTest
-io.github.mangi.eta.agent.mcp.McpProtocolValidationTest
-io.github.mangi.eta.agent.mcp.McpRunContextTest
-io.github.mangi.eta.agent.mcp.McpTimeoutPolicyTest
-io.github.mangi.eta.agent.media.AgentImageCodecTest
-io.github.mangi.eta.agent.memory.AgentLearningRecorderTest
-io.github.mangi.eta.agent.memory.AgentMemoryContextBuilderTest
-io.github.mangi.eta.agent.memory.AgentMemoryHeadingsTest
-io.github.mangi.eta.agent.model.AgentAskUserToolCatalogTest
-io.github.mangi.eta.agent.model.AgentCompactionProviderTest
-io.github.mangi.eta.agent.model.AgentCompactionReasoningTest
-io.github.mangi.eta.agent.model.AgentContextBudgetTest
-io.github.mangi.eta.agent.model.AgentContextCompactionTest
-io.github.mangi.eta.agent.model.AgentContextCompactionUsageTest
-io.github.mangi.eta.agent.model.AgentContextRecoveryTest
-io.github.mangi.eta.agent.model.AgentDeviceResultFormatterTest
-io.github.mangi.eta.agent.model.AgentDeviceToolCatalogTest
-io.github.mangi.eta.agent.model.AgentFileReferencePromptCodecTest
-io.github.mangi.eta.agent.model.AgentFileResultFormatterTest
-io.github.mangi.eta.agent.model.AgentFileToolCatalogTest
-io.github.mangi.eta.agent.model.AgentFileVisionToolCatalogTest
-io.github.mangi.eta.agent.model.AgentGoalTest
-io.github.mangi.eta.agent.model.AgentGoalToolCatalogTest
-io.github.mangi.eta.agent.model.AgentModeTest
-io.github.mangi.eta.agent.model.AgentModelRetryTest
-io.github.mangi.eta.agent.model.AgentPhoneResultFormatterTest
-io.github.mangi.eta.agent.model.AgentPlanModePolicyTest
-io.github.mangi.eta.agent.model.AgentRetryPolicyTest
-io.github.mangi.eta.agent.model.AgentRoleplayRuntimeTest
-io.github.mangi.eta.agent.model.AgentScreenObservationContractTest
-io.github.mangi.eta.agent.model.AgentSensitiveTranscriptTest
-io.github.mangi.eta.agent.model.AgentTodoPlanTest
-io.github.mangi.eta.agent.model.AgentToolCatalogTest
-io.github.mangi.eta.agent.model.AgentToolGuardTest
-io.github.mangi.eta.agent.model.AgentToolSpillTest
-io.github.mangi.eta.agent.model.AgentTraceFormatterTest
-io.github.mangi.eta.agent.model.AgentWebToolCatalogTest
-io.github.mangi.eta.agent.model.AnthropicMessagesProviderTest
-io.github.mangi.eta.agent.model.AssistantScreenContextProjectionTest
-io.github.mangi.eta.agent.model.AuthorizedProviderHttpTest
-io.github.mangi.eta.agent.model.ChatToolCallHistoryTest
-io.github.mangi.eta.agent.model.CodexResponsesRequestTest
-io.github.mangi.eta.agent.model.CustomHeaderAndBodyTest
-io.github.mangi.eta.agent.model.GeminiInteractionsTest
-io.github.mangi.eta.agent.model.GeminiModelFailureTest
-io.github.mangi.eta.agent.model.GeminiRuntimeIntegrationTest
-io.github.mangi.eta.agent.model.GeminiToolSchemaTest
-io.github.mangi.eta.agent.model.OpenAiChatCompletionsProviderTest
-io.github.mangi.eta.agent.model.OpenAiChatToolCallIdsTest
-io.github.mangi.eta.agent.model.OpenAiResponsesProviderTest
-io.github.mangi.eta.agent.model.ProviderConnectionProfileTest
-io.github.mangi.eta.agent.model.ProviderReasoningTest
-io.github.mangi.eta.agent.model.ProviderRequestHeadersTest
-io.github.mangi.eta.agent.model.ProviderSseReaderTest
-io.github.mangi.eta.agent.model.ProviderUrlsTest
-io.github.mangi.eta.agent.model.SkillInstallModelToolGateTest
-io.github.mangi.eta.agent.model.SkillInstallToolCatalogTest
-io.github.mangi.eta.agent.overlay.AgentOverlayPreferencePolicyTest
-io.github.mangi.eta.agent.overlay.AgentOverlayStateTest
-io.github.mangi.eta.agent.overlay.AgentOverlayVisibilityPolicyTest
-io.github.mangi.eta.agent.phone.NativeAppOperationsTest
-io.github.mangi.eta.agent.plugin.PluginHistoryStoreTest
-io.github.mangi.eta.agent.plugin.PluginLinkSourceTest
-io.github.mangi.eta.agent.plugin.PluginManifestTest
-io.github.mangi.eta.agent.plugin.PluginMcpSyncPlanTest
-io.github.mangi.eta.agent.plugin.PluginPackageInstallerInspectTest
-io.github.mangi.eta.agent.plugin.PluginPackageInstallerTest
-io.github.mangi.eta.agent.plugin.PluginRuntimeSourcesTest
-io.github.mangi.eta.agent.plugin.PluginSourceStoreTest
-io.github.mangi.eta.agent.plugin.PluginVersionTest
-io.github.mangi.eta.agent.project.ProjectRulesTest
-io.github.mangi.eta.agent.roleplay.CharacterCardCodecTest
-io.github.mangi.eta.agent.roleplay.CharacterWorldbookTest
-io.github.mangi.eta.agent.runtime.AgentContextPersistenceTest
-io.github.mangi.eta.agent.runtime.AgentContinuationBuilderTest
-io.github.mangi.eta.agent.runtime.AgentConversationIdentityTest
-io.github.mangi.eta.agent.runtime.AgentExecutionServiceTest
-io.github.mangi.eta.agent.runtime.AgentExternalArchivePayloadTest
-io.github.mangi.eta.agent.runtime.AgentFileBackupsTest
-io.github.mangi.eta.agent.runtime.AgentHistoryRetentionTest
-io.github.mangi.eta.agent.runtime.AgentRunArchiveStoreTest
-io.github.mangi.eta.agent.runtime.AgentRunCheckpointStoreTest
-io.github.mangi.eta.agent.runtime.AgentRunExclusivityPolicyTest
-io.github.mangi.eta.agent.runtime.AgentRunExportTest
-io.github.mangi.eta.agent.runtime.AgentRunFileChangesTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeAttachDeliveryTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeClientAckTimeoutPolicyTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeParallelWireTest
-io.github.mangi.eta.agent.runtime.AgentRuntimePolicyTest
-io.github.mangi.eta.agent.runtime.AgentRuntimePreparationFailureTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeRequestConfigResolverTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeResultStoreTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeSafetyTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeServiceRetentionTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeSessionTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeWireServiceIntentTest
-io.github.mangi.eta.agent.runtime.AgentRuntimeWireTest
-io.github.mangi.eta.agent.runtime.AgentTodoStoreTest
-io.github.mangi.eta.agent.runtime.EntrySurfaceGuardTest
-io.github.mangi.eta.agent.runtime.ExecutionStopQueueTest
-io.github.mangi.eta.agent.runtime.GuiControlCoordinatorTest
-io.github.mangi.eta.agent.runtime.RuntimeRunRegistryTest
-io.github.mangi.eta.agent.runtime.SearchSuggestionsPayloadTest
-io.github.mangi.eta.agent.runtime.ToolProgressRoundRegistryTest
-io.github.mangi.eta.agent.skill.GitHubSkillRepositoryParserTest
-io.github.mangi.eta.agent.skill.PublicGitHubSkillSourceTest
-io.github.mangi.eta.agent.skill.SkillPackageInstallerTest
-io.github.mangi.eta.agent.skill.SkillRecoveryJournalTest
-io.github.mangi.eta.agent.skill.SkillResourceReaderTest
-io.github.mangi.eta.agent.skill.SkillRuntimeTest
-io.github.mangi.eta.agent.subagent.SubagentTest
-io.github.mangi.eta.agent.tool.AgentAfterActionSummaryTest
-io.github.mangi.eta.agent.tool.AgentColorOsMemoryToolsTest
-io.github.mangi.eta.agent.tool.AgentLocalSkillInstallAuthorizationTest
-io.github.mangi.eta.agent.tool.AgentLocalSkillInstallIntegrationTest
-io.github.mangi.eta.agent.tool.AgentLocalSkillResourceToolTest
-io.github.mangi.eta.agent.tool.AgentLocalToolsPermissionTest
-io.github.mangi.eta.agent.tool.AgentProcessRssListTest
-io.github.mangi.eta.agent.tool.AgentToolCatalogRequirementTest
-io.github.mangi.eta.agent.tool.AgentToolDisplayScopeTest
-io.github.mangi.eta.agent.tool.AppInspectionToolTest
-io.github.mangi.eta.agent.tool.ColorOsMemoryDatabaseQueryTest
-io.github.mangi.eta.agent.tool.ConversationHistoryToolTest
-io.github.mangi.eta.agent.tool.DangerousCommandGuardTest
-io.github.mangi.eta.agent.tool.DeviceContextToolTest
-io.github.mangi.eta.agent.tool.DeviceStateMutationsTest
-io.github.mangi.eta.agent.tool.JsonArrayElementRealJournalTest
-io.github.mangi.eta.agent.tool.JsonArrayElementScannerTest
-io.github.mangi.eta.agent.tool.LogcatQueryTest
-io.github.mangi.eta.agent.tool.NodeActionRetryMatchTest
-io.github.mangi.eta.agent.tool.NodeActionRetryPolicyTest
-io.github.mangi.eta.agent.tool.ObservationReferencePolicyTest
-io.github.mangi.eta.agent.tool.PendingSkillConflictCapabilityParserTest
-io.github.mangi.eta.agent.tool.RootlessDeviceToolsTest
-io.github.mangi.eta.agent.trace.AgentNetworkRetryStatsTest
-io.github.mangi.eta.agent.trace.AgentRunTraceStoreTest
-io.github.mangi.eta.agent.trace.AgentRunTrajectoryTest
-io.github.mangi.eta.agent.trace.AgentToolUsageStatsTest
-io.github.mangi.eta.agent.usage.AgentUsageLedgerTest
-io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicyTest
-io.github.mangi.eta.agent.voice.CloudSpeechSynthesisTest
-io.github.mangi.eta.agent.voice.DoubaoTtsCodecTest
-io.github.mangi.eta.agent.voice.EtaAssistantScreenContextTest
-io.github.mangi.eta.agent.voice.EtaVoicePanelTouchTest
-io.github.mangi.eta.agent.voice.EtaWaveShaderTest
-io.github.mangi.eta.agent.voice.OssSpeechSignerTest
-io.github.mangi.eta.agent.voice.SpeechAudioLeaseContextTest
-io.github.mangi.eta.agent.voice.SpeechHttpTest
-io.github.mangi.eta.agent.voice.SpeechLifecycleTest
-io.github.mangi.eta.agent.voice.SpeechOssUploadTest
-io.github.mangi.eta.agent.voice.SpeechPcmDecoderTest
-io.github.mangi.eta.agent.voice.SpeechPcmOutputTest
-io.github.mangi.eta.agent.voice.SpeechPlaybackTest
-io.github.mangi.eta.agent.voice.SpeechProtocolTest
-io.github.mangi.eta.agent.voice.SpeechSegmentFadeTest
-io.github.mangi.eta.agent.voice.SpeechTextTest
-io.github.mangi.eta.agent.voice.SpeechTranscriptRefinerTest
-io.github.mangi.eta.agent.voice.SystemSpeechRecognizerTest
-io.github.mangi.eta.agent.web.AgentWebToolsTest
-io.github.mangi.eta.agent.web.PublicWebSearchTest
-io.github.mangi.eta.agent.web.WebHttpTransportTest
-io.github.mangi.eta.agent.web.WebPageContentTest
-io.github.mangi.eta.agent.web.WebResponseDecoderTest
-io.github.mangi.eta.config.PowerAssistantTargetTest
-io.github.mangi.eta.config.PrefsDefaultsTest
-io.github.mangi.eta.core.DexKitNativeLibraryFileTest
-io.github.mangi.eta.core.DexKitTargetCacheTest
-io.github.mangi.eta.core.DiagnosticsRetentionTest
-io.github.mangi.eta.core.HookInstallReportTest
-io.github.mangi.eta.core.LogSafetyTest
-io.github.mangi.eta.core.LogThrottleTest
-io.github.mangi.eta.core.ModuleConfigEntryPackagesTest
-io.github.mangi.eta.data.db.ChunkedTextDaoAccessTest
-io.github.mangi.eta.data.db.ChunkedTextDaoRealDataTest
-io.github.mangi.eta.data.db.ChunkedTextDaoStoreTextTest
-io.github.mangi.eta.data.db.ChunkedTextInputStreamTest
-io.github.mangi.eta.data.db.ChunkedTextLayoutTest
-io.github.mangi.eta.data.db.ConversationDeleteCascadeTest
-io.github.mangi.eta.data.db.ConversationPromptTokensMigrationTest
-io.github.mangi.eta.data.db.ConversationSearchSqlContractTest
-io.github.mangi.eta.data.db.EtaDatabaseMigrationChainTest
-io.github.mangi.eta.data.db.EtaDatabaseMigrationTest
-io.github.mangi.eta.data.db.JdbcChunkDao
-io.github.mangi.eta.data.db.JournalRoundTripProbeTest
-io.github.mangi.eta.data.db.JournalTailWriteRealDataTest
-io.github.mangi.eta.data.db.JournalWindowRealDataTest
-io.github.mangi.eta.data.db.McpEntitiesTest
-io.github.mangi.eta.data.model.AppearanceSettingsTest
-io.github.mangi.eta.data.model.ModelRetrySettingsTest
-io.github.mangi.eta.data.model.SettingsTest
-io.github.mangi.eta.data.model.SpeechSettingsTest
-io.github.mangi.eta.data.provider.BuiltinProvidersTest
-io.github.mangi.eta.data.provider.CommunityCatalogParserTest
-io.github.mangi.eta.data.provider.GeminiModelCapabilitiesTest
-io.github.mangi.eta.data.provider.OfficialModelCatalogTest
-io.github.mangi.eta.data.provider.ReasoningCapabilityResolverTest
-io.github.mangi.eta.data.repository.AgentMemoryDocumentTest
-io.github.mangi.eta.data.repository.AgentMemoryStoreTest
-io.github.mangi.eta.data.repository.AppearanceSettingsRepositoryTest
-io.github.mangi.eta.data.repository.AppearanceSnapshotTest
-io.github.mangi.eta.data.repository.CharacterMemoryRepositoryTest
-io.github.mangi.eta.data.repository.CharacterRepositoryTest
-io.github.mangi.eta.data.repository.CommunityCatalogRepositoryTest
-io.github.mangi.eta.data.repository.EtaBackupRepositoryTest
-io.github.mangi.eta.data.repository.EtaBackupStreamingTest
-io.github.mangi.eta.data.repository.GeminiModelCatalogHttpTest
-io.github.mangi.eta.data.repository.GeminiProviderConfigurationTest
-io.github.mangi.eta.data.repository.LinuxBackendSelectionTest
-io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepositoryTest
-io.github.mangi.eta.data.repository.ModelRepositoryTest
-io.github.mangi.eta.data.repository.NotificationHistoryRepositoryTest
-io.github.mangi.eta.data.repository.ProviderRepositoryTest
-io.github.mangi.eta.data.repository.RemoteModelCatalogHttpTest
-io.github.mangi.eta.data.repository.RemoteModelCatalogTest
-io.github.mangi.eta.data.repository.RemoteModelFetcherCancellationTest
-io.github.mangi.eta.data.repository.RemoteModelFetcherTest
-io.github.mangi.eta.data.repository.RemoteModelReconciliationTest
-io.github.mangi.eta.data.repository.RuntimeConfigRepositoryTest
-io.github.mangi.eta.data.repository.SpeechSettingsRepositoryTest
-io.github.mangi.eta.data.update.AppUpdateCheckerTest
-io.github.mangi.eta.hook.breeno.BreenoConversationHistoryTest
-io.github.mangi.eta.hook.breeno.BreenoHookStateTest
-io.github.mangi.eta.hook.breeno.BreenoRequestImagesTest
-io.github.mangi.eta.hook.breeno.BreenoTargetsTest
-io.github.mangi.eta.hook.hyperos.HyperOsLongPressGestureTest
-io.github.mangi.eta.hook.hyperos.HyperOsPowerPolicyTest
-io.github.mangi.eta.hook.hyperos.HyperOsScreenSearchRequestTest
-io.github.mangi.eta.hook.system.AccessibilityServiceEnforcerTest
-io.github.mangi.eta.hook.system.AssistantBindingTest
-io.github.mangi.eta.hook.system.ContextualSearchCallerPolicyTest
-io.github.mangi.eta.hook.xiaoai.XiaoAiHandoffTest
-io.github.mangi.eta.hook.xiaoai.XiaoAiHookStateTest
-io.github.mangi.eta.hook.xiaoai.XiaoAiImagesTest
-io.github.mangi.eta.systemizer.GoogleAppSystemizerInstallerTest
-io.github.mangi.eta.ui.MainActivityLaunchRequestsTest
-io.github.mangi.eta.ui.MainActivityTaskPolicyTest
-io.github.mangi.eta.ui.app.AgentBackgroundReleasePolicyTest
-io.github.mangi.eta.ui.app.AgentConversationJournalDeferralTest
-io.github.mangi.eta.ui.app.AgentConversationJournalPolicyTest
-io.github.mangi.eta.ui.app.AgentConversationMessageMappingTest
-io.github.mangi.eta.ui.app.AgentConversationPersistenceTest
-io.github.mangi.eta.ui.app.AgentConversationRealDatabaseLoadTest
-io.github.mangi.eta.ui.app.AgentConversationReleasePolicyTest
-io.github.mangi.eta.ui.app.AgentConversationRevisionReducerTest
-io.github.mangi.eta.ui.app.AgentConversationStoreTest
-io.github.mangi.eta.ui.app.AgentPendingResultRecoveryTest
-io.github.mangi.eta.ui.app.AgentRunEventCoalescerTest
-io.github.mangi.eta.ui.app.AgentRunReplayProjectionTest
-io.github.mangi.eta.ui.app.AgentRunStoreTest
-io.github.mangi.eta.ui.app.AgentRuntimeHistoryReducerTest
-io.github.mangi.eta.ui.app.AgentStaleRunReconcilerTest
-io.github.mangi.eta.ui.app.BatteryOptimizationCommandTest
-io.github.mangi.eta.ui.app.CharacterCardImportMessagesTest
-io.github.mangi.eta.ui.app.ConversationContentSearchTest
-io.github.mangi.eta.ui.app.ConversationMarkdownExporterTest
-io.github.mangi.eta.ui.app.ConversationTimeLabelsTest
-io.github.mangi.eta.ui.app.EnhancementSettingsHistoryTest
-io.github.mangi.eta.ui.app.JournalInlinePlanTest
-io.github.mangi.eta.ui.app.JournalRevisionLimitTest
-io.github.mangi.eta.ui.app.KimiWebLauncherTest
-io.github.mangi.eta.ui.app.KimiWebUiStateTest
-io.github.mangi.eta.ui.app.LikePatternEscapeTest
-io.github.mangi.eta.ui.app.LocalNetworkPermissionTest
-io.github.mangi.eta.ui.app.LocaleResourcesTest
-io.github.mangi.eta.ui.app.RoleplayConversationReducerTest
-io.github.mangi.eta.ui.app.SharedContentIntentTest
-io.github.mangi.eta.ui.app.SharedIntentContentTest
-io.github.mangi.eta.ui.app.SkillZipImportGatewayTest
-io.github.mangi.eta.ui.app.StartupSplashTest
-io.github.mangi.eta.ui.app.WorkspaceFileStoreTest
-io.github.mangi.eta.ui.components.AgentChatFinalResultTest
-io.github.mangi.eta.ui.components.AgentChatScrollPolicyTest
-io.github.mangi.eta.ui.components.AgentWorkStepsTest
-io.github.mangi.eta.ui.components.AnsiTextTest
-io.github.mangi.eta.ui.components.ChatConversationKeyTest
-io.github.mangi.eta.ui.components.ChatHistoryPagingTest
-io.github.mangi.eta.ui.components.ChatMessageSearchTest
-io.github.mangi.eta.ui.components.ChatStatusNoticeTest
-io.github.mangi.eta.ui.components.ChatTurnNavigatorPerfTest
-io.github.mangi.eta.ui.components.ChatTurnNavigatorTest
-io.github.mangi.eta.ui.components.ChatViewFilterTest
-io.github.mangi.eta.ui.components.ConversationPaneMotionTest
-io.github.mangi.eta.ui.components.ConversationPaneStateTest
-io.github.mangi.eta.ui.components.EtaPreferenceRenderingTest
-io.github.mangi.eta.ui.components.FilePreviewReaderTest
-io.github.mangi.eta.ui.components.HistoryScrollDemandTest
-io.github.mangi.eta.ui.components.InputPopupPositionProviderTest
-io.github.mangi.eta.ui.components.ProviderBrandingTest
-io.github.mangi.eta.ui.components.SearchSuggestionsViewTest
-io.github.mangi.eta.ui.layout.AdaptivePageLayoutTest
-io.github.mangi.eta.ui.markdown.MarkdownInlineTest
-io.github.mangi.eta.ui.markdown.SmoothTextRevealCoordinatorTest
-io.github.mangi.eta.ui.markdown.SmoothTextRevealPolicyTest
-io.github.mangi.eta.ui.markdown.StaticMarkdownDocumentCacheTest
-io.github.mangi.eta.ui.markdown.StreamingGfmParserTest
-io.github.mangi.eta.ui.markdown.StreamingMarkdownParsingTest
-io.github.mangi.eta.ui.markdown.StreamingMarkdownRestoreStateTest
-io.github.mangi.eta.ui.markdown.StreamingMarkdownStateCacheTest
-io.github.mangi.eta.ui.markdown.TexMathDelimitersTest
-io.github.mangi.eta.ui.model.AgentCompactionUiTest
-io.github.mangi.eta.ui.model.AgentModelPickerProjectorTest
-io.github.mangi.eta.ui.model.CapabilityOverviewFilterTest
-io.github.mangi.eta.ui.model.ConversationSearchTest
-io.github.mangi.eta.ui.model.PluginDetailsTest
-io.github.mangi.eta.ui.model.PluginItemUiTest
-io.github.mangi.eta.ui.model.PluginUpdateSummaryTest
-io.github.mangi.eta.ui.model.SkillDeletionPolicyTest
-io.github.mangi.eta.ui.model.ToolCapabilityProjectionTest
-io.github.mangi.eta.ui.navigation.AgentNavigationRestorationTest
-io.github.mangi.eta.ui.navigation.AppRouteSerializationTest
-io.github.mangi.eta.ui.pages.providers.ProviderComponentsTest
-io.github.mangi.eta.ui.pages.providers.ProviderLoginStoreTest
-io.github.mangi.eta.ui.screens.browser.AgentBrowserActivityTest
-io.github.mangi.eta.ui.screens.browser.BrowserAddressTargetTest
+io.github.mangi.eta.AppProcessPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.AccessibilityPlatformCompatibilityTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.AgentAccessibilityKeeperTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.MainThreadCallGateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.ScreenshotWindowPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.ScrollEventObservationGateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.accessibility.TextEditPlannerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.acp.AcpExecutableResolverTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.acp.AcpProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.acp.AcpStderrTailTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.acp.AgentAcpToolsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.auth.CodexOAuthFixture  # 测试夹具（非测试类），由 CodexOAuth 相关用例引用
+io.github.mangi.eta.agent.auth.LoopbackAuthorizationReceiverTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.auth.OidcTokenVerifierTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.auth.ProviderCredentialSessionsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.auth.ProviderOAuthClientTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.browser.BrowserActionArgumentsTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.browser.BrowserDomScriptsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.browser.BrowserPayloadLimiterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.browser.BrowserScreenshotTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.browser.BrowserSessionRegistryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.context.DmpQueryTransportTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.context.DmpSourceResolverTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.context.PersonalContextBillSummaryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.context.PersonalContextQueryServiceTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.context.PersonalContextRequestTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.context.PersonalContextSourcesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.AgentFileReferenceGatewayTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.device.AndroidDisplaySizeParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.BoundedFileCopyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.FocusedWindowParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.GestureFallbackPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.RootAccessPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.RootCommandEnvelopeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.RootScrollMotionContractTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.RootShellTextTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.ScreenshotOutcomePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.ScrollAxisContractTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.ScrollGestureContractTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.device.ShellActionOutcomePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.VirtualDisplayBudgetTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.VirtualDisplayImeIdTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.VirtualDisplayImePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.device.VirtualDisplayTasksTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.mcp.McpProtocolValidationTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.mcp.McpRunContextTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.mcp.McpTimeoutPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.media.AgentImageCodecTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.memory.AgentLearningRecorderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.memory.AgentMemoryContextBuilderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.memory.AgentMemoryHeadingsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentAskUserToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentCompactionProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentCompactionReasoningTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentContextBudgetTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentContextCompactionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentContextCompactionUsageTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentContextRecoveryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentDeviceResultFormatterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentDeviceToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentFileReferencePromptCodecTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentFileResultFormatterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentFileToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentFileVisionToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentGoalTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentGoalToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentModeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentModelRetryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentPhoneResultFormatterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentPlanModePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentRetryPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentRoleplayRuntimeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentScreenObservationContractTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentSensitiveTranscriptTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentTodoPlanTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentToolGuardTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentToolSpillTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentTraceFormatterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AgentWebToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AnthropicMessagesProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AssistantScreenContextProjectionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.AuthorizedProviderHttpTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ChatToolCallHistoryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.CodexResponsesRequestTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.CustomHeaderAndBodyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.GeminiInteractionsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.GeminiModelFailureTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.GeminiRuntimeIntegrationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.GeminiToolSchemaTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.OpenAiChatCompletionsProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.OpenAiChatToolCallIdsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.OpenAiResponsesProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ProviderConnectionProfileTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ProviderReasoningTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ProviderRequestHeadersTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ProviderSseReaderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.ProviderUrlsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.SkillInstallModelToolGateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.model.SkillInstallToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.overlay.AgentOverlayPreferencePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.overlay.AgentOverlayStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.overlay.AgentOverlayVisibilityPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.phone.NativeAppOperationsTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.plugin.PluginHistoryStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginLinkSourceTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginManifestTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginMcpSyncPlanTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginPackageInstallerInspectTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginPackageInstallerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginRuntimeSourcesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginSourceStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.plugin.PluginVersionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.project.ProjectRulesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.roleplay.CharacterCardCodecTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.roleplay.CharacterWorldbookTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentContextPersistenceTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentContinuationBuilderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentConversationIdentityTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentExecutionServiceTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentExternalArchivePayloadTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentFileBackupsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentHistoryRetentionTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRunArchiveStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRunCheckpointStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRunExclusivityPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRunExportTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRunFileChangesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeAttachDeliveryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeClientAckTimeoutPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeParallelWireTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRuntimePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimePreparationFailureTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRuntimeRequestConfigResolverTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeResultStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRuntimeSafetyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeServiceRetentionTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRuntimeSessionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.AgentRuntimeWireServiceIntentTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentRuntimeWireTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.AgentTodoStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.EntrySurfaceGuardTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.ExecutionStopQueueTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.GuiControlCoordinatorTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.RuntimeRunRegistryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.runtime.SearchSuggestionsPayloadTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.runtime.ToolProgressRoundRegistryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.skill.GitHubSkillRepositoryParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.skill.PublicGitHubSkillSourceTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.skill.SkillPackageInstallerTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.skill.SkillRecoveryJournalTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.skill.SkillResourceReaderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.skill.SkillRuntimeTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.subagent.SubagentTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentAfterActionSummaryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentColorOsMemoryToolsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.AgentLocalSkillInstallAuthorizationTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentLocalSkillInstallIntegrationTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentLocalSkillResourceToolTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentLocalToolsPermissionTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.AgentProcessRssListTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.AgentToolCatalogRequirementTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.AgentToolDisplayScopeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.AppInspectionToolTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.ColorOsMemoryDatabaseQueryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.ConversationHistoryToolTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.DangerousCommandGuardTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.DeviceContextToolTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.DeviceStateMutationsTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.tool.JsonArrayElementRealJournalTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.agent.tool.JsonArrayElementScannerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.LogcatQueryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.NodeActionRetryMatchTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.NodeActionRetryPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.ObservationReferencePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.PendingSkillConflictCapabilityParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.tool.RootlessDeviceToolsTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.trace.AgentNetworkRetryStatsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.trace.AgentRunTraceStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.trace.AgentRunTrajectoryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.trace.AgentToolUsageStatsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.usage.AgentUsageLedgerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.CloudSpeechSynthesisTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.DoubaoTtsCodecTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.EtaAssistantScreenContextTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.voice.EtaVoicePanelTouchTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.voice.EtaWaveShaderTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.voice.OssSpeechSignerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechAudioLeaseContextTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechHttpTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechLifecycleTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechOssUploadTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechPcmDecoderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechPcmOutputTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechPlaybackTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechProtocolTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechSegmentFadeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechTextTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SpeechTranscriptRefinerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.voice.SystemSpeechRecognizerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.web.AgentWebToolsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.web.PublicWebSearchTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.web.WebHttpTransportTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.web.WebPageContentTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.agent.web.WebResponseDecoderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.config.PowerAssistantTargetTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.config.PrefsDefaultsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.DexKitNativeLibraryFileTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.DexKitTargetCacheTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.DiagnosticsRetentionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.HookInstallReportTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.LogSafetyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.LogThrottleTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.core.ModuleConfigEntryPackagesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.ChunkedTextDaoAccessTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.ChunkedTextDaoRealDataTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.data.db.ChunkedTextDaoStoreTextTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.ChunkedTextInputStreamTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.db.ChunkedTextLayoutTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.ConversationDeleteCascadeTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.data.db.ConversationPromptTokensMigrationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.ConversationSearchSqlContractTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.EtaDatabaseMigrationChainTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.db.EtaDatabaseMigrationTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.db.JdbcChunkDao  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.db.JournalRoundTripProbeTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.data.db.JournalTailWriteRealDataTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.data.db.JournalWindowRealDataTest  # 依赖真机数据库副本（eta.realDb / /workspace/dbreal），门禁环境无此目录，assumeTrue 全部跳过
+io.github.mangi.eta.data.db.McpEntitiesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.model.AppearanceSettingsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.model.ModelRetrySettingsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.model.SettingsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.model.SpeechSettingsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.provider.BuiltinProvidersTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.provider.CommunityCatalogParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.provider.GeminiModelCapabilitiesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.provider.OfficialModelCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.provider.ReasoningCapabilityResolverTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.AgentMemoryDocumentTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.AgentMemoryStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.AppearanceSettingsRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.AppearanceSnapshotTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.CharacterMemoryRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.CharacterRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.CommunityCatalogRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.EtaBackupRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.EtaBackupStreamingTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.GeminiModelCatalogHttpTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.GeminiProviderConfigurationTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.LinuxBackendSelectionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.ModelRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.NotificationHistoryRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.ProviderRepositoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.data.repository.RemoteModelCatalogHttpTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.RemoteModelCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.RemoteModelFetcherCancellationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.RemoteModelFetcherTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.RemoteModelReconciliationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.RuntimeConfigRepositoryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.repository.SpeechSettingsRepositoryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.data.update.AppUpdateCheckerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.breeno.BreenoConversationHistoryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.breeno.BreenoHookStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.breeno.BreenoRequestImagesTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.hook.breeno.BreenoTargetsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.hyperos.HyperOsLongPressGestureTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.hook.hyperos.HyperOsPowerPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.hyperos.HyperOsScreenSearchRequestTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.hook.system.AccessibilityServiceEnforcerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.system.AssistantBindingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.system.ContextualSearchCallerPolicyTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.hook.xiaoai.XiaoAiHandoffTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.hook.xiaoai.XiaoAiHookStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.hook.xiaoai.XiaoAiImagesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.systemizer.GoogleAppSystemizerInstallerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.MainActivityLaunchRequestsTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.MainActivityTaskPolicyTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.AgentBackgroundReleasePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentConversationJournalDeferralTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.AgentConversationJournalPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentConversationMessageMappingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentConversationPersistenceTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.AgentConversationRealDatabaseLoadTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.AgentConversationReleasePolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentConversationRevisionReducerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentConversationStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.AgentPendingResultRecoveryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentRunEventCoalescerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentRunReplayProjectionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentRunStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentRuntimeHistoryReducerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.AgentStaleRunReconcilerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.BatteryOptimizationCommandTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.CharacterCardImportMessagesTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.ConversationContentSearchTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.ConversationMarkdownExporterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.ConversationTimeLabelsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.EnhancementSettingsHistoryTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.JournalInlinePlanTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.JournalRevisionLimitTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.KimiWebLauncherTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.KimiWebUiStateTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.LikePatternEscapeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.LocalNetworkPermissionTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.LocaleResourcesTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.app.RoleplayConversationReducerTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.SharedContentIntentTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.SharedIntentContentTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.SkillZipImportGatewayTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.StartupSplashTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.app.WorkspaceFileStoreTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.components.AgentChatFinalResultTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.AgentChatScrollPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.AgentWorkStepsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.AnsiTextTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatConversationKeyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatHistoryPagingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatMessageSearchTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatStatusNoticeTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatTurnNavigatorPerfTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatTurnNavigatorTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ChatViewFilterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ConversationPaneMotionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ConversationPaneStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.EtaPreferenceRenderingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.FilePreviewReaderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.HistoryScrollDemandTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.InputPopupPositionProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.ProviderBrandingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.components.SearchSuggestionsViewTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.layout.AdaptivePageLayoutTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.MarkdownInlineTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.SmoothTextRevealCoordinatorTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.markdown.SmoothTextRevealPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.StaticMarkdownDocumentCacheTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.markdown.StreamingGfmParserTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.StreamingMarkdownParsingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.StreamingMarkdownRestoreStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.markdown.StreamingMarkdownStateCacheTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.markdown.TexMathDelimitersTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.AgentCompactionUiTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.AgentModelPickerProjectorTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.CapabilityOverviewFilterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.ConversationSearchTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.PluginDetailsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.PluginItemUiTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.PluginUpdateSummaryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.SkillDeletionPolicyTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.model.ToolCapabilityProjectionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.navigation.AgentNavigationRestorationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.navigation.AppRouteSerializationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.pages.providers.ProviderComponentsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.pages.providers.ProviderLoginStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
+io.github.mangi.eta.ui.screens.browser.AgentBrowserActivityTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.ui.screens.browser.BrowserAddressTargetTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了

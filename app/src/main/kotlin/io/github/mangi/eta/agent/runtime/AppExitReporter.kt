@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.runtime
 
 import android.app.ActivityManager
+import androidx.core.content.edit
 import android.app.ApplicationExitInfo
 import android.content.Context
 
@@ -53,7 +54,7 @@ internal object AppExitReporter {
             .firstOrNull { it.timestamp > handledAt && it.processName == context.packageName }
             ?: return AppExitCause.NONE
         // 先落盘再返回：即使调用方当场崩溃也不会重复提示同一次退出。
-        prefs.edit().putLong(KEY_HANDLED_AT, exit.timestamp).apply()
+        prefs.edit { putLong(KEY_HANDLED_AT, exit.timestamp) }
         return when (exit.reason) {
             ApplicationExitInfo.REASON_LOW_MEMORY -> AppExitCause.LOW_MEMORY
             ApplicationExitInfo.REASON_OTHER,
@@ -73,6 +74,6 @@ internal object AppExitReporter {
 
     /** 单测用：清掉已处理游标，让下一次检测重新可见。 */
     internal fun resetForTest(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 }

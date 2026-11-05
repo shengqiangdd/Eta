@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.phone
 
 import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Bundle
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +12,7 @@ internal class ClockOperations(
     userId: Int,
     private val onMutation: () -> Unit = {},
 ) {
-    private val uri = Uri.parse("content://$userId@com.oplus.alarmclock.ai")
+    private val uri = "content://$userId@com.oplus.alarmclock.ai".toUri()
 
     fun execute(tool: String, args: JSONObject): JSONObject =
         when (tool) {

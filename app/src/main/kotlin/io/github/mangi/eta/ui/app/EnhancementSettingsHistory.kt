@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import android.content.Context
+import androidx.core.content.edit
 import android.content.SharedPreferences
 import io.github.mangi.eta.config.PowerAssistantTarget
 import io.github.mangi.eta.config.Prefs
@@ -27,14 +28,14 @@ internal class EnhancementSettingsHistory(context: Context) {
     fun powerTarget(): PowerAssistantTarget = Prefs.powerAssistantTarget(snapshot)
 
     fun recordCommittedBoolean(key: String, value: Boolean) {
-        if (key !in Prefs.Keys.LOCAL_AGENT_KEYS) snapshot.edit().putBoolean(key, value).apply()
+        if (key !in Prefs.Keys.LOCAL_AGENT_KEYS) snapshot.edit { putBoolean(key, value) }
     }
 
     fun recordCommittedTarget(target: PowerAssistantTarget) {
-        snapshot.edit().putString(Prefs.Keys.POWER_KEY_ASSISTANT_TARGET, target.persistedValue).apply()
+        snapshot.edit { putString(Prefs.Keys.POWER_KEY_ASSISTANT_TARGET, target.persistedValue) }
     }
 
     fun recordSystemizerUse() {
-        snapshot.edit().putBoolean("has_used_systemizer", true).apply()
+        snapshot.edit { putBoolean("has_used_systemizer", true) }
     }
 }

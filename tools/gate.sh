@@ -181,6 +181,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.components.AgentTaskLedgerSummaryTest
   --tests io.github.mangi.eta.agent.model.AgentTasksToolCatalogTest
   --tests io.github.mangi.eta.agent.model.AgentPromptBuilderTest
+  --tests io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicyTest
   --tests io.github.mangi.eta.agent.runtime.AgentLegacyConversationProjectionTest
   --tests io.github.mangi.eta.agent.model.AgentConversationCodecTest
   --tests io.github.mangi.eta.agent.model.AgentContextSummarizerParallelTest

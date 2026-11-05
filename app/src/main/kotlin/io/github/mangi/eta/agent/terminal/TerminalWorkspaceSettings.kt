@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.terminal
 
 import android.content.Context
+import androidx.core.content.edit
 import java.io.File
 
 /**
@@ -52,7 +53,7 @@ internal object TerminalWorkspaceSettings {
     }
 
     fun clear(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PATH).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_PATH) }
     }
 
     private val BLOCKED_ROOTS = setOf("/", "/system", "/data", "/proc", "/sys", "/dev", "/vendor", "/apex")

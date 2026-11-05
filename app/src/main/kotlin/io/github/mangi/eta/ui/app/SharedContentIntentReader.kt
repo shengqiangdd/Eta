@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import android.content.ContentResolver
+import androidx.core.net.toUri
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -51,7 +52,7 @@ internal object SharedContentIntentReader {
         private val resolver: ContentResolver,
     ) : SharedUriMetadata {
         override fun describe(uriText: String): SharedUriInput {
-            val uri = runCatching { Uri.parse(uriText) }.getOrNull()
+            val uri = runCatching { uriText.toUri() }.getOrNull()
                 ?: return SharedUriInput(uri = uriText, displayName = null)
             return SharedUriInput(
                 uri = uriText,

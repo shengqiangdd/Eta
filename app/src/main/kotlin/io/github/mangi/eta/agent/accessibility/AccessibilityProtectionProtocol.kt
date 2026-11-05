@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.accessibility
 
 import io.github.mangi.eta.BuildConfig
+import androidx.core.net.toUri
 import android.net.Uri
 import android.os.Bundle
 
@@ -41,7 +42,7 @@ internal object AccessibilityProtectionProtocol {
     const val HEALTH_STATUS_DISCONNECTED = "disconnected"
     const val HEALTH_STATUS_REJECTED = "rejected"
 
-    val HEALTH_URI: Uri = Uri.parse("content://$HEALTH_AUTHORITY")
+    val HEALTH_URI: Uri = "content://$HEALTH_AUTHORITY".toUri()
 
     fun request(): Bundle = Bundle().apply {
         putInt(EXTRA_PROTOCOL_VERSION, VERSION)

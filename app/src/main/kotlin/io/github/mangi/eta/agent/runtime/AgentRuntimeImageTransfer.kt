@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.runtime
 
 import android.content.Context
+import androidx.core.net.toUri
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -225,8 +226,8 @@ internal object AgentRuntimeImageTransfer {
             reference.startsWith("data:image/", ignoreCase = true) ->
                 reference.openDataUrlStream()
 
-            Uri.parse(reference).scheme in setOf("content", "file") ->
-                context.contentResolver.openInputStream(Uri.parse(reference))
+            reference.toUri().scheme in setOf("content", "file") ->
+                context.contentResolver.openInputStream(reference.toUri())
                     ?: throw ImageTransferException("无法打开本地图片")
 
             else -> {
@@ -246,7 +247,7 @@ internal object AgentRuntimeImageTransfer {
         context: Context,
         reference: String,
     ): ParcelFileDescriptor? = runCatching {
-        val uri = Uri.parse(reference)
+        val uri = reference.toUri()
         when (uri.scheme) {
             "content" -> context.contentResolver.openFileDescriptor(uri, "r")
             "file" -> uri.path

@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.phone
 
 import android.content.ContentProviderOperation
+import androidx.core.net.toUri
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -21,7 +22,7 @@ internal class CalendarOperations(
         get() = access
 
     private fun uri(table: String): Uri =
-        Uri.parse("content://${userId?.let { "$it@" }.orEmpty()}com.android.calendar/$table")
+        "content://${userId?.let { "$it@" }.orEmpty()}com.android.calendar/$table".toUri()
 
     private val eventColumns =
         arrayOf(

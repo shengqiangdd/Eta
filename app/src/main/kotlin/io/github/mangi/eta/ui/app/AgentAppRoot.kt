@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import android.Manifest
+import androidx.core.net.toUri
 import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
@@ -753,7 +754,7 @@ fun AgentAppRoot(
                                             context.startActivity(
                                                 Intent(
                                                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                                    Uri.parse("package:${context.packageName}")
+                                                    "package:${context.packageName}".toUri()
                                                 )
                                             )
                                         }
@@ -778,7 +779,7 @@ fun AgentAppRoot(
                                             context.startActivity(
                                                 Intent(
                                                     Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                                    Uri.parse("package:${context.packageName}")
+                                                    "package:${context.packageName}".toUri()
                                                 )
                                             )
                                         }
@@ -798,7 +799,7 @@ fun AgentAppRoot(
                                                     context.startActivity(
                                                         Intent(
                                                             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                                            Uri.parse("package:${context.packageName}")
+                                                            "package:${context.packageName}".toUri()
                                                         )
                                                     )
                                                 }

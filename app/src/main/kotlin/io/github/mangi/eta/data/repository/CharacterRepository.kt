@@ -1,6 +1,7 @@
 package io.github.mangi.eta.data.repository
 
 import android.annotation.SuppressLint
+import androidx.core.content.edit
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -105,7 +106,7 @@ internal object CharacterRepository {
         if (dao().characters().isEmpty()) {
             createDefaultCharacterStored()
         }
-        prefs.edit().putBoolean(KEY_DEFAULT_CHARACTER_SEEDED, true).apply()
+        prefs.edit { putBoolean(KEY_DEFAULT_CHARACTER_SEEDED, true) }
     }
 
     /** 用户主动恢复内置默认角色；与一次性播种互不影响。 */

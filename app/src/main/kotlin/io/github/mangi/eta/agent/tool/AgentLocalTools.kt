@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.tool
 
 import android.content.Context
+import androidx.core.net.toUri
 import android.graphics.Rect
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -3200,7 +3201,7 @@ internal class AgentLocalTools(
         if (uriText.isBlank()) {
             return errorResult("INVALID_ARGUMENT", "uri 不能为空")
         }
-        val uri = Uri.parse(uriText)
+        val uri = uriText.toUri()
         if (uri.scheme.isNullOrBlank()) {
             return errorResult("INVALID_ARGUMENT", "uri 缺少 scheme")
         }

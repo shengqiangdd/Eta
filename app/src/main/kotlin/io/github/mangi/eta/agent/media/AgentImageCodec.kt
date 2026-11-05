@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.media
 
 import android.content.Context
+import androidx.core.net.toUri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -109,7 +110,7 @@ internal object AgentImageCodec {
         }
 
         if (context != null) {
-            val uri = Uri.parse(trimmed)
+            val uri = trimmed.toUri()
             if (uri.scheme == "content") {
                 return readContentUri(context, uri, source)?.copy(preserveOriginal = preserveOriginal)
             }
@@ -187,7 +188,7 @@ internal object AgentImageCodec {
         }
         if (context == null) return fromReference(null, trimmed, source)
 
-        val uri = Uri.parse(trimmed)
+        val uri = trimmed.toUri()
         if (uri.scheme == "content") {
             return inspectContentUri(context, uri, trimmed, source)
         }

@@ -22,6 +22,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.graphics.createBitmap
+import androidx.core.net.toUri
 import io.github.mangi.eta.agent.media.AgentImageCodec
 import io.github.mangi.eta.agent.tool.requiredText
 import java.io.ByteArrayOutputStream
@@ -980,7 +981,7 @@ internal class AgentBrowserSession(
             .take(160)
 
     private fun hostOf(url: String): String =
-        runCatching { Uri.parse(url).host.orEmpty() }.getOrDefault("")
+        runCatching { url.toUri().host.orEmpty() }.getOrDefault("")
 
     private fun setNavigationErrorOnMain(code: String, message: String) {
         navigationGeneration.incrementAndGet()

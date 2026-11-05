@@ -8,7 +8,7 @@
         errorLine2="                                     ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/config/Prefs.kt"
-            line="224"
+            line="367"
             column="38"/>
     </issue>
 
@@ -41,7 +41,7 @@
         errorLine2="                                                                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/app/LocalNetworkPermissionUi.kt"
-            line="73"
+            line="74"
             column="74"/>
     </issue>
 
@@ -167,127 +167,6 @@
     </issue>
 
     <issue
-        id="AndroidGradlePluginVersion"
-        message="A newer version of Gradle than 9.7.1 is available: 9.8.2"
-        errorLine1="distributionUrl=https\://services.gradle.org/distributions/gradle-9.7.1-bin.zip"
-        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="../gradle/wrapper/gradle-wrapper.properties"
-            line="3"
-            column="17"/>
-    </issue>
-
-    <issue
-        id="GradleDependency"
-        message="A newer version of androidx.navigationevent:navigationevent-compose than 1.1.2 is available: 1.2.0"
-        errorLine1="androidx-navigationevent = &quot;1.1.2&quot;"
-        errorLine2="                           ~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="11"
-            column="28"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains.kotlin.android than 2.4.20 is available: 2.4.21"
-        errorLine1="kotlin = &quot;2.4.20&quot;"
-        errorLine2="         ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="4"
-            column="10"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains.kotlin.plugin.compose than 2.4.20 is available: 2.4.21"
-        errorLine1="kotlin = &quot;2.4.20&quot;"
-        errorLine2="         ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="4"
-            column="10"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains.kotlin.plugin.serialization than 2.4.20 is available: 2.4.21"
-        errorLine1="kotlin = &quot;2.4.20&quot;"
-        errorLine2="         ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="4"
-            column="10"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains:markdown than 0.7.16 is available: 0.7.18"
-        errorLine1="intellijMarkdown = &quot;0.7.16&quot;"
-        errorLine2="                   ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="14"
-            column="20"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of com.squareup.okhttp3:okhttp than 5.5.0 is available: 5.5.1"
-        errorLine1="okhttp = &quot;5.5.0&quot;"
-        errorLine2="         ~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="16"
-            column="10"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of com.squareup.okhttp3:okhttp-sse than 5.5.0 is available: 5.5.1"
-        errorLine1="okhttp = &quot;5.5.0&quot;"
-        errorLine2="         ~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="16"
-            column="10"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains.kotlinx:kotlinx-serialization-json than 1.11.0 is available: 1.12.0"
-        errorLine1="kotlinx-serialization = &quot;1.11.0&quot;"
-        errorLine2="                        ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="20"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.lsposed.hiddenapibypass:hiddenapibypass than 6.1 is available: 6.2"
-        errorLine1="hiddenApiBypass = &quot;6.1&quot;"
-        errorLine2="                  ~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="22"
-            column="19"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.xerial:sqlite-jdbc than 3.41.2.2 is available: 3.53.4.0"
-        errorLine1="sqliteJdbc = &quot;3.41.2.2&quot;"
-        errorLine2="             ~~~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="27"
-            column="14"/>
-    </issue>
-
-    <issue
         id="ComposableNaming"
         message="Composable functions with a return type should start with a lowercase letter"
         errorLine1="private fun MemoryTextStyle() = MiuixTheme.textStyles.body2.copy(lineHeight = 22.sp)"
@@ -327,7 +206,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentAppShell.kt"
-            line="123"
+            line="124"
             column="5"/>
     </issue>
 
@@ -338,7 +217,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/AgentChatBody.kt"
-            line="235"
+            line="248"
             column="5"/>
     </issue>
 
@@ -349,7 +228,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/AgentChatBody.kt"
-            line="725"
+            line="766"
             column="5"/>
     </issue>
 
@@ -360,7 +239,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/AgentChatBody.kt"
-            line="986"
+            line="1032"
             column="5"/>
     </issue>
 
@@ -382,7 +261,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/screens/home/AgentHomeScreen.kt"
-            line="51"
+            line="52"
             column="5"/>
     </issue>
 
@@ -426,7 +305,7 @@
         errorLine2="    ~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/ChatMessageItem.kt"
-            line="566"
+            line="296"
             column="5"/>
     </issue>
 
@@ -518,7 +397,6 @@
             column="5"/>
     </issue>
 
-
     <issue
         id="SwitchIntDef"
         message="Switch statement on an `int` with known associated constant missing case `AccessibilityEvent.TYPE_ANNOUNCEMENT`, `AccessibilityEvent.TYPE_ASSIST_READING_CONTEXT`, `AccessibilityEvent.TYPE_GESTURE_DETECTION_END`, `AccessibilityEvent.TYPE_GESTURE_DETECTION_START`, `AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED`, `AccessibilityEvent.TYPE_SPEECH_STATE_CHANGE`, `AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END`, `AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START`, `AccessibilityEvent.TYPE_TOUCH_INTERACTION_END`, `AccessibilityEvent.TYPE_TOUCH_INTERACTION_START`, `AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED`, `AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED`, `AccessibilityEvent.TYPE_VIEW_CLICKED`, `AccessibilityEvent.TYPE_VIEW_CONTEXT_CLICKED`, `AccessibilityEvent.TYPE_VIEW_FOCUSED`, `AccessibilityEvent.TYPE_VIEW_HOVER_ENTER`, `AccessibilityEvent.TYPE_VIEW_HOVER_EXIT`, `AccessibilityEvent.TYPE_VIEW_LONG_CLICKED`, `AccessibilityEvent.TYPE_VIEW_SELECTED`, `AccessibilityEvent.TYPE_VIEW_TARGETED_BY_SCROLL`, `AccessibilityEvent.TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY`"
@@ -548,7 +426,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="124"
+            line="127"
             column="5"/>
     </issue>
 
@@ -559,7 +437,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="125"
+            line="128"
             column="5"/>
     </issue>
 
@@ -570,7 +448,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="155"
+            line="158"
             column="5"/>
     </issue>
 
@@ -581,7 +459,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="157"
+            line="160"
             column="5"/>
     </issue>
 
@@ -592,7 +470,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="158"
+            line="161"
             column="5"/>
     </issue>
 
@@ -603,7 +481,7 @@
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/root_capabilities.xml"
-            line="161"
+            line="164"
             column="5"/>
     </issue>
 
@@ -614,7 +492,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="141"
+            line="138"
             column="3"/>
     </issue>
 
@@ -625,7 +503,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1011"
+            line="894"
             column="3"/>
     </issue>
 
@@ -636,7 +514,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1015"
+            line="898"
             column="3"/>
     </issue>
 
@@ -647,7 +525,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1261"
+            line="1140"
             column="3"/>
     </issue>
 
@@ -658,7 +536,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1271"
+            line="1150"
             column="3"/>
     </issue>
 
@@ -669,7 +547,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1277"
+            line="1156"
             column="3"/>
     </issue>
 
@@ -680,7 +558,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1279"
+            line="1158"
             column="3"/>
     </issue>
 
@@ -691,7 +569,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1513"
+            line="1409"
             column="3"/>
     </issue>
 
@@ -702,7 +580,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1539"
+            line="1435"
             column="3"/>
     </issue>
 
@@ -713,7 +591,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1540"
+            line="1436"
             column="3"/>
     </issue>
 
@@ -724,7 +602,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1541"
+            line="1437"
             column="3"/>
     </issue>
 
@@ -735,7 +613,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1613"
+            line="1524"
             column="3"/>
     </issue>
 
@@ -746,7 +624,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1675"
+            line="1586"
             column="3"/>
     </issue>
 
@@ -757,7 +635,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1676"
+            line="1587"
             column="3"/>
     </issue>
 
@@ -768,7 +646,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1678"
+            line="1589"
             column="3"/>
     </issue>
 
@@ -779,7 +657,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1683"
+            line="1594"
             column="3"/>
     </issue>
 
@@ -790,7 +668,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1685"
+            line="1596"
             column="3"/>
     </issue>
 
@@ -801,7 +679,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1706"
+            line="1617"
             column="3"/>
     </issue>
 
@@ -812,7 +690,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1749"
+            line="1662"
             column="3"/>
     </issue>
 
@@ -823,7 +701,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1750"
+            line="1663"
             column="3"/>
     </issue>
 
@@ -834,7 +712,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="1751"
+            line="1664"
             column="3"/>
     </issue>
 
@@ -845,7 +723,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="2300"
+            line="2212"
             column="3"/>
     </issue>
 
@@ -856,7 +734,7 @@
         errorLine2="  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/values/strings.xml"
-            line="2301"
+            line="2213"
             column="3"/>
     </issue>
 
@@ -867,7 +745,7 @@
         errorLine2="                          ~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="52"
+            line="77"
             column="27"/>
     </issue>
 
@@ -951,16 +829,9 @@
         errorLine2="                        ~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeService.kt"
-            line="314"
+            line="337"
             column="25"/>
     </issue>
-
-
-
-
-
-
-
 
     <issue
         id="UnusedResources"
@@ -1061,26 +932,6 @@
             column="47"/>
     </issue>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     <issue
         id="ViewConstructor"
         message="Custom view `PressIndicatorView` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
@@ -1127,23 +978,12 @@
 
     <issue
         id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="    val HEALTH_URI: Uri = Uri.parse(&quot;content://$HEALTH_AUTHORITY&quot;)"
-        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AccessibilityProtectionProtocol.kt"
-            line="41"
-            column="27"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
         message="Use the KTX extension property `SparseArray.size` instead?"
         errorLine1="        val keys = buildList { for (i in 0 until perDisplay.size()) add(perDisplay.keyAt(i)) }"
         errorLine2="                                                 ~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="260"
+            line="258"
             column="50"/>
     </issue>
 
@@ -1154,96 +994,8 @@
         errorLine2="                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="1449"
+            line="1507"
             column="26"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                                                    Uri.parse(&quot;package:${context.packageName}&quot;)"
-        errorLine2="                                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentAppRoot.kt"
-            line="744"
-            column="53"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                                                    Uri.parse(&quot;package:${context.packageName}&quot;)"
-        errorLine2="                                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentAppRoot.kt"
-            line="769"
-            column="53"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                                                            Uri.parse(&quot;package:${context.packageName}&quot;)"
-        errorLine2="                                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentAppRoot.kt"
-            line="789"
-            column="61"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                val selectedUri = Uri.parse(uri)"
-        errorLine2="                                  ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/AgentAppState.kt"
-            line="2740"
-            column="35"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        runCatching { Uri.parse(url).host.orEmpty() }.getOrDefault(&quot;&quot;)"
-        errorLine2="                      ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/browser/AgentBrowserSession.kt"
-            line="983"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            val uri = Uri.parse(trimmed)"
-        errorLine2="                      ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/media/AgentImageCodec.kt"
-            line="112"
-            column="23"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = Uri.parse(trimmed)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/media/AgentImageCodec.kt"
-            line="190"
-            column="19"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            ImageSourceKind.ContentUri -> context.contentResolver.openInputStream(Uri.parse(source))"
-        errorLine2="                                                                                  ~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/tool/AgentImageTools.kt"
-            line="70"
-            column="83"/>
     </issue>
 
     <issue
@@ -1253,19 +1005,8 @@
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/tool/AgentLocalTools.kt"
-            line="1145"
+            line="1295"
             column="13"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = Uri.parse(uriText)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/tool/AgentLocalTools.kt"
-            line="2780"
-            column="19"/>
     </issue>
 
     <issue
@@ -1297,53 +1038,8 @@
         errorLine2="               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/media/AgentModelImageEncoder.kt"
-            line="205"
+            line="206"
             column="16"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = Uri.parse(trimmed)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/media/AgentModelImageEncoder.kt"
-            line="289"
-            column="19"/>
-    </issue>
-
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            Uri.parse(reference).scheme in setOf(&quot;content&quot;, &quot;file&quot;) ->"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeImageTransfer.kt"
-            line="228"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                context.contentResolver.openInputStream(Uri.parse(reference))"
-        errorLine2="                                                        ~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeImageTransfer.kt"
-            line="229"
-            column="57"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val uri = Uri.parse(reference)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeImageTransfer.kt"
-            line="249"
-            column="19"/>
     </issue>
 
     <issue
@@ -1353,30 +1049,7 @@
         errorLine2="        ^">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AgentRuntimeService.kt"
-            line="1480"
-            column="9"/>
-    </issue>
-
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().putLong(KEY_HANDLED_AT, exit.timestamp).apply()"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AppExitReporter.kt"
-            line="56"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/runtime/AppExitReporter.kt"
-            line="76"
+            line="1553"
             column="9"/>
     </issue>
 
@@ -1393,45 +1066,12 @@
 
     <issue
         id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="    val address = Uri.parse(&quot;https://$value&quot;)"
-        errorLine2="                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/screens/browser/BrowserAddressTarget.kt"
-            line="13"
-            column="19"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        Uri.parse(&quot;content://${userId?.let { &quot;$it@&quot; }.orEmpty()}com.android.calendar/$table&quot;)"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/phone/CalendarOperations.kt"
-            line="24"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().putBoolean(KEY_DEFAULT_CHARACTER_SEEDED, true).apply()"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/data/repository/CharacterRepository.kt"
-            line="108"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
         message="Use the KTX function `createBitmap` instead?"
         errorLine1="        val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)"
         errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/data/repository/CharacterRepository.kt"
-            line="210"
+            line="211"
             column="22"/>
     </issue>
 
@@ -1442,7 +1082,7 @@
         errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/ChatNoticeDismissalPrefs.kt"
-            line="30"
+            line="31"
             column="22"/>
     </issue>
 
@@ -1453,30 +1093,8 @@
         errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/components/ChatNoticeDismissalPrefs.kt"
-            line="44"
+            line="45"
             column="22"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs(context).edit().remove(KEY_SCOPE_PREFIX + scopeKey).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/components/ChatNoticeDismissalPrefs.kt"
-            line="56"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="    private val uri = Uri.parse(&quot;content://$userId@com.oplus.alarmclock.ai&quot;)"
-        errorLine2="                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/phone/ClockOperations.kt"
-            line="14"
-            column="23"/>
     </issue>
 
     <issue
@@ -1486,74 +1104,8 @@
         errorLine2="        ~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/app/EnhancementSettingsHistory.kt"
-            line="16"
+            line="17"
             column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        if (key !in Prefs.Keys.LOCAL_AGENT_KEYS) snapshot.edit().putBoolean(key, value).apply()"
-        errorLine2="                                                 ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/EnhancementSettingsHistory.kt"
-            line="30"
-            column="50"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        snapshot.edit().putString(Prefs.Keys.POWER_KEY_ASSISTANT_TARGET, target.persistedValue).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/EnhancementSettingsHistory.kt"
-            line="34"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        snapshot.edit().putBoolean(&quot;has_used_systemizer&quot;, true).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/EnhancementSettingsHistory.kt"
-            line="38"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse(&quot;package:$packageName&quot;))"
-        errorLine2="                                                                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/voice/EtaAssistantOverlayService.kt"
-            line="280"
-            column="84"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="            preferences.edit().putBoolean(&quot;requested&quot;, true).apply()"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/ExecutionNotificationPermission.kt"
-            line="25"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse(&quot;package:${context.packageName}&quot;)),"
-        errorLine2="                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/LocalNetworkPermissionUi.kt"
-            line="81"
-            column="66"/>
     </issue>
 
     <issue
@@ -1581,39 +1133,6 @@
     <issue
         id="UseKtx"
         message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val base = Uri.parse(source.uri)"
-        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/phone/NativePersonalQueries.kt"
-            line="69"
-            column="20"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        val base = Uri.parse(s.uri)"
-        errorLine2="                   ~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/phone/NativePersonalQueries.kt"
-            line="132"
-            column="20"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="    private fun uri(path: String) = Uri.parse(&quot;content://$authority/$path&quot;)"
-        errorLine2="                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/phone/NoteOperations.kt"
-            line="16"
-            column="37"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
         errorLine1="                                    android.net.Uri.parse("
         errorLine2="                                    ^">
         <location
@@ -1625,56 +1144,23 @@
     <issue
         id="UseKtx"
         message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().putBoolean(key(pluginId), enabled).apply()"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/plugin/PluginRuntime.kt"
-            line="285"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().remove(key(pluginId)).apply()"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/plugin/PluginRuntime.kt"
-            line="289"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))"
-        errorLine2="                                                     ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/pages/providers/ProviderAccountControls.kt"
-            line="99"
-            column="54"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
         errorLine1="        preferences?.edit()?.putBoolean(LAST_GRANTED, false)?.apply()"
         errorLine2="        ~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/device/RootAccess.kt"
-            line="54"
+            line="55"
             column="9"/>
     </issue>
 
     <issue
         id="UseKtx"
         message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="                prefs.edit().putBoolean(LAST_GRANTED, granted).apply()"
-        errorLine2="                ~~~~~~~~~~~~">
+        errorLine1="                if (!prefs.edit().putBoolean(AUTOMATIC_REQUEST_ATTEMPTED, true).commit()) {"
+        errorLine2="                     ~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/device/RootAccess.kt"
-            line="96"
-            column="17"/>
+            line="86"
+            column="22"/>
     </issue>
 
     <issue
@@ -1702,22 +1188,11 @@
     <issue
         id="UseKtx"
         message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))"
-        errorLine2="                                                         ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/SettingsScreen.kt"
-            line="175"
-            column="58"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
         errorLine1="                                            android.net.Uri.parse(&quot;package:${context.packageName}&quot;),"
         errorLine2="                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/SettingsScreen.kt"
-            line="848"
+            line="951"
             column="45"/>
     </issue>
 
@@ -1728,7 +1203,7 @@
         errorLine2="                  ~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/SettingsScreen.kt"
-            line="1189"
+            line="1292"
             column="19"/>
     </issue>
 
@@ -1739,19 +1214,8 @@
         errorLine2="                  ~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/ui/SettingsScreen.kt"
-            line="1196"
+            line="1299"
             column="19"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            val uri = runCatching { Uri.parse(uriText) }.getOrNull()"
-        errorLine2="                                    ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/ui/app/SharedContentIntentReader.kt"
-            line="54"
-            column="37"/>
     </issue>
 
     <issue
@@ -1816,18 +1280,7 @@
         errorLine2="        ^">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/terminal/TerminalWorkspaceSettings.kt"
-            line="47"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PATH).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/terminal/TerminalWorkspaceSettings.kt"
-            line="55"
+            line="48"
             column="9"/>
     </issue>
 
@@ -1838,7 +1291,7 @@
         errorLine2="                     ^">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/device/VirtualDisplayController.kt"
-            line="291"
+            line="305"
             column="22"/>
     </issue>
 

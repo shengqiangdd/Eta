@@ -149,8 +149,12 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = false
-        // 存量告警记在基线里（418 条：410 warning + 7 hint，已逐类判读过，见 AGENT_RUNTIME.md）。
+        // 存量告警记在基线里（119 条，按类分：UseKtx 31、PluralsCandidate 29、
+        // ModifierParameter 18，其余为零散项）。
         // 这样 lintDebug 只对「新增」告警报错；否则存量永远红，门禁等于没有。
+        // 注：这个数字会随修复存量而变。改完请顺手核对实际条数
+        // （`grep -c "<issue" app/lint-baseline.xml`）—— 本轮之前它写的是 418，
+        // 与实际差了一倍多，容易让照注释判断存量规模的人误判。
         baseline = file("lint-baseline.xml")
         // 关键：abortOnError 只管 error 级别。而绝大多数 lint 检查默认是 **warning**
         // （SdCardPath、UnusedResources、UseKtx 等），只配 baseline 的话新增告警只会

@@ -3091,7 +3091,7 @@ internal class AgentAppState(
                     updateCurrentConversation(homeState.copy(pendingImages = homeState.pendingImages + pending))
                 }
             } finally {
-                val selectedUri = Uri.parse(uri)
+                val selectedUri = uri.toUri()
                 if (selectedUri.scheme == ContentResolver.SCHEME_CONTENT) {
                     runCatching {
                         appContext.contentResolver.releasePersistableUriPermission(

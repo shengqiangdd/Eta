@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 
 /** 在用户启动后台任务时首次询问；拒绝通知不阻止任务，后续可从权限页手动设置。 */
 @Composable
@@ -22,7 +23,7 @@ internal fun rememberExecutionNotificationRequest(): () -> Unit {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
             !preferences.getBoolean("requested", false)
         ) {
-            preferences.edit().putBoolean("requested", true).apply()
+            preferences.edit { putBoolean("requested", true) }
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }

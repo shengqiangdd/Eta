@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.plugin
 
 import android.content.Context
+import androidx.core.content.edit
 import io.github.mangi.eta.agent.acp.AcpClient
 import io.github.mangi.eta.core.AgentLogger
 import java.io.File
@@ -282,11 +283,11 @@ internal class SharedPreferencesPluginState(
     override fun isEnabled(pluginId: String): Boolean = prefs.getBoolean(key(pluginId), true)
 
     override fun setEnabled(pluginId: String, enabled: Boolean) {
-        prefs.edit().putBoolean(key(pluginId), enabled).apply()
+        prefs.edit { putBoolean(key(pluginId), enabled) }
     }
 
     override fun forget(pluginId: String) {
-        prefs.edit().remove(key(pluginId)).apply()
+        prefs.edit { remove(key(pluginId)) }
     }
 
     private fun key(pluginId: String): String = ENABLED_PREFIX + pluginId

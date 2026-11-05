@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.pages.providers
 
 import android.content.ActivityNotFoundException
+import androidx.core.net.toUri
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -96,7 +97,7 @@ internal fun ProviderAccountControls(
 }
 
 internal fun openProviderAccountLink(context: Context, url: String): String? = try {
-    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     null
 } catch (_: ActivityNotFoundException) {
     "未找到可用浏览器"

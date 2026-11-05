@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.tool
 
 import android.content.Context
+import androidx.core.net.toUri
 import android.net.Uri
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.BoundedFileCopy
@@ -67,7 +68,7 @@ internal class AgentImageTools(
     private fun copyAsApp(source: String, sourceKind: ImageSourceKind, destination: File): Boolean = try {
         val input = when (sourceKind) {
             ImageSourceKind.File -> File(source).takeIf { it.isFile && it.canRead() }?.inputStream()
-            ImageSourceKind.ContentUri -> context.contentResolver.openInputStream(Uri.parse(source))
+            ImageSourceKind.ContentUri -> context.contentResolver.openInputStream(source.toUri())
         }
         if (input == null) {
             false

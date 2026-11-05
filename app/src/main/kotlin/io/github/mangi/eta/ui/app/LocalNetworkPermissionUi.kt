@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import android.Manifest
+import androidx.core.net.toUri
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -78,7 +79,7 @@ internal fun rememberLocalNetworkPermissionRequest(onResult: () -> Unit): () -> 
 private fun openLocalNetworkPermissionSettings(context: Context) {
     try {
         context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri()),
         )
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, R.string.permission_local_network_settings_unavailable, Toast.LENGTH_LONG).show()

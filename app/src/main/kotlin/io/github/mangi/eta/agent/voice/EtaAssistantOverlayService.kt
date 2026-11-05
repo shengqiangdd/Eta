@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.voice
 
 import io.github.mangi.eta.data.model.TtsProvider
+import androidx.core.net.toUri
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.voice.openSpeechSettings
@@ -275,7 +276,7 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
         playback.stop()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             try {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri())
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 dismissAndStop()
             } catch (_: RuntimeException) {

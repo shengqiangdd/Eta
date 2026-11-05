@@ -116,6 +116,33 @@ def parse_existing_reasons() -> dict[str, str]:
     return reasons
 
 
+# 「为什么这个类不跑」必须写在行尾。文件头一直在要求，但读取端一直把它丢掉，
+# 于是 357 条里只有 1 条真写了原因 —— 清单名义上带理由，实质上是裸名单。
+# 不跑的类没人说得清理由，就会慢慢变成永远不跑（并且没人能反驳）。
+#
+# 这里**只查原因在不在**，不查写得对不对 —— 语义对不对没法机械校验，
+# 但「有没有」可以，而缺原因正是腐化的起点。
+
+
+def read_baseline_reasons() -> tuple[list[str], list[str]]:
+    """返回（无原因的条目，全部条目）。"""
+    if not BASELINE.exists():
+        return [], []
+    missing: list[str] = []
+    entries: list[str] = []
+    for raw in BASELINE.read_text(encoding="utf-8").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        name, _, reason = raw.partition("#")
+        name = name.strip()
+        if not name:
+            continue
+        entries.append(name)
+        if not reason.strip():
+            missing.append(name)
+    return missing, entries
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-baseline", action="store_true")
@@ -165,6 +192,17 @@ def main() -> int:
         for name in dead_filters[:20]:
             print(f"      {name}")
         print("    改名/删除测试类时同步更新过滤列表，否则等于静默少跑。")
+
+    missing_reasons, _ = read_baseline_reasons()
+    if missing_reasons:
+        failed = True
+        print(f"  ✗ 基线里有 {len(missing_reasons)} 条没写「为什么不跑」：")
+        for name in missing_reasons[:10]:
+            print(f"      {name}")
+        if len(missing_reasons) > 10:
+            print(f"      ……另有 {len(missing_reasons) - 10} 个")
+        print("    在行尾用 # 写明原因（需要 Robolectric / 需要真机库 / 已由 wide 阶段覆盖）。")
+        print("    没原因的条目不跑也没人能反驳，清单就会慢慢腐化成「永远不跑」。")
 
     if failed:
         return 1

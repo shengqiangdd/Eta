@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.phone
 
 import android.net.Uri
+import androidx.core.net.toUri
 import io.github.mangi.eta.agent.context.PersonalContextTimeUnit
 import java.time.OffsetDateTime
 import org.json.JSONArray
@@ -66,7 +67,7 @@ internal class NativePersonalQueries(
             clauses += "${source.time} < ?"
             values += it.toString()
         }
-        val base = Uri.parse(source.uri)
+        val base = source.uri.toUri()
         val uri = base.buildUpon().authority("$userId@${base.authority}").build()
         val order = source.order + if (sort == "oldest") " ASC" else " DESC"
         val cursor =
@@ -129,7 +130,7 @@ internal class NativePersonalQueries(
 
     fun probe(tool: String): Boolean {
         val s = sources.getValue(tool)
-        val base = Uri.parse(s.uri)
+        val base = s.uri.toUri()
         return resolver
             .query(
                 base.buildUpon().authority("$userId@${base.authority}").build(),

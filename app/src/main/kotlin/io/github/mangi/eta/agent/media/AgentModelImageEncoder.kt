@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.media
 
 import android.content.Context
+import androidx.core.net.toUri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -286,7 +287,7 @@ internal object AgentModelImageEncoder {
             if (decoded.isEmpty() || decoded.size > MAX_AGENT_IMAGE_BYTES) return null
             return { ByteArrayInputStream(decoded) }
         }
-        val uri = Uri.parse(trimmed)
+        val uri = trimmed.toUri()
         if (uri.scheme == "content") {
             return {
                 context.contentResolver.openInputStream(uri)
