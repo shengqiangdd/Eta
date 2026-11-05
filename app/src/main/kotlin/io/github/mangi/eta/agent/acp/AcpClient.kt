@@ -1323,7 +1323,17 @@ internal class AcpClient(
                 commandNames = listOf("claude-code-acp"),
                 // Claude Code 走 `claude` 登录或环境变量；两者任一即可。
                 credentialEnvKeys = listOf("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
-                credentialPaths = listOf("/root/.claude/.credentials.json", "/root/.claude.json"),
+                // 只认真正存凭据的文件。
+                //
+                // 曾经把 /root/.claude.json 也算进来，理由是「用 claude login 登录过就够了」。
+                // 实测推翻（2026-11-05）：那个文件是 Claude Code 的**配置文件**，即便从未登录
+                // 也会被创建（里面有 userID / cachedGrowthBookFeatures），
+                // 于是探测把「没登录」报成「已登录」。
+                // 真下去跑一次 prompt 直接回：
+                //   {"id":3,"error":{"code":-32000,"message":"Authentication required"}}
+                // 会话能建、模型列表也能拉，但一开口就 Authentication required —— 
+                // 这种“看起来好了”比直接报未登录更难查。
+                credentialPaths = listOf("/root/.claude/.credentials.json"),
             ),
         )
 
