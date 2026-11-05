@@ -309,14 +309,11 @@
   <string name="acp_delegation_auto_summary">複雜任務不再打斷，直接交出去</string>
   <string name="acp_delegation_auto_detail">複雜的多檔案任務直接交給選定的代理，不再多問一句。注意委派會另起一個行程並多花一輪 token。</string>
   <string name="settings_acp_default_agent_title">預設編碼代理</string>
-  <string name="settings_acp_provider_title">委派專用提供商</string>
-  <string name="settings_acp_provider_summary">委派出去的任務用哪個提供商。預設跟隨主模型。</string>
-  <string name="settings_acp_model_title">委派專用模型</string>
-  <string name="settings_acp_model_summary">委派出去的任務用哪個模型。選定提供商後才可選。</string>
+  <string name="settings_acp_model_title">委派專用提供商與模型</string>
+  <string name="settings_acp_model_summary">委派出去的任務用哪個提供商和模型。預設跟隨主模型。</string>
   <string name="acp_follow_main_title">跟隨主模型</string>
+  <string name="acp_picker_search_hint">搜尋提供商或模型</string>
   <string name="acp_follow_main_summary">用聊天介面目前選取的提供商與模型</string>
-  <string name="acp_model_auto_title">用提供商預設</string>
-  <string name="acp_model_auto_summary">用所選提供商第一個啟用的模型</string>
   <string name="acp_provider_none_title">沒有可用的提供商</string>
   <string name="acp_provider_none_summary">請先在模型設定裡新增提供商：Codex 需要 OpenAI 相容的，Claude 需要 Anthropic 的</string>
   <string name="acp_provider_not_ready">未就緒</string>

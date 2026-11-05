@@ -3,8 +3,10 @@ package io.github.mangi.eta.ui.components
 import android.content.SharedPreferences
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -28,21 +30,26 @@ import io.github.mangi.eta.agent.tool.acpProviderSupportsAgent
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.repository.ProviderRepository
+import top.yukonga.miuix.kmp.basic.InputField
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 「委派用它」的提供商与模型。
+ * 「委派用它」的提供商与模型 —— **一个**选择器，而不是两项。
  *
- * 为什么需要这两个开关：委派原先只能跟随主界面选中的提供商/模型。
- * 于是「聊天用便宜模型、委派用正式 API」这种常见诉求无法表达，
- * 而且换个主模型，委派目标会**静默**跟着变 —— 不报错、只是行为变了。
+ * 拆成「先选提供商、再选模型」两项时，用户要点开两个对话框、跨两个界面记着
+ * 上一步选了什么；而这两件事本来就是一体（模型名跨提供商不通用，选提供商
+ * 的唯一目的就是缩小模型范围）。合并后一次点开、按提供商分组、点哪个用哪个。
  *
- * 默认仍然是「跟随主模型」：不动设置的用户看不到任何行为变化。
+ * 分组而不是两级下钻：模型总量可能很大（本机有个提供商 96 个模型），
+ * 所以配了搜索框；但默认全部展开，常见情况下滚两下就到底，不必再点一次。
  *
- * 模型选择器要求先选定具体提供商：模型名跨提供商不通用，
- * 拿一个不属于当前提供商的模型名去跑，只会得到一个看不懂的上游 404。
+ * 底层仍存两个键（[Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER] 与
+ * [Prefs.Keys.AGENT_ACP_DEFAULT_MODEL]）：委派侧要在 hook 进程里读，
+ * 合成一个 JSON 还得在那儿解析一遍。界面合并是界面的事。
  */
 @Composable
-internal fun AcpProviderPreference(
+internal fun AcpModelPreference(
     prefs: SharedPreferences?,
     title: String,
     icon: ImageVector,
@@ -51,9 +58,17 @@ internal fun AcpProviderPreference(
     val context = LocalContext.current
     val resources = LocalResources.current
     val enabled = prefs != null
-    var current by remember(prefs) { mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER)) }
-    var agentId by remember(prefs) { mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_AGENT)) }
+    var currentProvider by remember(prefs) {
+        mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER))
+    }
+    var currentModel by remember(prefs) {
+        mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL))
+    }
+    var agentId by remember(prefs) {
+        mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_AGENT))
+    }
     var showDialog by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     val providers by ProviderRepository.providersFlow().collectAsState(initial = emptyList())
 
     DisposableEffect(prefs) {
@@ -61,7 +76,9 @@ internal fun AcpProviderPreference(
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { changed, key ->
             when (key) {
                 Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER ->
-                    current = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER)
+                    currentProvider = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER)
+                Prefs.Keys.AGENT_ACP_DEFAULT_MODEL ->
+                    currentModel = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL)
                 Prefs.Keys.AGENT_ACP_DEFAULT_AGENT ->
                     agentId = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_AGENT)
             }
@@ -70,8 +87,11 @@ internal fun AcpProviderPreference(
         onDispose { target.unregisterOnSharedPreferenceChangeListener(listener) }
     }
 
-    val selectable = remember(providers, agentId) { acpSelectableProviders(providers, agentId) }
-    val currentLabel = selectable.firstOrNull { it.id == current }?.name
+    val groups = remember(providers, agentId) { acpModelGroups(providers, agentId) }
+    val visible = remember(groups, query) { groups.filterByQuery(query) }
+    val currentLabel = groups.firstOrNull { it.provider.id == currentProvider }
+        ?.takeIf { group -> group.models.any { it == currentModel } }
+        ?.let { group -> "${group.provider.name} / $currentModel" }
         ?: stringResource(R.string.acp_follow_main_title)
 
     EtaPreference(
@@ -87,177 +107,132 @@ internal fun AcpProviderPreference(
         EtaWindowDialog(
             show = true,
             title = title,
-            summary = stringResource(R.string.settings_acp_provider_summary),
-            onDismissRequest = { showDialog = false },
-        ) {
-            // 必须是 LazyColumn，不能是普通 Column。
-            // miuix 的 WindowDialog 只是把 content 直接调出来，不自带任何滚动容器
-            // （已反编译 miuix-ui 0.9.4 的 WindowDialogKt 核实：content 直接 invoke）。
-            // 而用户的提供商列表可以到 20 多项，内置的排在前面、自己加的排在后面，
-            // 用 Column 的话超出屏幕高度的部分根本滚不到 ——
-            // 表现就是「只能选到几个内置的，自己加的不见了」。
-            // heightIn 给一个上界，否则 LazyColumn 在无限高度约束下无法滚动。
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item(key = "follow_main") {
-                    EtaRadioButtonPreference(
-                        title = stringResource(R.string.acp_follow_main_title),
-                        summary = stringResource(R.string.acp_follow_main_summary),
-                        selected = current.isEmpty(),
-                        onClick = {
-                            showDialog = false
-                            // 清掉提供商时一并清掉模型：留着旧模型名没有意义，
-                            // 一旦以后又选了别的提供商，它就会被当成有效值塞过去。
-                            val ok = writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER, "")
-                            if (ok == true) {
-                                writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")
-                                current = ""
-                            } else if (ok == false) {
-                                toast(context, resources)
-                            }
-                        },
-                    )
-                }
-                if (selectable.isEmpty()) {
-                    // 空列表要说清是「没有」而不是「加载中」，否则用户会以为界面坏了。
-                    item(key = "none") {
-                        EtaRadioButtonPreference(
-                            title = stringResource(R.string.acp_provider_none_title),
-                            summary = stringResource(R.string.acp_provider_none_summary),
-                            selected = false,
-                            enabled = false,
-                            onClick = { },
-                        )
-                    }
-                }
-                items(selectable, key = { it.id }) { provider ->
-                    val ready = acpProviderReady(provider, agentId)
-                    // 不用 buildString：本段需要调 @Composable 的 stringResource，
-                    // 先取出再拼更稳。
-                    val summary = if (ready) provider.baseUrl else provider.baseUrl + " · " + notReady
-                    EtaRadioButtonPreference(
-                        title = provider.name,
-                        summary = summary,
-                        selected = current == provider.id,
-                        onClick = {
-                            showDialog = false
-                            val ok = writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER, provider.id)
-                            if (ok == true) {
-                                // 换提供商必须重置模型，见上面「清掉提供商」处的说明。
-                                writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")
-                                current = provider.id
-                            } else if (ok == false) {
-                                toast(context, resources)
-                            }
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 委派专用模型。只有选定具体提供商后才可选 —— 见 [AcpProviderPreference] 的说明。
- */
-@Composable
-internal fun AcpModelPreference(
-    prefs: SharedPreferences?,
-    title: String,
-    icon: ImageVector,
-    iconTint: Color,
-) {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    var current by remember(prefs) { mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL)) }
-    var providerId by remember(prefs) { mutableStateOf(readString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER)) }
-    var showDialog by remember { mutableStateOf(false) }
-    val providers by ProviderRepository.providersFlow().collectAsState(initial = emptyList())
-
-    DisposableEffect(prefs) {
-        val target = prefs ?: return@DisposableEffect onDispose { }
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { changed, key ->
-            when (key) {
-                Prefs.Keys.AGENT_ACP_DEFAULT_MODEL ->
-                    current = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL)
-                Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER ->
-                    providerId = readString(changed, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER)
-            }
-        }
-        target.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { target.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
-
-    val owner = remember(providers, providerId) { providers.firstOrNull { it.id == providerId } }
-    // 没选提供商时这一项没有意义：模型名跨提供商不通用，先让它明确不可点。
-    val selectable = providerId.isNotEmpty() && owner != null
-    val enabled = prefs != null && selectable
-    val models = remember(owner) { owner?.let { acpProviderModelIds(it) }.orEmpty() }
-    val currentLabel = if (!selectable) {
-        stringResource(R.string.acp_follow_main_title)
-    } else {
-        current.takeIf { it.isNotEmpty() } ?: stringResource(R.string.acp_model_auto_title)
-    }
-
-    EtaPreference(
-        title = title,
-        summary = currentLabel,
-        startAction = { EtaPreferenceIcon(icon = icon, enabled = enabled, tint = iconTint) },
-        enabled = enabled,
-        onClick = if (enabled) ({ showDialog = true }) else null,
-    )
-    if (showDialog) {
-        EtaWindowDialog(
-            show = true,
-            title = title,
             summary = stringResource(R.string.settings_acp_model_summary),
             onDismissRequest = { showDialog = false },
         ) {
-            // 同理：模型的个数比提供商更多（本机有个提供商 96 个模型，全在数据库里实测过），
-            // 不滚就只能用前几个。
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item(key = "auto") {
-                    EtaRadioButtonPreference(
-                        title = stringResource(R.string.acp_model_auto_title),
-                        summary = stringResource(R.string.acp_model_auto_summary),
-                        selected = current.isEmpty(),
-                        onClick = {
-                            showDialog = false
-                            writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")?.let { ok ->
-                                if (ok) current = "" else toast(context, resources)
-                            }
-                        },
-                    )
-                }
-                items(models, key = { it }) { model ->
-                    EtaRadioButtonPreference(
-                        title = model,
-                        selected = current == model,
-                        onClick = {
-                            showDialog = false
-                            writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, model)?.let { ok ->
-                                if (ok) current = model else toast(context, resources)
-                            }
-                        },
-                    )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                InputField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    onSearch = {},
+                    expanded = false,
+                    onExpandedChange = {},
+                    label = stringResource(R.string.acp_picker_search_hint),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                // 必须是 LazyColumn，不能是普通 Column。
+                // miuix 的 WindowDialog 只是把 content 直接调出来，不自带任何滚动容器
+                // （已反编译 miuix-ui 0.9.4 的 WindowDialogKt 核实：content 直接 invoke），
+                // 而这里的条目可以有上百条（一个提供商的模型就可能有 96 个）。
+                // heightIn 给一个上界，否则 LazyColumn 在无限高度约束下无法滚动。
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    item(key = "follow_main") {
+                        EtaRadioButtonPreference(
+                            title = stringResource(R.string.acp_follow_main_title),
+                            summary = stringResource(R.string.acp_follow_main_summary),
+                            selected = currentProvider.isEmpty() && currentModel.isEmpty(),
+                            onClick = {
+                                showDialog = false
+                                // 两个键一起清：只清一个会留下「有模型、没提供商」的
+                                // 半截状态，而模型名跨提供商不通用，那个值永远不会是对的。
+                                val ok = writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER, "")
+                                if (ok == true) {
+                                    writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")
+                                    currentProvider = ""
+                                    currentModel = ""
+                                } else if (ok == false) {
+                                    toast(context, resources)
+                                }
+                            },
+                        )
+                    }
+                    if (visible.isEmpty()) {
+                        // 空列表要说清是「没有」而不是「加载中」，否则用户会以为界面坏了。
+                        item(key = "none") {
+                            EtaRadioButtonPreference(
+                                title = stringResource(R.string.acp_provider_none_title),
+                                summary = stringResource(R.string.acp_provider_none_summary),
+                                selected = false,
+                                enabled = false,
+                                onClick = { },
+                            )
+                        }
+                    }
+                    visible.forEach { group ->
+                        item(key = "header:${group.provider.id}") {
+                            Text(
+                                text = group.provider.name,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+                            )
+                        }
+                        items(group.models, key = { model -> "model:${group.provider.id}:$model" }) { model ->
+                            val ready = acpProviderReady(group.provider, agentId)
+                            EtaRadioButtonPreference(
+                                title = model,
+                                summary = if (ready) null else notReady,
+                                selected = currentProvider == group.provider.id && currentModel == model,
+                                onClick = {
+                                    showDialog = false
+                                    // 提供商和模型必须成对写入：这正是合并成一个选择器
+                                    // 换来的保证 —— 旧的「先选提供商」路径里，
+                                    // 换提供商必须顺手清掉模型，忘一次就会拿旧模型名去请求新上游。
+                                    val ok = writeString(
+                                        prefs,
+                                        Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER,
+                                        group.provider.id,
+                                    )
+                                    if (ok == true) {
+                                        writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, model)
+                                        currentProvider = group.provider.id
+                                        currentModel = model
+                                    } else if (ok == false) {
+                                        toast(context, resources)
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
+/** 选择器里的一组：一个提供商 + 它可用于委派的模型。 */
+internal data class AcpModelGroup(val provider: ProviderSetting, val models: List<String>)
+
 /**
- * 选择器对话框的最大高度。
+ * 按提供商分组的候选模型。
  *
- * 不直接写进调用处复用：两个对话框都得约束高度，否则 LazyColumn 在无限高
- * 约束下不会滚动（它会把所有项都测一遍，然后被外层裁掉）—— 症状和用 Column 时一模一样。
+ * 没有启用模型的提供商会整组略去 —— 委派必须带一个模型名，
+ * 列出「选不了的提供商」只会制造一次注定失败的点击。
  */
-private val ACP_PICKER_MAX_HEIGHT = 420.dp
+internal fun acpModelGroups(
+    providers: List<ProviderSetting>,
+    agentId: String,
+): List<AcpModelGroup> = acpSelectableProviders(providers, agentId).mapNotNull { provider ->
+    val models = acpProviderModelIds(provider)
+    if (models.isEmpty()) null else AcpModelGroup(provider, models)
+}
+
+/** 搜索过滤：提供商名或模型名命中即可；整组都不命中就整组消失。 */
+internal fun List<AcpModelGroup>.filterByQuery(query: String): List<AcpModelGroup> {
+    val keyword = query.trim()
+    if (keyword.isEmpty()) return this
+    return mapNotNull { group ->
+        if (group.provider.name.contains(keyword, ignoreCase = true)) {
+            group
+        } else {
+            val hit = group.models.filter { it.contains(keyword, ignoreCase = true) }
+            if (hit.isEmpty()) null else group.copy(models = hit)
+        }
+    }
+}
 
 /**
  * 当前能选哪些提供商。
@@ -278,6 +253,14 @@ internal fun acpSelectableProviders(
         agents.any { id -> acpProviderSupportsAgent(provider, id) }
     }
 }
+
+/**
+ * 选择器对话框的最大高度。
+ *
+ * 不直接写进调用处复用：没有上界的话 LazyColumn 在无限高约束下不会滚动
+ * （它会把所有项都测一遍，然后被外层裁掉）—— 症状和用 Column 时一模一样。
+ */
+private val ACP_PICKER_MAX_HEIGHT = 420.dp
 
 private fun readString(prefs: SharedPreferences?, key: String): String {
     if (prefs == null) return ""
