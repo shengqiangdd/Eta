@@ -4,13 +4,16 @@ import androidx.compose.runtime.saveable.SaverScope
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.Model
+import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.provider.BuiltinProviders
 import io.github.mangi.eta.data.provider.ProviderConnectionProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderComponentsTest {
@@ -152,6 +155,30 @@ class ProviderComponentsTest {
         assertEquals(listOf("first", "later"), filterProviderModels(models, "   ").map { it.id })
         assertEquals(listOf("first", "later"), filterProviderModels(models, "---").map { it.id })
         assertEquals(emptyList<Model>(), filterProviderModels(models, "missing"))
+    }
+
+    @Test
+    fun disabledProviderCannotBeSelected() {
+        // setSelectedProviderId 内部有 takeIf { it.isEnabled }，禁用项传进去会被静默丢弃。
+        // UI 必须提前拦住：原来这里无条件下发 onClick，点禁用项什么都不会发生、也不报错。
+        val disabled = OpenAiCompatibleProviderSetting(
+            id = "off",
+            name = "已停用",
+            baseUrl = "https://example.com/v1",
+            isEnabled = false,
+        )
+        val enabled = disabled.copy(id = "on", isEnabled = true)
+
+        assertFalse(canSelectProvider(disabled))
+        assertTrue(canSelectProvider(enabled))
+    }
+
+    @Test
+    fun providerWithoutModelsIsStillSelectable() {
+        // 可选择性只看 isEnabled，不看有没有模型 —— 配了提供商未必马上有模型，
+        // 不该因此连"选为当前提供商"都点不了（真正的兜底在 repairSelection）。
+        val empty = OpenAiCompatibleProviderSetting(id = "empty", name = "空", baseUrl = "https://example.com/v1")
+        assertTrue(canSelectProvider(empty))
     }
 
     private fun model(

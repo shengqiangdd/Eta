@@ -362,7 +362,6 @@ io.github.mangi.eta.ui.model.SkillDeletionPolicyTest  # 纯 JVM，已由 STAGES=
 io.github.mangi.eta.ui.model.ToolCapabilityProjectionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.navigation.AgentNavigationRestorationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.navigation.AppRouteSerializationTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
-io.github.mangi.eta.ui.pages.providers.ProviderComponentsTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.pages.providers.ProviderLoginStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.screens.browser.AgentBrowserActivityTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
 io.github.mangi.eta.ui.screens.browser.BrowserAddressTargetTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了

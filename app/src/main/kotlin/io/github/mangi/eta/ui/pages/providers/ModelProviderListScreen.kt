@@ -193,6 +193,15 @@ internal fun ModelProviderListScreen(
     }
 }
 
+/**
+ * 列表项右侧的选择按钮是否可点。
+ *
+ * 禁用提供商不能成为当前提供商：`setSelectedProviderId` 内部会用
+ * `takeIf { it.isEnabled }` 静静丢弃它。UI 必须提前拦住，否则用户点一下
+ * 什么都不发生，也不报错。
+ */
+internal fun canSelectProvider(provider: ProviderSetting): Boolean = provider.isEnabled
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProviderListItem(
@@ -246,15 +255,27 @@ private fun ProviderListItem(
             }
         },
         endActions = {
-            IconButton(onClick = onSelect) {
+            // 禁用提供商不可选：`setSelectedProviderId` 内部有 `takeIf { it.isEnabled }`，
+            // 传进去会被静静丢弃。原来这里无条件下发 onClick，用户点一下禁用项
+            // 没有任何反应（也不报错），只能看着界面自己猜。
+            // IconButton 的 onClick 不接受 null（上游换成的 Checkbox 接受），
+            // 所以用 `enabled = false` 让点击在组件层失效，同时保持无障碍语义可读。
+            IconButton(
+                onClick = if (canSelectProvider(provider)) onSelect else ({ }),
+                enabled = canSelectProvider(provider),
+            ) {
                 Icon(
                     imageVector = if (isSelected) Icons.Rounded.Check else Icons.Rounded.RadioButtonUnchecked,
-                    contentDescription = if (isSelected) {
-                        stringResource(R.string.provider_selected)
-                    } else {
-                        stringResource(R.string.provider_set_current)
+                    contentDescription = when {
+                        !canSelectProvider(provider) -> stringResource(R.string.ui_disabled_0fe5a9)
+                        isSelected -> stringResource(R.string.provider_selected)
+                        else -> stringResource(R.string.provider_set_current)
                     },
-                    tint = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantActions,
+                    tint = when {
+                        !canSelectProvider(provider) -> MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = 0.4f)
+                        isSelected -> MiuixTheme.colorScheme.primary
+                        else -> MiuixTheme.colorScheme.onSurfaceVariantActions
+                    },
                 )
             }
         },
