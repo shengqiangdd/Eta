@@ -1,8 +1,9 @@
 package io.github.mangi.eta.agent.media
 
 import android.content.Context
-import androidx.core.net.toUri
 import android.graphics.Bitmap
+import androidx.core.graphics.createBitmap
+import androidx.core.net.toUri
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
@@ -203,7 +204,7 @@ internal object AgentModelImageEncoder {
         ) {
             return bitmap
         }
-        return Bitmap.createBitmap(target.width, target.height, Bitmap.Config.ARGB_8888).also { output ->
+        return createBitmap(target.width, target.height, Bitmap.Config.ARGB_8888).also { output ->
             val canvas = Canvas(output)
             if (flattenAlpha) canvas.drawColor(Color.WHITE)
             canvas.drawBitmap(

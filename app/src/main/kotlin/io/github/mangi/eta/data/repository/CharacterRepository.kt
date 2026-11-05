@@ -1,9 +1,10 @@
 package io.github.mangi.eta.data.repository
 
 import android.annotation.SuppressLint
-import androidx.core.content.edit
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.core.content.edit
+import androidx.core.graphics.createBitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
@@ -208,7 +209,7 @@ internal object CharacterRepository {
     }
 
     private fun defaultAvatar(name: String): ByteArray {
-        val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(512, 512, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.rgb(66, 74, 80))
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 192f; textAlign = Paint.Align.CENTER }

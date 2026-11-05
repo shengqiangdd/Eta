@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import androidx.core.graphics.createBitmap
 import android.graphics.Path
 import android.graphics.Paint
 import android.graphics.Point
@@ -1504,7 +1505,7 @@ class AgentAccessibilityService : AccessibilityService() {
     ): Bitmap? {
         var merged: Bitmap? = null
         return try {
-            val output = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+            val output = createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
             merged = output
             val canvas = Canvas(output)
             canvas.drawColor(Color.BLACK)

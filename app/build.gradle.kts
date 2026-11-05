@@ -149,7 +149,7 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = false
-        // 存量告警记在基线里（119 条，按类分：UseKtx 31、PluralsCandidate 29、
+        // 存量告警记在基线里（117 条，按类分：PluralsCandidate 29、UseKtx 28、
         // ModifierParameter 18，其余为零散项）。
         // 这样 lintDebug 只对「新增」告警报错；否则存量永远红，门禁等于没有。
         // 注：这个数字会随修复存量而变。改完请顺手核对实际条数

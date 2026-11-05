@@ -404,7 +404,7 @@
         errorLine2="        ~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="135"
+            line="136"
             column="9"/>
     </issue>
 
@@ -983,19 +983,8 @@
         errorLine2="                                                 ~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="258"
+            line="259"
             column="50"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX function `createBitmap` instead?"
-        errorLine1="            val output = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)"
-        errorLine2="                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/accessibility/AgentAccessibilityService.kt"
-            line="1507"
-            column="26"/>
     </issue>
 
     <issue
@@ -1033,17 +1022,6 @@
 
     <issue
         id="UseKtx"
-        message="Use the KTX function `createBitmap` instead?"
-        errorLine1="        return Bitmap.createBitmap(target.width, target.height, Bitmap.Config.ARGB_8888).also { output ->"
-        errorLine2="               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/agent/media/AgentModelImageEncoder.kt"
-            line="206"
-            column="16"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
         message="Use the KTX extension function `SharedPreferences.edit` instead?"
         errorLine1="        Prefs.localAgentPreferences()"
         errorLine2="        ^">
@@ -1062,17 +1040,6 @@
             file="src/main/kotlin/io/github/mangi/eta/data/repository/AppearanceSettingsRepository.kt"
             line="52"
             column="13"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX function `createBitmap` instead?"
-        errorLine1="        val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)"
-        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/kotlin/io/github/mangi/eta/data/repository/CharacterRepository.kt"
-            line="211"
-            column="22"/>
     </issue>
 
     <issue
