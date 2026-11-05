@@ -61,7 +61,19 @@ internal class ProviderCredentialSessions(
     }
 
     fun accessToken(providerId: String, authMode: String, controller: AgentRunController,
-        rejectedAccessToken: String? = null): String {
+        rejectedAccessToken: String? = null): String =
+        freshCredential(providerId, authMode, controller, rejectedAccessToken).accessToken
+
+    /**
+     * 刷新（必要时）后返回**完整**凭据，而不只是 access token。
+     *
+     * 为什么要多这个入口：把订阅登录接到外部代理（codex）时，光有 access_token 不够 ——
+     * codex 的 auth.json 还需要 id_token（它从里面读 account_id / plan_type）与 account_id。
+     * 这些字段只有完整凭据里有，所以在同一个刷新锁内一并返回，
+     * 避免「先取 token 再取 id_token」两次读取中间凭据被轮换、拼出一份新旧混杂的文件。
+     */
+    fun freshCredential(providerId: String, authMode: String, controller: AgentRunController,
+        rejectedAccessToken: String? = null): ProviderCredential {
         OAuthProvider.fromAuthMode(authMode)
         val session = session(providerId)
         while (!session.refreshLock.tryLock(100, TimeUnit.MILLISECONDS)) controller.throwIfCancelled()
@@ -72,7 +84,7 @@ internal class ProviderCredentialSessions(
             }
             val rejected = rejectedAccessToken != null && rejectedAccessToken == credential.accessToken
             val expiresSoon = credential.expiresAt <= now() + REFRESH_MARGIN_MS
-            if (!rejected && !expiresSoon && credential.expiresAt > now()) return credential.accessToken
+            if (!rejected && !expiresSoon && credential.expiresAt > now()) return credential
             if (credential.refreshToken.isBlank()) {
                 invalidate(providerId, session, generation)
                 throw ProviderAuthException("oauth_session_expired", "登录已失效，请重新登录")
@@ -89,7 +101,7 @@ internal class ProviderCredentialSessions(
                 storage.write(providerId, refreshed)
             }
             controller.throwIfCancelled()
-            return requireCredential(refreshed, authMode).accessToken
+            return requireCredential(refreshed, authMode)
         } finally {
             session.refreshLock.unlock()
         }

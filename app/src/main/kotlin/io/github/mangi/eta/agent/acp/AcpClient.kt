@@ -62,11 +62,25 @@ internal fun acpLaunchEnv(
             provider?.baseUrl?.takeIf { it.isNotBlank() }
                 ?.let { add(TerminalEnvEntry(AcpProvider.CLAUDE_BASE_URL_ENV, it)) }
         } else {
-            provider?.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { add(TerminalEnvEntry(AcpProvider.ENV_KEY, it)) }
+            val subscription = provider?.subscription
+            if (subscription != null) {
+                // 订阅登录：三个值分开给，由 launchScript 在当地拼成 auth.json。
+                add(TerminalEnvEntry(AcpProvider.ENV_ACCESS_TOKEN, subscription.accessToken))
+                add(TerminalEnvEntry(AcpProvider.ENV_ID_TOKEN, subscription.idToken))
+                add(TerminalEnvEntry(AcpProvider.ENV_ACCOUNT_ID, subscription.accountId))
+            } else {
+                provider?.apiKey?.takeIf { it.isNotBlank() }
+                    ?.let { add(TerminalEnvEntry(AcpProvider.ENV_KEY, it)) }
+            }
         }
-        credentialEnvKeys.forEach { key ->
-            env(key)?.takeIf { it.isNotBlank() }?.let { add(TerminalEnvEntry(key, it)) }
+        // 订阅模式下**不**注入名为 OPENAI_API_KEY / CODEX_API_KEY 的环境变量。
+        // 用户既然选了「订阅登录」，就该走 auth.json；同机环境里残留的 API key
+        // 会盖过 auth.json（codex 优先读 env），表现为「明明选了订阅却在按 key 计费」，
+        // 而且错误信息不会提这一点。
+        if (provider?.subscription == null) {
+            credentialEnvKeys.forEach { key ->
+                env(key)?.takeIf { it.isNotBlank() }?.let { add(TerminalEnvEntry(key, it)) }
+            }
         }
     }
         // 同名键只留第一次出现的值：脚本按行 export，后写的会覆盖前写的。

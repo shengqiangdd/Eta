@@ -5,6 +5,7 @@ import io.github.mangi.eta.agent.auth.EncryptedProviderCredentialStorage
 import io.github.mangi.eta.agent.auth.LiveProviderOAuthClient
 import io.github.mangi.eta.agent.auth.ProviderAccountSummary
 import io.github.mangi.eta.agent.auth.ProviderAuthException
+import io.github.mangi.eta.agent.auth.ProviderCredential
 import io.github.mangi.eta.agent.auth.ProviderCredentialSessions
 import io.github.mangi.eta.agent.auth.ProviderCredentialBinding
 import io.github.mangi.eta.agent.auth.ProviderLoginPrompt
@@ -34,6 +35,16 @@ internal object ProviderCredentialRepository {
     fun accessToken(providerId: String, authMode: String, controller: AgentRunController,
         rejectedAccessToken: String? = null): String =
         sessions().accessToken(providerId, authMode, controller, rejectedAccessToken)
+
+    /**
+     * 完整凭据（含 id_token / account_id / refresh_token），供委派侧生成外部代理的认证文件。
+     *
+     * 拿到的对象**不得**写进日志、配置或异常消息：它含真实的 access / refresh token。
+     * 调用方只能把它变成代理认的认证文件，写完即丢。
+     */
+    fun freshCredential(providerId: String, authMode: String, controller: AgentRunController,
+        rejectedAccessToken: String? = null): ProviderCredential =
+        sessions().freshCredential(providerId, authMode, controller, rejectedAccessToken)
 
     fun disconnect(providerId: String, authMode: String, controller: AgentRunController): Boolean? =
         sessions().disconnect(providerId, authMode, controller)

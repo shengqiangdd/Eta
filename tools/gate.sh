@@ -184,6 +184,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicyTest
   --tests io.github.mangi.eta.agent.acp.AcpCredentialMessageTest
   --tests io.github.mangi.eta.ui.components.AcpModelGroupsTest
+  --tests io.github.mangi.eta.agent.tool.AcpSubscriptionRoutingTest
   --tests io.github.mangi.eta.agent.tool.AcpProviderRoutingTest
   --tests io.github.mangi.eta.ui.components.AcpSelectableProvidersTest
   --tests io.github.mangi.eta.agent.runtime.AgentLegacyConversationProjectionTest

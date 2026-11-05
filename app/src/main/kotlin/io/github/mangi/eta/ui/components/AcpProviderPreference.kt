@@ -29,6 +29,7 @@ import io.github.mangi.eta.agent.tool.acpProviderReady
 import io.github.mangi.eta.agent.tool.acpProviderSupportsAgent
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.data.model.ProviderSetting
+import io.github.mangi.eta.data.repository.ProviderCredentialRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
 import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.Text
@@ -89,6 +90,18 @@ internal fun AcpModelPreference(
 
     val groups = remember(providers, agentId) { acpModelGroups(providers, agentId) }
     val visible = remember(groups, query) { groups.filterByQuery(query) }
+    // 登录态只在界面刷新时算一次；每行都去查一遍仓库会把整张列表拖成同步 I/O。
+    val oauthConnected: (ProviderSetting) -> Boolean = remember(providers, agentId) {
+        val loggedIn = providers.associate { provider ->
+            provider.id to runCatching {
+                ProviderCredentialRepository.account(provider.id, provider.authMode)
+                    ?.let { summary -> !summary.needsReauthentication } ?: false
+            }.getOrDefault(false)
+        }
+        // 先赋给局部变量：内层 lambda 直接当尾随参数会被当成 remember 自己的 trailing lambda。
+        val lookup: (ProviderSetting) -> Boolean = { provider -> loggedIn[provider.id] == true }
+        lookup
+    }
     val currentLabel = groups.firstOrNull { it.provider.id == currentProvider }
         ?.takeIf { group -> group.models.any { it == currentModel } }
         ?.let { group -> "${group.provider.name} / $currentModel" }
@@ -171,7 +184,9 @@ internal fun AcpModelPreference(
                             )
                         }
                         items(group.models, key = { model -> "model:${group.provider.id}:$model" }) { model ->
-                            val ready = acpProviderReady(group.provider, agentId)
+                            // 订阅登录的提供商 apiKey 本来就是空的，拿它当“没凭据”会把
+                            // 「已登录的 ChatGPT 订阅」误标成不可用 —— 那正是这一轮要修的东西。
+                            val ready = acpProviderReady(group.provider, agentId, oauthConnected)
                             EtaRadioButtonPreference(
                                 title = model,
                                 summary = if (ready) null else notReady,

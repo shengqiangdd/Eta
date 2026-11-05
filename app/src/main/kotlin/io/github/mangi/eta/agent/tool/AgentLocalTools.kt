@@ -32,6 +32,8 @@ import io.github.mangi.eta.agent.acp.AcpTranscriptStore
 import io.github.mangi.eta.agent.acp.AcpModels
 import io.github.mangi.eta.agent.acp.AcpProvider
 import io.github.mangi.eta.agent.acp.AgentAcpTools
+import io.github.mangi.eta.agent.auth.ProviderAuthException
+import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.plugin.AgentPluginTools
 import io.github.mangi.eta.agent.plugin.PluginMcpRegistry
 import io.github.mangi.eta.agent.plugin.PluginRuntime
@@ -39,8 +41,10 @@ import io.github.mangi.eta.agent.plugin.PluginPackageInstaller
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.repository.McpServerRepository
+import io.github.mangi.eta.data.repository.ProviderCredentialRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.WebToolsSettingsRepository
 import io.github.mangi.eta.agent.plugin.PluginManifest
@@ -2294,7 +2298,7 @@ internal class AgentLocalTools(
      * 用的是同一个判据，避免两处口径不一致。
      */
     private fun providerReadyFor(agentId: String): Boolean =
-        allProviders().any { provider -> acpProviderReady(provider, agentId) }
+        allProviders().any { provider -> acpProviderReady(provider, agentId, ::oauthAccountPresent) }
 
     /** 用户在设置页选的委派模式（off/ask/auto）；空串按默认 ASK 处理。 */
     private fun preferredAcpDelegationMode(): String =
@@ -2342,8 +2346,11 @@ internal class AgentLocalTools(
         model: String?,
         agentId: String,
     ): AcpProviderResolution? {
-        // 候选 = 这个代理真的能用起来的提供商（类型匹配 + 有 key + 有模型）。
-        val compatible = allProviders().filter { provider -> acpProviderReady(provider, agentId) }
+        // 候选 = 这个代理真的能用起来的提供商（类型匹配 + 有凭据 + 有模型）。
+        // 订阅登录的「有凭据」要看登录态，不能只看 apiKey —— 那类提供商的 key 本来就是空的。
+        val compatible = allProviders().filter { provider ->
+            acpProviderReady(provider, agentId, ::oauthAccountPresent)
+        }
         val wanted = requested?.trim()?.takeIf { it.isNotEmpty() }
         if (wanted == null) {
             val settings = runCatching { runBlocking { ProviderRepository.settings() } }.getOrNull()
@@ -2367,6 +2374,11 @@ internal class AgentLocalTools(
                 ?: mainModel
                 ?: acpProviderModelIds(chosen).firstOrNull()
                 ?: return null
+            val subscription = try {
+                subscriptionFor(chosen)
+            } catch (error: ProviderAuthException) {
+                return AcpProviderResolution.Error(error.code, error.message ?: "订阅登录已失效，请重新登录")
+            }
             return AcpProviderResolution.Use(
                 config = AcpProvider.Config(
                     id = chosen.id,
@@ -2392,10 +2404,14 @@ internal class AgentLocalTools(
                 "Eta 中没有能用于 $agentId 的提供商「$wanted」。可用：" +
                     pool.joinToString("、") { provider -> provider.name }.ifEmpty { "无" },
             )
-        if (!acpProviderReady(chosen, agentId)) {
+        if (!acpProviderReady(chosen, agentId, ::oauthAccountPresent)) {
             return AcpProviderResolution.Error(
                 "ACP_PROVIDER_NOT_READY",
-                "提供商「${chosen.name}」还不能用于 $agentId：需要启用、填写 API key，并至少有一个模型",
+                if (ProviderAuthModes.isOAuth(chosen.authMode)) {
+                    "提供商「${chosen.name}」还不能用于 $agentId：需要先在提供商页完成登录，并至少有一个模型"
+                } else {
+                    "提供商「${chosen.name}」还不能用于 $agentId：需要启用、填写 API key，并至少有一个模型"
+                },
             )
         }
         val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
@@ -2404,6 +2420,11 @@ internal class AgentLocalTools(
                 "ACP_PROVIDER_NO_MODEL",
                 "提供商「${chosen.name}」没有可用模型",
             )
+        val subscription = try {
+            subscriptionFor(chosen)
+        } catch (error: ProviderAuthException) {
+            return AcpProviderResolution.Error(error.code, error.message ?: "订阅登录已失效，请重新登录")
+        }
         return AcpProviderResolution.Use(
             config = AcpProvider.Config(
                 id = chosen.id,
@@ -2413,10 +2434,44 @@ internal class AgentLocalTools(
                 wireApi = AcpProvider.CODEX_WIRE_API,
                 defaultModel = chosenModel,
                 customHeaders = chosen.customHeaders,
+                subscription = subscription,
             ),
             model = chosenModel,
         )
     }
+
+    /**
+     * 订阅登录的提供商 → codex 的 auth.json 材料；非订阅类返回 null。
+     *
+     * 取的是**完整**凭据：codex 的 auth.json 除了 access_token 还需要 id_token 与 account_id。
+     * 用独立控制器而不是父任务的：刷新是一次短网络请求，而这里拿不到 run 级控制器；
+     * 失败会以明确错误码（如 oauth_session_expired）返回给模型，而不是静默地“没提供商”。
+     */
+    private fun subscriptionFor(provider: ProviderSetting): AcpProvider.Subscription? {
+        if (!ProviderAuthModes.isOAuth(provider.authMode)) return null
+        val credential = ProviderCredentialRepository.freshCredential(
+            providerId = provider.id,
+            authMode = provider.authMode,
+            controller = AgentRunController(),
+        )
+        return AcpProvider.Subscription(
+            accessToken = credential.accessToken,
+            idToken = credential.idToken,
+            accountId = credential.accountId.orEmpty(),
+        )
+    }
+
+    /**
+     * 订阅是否已登录（只判断能不能用，不取 token）。
+     *
+     * 仓库没初始化时返回 false 而不是抛异常：这个函数会被“判断有哪些提供商可选”
+     * 那条路径调到，而那条路径在单测与 hook 进程里也跑。
+     */
+    private fun oauthAccountPresent(provider: ProviderSetting): Boolean = runCatching {
+        ProviderCredentialRepository.account(provider.id, provider.authMode)
+            ?.let { summary -> !summary.needsReauthentication }
+            ?: false
+    }.getOrDefault(false)
 
     /**
      * 提供商清单（给模型看的）。
@@ -2445,7 +2500,7 @@ internal class AgentLocalTools(
                         .put("supports", JSONArray(supports))
                         .put(
                             "ready_for",
-                            JSONArray(supports.filter { agentId -> acpProviderReady(provider, agentId) }),
+                            JSONArray(supports.filter { agentId -> acpProviderReady(provider, agentId, ::oauthAccountPresent) }),
                         )
                         .put("selected", provider.id == selectedId),
                 )
@@ -2468,7 +2523,7 @@ internal class AgentLocalTools(
                 // 每个代理各自算。用同一个布尔会把「codex 有 OpenAI 兼容提供商」
                 // 当成「claude 也有」—— 而两者认的类型根本不同。
                 val providerReadyAgents = ACP_PROVIDER_AGENT_ORDER.filterTo(mutableSetOf()) { agentId ->
-                    providers.any { provider -> acpProviderReady(provider, agentId) }
+                    providers.any { provider -> acpProviderReady(provider, agentId, ::oauthAccountPresent) }
                 }
                 textResult(
                     JSONObject()
@@ -4294,15 +4349,40 @@ private val PROVIDER_CAPABLE_AGENTS = ACP_PROVIDER_AGENT_ORDER.toSet()
  * 一个叫 codex 的判据给 claude 用，就是这么出错的。
  */
 internal fun acpProviderSupportsAgent(provider: ProviderSetting, agentId: String): Boolean =
-    provider.isEnabled && provider.baseUrl.isNotBlank() && when (agentId) {
-        AGENT_CLAUDE -> provider is AnthropicProviderSetting || provider is CustomProviderSetting
-        else -> provider is OpenAiCompatibleProviderSetting || provider is CustomProviderSetting
+    provider.isEnabled && when {
+        // 订阅登录（ChatGPT OAuth）不是「接口兼容」那一套：它不往自定义 provider
+        // 发请求，而是由 codex 自己的 openai provider + auth.json 完成认证。
+        // 所以这里不看 baseUrl，也不看类型，只看是哪个代理。
+        // Claude 用不了 ChatGPT 订阅（它只认 Anthropic 口径的凭据）。
+        ProviderAuthModes.isOAuth(provider.authMode) ->
+            provider.authMode == ProviderAuthModes.OPENAI_CHATGPT && agentId != AGENT_CLAUDE
+        else -> provider.baseUrl.isNotBlank() && when (agentId) {
+            AGENT_CLAUDE -> provider is AnthropicProviderSetting || provider is CustomProviderSetting
+            else -> provider is OpenAiCompatibleProviderSetting || provider is CustomProviderSetting
+        }
     }
 
-/** 提供商能否直接拿来委派：接口认识它、有 key、至少一个启用模型。 */
-internal fun acpProviderReady(provider: ProviderSetting, agentId: String): Boolean =
-    acpProviderSupportsAgent(provider, agentId) && provider.apiKey.isNotBlank() &&
-        provider.models.any { model -> model.isEnabled && model.modelId.isNotBlank() }
+/**
+ * 提供商能否直接拿来委派：接口认识它、有凭据、至少一个启用模型。
+ *
+ * `oauthConnected` 由调用方注入而不是在这里查仓库：这个函数会在没有 Context
+ * 的上下文里被调到（单测、hook 进程），而凭据仓库在那里根本没初始化 ——
+ * 查一下就会抛「登录服务尚未就绪」，把「有订阅」误报成「没凭据」。
+ * 默认返回 false：调用方不提供判断时，订阅类提供商不会被当成可用。
+ */
+internal fun acpProviderReady(
+    provider: ProviderSetting,
+    agentId: String,
+    oauthConnected: (ProviderSetting) -> Boolean = { false },
+): Boolean {
+    if (!acpProviderSupportsAgent(provider, agentId)) return false
+    val hasCredential = if (ProviderAuthModes.isOAuth(provider.authMode)) {
+        oauthConnected(provider)
+    } else {
+        provider.apiKey.isNotBlank()
+    }
+    return hasCredential && provider.models.any { model -> model.isEnabled && model.modelId.isNotBlank() }
+}
 
 /** 提供商里真正可用于委派的模型 id（按配置顺序）。 */
 internal fun acpProviderModelIds(provider: ProviderSetting): List<String> =
