@@ -379,8 +379,10 @@ internal class AcpClient(
         if (credentialMissing) {
             return false to errorJson(
                 "ACP_CREDENTIAL_MISSING",
-                "缺少凭据：请设置 ${spec.credentialEnvKeys.joinToString(" 或 ")}，" +
-                    "或在该环境里完成一次代理登录（例如 codex login）后重试",
+                credentialMissingMessage(
+                    envKeys = spec.credentialEnvKeys,
+                    loginHint = spec.loginHint,
+                ),
             )
         }
         val launched = runCatching { launch(spec, resolution.path, task, cwd, model, provider) }
@@ -556,6 +558,17 @@ internal class AcpClient(
          * 而代理其实已经能用 —— 真机验收时就撞上了这个（auth.json 在、delegate 仍被拒）。
          */
         val credentialPaths: List<String> = emptyList(),
+        /**
+         * 缺凭据时给用户的具体做法。
+         *
+         * 为什么不能统一写一句「完成一次代理登录（例如 codex login）」：
+         * 各代理的前提不一样。codex CLI 在 guest 里存在，`codex login` 真能跑；
+         * 而 claude CLI **根本没有**（只装了 claude-code-acp），按提示去跑
+         * `claude login` 只会得到 command not found —— 提示把人指向了一个做不到的动作。
+         *
+         * 留空表示没有额外指引，只列环境变量名。
+         */
+        val loginHint: String = "",
     )
 
     private fun candidateList(spec: AgentSpec): List<String> =
@@ -1263,6 +1276,21 @@ internal class AcpClient(
         "'" + value.replace("'", "'\\''") + "'"
 
     internal companion object {
+        /**
+         * 缺凭据时的提示文案。抽成纯函数是为了能单测：
+         * 这段文案对用户的唯一价值就是「告诉我下一步怎么做」，
+         * 指错了比不指更糟（比如让没装 claude CLI 的人去跑 claude login）。
+         */
+        internal fun credentialMissingMessage(envKeys: List<String>, loginHint: String): String =
+            buildString {
+                append("缺少凭据：请设置 ")
+                append(envKeys.joinToString(" 或 "))
+                if (loginHint.isNotBlank()) {
+                    append("，或在 Linux 环境里")
+                    append(loginHint)
+                }
+                append("，然后重试")
+            }
         const val MAX_RESULT_CHARS = 12_000
         const val MAX_TOOL_CHARS = 4_000
 
@@ -1310,6 +1338,8 @@ internal class AcpClient(
                 credentialEnvKeys = listOf("CODEX_API_KEY", "OPENAI_API_KEY"),
                 // 用 `codex login` 登录过就够了，不强制用户再配一遍环境变量。
                 credentialPaths = listOf("/root/.codex/auth.json"),
+                // codex CLI 在 guest 里存在，`codex login` 真能跑。
+                loginHint = "跑一次 codex login",
             ),
             AgentSpec(
                 id = "claude",
@@ -1334,6 +1364,9 @@ internal class AcpClient(
                 // 会话能建、模型列表也能拉，但一开口就 Authentication required —— 
                 // 这种“看起来好了”比直接报未登录更难查。
                 credentialPaths = listOf("/root/.claude/.credentials.json"),
+                // 不写 claude login：guest 里只装了 claude-code-acp，没有 claude CLI，
+                // 那句提示会把人引到 command not found。对 Claude 现阶段的可行路径只有环境变量。
+                loginHint = "",
             ),
         )
 
