@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
@@ -70,6 +72,10 @@ internal fun AcpModelPreference(
     }
     var showDialog by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // 两级下钻的当前位置：null = 提供商列表，非 null = 该提供商的模型列表。
+    // 不把两级平铺在一页：模型总量可能是几百（本机有个提供商 96 个），
+    // 平铺后用户为了看第二个提供商也得滑过前一个的全部模型。
+    var pickedProviderId by remember { mutableStateOf<String?>(null) }
     val providers by ProviderRepository.providersFlow().collectAsState(initial = emptyList())
 
     DisposableEffect(prefs) {
@@ -112,11 +118,23 @@ internal fun AcpModelPreference(
         summary = currentLabel,
         startAction = { EtaPreferenceIcon(icon = icon, enabled = enabled, tint = iconTint) },
         enabled = enabled,
-        onClick = if (enabled) ({ showDialog = true }) else null,
+        onClick = if (enabled) ({
+            // 每次打开都从提供商列表开始。记住上次停在哪一层，下次打开
+            // 会先看到一堆自己没打算看的模型。
+            pickedProviderId = null
+            query = ""
+            showDialog = true
+        }) else null,
     )
     if (showDialog) {
         // 取到 LazyColumn 外面：LazyListScope 不是 @Composable，里面不能直接调 stringResource。
         val notReady = stringResource(R.string.acp_provider_not_ready)
+        val picked = pickedProviderId?.let { id -> groups.firstOrNull { it.provider.id == id } }
+        // 停在模型页、但那个提供商已经不在候选里了（被停用或删掉）：
+        // 退回提供商列表，而不是留一个空白对话框。
+        LaunchedEffect(pickedProviderId, groups) {
+            if (pickedProviderId != null && picked == null) pickedProviderId = null
+        }
         EtaWindowDialog(
             show = true,
             title = title,
@@ -130,67 +148,109 @@ internal fun AcpModelPreference(
                     onSearch = {},
                     expanded = false,
                     onExpandedChange = {},
-                    label = stringResource(R.string.acp_picker_search_hint),
+                    label = stringResource(
+                        if (picked == null) R.string.acp_picker_search_hint else R.string.acp_picker_search_model,
+                    ),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 )
                 // 必须是 LazyColumn，不能是普通 Column。
                 // miuix 的 WindowDialog 只是把 content 直接调出来，不自带任何滚动容器
                 // （已反编译 miuix-ui 0.9.4 的 WindowDialogKt 核实：content 直接 invoke），
-                // 而这里的条目可以有上百条（一个提供商的模型就可能有 96 个）。
-                // heightIn 给一个上界，否则 LazyColumn 在无限高度约束下无法滚动。
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    item(key = "follow_main") {
-                        EtaRadioButtonPreference(
-                            title = stringResource(R.string.acp_follow_main_title),
-                            summary = stringResource(R.string.acp_follow_main_summary),
-                            selected = currentProvider.isEmpty() && currentModel.isEmpty(),
-                            onClick = {
-                                showDialog = false
-                                // 两个键一起清：只清一个会留下「有模型、没提供商」的
-                                // 半截状态，而模型名跨提供商不通用，那个值永远不会是对的。
-                                val ok = writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER, "")
-                                if (ok == true) {
-                                    writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")
-                                    currentProvider = ""
-                                    currentModel = ""
-                                } else if (ok == false) {
-                                    toast(context, resources)
-                                }
-                            },
-                        )
-                    }
-                    if (visible.isEmpty()) {
-                        // 空列表要说清是「没有」而不是「加载中」，否则用户会以为界面坏了。
-                        item(key = "none") {
+                // 而模型可能上百条。heightIn 给一个上界，否则 LazyColumn 在无限高度约束下无法滚动。
+                if (picked == null) {
+                    // 第一级：只列提供商。每个提供商有多少模型写在摘要里，
+                    // 进去才看得到具体模型名 —— 这样不管总模型有多少，这一页都是可数的。
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        item(key = "follow_main") {
                             EtaRadioButtonPreference(
-                                title = stringResource(R.string.acp_provider_none_title),
-                                summary = stringResource(R.string.acp_provider_none_summary),
-                                selected = false,
-                                enabled = false,
-                                onClick = { },
+                                title = stringResource(R.string.acp_follow_main_title),
+                                summary = stringResource(R.string.acp_follow_main_summary),
+                                selected = currentProvider.isEmpty() && currentModel.isEmpty(),
+                                onClick = {
+                                    showDialog = false
+                                    // 两个键一起清：只清一个会留下「有模型、没提供商」的
+                                    // 半截状态，而模型名跨提供商不通用，那个值永远不会是对的。
+                                    val ok = writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER, "")
+                                    if (ok == true) {
+                                        writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, "")
+                                        currentProvider = ""
+                                        currentModel = ""
+                                    } else if (ok == false) {
+                                        toast(context, resources)
+                                    }
+                                },
                             )
                         }
-                    }
-                    visible.forEach { group ->
-                        item(key = "header:${group.provider.id}") {
-                            Text(
-                                text = group.provider.name,
-                                style = MiuixTheme.textStyles.footnote1,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
-                            )
+                        if (visible.isEmpty()) {
+                            // 空列表要说清是「没有」而不是「加载中」，否则用户会以为界面坏了。
+                            item(key = "none") {
+                                EtaRadioButtonPreference(
+                                    title = stringResource(R.string.acp_provider_none_title),
+                                    summary = stringResource(R.string.acp_provider_none_summary),
+                                    selected = false,
+                                    enabled = false,
+                                    onClick = { },
+                                )
+                            }
                         }
-                        items(group.models, key = { model -> "model:${group.provider.id}:$model" }) { model ->
+                        items(visible, key = { group -> "provider:${group.provider.id}" }) { group ->
                             // 订阅登录的提供商 apiKey 本来就是空的，拿它当“没凭据”会把
                             // 「已登录的 ChatGPT 订阅」误标成不可用 —— 那正是这一轮要修的东西。
                             val ready = acpProviderReady(group.provider, agentId, oauthConnected)
                             EtaRadioButtonPreference(
+                                title = group.provider.name,
+                                summary = pluralStringResource(
+                                    R.plurals.provider_models_count,
+                                    group.models.size,
+                                    group.models.size,
+                                ) + if (ready) "" else " · $notReady",
+                                selected = currentProvider == group.provider.id,
+                                onClick = {
+                                    pickedProviderId = group.provider.id
+                                    // 换层就清搜索词：上一层的过滤条件带到下一层，
+                                    // 会出现「点进去是空的」这种莫名其妙的页面。
+                                    query = ""
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    val models = remember(picked, query) { picked.filterModelsByQuery(query) }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = ACP_PICKER_MAX_HEIGHT),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        item(key = "back") {
+                            EtaRadioButtonPreference(
+                                title = stringResource(R.string.acp_picker_back),
+                                summary = picked.provider.name,
+                                selected = false,
+                                onClick = {
+                                    pickedProviderId = null
+                                    query = ""
+                                },
+                            )
+                        }
+                        if (models.isEmpty()) {
+                            item(key = "no_model") {
+                                EtaRadioButtonPreference(
+                                    title = stringResource(R.string.acp_picker_no_match),
+                                    summary = null,
+                                    selected = false,
+                                    enabled = false,
+                                    onClick = { },
+                                )
+                            }
+                        }
+                        items(models, key = { model -> "model:${picked.provider.id}:$model" }) { model ->
+                            val ready = acpProviderReady(picked.provider, agentId, oauthConnected)
+                            EtaRadioButtonPreference(
                                 title = model,
                                 summary = if (ready) null else notReady,
-                                selected = currentProvider == group.provider.id && currentModel == model,
+                                selected = currentProvider == picked.provider.id && currentModel == model,
                                 onClick = {
                                     showDialog = false
                                     // 提供商和模型必须成对写入：这正是合并成一个选择器
@@ -199,11 +259,11 @@ internal fun AcpModelPreference(
                                     val ok = writeString(
                                         prefs,
                                         Prefs.Keys.AGENT_ACP_DEFAULT_PROVIDER,
-                                        group.provider.id,
+                                        picked.provider.id,
                                     )
                                     if (ok == true) {
                                         writeString(prefs, Prefs.Keys.AGENT_ACP_DEFAULT_MODEL, model)
-                                        currentProvider = group.provider.id
+                                        currentProvider = picked.provider.id
                                         currentModel = model
                                     } else if (ok == false) {
                                         toast(context, resources)
@@ -235,7 +295,19 @@ internal fun acpModelGroups(
     if (models.isEmpty()) null else AcpModelGroup(provider, models)
 }
 
-/** 搜索过滤：提供商名或模型名命中即可；整组都不命中就整组消失。 */
+/**
+ * 模型页的搜索：只在当前这一组的模型名里过滤。
+ *
+ * 和 [filterByQuery] 分开：那一层要判断「哪些提供商还值得列出来」，所以模型名命中
+ * 也要保留整组；这一层已经确定只有一个提供商，只剩模型名这一个维度。
+ */
+internal fun AcpModelGroup.filterModelsByQuery(query: String): List<String> {
+    val keyword = query.trim()
+    if (keyword.isEmpty()) return models
+    return models.filter { it.contains(keyword, ignoreCase = true) }
+}
+
+/** 提供商页的搜索：提供商名或模型名命中即可；整组都不命中就整组消失。 */
 internal fun List<AcpModelGroup>.filterByQuery(query: String): List<AcpModelGroup> {
     val keyword = query.trim()
     if (keyword.isEmpty()) return this

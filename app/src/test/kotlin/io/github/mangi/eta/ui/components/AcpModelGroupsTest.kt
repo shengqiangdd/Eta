@@ -114,4 +114,44 @@ class AcpModelGroupsTest {
         assertEquals(listOf("anthropic"), groups.map { it.provider.id })
         assertEquals(listOf("claude-sonnet"), groups[0].models)
     }
+
+    // ---- 两级下钻：模型页只过滤当前这一组的模型 ----
+
+    private fun group(vararg models: String) = AcpModelGroup(
+        provider = custom("p", "提供商", *models),
+        models = models.toList(),
+    )
+
+    @Test
+    fun modelFilterReturnsAllWhenQueryIsBlank() {
+        // 进了模型页还没打字时，必须把该提供商的模型全列出来。
+        // 这里若返回空，用户点进去看到的就是一个空列表。
+        val g = group("gpt-5", "gpt-5-mini")
+        assertEquals(listOf("gpt-5", "gpt-5-mini"), g.filterModelsByQuery(""))
+        assertEquals(listOf("gpt-5", "gpt-5-mini"), g.filterModelsByQuery("   "))
+    }
+
+    @Test
+    fun modelFilterMatchesIgnoringCase() {
+        val g = group("GPT-5", "claude-sonnet")
+        assertEquals(listOf("GPT-5"), g.filterModelsByQuery("gpt"))
+    }
+
+    @Test
+    fun modelFilterReturnsEmptyWhenNothingMatches() {
+        // 空结果由界面渲染成「没有匹配的模型」，不能悄悄退回全量 ——
+        // 那会让用户以为搜索没生效。
+        assertEquals(emptyList<String>(), group("gpt-5").filterModelsByQuery("claude"))
+    }
+
+    @Test
+    fun modelFilterNeverLeaksOtherProvidersModels() {
+        // 两级下钻的意义就在这里：模型页只看得到这一组。
+        val a = AcpModelGroup(custom("a", "A", "a-1", "a-2"), listOf("a-1", "a-2"))
+        val b = AcpModelGroup(custom("b", "B", "b-1"), listOf("b-1"))
+
+        assertEquals(listOf("a-1", "a-2"), a.filterModelsByQuery(""))
+        assertEquals(emptyList<String>(), a.filterModelsByQuery("b-1"))
+        assertEquals(listOf("b-1"), b.filterModelsByQuery("b"))
+    }
 }

@@ -298,6 +298,9 @@
   <string name="settings_acp_model_title">Delegation provider &amp; model</string>
   <string name="settings_acp_model_summary">Which provider and model delegated tasks use. Default follows your main model.</string>
   <string name="acp_follow_main_title">Follow main model</string>
+  <string name="acp_picker_back">All providers</string>
+  <string name="acp_picker_search_model">Search model</string>
+  <string name="acp_picker_no_match">No matching model</string>
   <string name="acp_picker_search_hint">Search provider or model</string>
   <string name="acp_follow_main_summary">Use whichever provider and model are selected in the chat model picker</string>
   <string name="acp_provider_none_title">No provider available</string>
