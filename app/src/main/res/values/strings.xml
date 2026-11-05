@@ -2111,7 +2111,6 @@
   <string name="tool_ui_character_memory_write_summary">Roleplay sessions only. Updates the character\'s story memory; does not write to the device MEMORY.md.</string>
   <string name="speech_preview_text">Hi, I\'m Eta. How can I help you?</string>
   <string name="virtual_display_title_expanded">● Virtual display · %1$s</string>
-  <string name="virtual_display_title_collapsed">▸ Virtual display · %1$s</string>
   <string name="virtual_display_running">Running</string>
   <string name="virtual_display_collapse">Collapse</string>
   <string name="virtual_display_expand">Expand</string>

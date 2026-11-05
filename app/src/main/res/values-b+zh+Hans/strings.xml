@@ -2060,7 +2060,6 @@
   <string name="tool_ui_character_memory_write_summary">仅角色会话可用，更新当前角色的剧情记忆，不写入现实 MEMORY.md。</string>
   <string name="speech_preview_text">你好，我是 Eta。有什么可以帮你？</string>
   <string name="virtual_display_title_expanded">● 虚拟屏 · %1$s</string>
-  <string name="virtual_display_title_collapsed">▸ 虚拟屏 · %1$s</string>
   <string name="virtual_display_running">运行中</string>
   <string name="virtual_display_collapse">收起</string>
   <string name="virtual_display_expand">展开</string>

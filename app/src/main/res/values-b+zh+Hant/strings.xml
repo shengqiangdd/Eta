@@ -2060,7 +2060,6 @@
   <string name="tool_ui_character_memory_write_summary">僅角色工作階段可用，更新目前角色的劇情記憶，不寫入現實 MEMORY.md。</string>
   <string name="speech_preview_text">你好，我是 Eta。有什麼可以幫你？</string>
   <string name="virtual_display_title_expanded">● 虛擬螢幕 · %1$s</string>
-  <string name="virtual_display_title_collapsed">▸ 虛擬螢幕 · %1$s</string>
   <string name="virtual_display_running">執行中</string>
   <string name="virtual_display_collapse">收合</string>
   <string name="virtual_display_expand">展開</string>

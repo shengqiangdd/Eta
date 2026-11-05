@@ -5,15 +5,20 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ScreenshotMonitor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -45,9 +51,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * App 内的虚拟屏预览面板（不是悬浮窗）。
  *
  * 用户把 Eta 当小窗用时，预览必须跟着 Eta 的窗口走；悬浮窗会独立占屏，
- * 还会遮挡主屏内容，所以这里做成应用内的可折叠卡片：
- * - 右上角一条标题栏，点一下展开/收起；
- * - 展开时按 700ms 刷新一帧（缩放解码，避免每帧 8MB）；
+ * 还会遮挡主屏内容，所以这里做成应用内的卡片：
+ * - 收起态是一个圆形小图标（38dp），点一下才展开 —— 没在用预览时不该占着一行；
+ * - 展开时按 1 秒刷新一帧（缩放解码，避免每帧 8MB）；
  * - 只在**当前对话存在虚拟屏**时出现，跟随对话切换，虚拟屏释放后自动消失。
  */
 @Composable
@@ -88,6 +94,26 @@ internal fun VirtualDisplayPanel(
             delay(1_000)
         }
     }
+    if (!expanded) {
+        // 收起态只留一个圆形图标。原来的收起态仍然是一个带标题的整行卡片，
+        // 常挂在对话页角落时抢的正是消息的显示位置。
+        Box(
+            modifier = modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(MiuixTheme.colorScheme.surfaceContainer)
+                .clickable { expanded = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ScreenshotMonitor,
+                contentDescription = stringResource(R.string.virtual_display_expand),
+                tint = MiuixTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        return
+    }
     val purposeLabel = current.purpose.ifBlank { stringResource(R.string.virtual_display_running) }
     Column(
         modifier = modifier
@@ -100,14 +126,10 @@ internal fun VirtualDisplayPanel(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded },
+                .clickable { expanded = false },
         ) {
             Text(
-                text = if (expanded) {
-                    stringResource(R.string.virtual_display_title_expanded, purposeLabel)
-                } else {
-                    stringResource(R.string.virtual_display_title_collapsed, purposeLabel)
-                },
+                text = stringResource(R.string.virtual_display_title_expanded, purposeLabel),
                 style = MiuixTheme.textStyles.footnote1,
                 fontWeight = FontWeight.Medium,
                 color = MiuixTheme.colorScheme.onSurface,
@@ -117,7 +139,7 @@ internal fun VirtualDisplayPanel(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = if (expanded) stringResource(R.string.virtual_display_collapse) else stringResource(R.string.virtual_display_expand),
+                text = stringResource(R.string.virtual_display_collapse),
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.primary,
                 maxLines = 1,
@@ -126,40 +148,38 @@ internal fun VirtualDisplayPanel(
                 modifier = Modifier.widthIn(min = 32.dp),
             )
         }
-        if (expanded) {
-            // 面板上直接写清这块屏的分辨率和密度：支持多分辨率之后，用户要靠它确认
-            // 自己看到的是哪块屏、是不是跟主屏一致，不用再翻日志。
+        // 面板上直接写清这块屏的分辨率和密度：支持多分辨率之后，用户要靠它确认
+        // 自己看到的是哪块屏、是不是跟主屏一致，不用再翻日志。
+        Text(
+            text = "${current.width} × ${current.height} · ${current.densityDpi} dpi",
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        val image = bitmap
+        if (image != null) {
+            Image(
+                bitmap = image.asImageBitmap(),
+                contentDescription = stringResource(R.string.virtual_display_preview),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 240.dp)
+                    .padding(top = 6.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+        } else {
+            // 空屏或首帧还没到时，明确告诉用户「在等画面」，
+            // 而不是只留一个没有内容的展开卡片，看起来像坏了。
             Text(
-                text = "${current.width} × ${current.height} · ${current.densityDpi} dpi",
+                text = stringResource(R.string.virtual_display_waiting),
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.padding(top = 6.dp),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 6.dp),
             )
-            val image = bitmap
-            if (image != null) {
-                Image(
-                    bitmap = image.asImageBitmap(),
-                    contentDescription = stringResource(R.string.virtual_display_preview),
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 240.dp)
-                        .padding(top = 6.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                )
-            } else {
-                // 空屏或首帧还没到时，明确告诉用户「在等画面」，
-                // 而不是只留一个没有内容的展开卡片，看起来像坏了。
-                Text(
-                    text = stringResource(R.string.virtual_display_waiting),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 6.dp),
-                )
-            }
         }
     }
 }

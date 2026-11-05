@@ -31,6 +31,23 @@ internal data class AgentTodoPlan(val items: List<AgentTodoItem>) {
     val allCompleted: Boolean
         get() = items.isNotEmpty() && pendingCount == 0 && inProgressCount == 0
 
+    /**
+     * 底部卡片该不该出现。
+     *
+     * 空清单没得看；全部完成时再挂一行就只是占地方 —— 那张卡的用途是「还有活要干」，
+     * 活干完了还立在那里，反而让人以为任务没结束。
+     */
+    val shouldShowCard: Boolean get() = !isEmpty && !allCompleted
+
+    /**
+     * 卡片里要列出的项：只列未完成的。
+     *
+     * 已勾掉的项不再影响「接下来干什么」，留在展开列表里只会把真正要看的
+     * 那两三条越挤越下面。总进度仍由标题里的 `completedCount/items.size` 表示。
+     */
+    val openItems: List<AgentTodoItem>
+        get() = items.filter { it.status != AgentTodoStatus.COMPLETED }
+
     fun toJson(): JSONObject =
         JSONObject().put(
             "todos",

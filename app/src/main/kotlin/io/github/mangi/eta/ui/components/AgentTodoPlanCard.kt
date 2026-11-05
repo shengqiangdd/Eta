@@ -57,7 +57,8 @@ internal fun rememberTodoPlan(scopeId: String?): AgentTodoPlan? {
         val id = scopeId?.takeIf(String::isNotBlank)
         plan = if (id == null) null else withContext(Dispatchers.IO) { store.load(id) }
     }
-    return plan?.takeIf { !it.isEmpty }
+    // 要不要出现、列哪些项都由数据层决定（单测守着）：空清单与全部完成都不常驻。
+    return plan?.takeIf { it.shouldShowCard }
 }
 
 /**
@@ -120,7 +121,9 @@ internal fun AgentTodoPlanCard(plan: AgentTodoPlan, modifier: Modifier = Modifie
         }
         AnimatedVisibility(visible = expanded) {
             Column(modifier = Modifier.padding(top = 6.dp)) {
-                plan.items.forEach { item -> TodoPlanRow(item) }
+                // 只列还没做完的：已经勾掉的项不再影响「接下来干什么」，留在列表里
+                // 只会把真正要看的那两三条越挤越下面。总进度看标题里的 1/3。
+                plan.openItems.forEach { item -> TodoPlanRow(item) }
             }
         }
     }
