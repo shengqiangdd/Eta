@@ -1033,8 +1033,12 @@
   <string name="skills_choose_package">Choose a skill package containing SKILL.md</string>
   <string name="skills_choose_zip">Choose ZIP skill package</string>
   <string name="skills_replace_summary">A user skill named “%1$s” (%2$s) already exists. Replacing it will overwrite all of its current files.</string>
+  <string name="settings_chat_ui_title">Chat &amp; interface</string>
   <string name="settings_context_extensions">Context &amp; extensions</string>
-  <string name="settings_llm_providers">LLM providers</string>
+  <string name="settings_search_hint">Search settings</string>
+  <string name="settings_no_match">No matching setting</string>
+  <string name="settings_model_usage_title">Models &amp; usage</string>
+  <string name="settings_chat_delegation_title">Chat &amp; delegation</string>
   <string name="settings_usage_title">Usage</string>
   <string name="settings_usage_summary">Records tokens for each model call locally</string>
   <string name="settings_runs_title">Run history</string>

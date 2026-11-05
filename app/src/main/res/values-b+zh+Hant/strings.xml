@@ -999,8 +999,12 @@
   <string name="skills_choose_package">選擇包含 SKILL.md 的 Skill 包</string>
   <string name="skills_choose_zip">選擇 ZIP Skill 包</string>
   <string name="skills_replace_summary">已有使用者 Skill「%1$s」（%2$s）。取代後會覆寫其目前的所有檔案。</string>
+  <string name="settings_chat_ui_title">聊天與介面</string>
   <string name="settings_context_extensions">上下文與擴充</string>
-  <string name="settings_llm_providers">LLM 供應商</string>
+  <string name="settings_search_hint">搜尋設定</string>
+  <string name="settings_no_match">沒有符合的設定項</string>
+  <string name="settings_model_usage_title">模型與用量</string>
+  <string name="settings_chat_delegation_title">對話與委派</string>
   <string name="settings_usage_title">用量統計</string>
   <string name="settings_usage_summary">本地記錄每次模型呼叫的 token</string>
   <string name="settings_runs_title">執行記錄</string>

@@ -66,6 +66,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -103,6 +104,7 @@ import io.github.mangi.eta.ui.components.EtaDropdownPreference
 import io.github.mangi.eta.ui.components.EtaPreference
 import io.github.mangi.eta.ui.components.EtaPreferenceColors
 import io.github.mangi.eta.ui.components.EtaPreferenceDivider
+import io.github.mangi.eta.ui.components.EtaCollapsibleSection
 import io.github.mangi.eta.ui.components.EtaPreferenceGroup
 import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
 import io.github.mangi.eta.ui.components.EtaPreferenceIcon
@@ -117,6 +119,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -276,6 +279,8 @@ private fun SettingsPageContent(
         EtaApp.addServiceStateListener(listener, notifyImmediately = true)
         onDispose { EtaApp.removeServiceStateListener(listener) }
     }
+    // 设置搜索：非空时只渲染命中的组，并忽略折叠状态（见 SETTINGS_*_KEYWORDS）。
+    var settingsQuery by rememberSaveable { mutableStateOf("") }
     val powerAssistantTargets = PowerAssistantTarget.entries
     val powerAssistantItems = powerAssistantTargets.map { target ->
         DropdownItem(text = target.displayName(context))
@@ -285,10 +290,39 @@ private fun SettingsPageContent(
         title = stringResource(R.string.ui_set_up_7debf9),
         onBack = onBack,
     ) {
+            // 搜索放在最前面：设置页收起来以后只有一屏多，从这里直接输词
+            // 比逐组点开再找快得多。
+            item(key = "settings_search") {
+                InputField(
+                    query = settingsQuery,
+                    onQueryChange = { settingsQuery = it },
+                    onSearch = {},
+                    expanded = false,
+                    onExpandedChange = {},
+                    label = stringResource(R.string.settings_search_hint),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            // 一个组都没命中时给一句提示：否则用户会以为是筛选坏了，
+            // 而不是「确实没有这个设置项」。
+            if (settingsQuery.isNotBlank() && !SETTINGS_ALL_KEYWORDS.any { settingsSectionMatches(settingsQuery, it) }) {
+                item(key = "settings_no_match") {
+                    Text(
+                        text = stringResource(R.string.settings_no_match),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 24.dp),
+                    )
+                }
+            }
             // ── LLM 提供商 ──────────────────────────────────────────────
-            item(key = "section_agent") {
-                EtaPreferenceGroupTitle(stringResource(R.string.settings_llm_providers))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_AGENT_KEYWORDS)) item(key = "section_agent") {
+                var agentExpanded by rememberSaveable { mutableStateOf(true) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.settings_model_usage_title),
+                    expanded = settingsSectionExpanded(settingsQuery, agentExpanded),
+                    onToggle = { agentExpanded = !agentExpanded },
+                ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_model_provider_e8c7f5),
                         summary = providerSummary,
@@ -326,8 +360,20 @@ private fun SettingsPageContent(
                         },
                         onClick = { onNavigate(AppRoute.RunInspector()) },
                     )
+                }
+            }
 
-                    EtaPreferenceDivider()
+            // ── 对话与委派 ────────────────────────────────────────────
+            // 从「模型提供商」里拆出来：思考、委派代理、委派专用模型、重试
+            // 讲的是「模型怎么用」，不是「模型在哪」。合在一起时这一组有 7 项、
+            // 又默认展开，等于每次进设置都要先滑过一整屏。
+            if (settingsSectionMatches(settingsQuery, SETTINGS_DELEGATION_KEYWORDS)) item(key = "section_agent_behavior") {
+                var delegationExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.settings_chat_delegation_title),
+                    expanded = settingsSectionExpanded(settingsQuery, delegationExpanded),
+                    onToggle = { delegationExpanded = !delegationExpanded },
+                ) {
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
@@ -365,6 +411,18 @@ private fun SettingsPageContent(
                     )
 
                     EtaPreferenceDivider()
+                    io.github.mangi.eta.ui.components.ModelRetryPreferences()
+                }
+            }
+
+            // ── 聊天与界面 ────────────────────────────────────────────
+            if (settingsSectionMatches(settingsQuery, SETTINGS_CHAT_UI_KEYWORDS)) item(key = "section_chat_ui") {
+                var chatUiExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.settings_chat_ui_title),
+                    expanded = settingsSectionExpanded(settingsQuery, chatUiExpanded),
+                    onToggle = { chatUiExpanded = !chatUiExpanded },
+                ) {
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
@@ -449,16 +507,17 @@ private fun SettingsPageContent(
                         icon = Icons.Rounded.ViewAgenda,
                         iconTint = EtaPreferenceColors.Yellow,
                     )
-
-                    EtaPreferenceDivider()
-                    io.github.mangi.eta.ui.components.ModelRetryPreferences()
                 }
             }
 
             // ── 上下文与扩展 ────────────────────────────────────────────
-            item(key = "section_context_extensions") {
-                EtaPreferenceGroupTitle(stringResource(R.string.settings_context_extensions))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_CONTEXT_KEYWORDS)) item(key = "section_context_extensions") {
+                var contextExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.settings_context_extensions),
+                    expanded = settingsSectionExpanded(settingsQuery, contextExpanded),
+                    onToggle = { contextExpanded = !contextExpanded },
+                ) {
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
@@ -543,9 +602,13 @@ private fun SettingsPageContent(
             }
 
             // ── 工具 ───────────────────────────────────────────────────
-            item(key = "section_tools") {
-                EtaPreferenceGroupTitle(stringResource(R.string.ui_tool_a72ef1))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_TOOLS_KEYWORDS)) item(key = "section_tools") {
+                var toolsExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.ui_tool_a72ef1),
+                    expanded = settingsSectionExpanded(settingsQuery, toolsExpanded),
+                    onToggle = { toolsExpanded = !toolsExpanded },
+                ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.settings_tools_list),
                         startAction = { EtaPreferenceIcon(Icons.Rounded.Dashboard, tint = EtaPreferenceColors.Green) },
@@ -699,7 +762,7 @@ private fun SettingsPageContent(
                 }
             }
 
-            item(key = "system_enhancements") {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_ENHANCE_KEYWORDS)) item(key = "system_enhancements") {
                 EtaPreferenceGroup {
                     EtaArrowPreference(
                         title = stringResource(R.string.capability_enhancements),
@@ -710,9 +773,13 @@ private fun SettingsPageContent(
             }
 
             // ── 系统助手接管 ──────────────────────────────────────────────
-            item(key = "section_assistant_takeover") {
-                EtaPreferenceGroupTitle(stringResource(R.string.ui_system_assistant_takes_over_f46043))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_ASSISTANT_KEYWORDS)) item(key = "section_assistant_takeover") {
+                var assistantExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.ui_system_assistant_takes_over_f46043),
+                    expanded = settingsSectionExpanded(settingsQuery, assistantExpanded),
+                    onToggle = { assistantExpanded = !assistantExpanded },
+                ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_eta_system_assistant_003e9b),
                         startAction = {
@@ -774,9 +841,13 @@ private fun SettingsPageContent(
 
             if (prefs != null || hasConnectedFramework) {
                 // ── 厂商助手兼容入口 ──────────────────────────────────────────
-                item(key = "section_oem_assistant_compatibility") {
-                    EtaPreferenceGroupTitle(stringResource(R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a))
-                    EtaPreferenceGroup {
+                if (settingsSectionMatches(settingsQuery, SETTINGS_OEM_KEYWORDS)) item(key = "section_oem_assistant_compatibility") {
+                    var vendorExpanded by rememberSaveable { mutableStateOf(false) }
+                    EtaCollapsibleSection(
+                        title = stringResource(R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a),
+                        expanded = settingsSectionExpanded(settingsQuery, vendorExpanded),
+                        onToggle = { vendorExpanded = !vendorExpanded },
+                    ) {
                         SwitchPref(
                             context = context,
                             prefs = prefs,
@@ -801,9 +872,13 @@ private fun SettingsPageContent(
 
             if (prefs != null || hasConnectedFramework || capabilities.root.isGranted || hasUsedSystemizer) {
                 // ── Gemini ─────────────────────────────────────────────────
-                item(key = "section_gemini") {
-                    EtaPreferenceGroupTitle("Gemini")
-                    EtaPreferenceGroup {
+                if (settingsSectionMatches(settingsQuery, SETTINGS_GEMINI_KEYWORDS)) item(key = "section_gemini") {
+                    var geminiExpanded by rememberSaveable { mutableStateOf(false) }
+                    EtaCollapsibleSection(
+                        title = "Gemini",
+                        expanded = settingsSectionExpanded(settingsQuery, geminiExpanded),
+                        onToggle = { geminiExpanded = !geminiExpanded },
+                    ) {
                         if (prefs != null || hasConnectedFramework) {
                             SwitchPref(
                                 context = context,
@@ -866,9 +941,13 @@ private fun SettingsPageContent(
 
             if (prefs != null || hasConnectedFramework) {
                 // ── 一圈即搜 ────────────────────────────────────────────────
-                item(key = "section_circle_to_search") {
-                    EtaPreferenceGroupTitle(stringResource(R.string.ui_search_in_one_turn_179584))
-                    EtaPreferenceGroup {
+                if (settingsSectionMatches(settingsQuery, SETTINGS_CIRCLE_KEYWORDS)) item(key = "section_circle_to_search") {
+                    var circleExpanded by rememberSaveable { mutableStateOf(false) }
+                    EtaCollapsibleSection(
+                        title = stringResource(R.string.ui_search_in_one_turn_179584),
+                        expanded = settingsSectionExpanded(settingsQuery, circleExpanded),
+                        onToggle = { circleExpanded = !circleExpanded },
+                    ) {
                         SwitchPref(
                             context = context,
                             prefs = prefs,
@@ -892,9 +971,13 @@ private fun SettingsPageContent(
             }
 
             // ── 通用 ────────────────────────────────────────────────────
-            item(key = "section_general") {
-                EtaPreferenceGroupTitle(stringResource(R.string.settings_general))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_GENERAL_KEYWORDS)) item(key = "section_general") {
+                var generalExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.settings_general),
+                    expanded = settingsSectionExpanded(settingsQuery, generalExpanded),
+                    onToggle = { generalExpanded = !generalExpanded },
+                ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.appearance_title),
                         startAction = {
@@ -930,9 +1013,13 @@ private fun SettingsPageContent(
             }
 
             // ── 权限 ────────────────────────────────────────────────────
-            item(key = "section_permissions") {
-                EtaPreferenceGroupTitle(stringResource(R.string.ui_permissions_560165))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_PERMISSIONS_KEYWORDS)) item(key = "section_permissions") {
+                var permissionsExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.ui_permissions_560165),
+                    expanded = settingsSectionExpanded(settingsQuery, permissionsExpanded),
+                    onToggle = { permissionsExpanded = !permissionsExpanded },
+                ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_floating_window_permissions_076b77),
                         startAction = {
@@ -1046,9 +1133,13 @@ private fun SettingsPageContent(
             }
 
             // ── 关于 ────────────────────────────────────────────────────
-            item(key = "section_about") {
-                EtaPreferenceGroupTitle(stringResource(R.string.ui_about_bed172))
-                EtaPreferenceGroup {
+            if (settingsSectionMatches(settingsQuery, SETTINGS_ABOUT_KEYWORDS)) item(key = "section_about") {
+                var aboutExpanded by rememberSaveable { mutableStateOf(false) }
+                EtaCollapsibleSection(
+                    title = stringResource(R.string.ui_about_bed172),
+                    expanded = settingsSectionExpanded(settingsQuery, aboutExpanded),
+                    onToggle = { aboutExpanded = !aboutExpanded },
+                ) {
                     EtaPreference(
                         title = stringResource(R.string.ui_about_version_title),
                         summary = appVersionSummary,
@@ -1348,3 +1439,81 @@ private fun SystemizerInstallResult.toToastMessage(context: Context): String =
             ?.let { "$message：$it" }
             ?: message
     }
+
+/**
+ * 设置搜索的匹配规则：命中任意关键词即显示该组。
+ *
+ * 匹配的是组内每个条目的叫法，而不只是组标题 —— 用户搜「委派」时目标项在
+ * 「模型提供商」组里，只看标题永远搜不到，而这正是搜索要解决的问题。
+ * 关键词中英混排：界面语言和输入习惯经常不一致。
+ */
+/**
+ * 某组此刻是否展开。
+ *
+ * 搜索时一律展开：命中的组如果还保持用户上次的折叠状态，搜索结果就只剩一行标题，
+ * 用户还得再点一次才能看到自己要找的那一项 —— 搜索等于没搜到。
+ */
+internal fun settingsSectionExpanded(query: String, userExpanded: Boolean): Boolean =
+    query.isNotBlank() || userExpanded
+
+internal fun settingsSectionMatches(query: String, keywords: List<String>): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    return keywords.any { it.contains(q, ignoreCase = true) }
+}
+
+// 各组的关键词表。加设置项时记得同步补一行，否则那一项搜不到。
+internal val SETTINGS_AGENT_KEYWORDS = listOf(
+    "模型", "提供商", "用量", "统计", "运行", "记录",
+    "provider", "model", "usage", "run",
+)
+internal val SETTINGS_DELEGATION_KEYWORDS = listOf(
+    "思考", "委派", "代理", "重试", "任务", "codex", "claude", "acp", "delegation", "retry",
+)
+internal val SETTINGS_CHAT_UI_KEYWORDS = listOf(
+    "聊天", "界面", "卡片", "屏幕", "唤醒", "悬浮", "胶囊", "光晕", "助手模式",
+    "发送", "任务卡", "详情", "chat", "ui",
+)
+internal val SETTINGS_CONTEXT_KEYWORDS = listOf(
+    "上下文", "压缩", "记忆", "技能", "插件", "角色", "context", "skill", "plugin", "mcp",
+)
+internal val SETTINGS_TOOLS_KEYWORDS = listOf(
+    "工具", "联网", "浏览", "网页", "虚拟屏", "设备", "敏感", "终端", "文件",
+    "后台", "工作区", "变量", "tools", "browser", "linux", "terminal",
+)
+internal val SETTINGS_ENHANCE_KEYWORDS = listOf("能力", "增强", "capability", "enhancement")
+internal val SETTINGS_ASSISTANT_KEYWORDS = listOf(
+    "助手", "接管", "电源键", "长按", "默认", "assistant", "power",
+)
+internal val SETTINGS_OEM_KEYWORDS = listOf("小布", "小爱", "厂商", "前缀", "xiaobu", "xiaomi")
+internal val SETTINGS_GEMINI_KEYWORDS = listOf(
+    "gemini", "谷歌", "google", "语音", "唤醒", "锁屏", "系统应用",
+)
+internal val SETTINGS_CIRCLE_KEYWORDS = listOf("圈选", "搜索", "手势", "两指", "circle", "search")
+internal val SETTINGS_GENERAL_KEYWORDS = listOf(
+    "通用", "外观", "语音", "声音", "备份", "数据",
+    "general", "appearance", "speech", "backup",
+)
+internal val SETTINGS_PERMISSIONS_KEYWORDS = listOf(
+    "权限", "悬浮窗", "无障碍", "permission", "accessibility", "overlay",
+)
+internal val SETTINGS_ABOUT_KEYWORDS = listOf(
+    "关于", "版本", "更新", "反馈", "about", "version", "update", "github",
+)
+
+/** 全部关键词表，用来判断「一个组都没命中」。 */
+internal val SETTINGS_ALL_KEYWORDS = listOf(
+    SETTINGS_AGENT_KEYWORDS,
+    SETTINGS_DELEGATION_KEYWORDS,
+    SETTINGS_CHAT_UI_KEYWORDS,
+    SETTINGS_CONTEXT_KEYWORDS,
+    SETTINGS_TOOLS_KEYWORDS,
+    SETTINGS_ENHANCE_KEYWORDS,
+    SETTINGS_ASSISTANT_KEYWORDS,
+    SETTINGS_OEM_KEYWORDS,
+    SETTINGS_GEMINI_KEYWORDS,
+    SETTINGS_CIRCLE_KEYWORDS,
+    SETTINGS_GENERAL_KEYWORDS,
+    SETTINGS_PERMISSIONS_KEYWORDS,
+    SETTINGS_ABOUT_KEYWORDS,
+)
