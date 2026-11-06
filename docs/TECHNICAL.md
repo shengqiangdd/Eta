@@ -3772,3 +3772,47 @@ fix130 的结论是「耗时下限是解压 + 写盘，不可能秒级」。要�
 单测 `DataBackupPartialCleanupTest`（5 例）：正常清理且不动正式备份 / 不误删 `notes.part` 与
 `*.eta-backup.json.bak` / 目录不存在返回 0 / 同名目录不当文件删 / 后缀常量与导出命名绑定
 （改命名会红）。已加入 `gate.sh` 的 `FAST_TEST_FILTERS`（纯 JVM，不依赖 Robolectric）。
+
+### fix135c：把「提示说了假话」的三处改掉
+
+**一、虚拟屏半死时给出可执行的诊断**
+
+`ensureDisplayHasTask` 原来只会说「显示 $id 上还没有界面」。但真机踩到的是**另一种状态**：
+虚拟屏没被 release，任务栈却空了（前台应用自退、或系统把它的 Activity 收掉）。此时
+`launch_app` 往它上面起应用**永远起不来**，用户只看到一句「目标显示上已有任务」之外的话，
+不知道该把屏扔掉重建。
+
+判据是**实验定出来的**（不是猜的）：
+
+| 手法（debug 包 `settings global eta_vd_extra_flags`） | `canHostTasks` | `mBaseDisplayInfo` | 能否起任务 |
+|---|---|---|---|
+| `8000`（TOUCH_FEEDBACK_DISABLED） | false | state ON | 能 |
+| 死屏（前台应用退掉后） | false | **state OFF** | 不能 |
+| 正常新建 | false | state ON | 能 |
+
+即 `canHostTasks` **不是**判据（三种情况都是 false）；`state` 才是。于是 count==0 时补查
+`dumpsys display` 的 `displayId N, ... state X`，`OFF`/`DOZE` 直接说明「半死，release + create 重建」，
+其余仍给「应用可能退到后台」的原文案。
+
+**二、显式 environment 不再被路径启发式抢走**
+
+现场：`cd /data/local/tmp/eta/eta-v2 && ./gradlew ...` 传 `environment=linux`，被执行器
+**静默切成 android**，那里没有 bash/gradle，于是报 `bash: not found`；只能用 `cwd` 传路径绕开。
+
+根因：前缀表假设「`/data/local/tmp`、`/sdcard`、`/storage/emulated` 在 linux 里不存在」。
+实测 chroot 里这三处**默认挂载**，两边都能访问。
+
+修法：这几条前缀**两边都算数**（`sharedHit` 同时参与 linux/android 判定），只有它们时不做方向判断、
+按显式值执行并附一句 `note`。`/data/user/0`（linux 里确实没有）仍照旧切到 android —— 这条由
+`sdcardAndUserStorageUnderLinux` 守着（第一版改宽了，把这条也拦了，测试立刻红）。
+
+**三、备份提示：说清释放了多少，且不再互相顶掉**
+
+`cleanOrphanPartials` 改返回 `PartialCleanup(count, bytes)`：只说「1 个」时，38.9 MB 和 3 KB
+看起来一模一样。另把清理提示**并入**导出成功文案（`Toast.LENGTH_LONG`），不再单独弹 ——
+Android 用新 Toast 替换旧的，先弹的那条必然被「已导出…」顶掉，真机上用户永远看不到清理结果。
+
+`data_backup_cleaned_partials` 增加 `%2$s`（三语同步），占位符门禁（200 条）仍全绿。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1554** 个、失败 0（新增 `多个孤儿时个数与字节数都正确`、
+`字节数格式化到人类可读`）。

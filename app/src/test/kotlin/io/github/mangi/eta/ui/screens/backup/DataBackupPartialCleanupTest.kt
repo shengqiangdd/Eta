@@ -27,7 +27,9 @@ internal class DataBackupPartialCleanupTest {
         val orphan = seed(dir, "Eta-backup-20261107-0021.eta-backup.json.part", 4096)
         val finished = seed(dir, "Eta-backup-20261107-0016.eta-backup.json", 128)
 
-        assertEquals(1, cleanOrphanPartials(dir))
+        val cleanup = cleanOrphanPartials(dir)
+        assertEquals(1, cleanup.count)
+        assertEquals(4096L, cleanup.bytes)
         assertFalse(orphan.exists())
         assertTrue(finished.exists())
         assertEquals(128, finished.length().toInt())
@@ -44,15 +46,36 @@ internal class DataBackupPartialCleanupTest {
         ).map { seed(dir, it) }
         val orphan = seed(dir, "Eta-backup-20261107-0021.eta-backup.json.part")
 
-        assertEquals(1, cleanOrphanPartials(dir))
+        assertEquals(1, cleanOrphanPartials(dir).count)
         assertFalse(orphan.exists())
         others.forEach { assertTrue("不该删 ${it.name}", it.exists()) }
     }
 
     @Test
+    fun `多个孤儿时个数与字节数都正确`() {
+        val dir = tempDir()
+        seed(dir, "Eta-backup-20261107-0021.eta-backup.json.part", 1000)
+        seed(dir, "Eta-backup-20261107-0022.eta-backup.json.part", 2500)
+        seed(dir, "Eta-backup-20261107-0023.eta-backup.json", 64)
+
+        val cleanup = cleanOrphanPartials(dir)
+        assertEquals(2, cleanup.count)
+        assertEquals(3500L, cleanup.bytes)
+    }
+
+    @Test
+    fun `字节数格式化到人类可读`() {
+        assertEquals("0 B", formatBytes(0))
+        assertEquals("999 B", formatBytes(999))
+        assertEquals("1.0 KB", formatBytes(1024))
+        assertEquals("38.9 MB", formatBytes(40_800_000))
+        assertEquals("1.0 GB", formatBytes(1073741824))
+    }
+
+    @Test
     fun `目录不存在时返回 0 且不抛异常`() {
         val missing = File(tempDir(), "not-there")
-        assertEquals(0, cleanOrphanPartials(missing))
+        assertEquals(0, cleanOrphanPartials(missing).count)
     }
 
     @Test
@@ -61,7 +84,7 @@ internal class DataBackupPartialCleanupTest {
         val sub = File(dir, "子目录.eta-backup.json.part").apply { mkdirs() }
         assertTrue(sub.isDirectory)
 
-        assertEquals(0, cleanOrphanPartials(dir))
+        assertEquals(0, cleanOrphanPartials(dir).count)
         assertTrue(sub.exists())
     }
 

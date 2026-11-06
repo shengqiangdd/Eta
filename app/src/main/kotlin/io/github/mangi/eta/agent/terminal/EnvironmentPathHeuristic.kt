@@ -47,18 +47,29 @@ internal object EnvironmentPathHeuristic {
      */
     private val PATH_IN_COMMAND = Regex("""/[^\s;|&<>"'`(){}$\\]*[^\s;|&<>"'`(){}$\\,.]""")
 
+    /**
+     * 两边**都能访问**的路径：chroot 里 `/data/local/tmp`、`/storage/emulated/0`、`/sdcard`
+     * 是默认挂载的（本机实测）。
+     *
+     * 它们不能作为「该切到哪一侧」的依据：`cd /data/local/tmp/... && ./gradlew` 曾被静默切到
+     * android，那里没有 bash/gradle，报“bash: not found”。这些路径一律交给显式 environment 决定。
+     */
+    @SuppressLint("SdCardPath")
+    private val SHARED_PREFIXES = listOf("/data/local/tmp", "/sdcard", "/storage/emulated")
+
     data class Resolution(
         val environment: String,
         val switchedFrom: String? = null,
+        private val hint: String? = null,
     ) {
         val switched: Boolean get() = switchedFrom != null
 
-        /** 直接进工具结果的说明；没切换时为 null。 */
+        /** 直接进工具结果的说明；没切换也没有提示时为 null。 */
         val note: String?
             get() = switchedFrom?.let { from ->
                 "本次 environment=$from，但路径属于 $environment 环境；已自动切换为 environment=$environment。" +
                     "要作用于另一侧请显式改传 environment=$from。"
-            }
+            } ?: hint
     }
 
     /**
@@ -69,8 +80,25 @@ internal object EnvironmentPathHeuristic {
         val normalized = requested.trim().ifBlank { ANDROID }.lowercase()
         val candidates = paths.map(String::trim).filter { it.startsWith("/") }
         if (candidates.isEmpty()) return Resolution(normalized)
-        val linuxHit = candidates.any { matches(it, LINUX_PREFIXES) }
-        val androidHit = candidates.any { matches(it, ANDROID_PREFIXES) }
+        // 两边都挂载的路径（chroot 里 /data/local/tmp、/sdcard、/storage/emulated 默认挂载）
+        // **两边都算数**：既不能单独证明该切 linux，也不能单独证明该切 android。
+        val sharedHit = candidates.any { matches(it, SHARED_PREFIXES) }
+        val decisive = candidates.filterNot { matches(it, SHARED_PREFIXES) }
+        if (decisive.isEmpty()) {
+            // 只有共享路径时两侧都说得通 → 不猜，按显式 environment 执行（但说一声，
+            // 免得模型以为“路径有 android 前缀所以已经切过去了”）。
+            return if (sharedHit) {
+                Resolution(
+                    environment = normalized,
+                    hint = "命令里的路径（/data/local/tmp、/sdcard、/storage/emulated）在两侧都能访问，" +
+                        "因此不做切换、按 environment=$normalized 执行。",
+                )
+            } else {
+                Resolution(normalized)
+            }
+        }
+        val linuxHit = sharedHit || decisive.any { matches(it, LINUX_PREFIXES) }
+        val androidHit = sharedHit || decisive.any { matches(it, ANDROID_PREFIXES) }
         val target = when {
             linuxHit && !androidHit -> LINUX
             androidHit && !linuxHit -> ANDROID

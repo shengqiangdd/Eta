@@ -118,14 +118,9 @@ internal fun DataBackupScreen(
             // 上一次若在导出途中被杀，catch 里的 partial.delete() 根本不会执行，用户的目录里
             // 会留下一个几十到几百 MB 的 `.part`。它既不是可用备份，也不会被 uniqueBackupFile
             // 当成重名（那个只看正式名），所以只会一直占着空间。动手前先扫掉自家的临时文件。
+            // 清理结果**不单独弹 Toast**：紧接着就是导出完成的提示，两条会互相顶掉
+            // （Android 用新 Toast 替换旧的），真机上最后只剩一条。合并进成功文案。
             val cleaned = cleanOrphanPartials(targetDir)
-            if (cleaned > 0) {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.data_backup_cleaned_partials, cleaned),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
             val target = uniqueBackupFile(targetDir, defaultBackupFileName())
             // 先写 .part，成功后才改名：中途失败或被杀只会留下一个显而易见的临时文件，
             // 不会让用户把「写了一半的备份」当成能用的备份。旧实现靠 cache 中转来保证
@@ -138,15 +133,22 @@ internal fun DataBackupScreen(
                 if (!partial.renameTo(target)) {
                     throw EtaBackupException(context.getString(R.string.data_backup_error_rename))
                 }
-                Toast.makeText(
-                    context,
-                    context.getString(
-                        R.string.data_backup_exported,
-                        summary.conversationCount,
-                        summary.providerCount,
-                    ),
-                    Toast.LENGTH_SHORT,
-                ).show()
+                val base = context.getString(
+                    R.string.data_backup_exported,
+                    summary.conversationCount,
+                    summary.providerCount,
+                )
+                // 清理与导出合并成一句：分开弹会被后者顶掉，用户永远看不到前一条。
+                val message = if (cleaned.count > 0) {
+                    base + "；" + context.getString(
+                        R.string.data_backup_cleaned_partials,
+                        cleaned.count,
+                        formatBytes(cleaned.bytes),
+                    )
+                } else {
+                    base
+                }
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             } catch (throwable: Throwable) {
                 partial.delete()
                 showFailure(throwable)
@@ -654,23 +656,43 @@ private const val PARTIAL_SUFFIX = ".part"
 internal const val BACKUP_PARTIAL_SUFFIX = ".eta-backup.json" + PARTIAL_SUFFIX
 
 /**
- * 删掉目录里上次中断留下的导出临时文件，返回删掉的个数。
+ * 删掉目录里上次中断留下的导出临时文件，返回删了几个、释放了多少字节。
  *
  * 进程被杀时 `partial.delete()` 之前那段 catch 根本不会跑到，所以清理只能放到下一次
- * 动手之前做。目录读不了（不存在 / 无权限）时返回 0 —— 清理失败不该挡住导出本身。
+ * 动手之前做。目录读不了（不存在 / 无权限）时返回空结果 —— 清理失败不该挡住导出本身。
  */
-internal fun cleanOrphanPartials(directory: File): Int {
-    val children = directory.listFiles() ?: return 0
+internal fun cleanOrphanPartials(directory: File): PartialCleanup {
+    val children = directory.listFiles() ?: return PartialCleanup(0, 0L)
     var removed = 0
+    var bytes = 0L
     for (child in children) {
         if (!child.isFile || !child.name.endsWith(BACKUP_PARTIAL_SUFFIX)) continue
+        val size = child.length()
         if (child.delete()) {
             removed++
+            bytes += size
         } else {
             AndroidAgentLogger.error("Agent backup: cannot delete stale partial ${child.name.take(80)}")
         }
     }
-    return removed
+    return PartialCleanup(removed, bytes)
+}
+
+/** 清理结果：只报「几个」不报「多大」时，38.9 MB 和 3 KB 看起来一模一样。 */
+internal data class PartialCleanup(val count: Int, val bytes: Long)
+
+/** 人类可读的字节数；只用于提示文案。 */
+internal fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = listOf("KB", "MB", "GB", "TB")
+    var value = bytes.toDouble() / 1024
+    var index = 0
+    while (value >= 1024 && index < units.lastIndex) {
+        value /= 1024
+        index++
+    }
+    return if (value >= 100) "${value.toInt()} ${units[index]}"
+    else String.format(java.util.Locale.ROOT, "%.1f %s", value, units[index])
 }
 
 /**

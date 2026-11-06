@@ -1197,15 +1197,29 @@ internal class AgentLocalTools(
             process.inputStream.bufferedReader().use { it.readText() }.trim().toIntOrNull()
         }.getOrNull() ?: return
         if (count == 0) {
+            val powerState = displayPowerState(displayId)
+            val asleep = powerState?.uppercase()?.let { it.startsWith("OFF") || it.startsWith("DOZE") } == true
             throw InvalidToolArgumentException(
-                message = "虚拟屏 $displayId 上没有可见窗口（应用可能已迁回主屏或退到后台）；本次动作未执行。" +
-                    "请先 virtual_display_launch 把应用带回这块屏，或用 observe_screen 确认它还在；" +
-                    "不要原样重试这次调用",
+                message = "虚拟屏 $displayId 上没有可见窗口" +
+                    (if (asleep) "（display state=$powerState：屏已半死，不是应用退到后台）"
+                    else "（应用可能已迁回主屏或退到后台）") +
+                    "；本次动作未执行。" +
+                    DisplayScopeErrors.noVisibleWindowAdvice(powerState),
                 code = DisplayScopeErrors.NO_VISIBLE_WINDOW,
                 retryable = false,
             )
         }
     }
+
+    /** 这块屏的电源状态（`dumpsys display` 里的 base state）；读不到返回 null。 */
+    private fun displayPowerState(displayId: Int): String? = runCatching {
+        val process = ProcessBuilder(
+            "su", "-c",
+            "dumpsys display | grep 'displayId $displayId,' | grep -o 'state [A-Z_]*' | head -1",
+        ).redirectErrorStream(true).start()
+        process.inputStream.bufferedReader().use { it.readText() }.trim()
+            .removePrefix("state ").takeIf { it.isNotBlank() }
+    }.getOrNull()
 
     /**
      * 只对虚拟屏截图做区域裁剪：模型看不到 UI 树时，小控件在整屏截图里只有几十像素，

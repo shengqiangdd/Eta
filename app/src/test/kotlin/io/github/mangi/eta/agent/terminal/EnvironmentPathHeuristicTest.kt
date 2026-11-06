@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.terminal
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,15 +32,20 @@ class EnvironmentPathHeuristicTest {
         assertEquals("android", result.switchedFrom)
     }
 
-    @Test fun androidPathUnderLinuxSwitchesBack() {
+    @Test fun androidPathUnderLinuxDoesNotSwitch() {
+        // 反方向不切：chroot 里 /data/local/tmp、/storage/emulated、/sdcard 是**默认挂载**的，
+        // 静默切到 android 会让 `cd /data/local/tmp/... && ./gradlew` 报 "bash: not found"。
         val result = resolve("linux", "/data/local/tmp/eta/app.apk")
-        assertEquals("android", result.environment)
-        assertEquals("linux", result.switchedFrom)
+        assertEquals("linux", result.environment)
+        assertNull(result.switchedFrom)
+        assertFalse(result.switched)
+        assertNotNull("应当给出提示，说明为什么没有切换", result.note)
     }
 
-    @Test fun sdcardAndUserStorageCountAsAndroid() {
-        assertEquals("android", resolve("linux", "/sdcard/Download/a.txt").environment)
-        assertEquals("android", resolve("linux", "/storage/emulated/0/a.txt").environment)
+    @Test fun sdcardAndUserStorageUnderLinux() {
+        // 前两个在 chroot 里挂载着 → 不切；/data/user/0 不在挂载表里 → 仍然切回 android。
+        assertEquals("linux", resolve("linux", "/sdcard/Download/a.txt").environment)
+        assertEquals("linux", resolve("linux", "/storage/emulated/0/a.txt").environment)
         assertEquals("android", resolve("linux", "/data/user/0/io.github.mangi.eta/files/x").environment)
     }
 

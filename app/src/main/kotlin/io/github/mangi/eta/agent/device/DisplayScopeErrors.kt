@@ -30,4 +30,29 @@ internal object DisplayScopeErrors {
 
     /** 屏还在，但上面没有可见窗口（应用可能已迁回主屏或退到后台）。 */
     const val NO_VISIBLE_WINDOW: String = "DISPLAY_NO_VISIBLE_WINDOW"
+
+    /**
+     * 「没有可见窗口」时给模型的下一步建议，按屏的真实电源状态分流。
+     *
+     * 现场（2026-11-07）：一块摆了 20 多分钟的虚拟屏，`dumpsys display` 里
+     * `mBaseDisplayInfo` 是 `state OFF`、`mOverrideDisplayInfo` 还是 `state ON` —— 半死状态。
+     * 但工具只报「没有可见窗口（应用可能已迁回主屏）」，`virtual_display_launch` 还说
+     * 「已在目标屏，直接观察即可」，三句话互相矛盾，我在同一块死屏上试了三次才想起来查 dumpsys。
+     *
+     * 顺带实测否掉了「调 flags 能救」的猜测：`eta_vd_extra_flags=8000` 建出的新屏
+     * `canHostTasks` 仍是 false（与正常的屏一样），所以 canHostTasks 不是这个症状的判据，
+     * 能判的只有 state。
+     */
+    fun noVisibleWindowAdvice(powerState: String?): String {
+        val out = powerState?.trim()?.uppercase()
+        val asleep = out != null && (out.startsWith("OFF") || out.startsWith("DOZE"))
+        return if (asleep) {
+            "这块屏已处于半死状态（display state=$out）：闲置后系统关掉了它，但 DisplayManager " +
+                "没同步，窗口因此不可见，再 launch 也没用。**重建即可**：virtual_display_release 后 " +
+                "重新 create（屏上的任务会丢，先想清楚要不要保）。"
+        } else {
+            "请先 virtual_display_launch 把应用带回这块屏，或用 observe_screen 确认它还在；" +
+                "不要原样重试这次调用"
+        }
+    }
 }
