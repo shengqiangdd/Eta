@@ -50,6 +50,7 @@ import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.components.WorkspacePathPicker
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -75,6 +76,8 @@ internal fun DataBackupScreen(
     val scope = rememberCoroutineScope()
     var busyOp by remember { mutableStateOf(BackupOp.IDLE) }
     val busy = busyOp != BackupOp.IDLE
+    // -1 表示还没读到可估算的比例（文件读不了 / 大小未知）；0~100 是已读的压缩字节占比。
+    var parsePercent by remember { mutableStateOf(-1) }
     var pendingImportPath by remember { mutableStateOf<String?>(null) }
     var pendingSummary by remember { mutableStateOf<EtaBackupSummary?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -117,15 +120,21 @@ internal fun DataBackupScreen(
     fun inspectImport(path: String) {
         pendingImportPath = path
         // 先只读解析：把「将要导入什么」摆到确认框里。解析失败不弹框，也不碰库。
+        val total = File(path).length()
+        parsePercent = -1
         scope.launch {
             busyOp = BackupOp.IMPORT_PARSING
             try {
-                pendingSummary = openSelectedBackup(context, path).use { onInspect(it) }
+                pendingSummary = openSelectedBackup(context, path).use { raw ->
+                    // 进度按「已读压缩字节 / 文件大小」算：全量回退时 stage 也要读到底，进度能走完。
+                    onInspect(ProgressInputStream(raw, total) { percent -> parsePercent = percent })
+                }
                 showImportDialog = true
             } catch (throwable: Throwable) {
                 pendingImportPath = null
                 showFailure(throwable)
             } finally {
+                parsePercent = -1
                 busyOp = BackupOp.IDLE
             }
         }
@@ -282,7 +291,11 @@ internal fun DataBackupScreen(
                 EtaArrowPreference(
                     title = stringResource(R.string.data_backup_import),
                     summary = when (busyOp) {
-                        BackupOp.IMPORT_PARSING -> stringResource(R.string.data_backup_import_parsing)
+                        BackupOp.IMPORT_PARSING -> if (parsePercent >= 0) {
+                            stringResource(R.string.data_backup_import_parsing_progress, parsePercent)
+                        } else {
+                            stringResource(R.string.data_backup_import_parsing)
+                        }
                         BackupOp.IMPORTING -> stringResource(R.string.data_backup_working)
                         else -> stringResource(R.string.data_backup_import_summary)
                     },
@@ -497,6 +510,38 @@ private enum class BackupPickerMode { EXPORT_DIRECTORY, IMPORT_FILE }
 
 /** 哪个操作正在跑：三个按钮互斥，但「处理中」只能出现在真正在跑的那一个上。 */
 private enum class BackupOp { IDLE, BACKUP, EXPORT, IMPORT_PARSING, IMPORTING }
+
+/**
+ * 数字节进度。
+ *
+ * 只在**最外层原始流**上计数，所以分母就是文件大小；解析器内部再包 gzip、再缓存重放，
+ * 都不影响这里的口径。百分比只在跨整数位时回调一次，避免每读 8 KB 就重组一次界面。
+ *
+ * total ≤ 0（拿不到文件大小）时干脆不报进度，界面退回到「不知道还要多久」的原提示。
+ */
+private class ProgressInputStream(
+    input: InputStream,
+    private val total: Long,
+    private val onPercent: (Int) -> Unit,
+) : FilterInputStream(input) {
+    private var readBytes = 0L
+    private var lastPercent = -1
+
+    override fun read(): Int = super.read().also { if (it >= 0) advance(1L) }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        super.read(buffer, offset, length).also { if (it > 0) advance(it.toLong()) }
+
+    private fun advance(count: Long) {
+        readBytes += count
+        if (total <= 0L) return
+        val percent = ((readBytes * 100) / total).toInt().coerceIn(0, 100)
+        if (percent != lastPercent) {
+            lastPercent = percent
+            onPercent(percent)
+        }
+    }
+}
 
 /**
  * 同名文件不覆盖：追加 -2、-3 …。

@@ -1203,6 +1203,7 @@
   <string name="data_backup_import">Import data</string>
   <string name="data_backup_import_summary">Replace conversations, providers, and MEMORY.md from a backup file</string>
   <string name="data_backup_import_parsing">Parsing the backup file; a large one can take a minute or two</string>
+  <string name="data_backup_import_parsing_progress">Parsing the backup file… %1$d%%</string>
   <string name="data_backup_import_confirm_title">Import Eta data?</string>
   <string name="data_backup_import_confirm_summary">Current conversations, providers, and MEMORY.md will be replaced. The backup may contain API keys.</string>
   <!-- 五个占位符（4 个计数 + 内存大小），plurals 表达不了，关闭启发式检查。 -->
