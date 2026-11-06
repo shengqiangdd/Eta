@@ -3,6 +3,7 @@ package io.github.mangi.eta.ui.components
 import android.content.res.Resources
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -195,18 +197,6 @@ private fun ModelQuickList(
     }
 }
 
-private sealed interface ModelSheetEntry {
-    val key: String
-
-    data class Header(val providerId: String, val name: String) : ModelSheetEntry {
-        override val key: String get() = "header:$providerId"
-    }
-
-    data class Option(val model: AgentModelOptionUi) : ModelSheetEntry {
-        override val key: String get() = "model:${model.providerId}:${model.id}"
-    }
-}
-
 @Composable
 private fun ModelSheetContent(
     state: AgentModelPickerUiState,
@@ -214,23 +204,23 @@ private fun ModelSheetContent(
 ) {
     var query by remember { mutableStateOf("") }
     var providerFilter by remember { mutableStateOf<String?>(null) }
-    val entries = remember(state.providerGroups, query, providerFilter) {
+    // 按服务商分组渲染：每组一个卡片，和设置页同一套视觉语言。
+    // 原先是一条扁平流（组标题 + 模型行），模型直接平铺在弹层底色上，
+    // 十几个模型连成一片，找起来要靠读而不是靠看。
+    val sections = remember(state.providerGroups, query, providerFilter) {
         state.filterGroups(query)
             .filter { providerFilter == null || it.providerId == providerFilter }
-            .flatMap { group ->
-                // 只看一个服务商时，筛选标签已经说明了归属，分组标题只会重复。
-                val header = if (providerFilter == null) {
-                    listOf(ModelSheetEntry.Header(group.providerId, group.providerName))
-                } else {
-                    emptyList()
-                }
-                header + group.models.map(ModelSheetEntry::Option)
-            }
+            .map { it.providerName to it.models }
     }
-    val selectedIndex = entries.indexOfFirst {
-        it is ModelSheetEntry.Option && it.model.id == state.selectedModel?.id
+    // 只看一个服务商时，筛选标签已经说明了归属，分组标题只会重复。
+    val showHeaders = providerFilter == null
+    val selectedSection = sections.indexOfFirst { (_, models) ->
+        models.any { it.id == state.selectedModel?.id }
     }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = (selectedIndex - 2).coerceAtLeast(0))
+    val itemsPerSection = if (showHeaders) 2 else 1
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = ((selectedSection - 1) * itemsPerSection).coerceAtLeast(0),
+    )
     LaunchedEffect(listState) {
         snapshotFlow { query to providerFilter }.drop(1).collect { listState.scrollToItem(0) }
     }
@@ -287,7 +277,7 @@ private fun ModelSheetContent(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-            if (entries.isEmpty()) {
+            if (sections.isEmpty()) {
                 item(key = "empty") {
                     Text(
                         text = stringResource(R.string.page_no_matching_model_found_ae7e96),
@@ -300,15 +290,37 @@ private fun ModelSheetContent(
                     )
                 }
             }
-            items(entries, key = ModelSheetEntry::key, contentType = { it::class }) { entry ->
-                when (entry) {
-                    is ModelSheetEntry.Header -> ModelProviderLabel(entry.name, horizontalPadding = 24.dp)
-                    is ModelSheetEntry.Option -> ModelPickerRow(
-                        model = entry.model,
-                        selected = entry.model.id == selectedId,
-                        onClick = { select(entry.model.id) },
-                        horizontalPadding = 12.dp,
-                    )
+            sections.forEach { (providerName, models) ->
+                if (showHeaders) {
+                    item(key = "header:$providerName") {
+                        ModelProviderLabel(providerName, horizontalPadding = 24.dp)
+                    }
+                }
+                item(key = "group:$providerName") {
+                    // 弹层背景本身就是 surface，默认卡片色和它融成一片、看不出分组；
+                    // 这里用高一档容器色 + 一条 8% 描边，任何壁纸/主题下都能看清边界。
+                    val shape = RoundedCornerShape(24.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 12.dp)
+                            .clip(shape)
+                            .background(MiuixTheme.colorScheme.surfaceContainerHigh)
+                            .border(1.dp, MiuixTheme.colorScheme.onBackground.copy(alpha = 0.08f), shape),
+                    ) {
+                        models.forEachIndexed { index, model ->
+                            if (index > 0) {
+                                EtaPreferenceDivider(hasLeading = false)
+                            }
+                            ModelPickerRow(
+                                model = model,
+                                selected = model.id == selectedId,
+                                onClick = { select(model.id) },
+                                horizontalPadding = 8.dp,
+                            )
+                        }
+                    }
                 }
             }
         }

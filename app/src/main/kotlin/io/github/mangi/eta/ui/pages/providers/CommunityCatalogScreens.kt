@@ -91,8 +91,9 @@ internal fun CommunityCatalogScreen(
                 Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.catalog_refresh_models))
             }
         },
-    ) {
-        item(key = "search") {
+        // 搜索框固定在列表上方：目录几百项时，往下翻两屏它就滚没了，
+        // 想换个关键词还得一路滑回顶部。横向留白由 MiuixScaffoldPage 统一补。
+        header = {
             InputField(
                 query = query,
                 onQueryChange = { query = it },
@@ -102,10 +103,10 @@ internal fun CommunityCatalogScreen(
                 label = stringResource(R.string.catalog_search_provider),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(vertical = 8.dp),
             )
-        }
-
+        },
+    ) {
         item(key = "catalog_status") {
             ProviderSection(title = stringResource(R.string.catalog_status_section)) {
                 EtaPreference(

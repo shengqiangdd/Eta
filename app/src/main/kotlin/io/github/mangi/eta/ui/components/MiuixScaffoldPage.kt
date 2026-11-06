@@ -1,12 +1,15 @@
 package io.github.mangi.eta.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -36,6 +39,9 @@ fun MiuixScaffoldPage(
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
     overlay: @Composable () -> Unit = {},
+    // 固定在列表上方的头部（如设置搜索框）。为空时布局与原来完全一致：
+    // 只有传了它才会把内容切成「header + LazyColumn」两段。
+    header: (@Composable () -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
     compactTitle: Boolean = false,
     content: LazyListScope.() -> Unit,
@@ -72,24 +78,49 @@ fun MiuixScaffoldPage(
         ) { innerPadding ->
             WidePageContent { sidePadding ->
                 // 保留 MiuixTheme 注入的默认越界工厂，让短内容页也能回弹到顶栏采样区。
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalCutoutPadding()
-                        .captureForTopBar(backdrop)
-                        .scrollEndHaptic()
-                        .overScrollVertical()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    contentPadding = PaddingValues(
-                        start = sidePadding,
-                        top = innerPadding.calculateTopPadding(),
-                        end = sidePadding,
-                    ),
-                ) {
-                    content()
-                    item(key = "bottom_spacer") {
-                        MiuixPageBottomSpacer()
+                val list: @Composable () -> Unit = {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .horizontalCutoutPadding()
+                            .captureForTopBar(backdrop)
+                            .scrollEndHaptic()
+                            .overScrollVertical()
+                            .nestedScroll(scrollBehavior.nestedScrollConnection),
+                        contentPadding = PaddingValues(
+                            start = sidePadding,
+                            // 有固定头部时，顶栏的留白已经由外层 Column 让出来了，
+                            // 再叠一次会把列表推到半个屏幕下。
+                            top = if (header == null) innerPadding.calculateTopPadding() else 0.dp,
+                            end = sidePadding,
+                        ),
+                    ) {
+                        content()
+                        item(key = "bottom_spacer") {
+                            MiuixPageBottomSpacer()
+                        }
+                    }
+                }
+                if (header == null) {
+                    list()
+                } else {
+                    Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+                        // 头部必须和列表吃同一份水平约束：列表的左右留白来自 LazyColumn 的
+                        // contentPadding(sidePadding)，header 在 Column 里拿不到它，
+                        // 宽屏下会贴着屏幕边缘、与下面的卡片错开。截屏/横屏刘海同理。
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalCutoutPadding()
+                                // sidePadding 只负责宽屏居中；手机上它是 0，而列表卡片
+                                // 自己还有一层 SidePadding 的内边距，所以这里要一起补上，
+                                // 否则搜索框会贴着屏幕边、和下面的卡片错开 16dp。
+                                .padding(horizontal = sidePadding + EtaPreferenceDefaults.SidePadding),
+                        ) {
+                            header()
+                        }
+                        list()
                     }
                 }
             }

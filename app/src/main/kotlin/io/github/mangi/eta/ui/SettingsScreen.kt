@@ -8,10 +8,18 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.AccountTree
@@ -280,7 +288,10 @@ private fun SettingsPageContent(
         onDispose { EtaApp.removeServiceStateListener(listener) }
     }
     // 设置搜索：非空时只渲染命中的组，并忽略折叠状态（见 SETTINGS_*_KEYWORDS）。
-    var settingsQuery by rememberSaveable { mutableStateOf("") }
+    // 用 remember 而不是 rememberSaveable：搜索词是瞬时状态，离开设置页
+    // （composable 销毁）就该清空。否则下次进来看到的是被过滤过的列表，
+    // 只剩几个组，像是设置项丢了一半。
+    var settingsQuery by remember { mutableStateOf("") }
     val powerAssistantTargets = PowerAssistantTarget.entries
     val powerAssistantItems = powerAssistantTargets.map { target ->
         DropdownItem(text = target.displayName(context))
@@ -289,20 +300,20 @@ private fun SettingsPageContent(
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_set_up_7debf9),
         onBack = onBack,
+        header = {
+            // 固定在列表上方，不随设置项滚走：它在第一个位置，滑到下面的组之后
+            // 想改关键词还得先滑回顶部。
+            InputField(
+                query = settingsQuery,
+                onQueryChange = { settingsQuery = it },
+                onSearch = {},
+                expanded = false,
+                onExpandedChange = {},
+                label = stringResource(R.string.settings_search_hint),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp),
+            )
+        },
     ) {
-            // 搜索放在最前面：设置页收起来以后只有一屏多，从这里直接输词
-            // 比逐组点开再找快得多。
-            item(key = "settings_search") {
-                InputField(
-                    query = settingsQuery,
-                    onQueryChange = { settingsQuery = it },
-                    onSearch = {},
-                    expanded = false,
-                    onExpandedChange = {},
-                    label = stringResource(R.string.settings_search_hint),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
             // 一个组都没命中时给一句提示：否则用户会以为是筛选坏了，
             // 而不是「确实没有这个设置项」。
             if (settingsQuery.isNotBlank() && !SETTINGS_ALL_KEYWORDS.any { settingsSectionMatches(settingsQuery, it) }) {
@@ -320,6 +331,7 @@ private fun SettingsPageContent(
                 var agentExpanded by rememberSaveable { mutableStateOf(true) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.settings_model_usage_title),
+                    icon = Icons.Rounded.Cloud,
                     expanded = settingsSectionExpanded(settingsQuery, agentExpanded),
                     onToggle = { agentExpanded = !agentExpanded },
                 ) {
@@ -371,6 +383,7 @@ private fun SettingsPageContent(
                 var delegationExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.settings_chat_delegation_title),
+                    icon = Icons.Rounded.AccountTree,
                     expanded = settingsSectionExpanded(settingsQuery, delegationExpanded),
                     onToggle = { delegationExpanded = !delegationExpanded },
                 ) {
@@ -420,6 +433,7 @@ private fun SettingsPageContent(
                 var chatUiExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.settings_chat_ui_title),
+                    icon = Icons.Rounded.ChatBubble,
                     expanded = settingsSectionExpanded(settingsQuery, chatUiExpanded),
                     onToggle = { chatUiExpanded = !chatUiExpanded },
                 ) {
@@ -515,6 +529,7 @@ private fun SettingsPageContent(
                 var contextExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.settings_context_extensions),
+                    icon = Icons.Rounded.Apps,
                     expanded = settingsSectionExpanded(settingsQuery, contextExpanded),
                     onToggle = { contextExpanded = !contextExpanded },
                 ) {
@@ -606,6 +621,7 @@ private fun SettingsPageContent(
                 var toolsExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.ui_tool_a72ef1),
+                    icon = Icons.Rounded.Build,
                     expanded = settingsSectionExpanded(settingsQuery, toolsExpanded),
                     onToggle = { toolsExpanded = !toolsExpanded },
                 ) {
@@ -777,6 +793,7 @@ private fun SettingsPageContent(
                 var assistantExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.ui_system_assistant_takes_over_f46043),
+                    icon = Icons.Rounded.PowerSettingsNew,
                     expanded = settingsSectionExpanded(settingsQuery, assistantExpanded),
                     onToggle = { assistantExpanded = !assistantExpanded },
                 ) {
@@ -845,6 +862,7 @@ private fun SettingsPageContent(
                     var vendorExpanded by rememberSaveable { mutableStateOf(false) }
                     EtaCollapsibleSection(
                         title = stringResource(R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a),
+                        icon = Icons.Rounded.SupportAgent,
                         expanded = settingsSectionExpanded(settingsQuery, vendorExpanded),
                         onToggle = { vendorExpanded = !vendorExpanded },
                     ) {
@@ -876,6 +894,7 @@ private fun SettingsPageContent(
                     var geminiExpanded by rememberSaveable { mutableStateOf(false) }
                     EtaCollapsibleSection(
                         title = "Gemini",
+                        icon = Icons.Rounded.AutoAwesome,
                         expanded = settingsSectionExpanded(settingsQuery, geminiExpanded),
                         onToggle = { geminiExpanded = !geminiExpanded },
                     ) {
@@ -945,6 +964,7 @@ private fun SettingsPageContent(
                     var circleExpanded by rememberSaveable { mutableStateOf(false) }
                     EtaCollapsibleSection(
                         title = stringResource(R.string.ui_search_in_one_turn_179584),
+                        icon = Icons.Rounded.Search,
                         expanded = settingsSectionExpanded(settingsQuery, circleExpanded),
                         onToggle = { circleExpanded = !circleExpanded },
                     ) {
@@ -975,6 +995,7 @@ private fun SettingsPageContent(
                 var generalExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.settings_general),
+                    icon = Icons.Rounded.Settings,
                     expanded = settingsSectionExpanded(settingsQuery, generalExpanded),
                     onToggle = { generalExpanded = !generalExpanded },
                 ) {
@@ -1017,6 +1038,7 @@ private fun SettingsPageContent(
                 var permissionsExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.ui_permissions_560165),
+                    icon = Icons.Rounded.Shield,
                     expanded = settingsSectionExpanded(settingsQuery, permissionsExpanded),
                     onToggle = { permissionsExpanded = !permissionsExpanded },
                 ) {
@@ -1137,6 +1159,7 @@ private fun SettingsPageContent(
                 var aboutExpanded by rememberSaveable { mutableStateOf(false) }
                 EtaCollapsibleSection(
                     title = stringResource(R.string.ui_about_bed172),
+                    icon = Icons.Rounded.Description,
                     expanded = settingsSectionExpanded(settingsQuery, aboutExpanded),
                     onToggle = { aboutExpanded = !aboutExpanded },
                 ) {

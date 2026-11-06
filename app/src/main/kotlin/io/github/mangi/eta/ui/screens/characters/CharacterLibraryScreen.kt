@@ -97,12 +97,12 @@ internal fun CharacterLibraryScreen(
                 Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.character_create))
             }
         },
-    ) {
-        item(key = "search") {
+        // 搜索框固定在列表上方：角色一多、往下一滑它就没了，想换关键词得先滑回顶部。
+        // 横向留白由 MiuixScaffoldPage 统一补（与列表卡片同一份 16dp），这里不再加。
+        header = {
             SearchBar(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = CharacterCardPadding)
                     .padding(top = 4.dp, bottom = 12.dp),
                 // 去掉组件自带的横向内边距，让搜索框与下方卡片左右对齐。
                 insideMargin = DpSize(0.dp, 0.dp),
@@ -120,7 +120,8 @@ internal fun CharacterLibraryScreen(
                 },
                 content = {},
             )
-        }
+        },
+    ) {
         when {
             store.busy && store.characters.isEmpty() -> {
                 item(key = "loading") {

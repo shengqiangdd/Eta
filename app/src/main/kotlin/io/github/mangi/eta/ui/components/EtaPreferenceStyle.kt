@@ -1,14 +1,17 @@
 package io.github.mangi.eta.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
@@ -93,11 +96,30 @@ internal fun EtaCollapsibleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    icon: ImageVector? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    EtaCollapsibleGroupTitle(text = title, expanded = expanded, onToggle = onToggle)
-    AnimatedVisibility(visible = expanded) {
-        EtaPreferenceGroup(content = content)
+    // 展开/收起时让高度平滑过渡。这里原来写的是 `AnimatedVisibility(visible = true)`：
+    // 恒为真，等于没有任何动画——展开是瞬间蹦出来的，收起也是。
+    // 现在按内容真实高度做尺寸动画；标题位置本身仍是两套布局（卡片内/卡片外），
+    // 但高度变化不再突兀。
+    Column(modifier = Modifier.animateContentSize()) {
+        if (expanded) {
+            EtaCollapsibleGroupTitle(text = title, expanded = true, onToggle = onToggle)
+            EtaPreferenceGroup(content = content)
+        } else {
+            // 折叠时把标题装进和内容同款的卡片：否则整页只剩一串没有背景的灰字，
+            // 和旁边展开的卡片完全不是一个视觉语言。
+            EtaPreferenceGroup {
+                EtaCollapsibleGroupTitle(
+                    text = title,
+                    expanded = false,
+                    onToggle = onToggle,
+                    insideCard = true,
+                    icon = icon,
+                )
+            }
+        }
     }
 }
 
@@ -114,21 +136,39 @@ internal fun EtaCollapsibleGroupTitle(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    // 放在卡片里时，左右 16dp 由卡片自己让出来，这里再加会双倍缩进。
+    insideCard: Boolean = false,
+    // 折叠时这张卡片只剩标题一行，没有图标会很空；展开时标题在卡片外，
+    // 不要图标，避免和卡片里第一个条目的图标打架。
+    icon: ImageVector? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = EtaPreferenceDefaults.SidePadding)
-            .padding(top = 2.dp, bottom = 6.dp)
+            .then(
+                if (insideCard) Modifier
+                else Modifier.padding(horizontal = EtaPreferenceDefaults.SidePadding).padding(top = 2.dp, bottom = 6.dp)
+            )
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onToggle)
-            .padding(start = 16.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+            .padding(
+                start = 16.dp,
+                end = 10.dp,
+                top = if (insideCard) 14.dp else 6.dp,
+                bottom = if (insideCard) 14.dp else 6.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (insideCard && icon != null) {
+            EtaPreferenceIcon(icon = icon, tint = EtaPreferenceColors.Blue)
+            Spacer(modifier = Modifier.width(EtaPreferenceDefaults.IconTextGap))
+        }
         Text(
             text = text,
             style = MiuixTheme.textStyles.subtitle,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            // 折叠时这行就是卡片里唯一的内容，用摘要色会整页发灰；
+            // 展开时它只是卡片上方的分组标签，保持原来的灰。
+            color = if (insideCard) MiuixTheme.colorScheme.onSurface else MiuixTheme.colorScheme.onSurfaceVariantSummary,
             modifier = Modifier.weight(1f),
         )
         Icon(

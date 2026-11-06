@@ -34,7 +34,6 @@ import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaOverlayDialog
 import io.github.mangi.eta.ui.components.EtaPreferenceColors
-import io.github.mangi.eta.ui.components.EtaPreferenceDefaults
 import io.github.mangi.eta.ui.components.EtaPreferenceDivider
 import io.github.mangi.eta.ui.components.EtaPreferenceIcon
 import io.github.mangi.eta.ui.components.EtaPreferenceRow
@@ -74,8 +73,12 @@ internal fun ModelProviderListScreen(
         }
     }
 
-    MiuixScaffoldPage(title = stringResource(R.string.ui_model_provider_e8c7f5), onBack = onBack) {
-        item(key = "search") {
+    MiuixScaffoldPage(
+        title = stringResource(R.string.ui_model_provider_e8c7f5),
+        onBack = onBack,
+        // 搜索框固定在列表上方：它是列表第一项时，提供商一多、往下一滑就没了，
+        // 想改关键词还得先滑回顶部。与设置页同一套处理。
+        header = {
             InputField(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
@@ -85,10 +88,11 @@ internal fun ModelProviderListScreen(
                 label = stringResource(R.string.ui_search_provider_74e049),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = EtaPreferenceDefaults.SidePadding)
+                    // 左右留白由 MiuixScaffoldPage 按列表同一份 sidePadding 补齐。
                     .padding(top = 12.dp, bottom = 8.dp),
             )
-        }
+        },
+    ) {
 
         item(key = "create_section") {
             ProviderSection(title = stringResource(R.string.ui_add_new_provider_74df54)) {

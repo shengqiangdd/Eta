@@ -121,6 +121,24 @@ internal fun CapabilityOverviewScreen(
     )
     val visibleGroups = filterCapabilityGroups(groups, query)
     val entryCount = groups.sumOf { it.entries.size }
+    // 搜索栏跟着顶栏固定：它是列表第一项时，往下看几屏就得滑回顶部才能改关键词。
+    // 横向留白由 MiuixScaffoldPage 统一补，这里只留纵向。
+    val searchHeader: (@Composable () -> Unit)? = if (searching) {
+        {
+            TextField(
+                value = query,
+                onValueChange = { query = it },
+                label = stringResource(R.string.capability_overview_search_hint),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .focusRequester(focusRequester),
+            )
+        }
+    } else {
+        null
+    }
     MiuixScaffoldPage(
         title = stringResource(R.string.capability_overview_title),
         onBack = onBack,
@@ -145,22 +163,8 @@ internal fun CapabilityOverviewScreen(
                 )
             }
         },
+        header = searchHeader,
     ) {
-        if (searching) {
-            item(key = "search") {
-                TextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = stringResource(R.string.capability_overview_search_hint),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = EtaPreferenceDefaults.SidePadding)
-                        .padding(bottom = 8.dp)
-                        .focusRequester(focusRequester),
-                )
-            }
-        }
         item(key = "intro") {
             Text(
                 text = stringResource(R.string.capability_overview_intro, entryCount),
