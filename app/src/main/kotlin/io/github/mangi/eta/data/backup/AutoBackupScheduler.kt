@@ -190,10 +190,17 @@ internal object AutoBackupScheduler {
                 )
                 AutoBackupOutcome(
                     ran = true,
-                    error = throwable.message ?: throwable.safeLogType(),
+                    error = failureReason(throwable),
                 )
             }
         }
+
+    /** 自动备份失败时的展示原因：不把英文 errno 直接摆给用户。 */
+    internal fun failureReason(throwable: Throwable): String = when {
+        StorageFailures.isOutOfSpace(throwable) -> "存储空间不足（清理后重试）"
+        StorageFailures.isNotWritable(throwable) -> "备份目录不可写（只读或权限不足）"
+        else -> throwable.message ?: throwable.safeLogType()
+    }
 
     /** 同一分钟内可能被触发两次（启动 + 回到前台），撞名时追加 -2、-3。 */
     private fun uniqueFile(directory: File, name: String): File {

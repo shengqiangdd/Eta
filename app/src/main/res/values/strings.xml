@@ -1205,12 +1205,16 @@
   <string name="data_backup_import_confirm_title">Import Eta data?</string>
   <string name="data_backup_import_confirm_summary">Current conversations, providers, and MEMORY.md will be replaced. The backup may contain API keys.</string>
   <!-- 五个占位符（4 个计数 + 内存大小），plurals 表达不了，关闭启发式检查。 -->
-  <string name="data_backup_import_preview" tools:ignore="PluralsCandidate">Import %1$d conversations, %2$d messages, %3$d providers, %4$d characters, memory %5$s. Current data will be replaced; tapping Import first saves a full snapshot (about the same size as the current database, only the latest 2 are kept).</string>
+  <string name="data_backup_import_preview" tools:ignore="PluralsCandidate">Import %1$d conversations, %2$d messages, %3$d providers, %4$d characters, memory %5$s. Current data will be replaced; tapping Import first saves a full snapshot (about the same size as the current database, only the latest 2 are kept). Import also unpacks the file into app cache first, so it needs that much free space.</string>
   <string name="data_backup_working">Working…</string>
   <!-- 两个独立计数（对话数、提供商数），无法用单个 plurals 表达，关闭启发式检查。 -->
   <string name="data_backup_exported" tools:ignore="PluralsCandidate">Exported %1$d conversations and %2$d providers</string>
   <string name="data_backup_imported" tools:ignore="PluralsCandidate">Imported %1$d conversations and %2$d providers</string>
   <string name="data_backup_failed">Backup operation failed</string>
+  <string name="data_backup_error_no_space">Not enough storage. Nothing was changed: free up space and retry.</string>
+  <string name="data_backup_error_not_writable">The target folder is not writable (read-only or permission denied). Nothing was changed.</string>
+  <string name="data_backup_error_unreadable">Cannot read the selected backup file. Copy it to another folder and pick it again; nothing was changed.</string>
+  <string name="data_backup_snapshot_failed">Could not save a pre-import snapshot (%1$s). Import cancelled; your data is unchanged.</string>
   <string name="data_backup_auto_title">Automatic backup</string>
   <string name="data_backup_auto_enable">Automatic backup</string>
   <string name="data_backup_auto_enable_summary">Saves to Download/Eta/backups (one folder per app), compressed, keeps the latest 3 (up to 512 MB)</string>

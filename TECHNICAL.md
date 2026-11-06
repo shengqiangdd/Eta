@@ -3323,3 +3323,74 @@ canary 这种体量（153k 消息）导出一份备份是 **406 MB**、耗时约
   峰值占用 =「备份 89 MB + 解压后 406 MB」；取消与失败都会删临时文件（本次已实测取消路径）。
 - 耗时：这次从点击到落盘约 45~65 秒（旧明文约 75 秒），**没有做严格的 A/B 计时**，
   只能说没变慢，不能声称「快了」。
+
+## 备份/导入失败要说清是哪一种失败（fix128）
+
+### 为什么
+
+上一节之后，备份链路有三种性质完全不同的失败，界面却几乎说同一句话：
+
+- **空间不足**（ENOSPC）：用户该去清空间；
+- **目标目录不可写**（EACCES / EROFS）：用户该换目录或改权限；
+- **选中的备份文件读不了**（文件被移走、路径访问被 scoped storage 拒绝）：用户该换位置重选。
+
+原先只有一句「备份操作失败」，导入侧更糟：`NOT_WRITABLE` 与「选中文件读取失败」共享同一个
+EACCES 判定，于是**读文件失败会被说成“目标目录不可写”**——用户按提示去改目录权限，
+改完仍然失败。真机上已复现：一份 12 字节的坏文件（用路径直接读 `/storage/emulated/0` 下的文件）
+导入时，界面报的是「目标目录不可写」。
+
+### 实现
+
+**归因（`data/backup/StorageFailures.kt`，新增）**
+
+- `isOutOfSpace(t)` / `isNotWritable(t)` 沿 `cause` 链最多 8 层查找，
+  同时匹配 errno 名（`ENOSPC`、`EACCES`、`EPERM`、`EROFS`）与本地化消息
+  （`No space left on device`、`disk is full`、`SQLITE_FULL`、`Read-only file system`、
+  `Permission denied`）。只认一层 `cause` 会漏掉 `IOException("...", errnoException)` 这类嵌套。
+
+**写路径**
+
+- `stage()` 的 catch 先 `AndroidAgentLogger.error(...)` 记录**完整异常链**（便于线上定位），
+  再抛归类后的异常：空间不足 → 提示「导入要先把备份完整解压到应用缓存」；不可写 → 提示
+  「无法写入应用缓存，导入未开始」；两者都写明**数据未改动**。
+- 顺带修掉一个真实误判：`createDirectory` 原用 `if (!dir.mkdirs()) throw`，
+  而**目录已存在时 `mkdirs()` 返回 false**，于是“目录本来就在”被当成“不可写”。改为
+  `if (dir.isDirectory || dir.mkdirs()) return dir`，失败时才 `warn` 后抛出。
+
+**自动备份**：`AutoBackupScheduler` 的失败状态改用 `failureReason()`，同样区分空间不足/目录不可写，
+其余回退到 message 或异常类型。
+
+**界面（`DataBackupScreen`）**
+
+- `showFailure` 改为 `failureMessage(context, throwable)`；
+- 选中文件后不再 `File(path).inputStream()` 裸抛，而是包成
+  `EtaBackupException(R.string.data_backup_error_unreadable, failure)`；
+- `failureMessage` 的**首分支**是「`EtaBackupException` 且 message 非空 → 直接用」。
+  这一条是必须的：否则「文件读不了」会被 cause 链里的 EACCES 改写成「目录不可写」，
+  等于把刚修掉的误归因换个地方复发。
+- 导入前整库快照失败单独一条文案（`data_backup_snapshot_failed`，含「数据未改动」）。
+
+**文案长度也是功能**：Toast 只有两行。上一版 `data_backup_error_unreadable` 写到了 47 字，
+真机上被截成「…可以把它复」，最关键的「数据未改动」根本看不到。三处 strings 统一压到
+34 字以内（`无法读取所选备份文件（权限不足或已被移走）。换个位置再选一次，数据未改动。`）。
+
+### 验证
+
+- 单测 6 例（`BackupFailureTextTest`）：ENOSPC 嵌套 cause、`SQLITE_FULL`、EROFS/EACCES、
+  **真格式错误不被误判**、`stagingFailure` 归因、`failureReason`。
+- 门禁 `STAGES=test`：**1535 用例 0 失败**；快速覆盖 170 类、基线未覆盖 355 类都有归属，
+  死文案 0、197 条占位符齐全。
+- canary 真机（12 字节坏文件）：
+  - 修复前报「目标目录不可写（只读或权限不足）」，修复后报
+    **「无法读取所选备份文件…」** —— 归因正确；
+  - 失败后 `databases/eta.db` 的 mtime 仍是 16:15（本轮操作在 17:23 之后）→ **数据确实未被改动**；
+  - `Download/Eta/backups/io.github.mangi.eta.canary/` 里两份旧备份一份未少。
+
+### 没验证到的
+
+- **空间不足 / 目录只读 / 快照失败三条文案没有在真机上真的触发过**：
+  要造这些条件得把 `/storage` 写满或改真实目录权限，对正在使用的设备代价太大。
+  它们目前只有单测覆盖（触发条件与文案映射），不是“真机验证过”。
+- 压缩后的**新短文案没有逐字截图确认**：Toast 只活 2.5 秒，`screencap -d <虚拟屏>` 不受支持，
+  工具往返时间比 Toast 寿命长。判断依据是「上一版 47 字被截在约 37 字处、新版 34 字」，
+  属推算，不属实测。

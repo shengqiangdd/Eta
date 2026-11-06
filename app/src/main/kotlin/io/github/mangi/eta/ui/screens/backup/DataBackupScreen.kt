@@ -27,7 +27,9 @@ import io.github.mangi.eta.core.safeStackTrace
 import io.github.mangi.eta.data.backup.AutoBackupOutcome
 import io.github.mangi.eta.data.backup.AutoBackupRepository
 import io.github.mangi.eta.data.backup.AutoBackupScheduler
+import io.github.mangi.eta.data.backup.StorageFailures
 import io.github.mangi.eta.data.model.AutoBackupSettings
+import io.github.mangi.eta.data.repository.EtaBackupException
 import io.github.mangi.eta.data.repository.EtaBackupSummary
 import io.github.mangi.eta.ui.app.ConversationTimeLabels
 import io.github.mangi.eta.ui.app.WorkspacePickerHistory
@@ -48,6 +50,7 @@ import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.components.WorkspacePathPicker
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
@@ -84,11 +87,7 @@ internal fun DataBackupScreen(
     fun showFailure(throwable: Throwable) {
         if (throwable is CancellationException) throw throwable
         AndroidAgentLogger.error("Agent backup UI failed: type=${throwable.safeLogType()}\n${throwable.safeStackTrace()}")
-        Toast.makeText(
-            context,
-            throwable.message ?: context.getString(R.string.data_backup_failed),
-            Toast.LENGTH_LONG,
-        ).show()
+        Toast.makeText(context, failureMessage(context, throwable), Toast.LENGTH_LONG).show()
     }
 
     fun exportTo(directory: String) {
@@ -120,7 +119,7 @@ internal fun DataBackupScreen(
         scope.launch {
             busy = true
             try {
-                pendingSummary = File(path).inputStream().use { onInspect(it) }
+                pendingSummary = openSelectedBackup(context, path).use { onInspect(it) }
                 showImportDialog = true
             } catch (throwable: Throwable) {
                 pendingImportPath = null
@@ -340,9 +339,22 @@ internal fun DataBackupScreen(
                         busy = true
                         try {
                             // 覆盖前先落一份整库快照：导入中途失败时还有原样可回退的副本。
-                            // 快照失败就不导入 —— 没有回退点的破坏性操作不做。
-                            onSnapshot()
-                            val summary = File(path).inputStream().use { onImport(it) }
+                            // 快照失败就不导入 —— 没有回退点的破坏性操作不做；并且要明确告诉用户
+                            // 「一个字节都还没动」，否则失败会被理解成「导入了一半」。
+                            try {
+                                onSnapshot()
+                            } catch (snapshotFailure: CancellationException) {
+                                throw snapshotFailure
+                            } catch (snapshotFailure: Throwable) {
+                                throw EtaBackupException(
+                                    context.getString(
+                                        R.string.data_backup_snapshot_failed,
+                                        failureMessage(context, snapshotFailure),
+                                    ),
+                                    snapshotFailure,
+                                )
+                            }
+                            val summary = openSelectedBackup(context, path).use { onImport(it) }
                             Toast.makeText(
                                 context,
                                 context.getString(
@@ -421,8 +433,7 @@ private fun autoBackupSummary(context: Context, settings: AutoBackupSettings?): 
     }
 }
 
-private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcome): String {
-    val error = outcome.error
+private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcome): String {    val error = outcome.error
     return when {
         error != null -> context.getString(R.string.data_backup_auto_failed, error)
         outcome.skippedEmpty -> context.getString(R.string.data_backup_auto_skipped_empty)
@@ -432,6 +443,31 @@ private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcom
             outcome.pruned,
         )
     }
+}
+
+/**
+ * 打开用户选中的备份文件。
+ *
+ * 读不了要说「这个文件读不了」——原来的归因会把它说成「目标目录不可写」，把人指去改权限，
+ * 而真正该做的是把文件换个位置（或确认它还在）。
+ */
+private fun openSelectedBackup(context: Context, path: String): InputStream = try {
+    File(path).inputStream()
+} catch (failure: IOException) {
+    throw EtaBackupException(context.getString(R.string.data_backup_error_unreadable), failure)
+}
+
+/**
+ * 把 errno 级失败翻译成用户能据以行动的话；其余保持原样（多半已经是写好的中文领域错误）。
+ *
+ * 领域层已经给出可操作说明时原样使用：再按 cause 归因一次，会把「所选文件读不了」
+ * 改写回「目标目录不可写」（两者经常共享同一个 EACCES）。
+ */
+private fun failureMessage(context: Context, throwable: Throwable): String = when {
+    throwable is EtaBackupException && !throwable.message.isNullOrBlank() -> throwable.message.orEmpty()
+    StorageFailures.isOutOfSpace(throwable) -> context.getString(R.string.data_backup_error_no_space)
+    StorageFailures.isNotWritable(throwable) -> context.getString(R.string.data_backup_error_not_writable)
+    else -> throwable.message ?: context.getString(R.string.data_backup_failed)
 }
 
 private fun formatFileSize(bytes: Long): String = when {

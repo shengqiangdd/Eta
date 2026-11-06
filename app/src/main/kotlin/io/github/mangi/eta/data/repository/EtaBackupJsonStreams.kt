@@ -5,6 +5,7 @@ import android.util.JsonReader
 import android.util.JsonToken
 import android.util.JsonWriter
 import io.github.mangi.eta.core.AndroidAgentLogger
+import io.github.mangi.eta.data.backup.StorageFailures
 import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMessageEntity
@@ -125,8 +126,26 @@ internal object EtaBackupJsonStreams {
         } catch (failure: Throwable) {
             removeDirectory(directory)
             if (failure is CancellationException || failure is EtaBackupException || failure is Error) throw failure
-            throw EtaBackupException("备份文件格式无效", failure)
+            // 这条路径上的失败只在用户主动导入时发生，频率低；把完整异常链记下来，
+            // 否则「导入失败」在日志里只剩一个 type，没法判断是读不了源文件还是写不了缓存。
+            AndroidAgentLogger.error("Agent backup stage failed", failure)
+            throw stagingFailure(failure)
         }
+    }
+
+    /**
+     * 暂存失败的真实归因。
+     *
+     * 原实现把所有非 [EtaBackupException] 的异常都记成「备份文件格式无效」——磁盘满是这条
+     * 路径上最常见的失败（导入要把整份备份解压到应用缓存，406 MB 的库就要同量级临时空间），
+     * 却会把人引向「换个备份文件试试」这条错路。
+     */
+    internal fun stagingFailure(failure: Throwable): EtaBackupException = when {
+        StorageFailures.isOutOfSpace(failure) ->
+            EtaBackupException("存储空间不足：导入要先把备份完整解压到应用缓存，清理空间后重试（数据未改动）", failure)
+        StorageFailures.isNotWritable(failure) ->
+            EtaBackupException("无法写入应用缓存（目录只读或权限不足），导入未开始，数据未改动", failure)
+        else -> EtaBackupException("备份文件格式无效", failure)
     }
 
     /**
@@ -268,10 +287,13 @@ internal object EtaBackupJsonStreams {
         }
     }
 
-    private fun createDirectory(context: Context): File =
-        File(context.cacheDir, "eta_backup_${UUID.randomUUID()}").apply {
-            if (!mkdirs()) throw IOException("Unable to create backup staging directory")
-        }
+    private fun createDirectory(context: Context): File {
+        val directory = File(context.cacheDir, "eta_backup_${UUID.randomUUID()}")
+        // mkdirs() 在目录已存在时返回 false：直接拿它当失败判据，会把「本来就能用」报成不可写。
+        if (directory.isDirectory || directory.mkdirs()) return directory
+        AndroidAgentLogger.warn("Agent backup staging mkdir failed: cacheDir=${context.cacheDir.absolutePath}")
+        throw IOException("Unable to create backup staging directory")
+    }
 
     private fun removeDirectory(directory: File) {
         if (directory.exists() && !directory.deleteRecursively()) {

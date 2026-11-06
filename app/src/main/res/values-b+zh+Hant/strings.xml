@@ -1172,11 +1172,15 @@
   <string name="data_backup_import_summary">從備份檔案取代對話、模型供應商與 MEMORY.md</string>
   <string name="data_backup_import_confirm_title">匯入 Eta 資料？</string>
   <string name="data_backup_import_confirm_summary">目前的對話、模型供應商與 MEMORY.md 將被取代，備份檔案可能包含 API Key。</string>
-  <string name="data_backup_import_preview">將匯入 %1$d 個對話、%2$d 則訊息、%3$d 個模型供應商、%4$d 個角色，記憶 %5$s。目前的資料將被取代；按下「匯入」後會先儲存整庫快照（體積與目前資料庫相近，只保留最近 2 份）。</string>
+  <string name="data_backup_import_preview">將匯入 %1$d 個對話、%2$d 則訊息、%3$d 個模型供應商、%4$d 個角色，記憶 %5$s。目前的資料將被取代；按下「匯入」後會先儲存整庫快照（體積與目前資料庫相近，只保留最近 2 份）；匯入前會先把備份整份解壓到應用程式快取，需要同量級的暫存空間。</string>
   <string name="data_backup_working">處理中…</string>
   <string name="data_backup_exported">已匯出 %1$d 個對話與 %2$d 個模型供應商</string>
   <string name="data_backup_imported">已匯入 %1$d 個對話與 %2$d 個模型供應商</string>
   <string name="data_backup_failed">備份操作失敗</string>
+  <string name="data_backup_error_no_space">儲存空間不足，本次操作沒有完成（資料未改動）。清理空間後重試。</string>
+  <string name="data_backup_error_not_writable">目標目錄不可寫（唯讀或權限不足），本次操作沒有完成（資料未改動）。</string>
+  <string name="data_backup_error_unreadable">無法讀取所選備份檔案（權限不足或已被移走）。換個位置再選一次，資料未改動。</string>
+  <string name="data_backup_snapshot_failed">匯入前的整庫快照沒存下來（%1$s），已取消匯入，原有資料未改動。</string>
   <string name="data_backup_auto_title">自動備份</string>
   <string name="data_backup_auto_enable">自動備份</string>
   <string name="data_backup_auto_enable_summary">儲存到 Download/Eta/backups（每個應用程式一個子目錄），壓縮後保留最近 3 份（總量上限 512 MB）</string>
