@@ -17,6 +17,7 @@ import java.io.OutputStream
 import java.io.PushbackInputStream
 import java.math.BigDecimal
 import java.util.UUID
+import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -81,7 +82,10 @@ internal object EtaBackupJsonStreams {
         try {
             val header = File(directory, "header.json")
             val cancellation = currentCoroutineContext()
-            val checked = PushbackInputStream(LimitedInput(input, MAX_BACKUP_BYTES, cancellation::ensureActive))
+            // 自动备份是 gzip 写出的，手动导出仍是明文 JSON：按魔数自动识别，
+            // 两种文件走同一条导入路径，用户不需要记「这个文件要不要解压」。
+            val source = openMaybeGzip(input)
+            val checked = PushbackInputStream(LimitedInput(source, MAX_BACKUP_BYTES, cancellation::ensureActive))
             val first = checked.read()
             if (first < 0) throw EtaBackupException("备份文件为空")
             checked.unread(first)
@@ -123,6 +127,28 @@ internal object EtaBackupJsonStreams {
             if (failure is CancellationException || failure is EtaBackupException || failure is Error) throw failure
             throw EtaBackupException("备份文件格式无效", failure)
         }
+    }
+
+    /**
+     * gzip 备份与明文 JSON 都认：读前两字节看 1F 8B，命中就解压，否则原样返回。
+     *
+     * 大小上限必须放在解压之后（[LimitedInput] 包在返回的流上）—— 包在压缩侧的话，
+     * 一个几十 MB 的压缩包可以解出 GB 级内容绕过检查。
+     */
+    internal fun openMaybeGzip(input: InputStream): InputStream {
+        val peeked = PushbackInputStream(input, 2)
+        val magic = ByteArray(2)
+        var read = 0
+        while (read < magic.size) {
+            val count = peeked.read(magic, read, magic.size - read)
+            if (count <= 0) break
+            read += count
+        }
+        if (read > 0) peeked.unread(magic, 0, read)
+        val gzip = read == magic.size &&
+            magic[0] == 0x1f.toByte() &&
+            magic[1] == 0x8b.toByte()
+        return if (gzip) GZIPInputStream(peeked) else peeked
     }
 
     class StagedDocument(private val directory: File, val header: EtaBackupDocument) : AutoCloseable {

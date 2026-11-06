@@ -1213,7 +1213,7 @@
   <string name="data_backup_failed">Backup operation failed</string>
   <string name="data_backup_auto_title">Automatic backup</string>
   <string name="data_backup_auto_enable">Automatic backup</string>
-  <string name="data_backup_auto_enable_summary">Saves to Download/Eta/backups (one folder per app), keeps only the latest 3</string>
+  <string name="data_backup_auto_enable_summary">Saves to Download/Eta/backups (one folder per app), compressed, keeps the latest 3 (up to 512 MB)</string>
   <string name="data_backup_auto_interval">Interval</string>
   <string name="data_backup_auto_interval_6h">Every 6 hours</string>
   <string name="data_backup_auto_interval_12h">Every 12 hours</string>

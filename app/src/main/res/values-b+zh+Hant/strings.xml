@@ -1179,7 +1179,7 @@
   <string name="data_backup_failed">備份操作失敗</string>
   <string name="data_backup_auto_title">自動備份</string>
   <string name="data_backup_auto_enable">自動備份</string>
-  <string name="data_backup_auto_enable_summary">儲存到 Download/Eta/backups（每個應用程式一個子目錄），只保留最近 3 份</string>
+  <string name="data_backup_auto_enable_summary">儲存到 Download/Eta/backups（每個應用程式一個子目錄），壓縮後保留最近 3 份（總量上限 512 MB）</string>
   <string name="data_backup_auto_interval">備份間隔</string>
   <string name="data_backup_auto_interval_6h">每 6 小時</string>
   <string name="data_backup_auto_interval_12h">每 12 小時</string>

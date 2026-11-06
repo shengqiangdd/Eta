@@ -1,11 +1,16 @@
 package io.github.mangi.eta.data.backup
 
+import io.github.mangi.eta.data.repository.EtaBackupJsonStreams
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.util.zip.GZIPOutputStream
 
 internal class AutoBackupSchedulerTest {
 
@@ -14,6 +19,12 @@ internal class AutoBackupSchedulerTest {
     private fun seed(dir: File, name: String, modifiedAt: Long): File =
         File(dir, name).apply {
             writeText("{}")
+            setLastModified(modifiedAt)
+        }
+
+    private fun seedBytes(dir: File, name: String, modifiedAt: Long, size: Int): File =
+        File(dir, name).apply {
+            writeBytes(ByteArray(size) { 0x41 })
             setLastModified(modifiedAt)
         }
 
@@ -192,5 +203,67 @@ internal class AutoBackupSchedulerTest {
         assertFalse(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 0, messageCount = 0))
         assertTrue(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 1, messageCount = 0))
         assertTrue(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 0, messageCount = 3))
+    }
+
+    // ---- 压缩 ----
+
+    @Test
+    fun gzipBackupsAndPlainJsonAreBothReadable() {
+        val payload = """{"format":"eta-backup","conversations":[]}""".toByteArray()
+        assertArrayEquals(
+            payload,
+            EtaBackupJsonStreams.openMaybeGzip(ByteArrayInputStream(payload)).readBytes(),
+        )
+
+        val compressed = ByteArrayOutputStream().also { buffer ->
+            GZIPOutputStream(buffer).use { it.write(payload) }
+        }.toByteArray()
+        // 首字节 1F 8B 是 gzip 魔数；导入侧据此自动解压，用户不必区分两种文件。
+        assertEquals(0x1f.toByte(), compressed[0])
+        assertArrayEquals(
+            payload,
+            EtaBackupJsonStreams.openMaybeGzip(ByteArrayInputStream(compressed)).readBytes(),
+        )
+    }
+
+    @Test
+    fun emptyInputIsStillEmptyAfterDetection() {
+        // 空文件不能因为探测两字节而「看似有内容」：它仍然要在 stage 里被判成空备份。
+        assertEquals(-1, EtaBackupJsonStreams.openMaybeGzip(ByteArrayInputStream(ByteArray(0))).read())
+    }
+
+    // ---- 总大小上限 ----
+
+    @Test
+    fun pruneRespectsTotalSizeBudget() {
+        val dir = tempDir()
+        try {
+            // 每份 400 字节，共 1200；上限 900 时只能留 2 份。
+            val newest = seedBytes(dir, "${AutoBackupScheduler.FILE_PREFIX}3.eta-backup.json.gz", 3_000L, 400)
+            val middle = seedBytes(dir, "${AutoBackupScheduler.FILE_PREFIX}2.eta-backup.json.gz", 2_000L, 400)
+            val stale = seedBytes(dir, "${AutoBackupScheduler.FILE_PREFIX}1.eta-backup.json.gz", 1_000L, 400)
+
+            val removed = AutoBackupScheduler.prune(dir, keep = 3, maxBytes = 900)
+
+            assertEquals(1, removed)
+            assertTrue(newest.exists())
+            assertTrue(middle.exists())
+            assertFalse(stale.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pruneAlwaysKeepsTheNewestBackup() {
+        val dir = tempDir()
+        try {
+            val newest = seedBytes(dir, "${AutoBackupScheduler.FILE_PREFIX}only.eta-backup.json.gz", 1_000L, 1_000)
+            // 上限比单份还小：宁可超限也不能把最后一份删掉 —— 一份都不留等于没有备份。
+            assertEquals(0, AutoBackupScheduler.prune(dir, keep = 3, maxBytes = 100))
+            assertTrue(newest.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 }

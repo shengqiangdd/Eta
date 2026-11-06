@@ -9,11 +9,13 @@ import io.github.mangi.eta.data.repository.EtaBackupRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.GZIPOutputStream
 
 /** 一次自动备份的结果；[ran] 为 false 表示这次根本没有到期，什么都没做。 */
 internal data class AutoBackupOutcome(
@@ -43,6 +45,11 @@ internal object AutoBackupScheduler {
 
     /** 保留的自动备份份数。 */
     const val KEEP_COUNT = 3
+
+    /** 自动备份总量上限：份数之内也按总大小兜底，避免巨库把保留的几份堆到 GB 级。 */
+    const val MAX_TOTAL_BYTES = 512L * 1024L * 1024L
+
+    private const val WRITE_BUFFER_BYTES = 64 * 1024
 
     /** 可选的间隔（小时）。 */
     val INTERVAL_CHOICES = listOf(6, 12, 24, 72, 168)
@@ -108,10 +115,24 @@ internal object AutoBackupScheduler {
     internal fun shouldPersistAutoBackup(conversationCount: Int, messageCount: Int): Boolean =
         conversationCount > 0 || messageCount > 0
 
-    /** 只保留最近 [keep] 份自动备份，返回实际删掉的份数。 */
-    fun prune(directory: File, keep: Int): Int {
+    /**
+     * 只保留最近 [keep] 份自动备份、且总量不超过 [maxBytes]，返回实际删掉的份数。
+     *
+     * 份数与大小两道闸：巨库单份就有几百 MB，只按份数留 3 份会堆到 GB；
+     * 但无论超多少，**至少留最新的一份** —— 一份都不留等于没有备份。
+     */
+    fun prune(directory: File, keep: Int, maxBytes: Long = MAX_TOTAL_BYTES): Int {
+        val backups = autoBackups(directory)
+        val keepCount = keep.coerceAtLeast(0)
         var removed = 0
-        autoBackups(directory).drop(keep.coerceAtLeast(0)).forEach { stale ->
+        backups.drop(keepCount).forEach { stale ->
+            if (stale.delete()) removed++
+        }
+        val kept = backups.take(keepCount).toMutableList()
+        var total = kept.sumOf { it.length().coerceAtLeast(0L) }
+        while (maxBytes > 0 && kept.size > 1 && total > maxBytes) {
+            val stale = kept.removeAt(kept.lastIndex)
+            total -= stale.length().coerceAtLeast(0L)
             if (stale.delete()) removed++
         }
         return removed
@@ -134,10 +155,15 @@ internal object AutoBackupScheduler {
                     )
                 }
                 val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-                val target = uniqueFile(directory, "$FILE_PREFIX$stamp.eta-backup.json")
+                val target = uniqueFile(directory, "$FILE_PREFIX$stamp.eta-backup.json.gz")
                 val temp = File(directory, target.name + TEMP_SUFFIX)
                 try {
-                    val summary = FileOutputStream(temp).use { output ->
+                    // 压缩写：巨库的明文 JSON 能到 400 MB 级，gzip 后通常只剩十分之一左右。
+                    // 大小上限仍按解压后的明文算（EtaBackupJsonStreams 的 LimitedOutput 在内层）。
+                    val summary = GZIPOutputStream(
+                        BufferedOutputStream(FileOutputStream(temp), WRITE_BUFFER_BYTES),
+                        WRITE_BUFFER_BYTES,
+                    ).use { output ->
                         EtaBackupRepository.export(context, output)
                     }
                     if (!shouldPersistAutoBackup(summary.conversationCount, summary.messageCount)) {
@@ -173,8 +199,16 @@ internal object AutoBackupScheduler {
     private fun uniqueFile(directory: File, name: String): File {
         val first = File(directory, name)
         if (!first.exists()) return first
-        val stem = name.substringBeforeLast('.')
-        val extension = name.substringAfterLast('.', "")
+        val stem: String
+        val extension: String
+        // 后缀可能有两段（.json.gz），撞名时要插在最后一段之前，别拼出 .json-2.gz。
+        if (name.endsWith(".json.gz")) {
+            extension = "json.gz"
+            stem = name.removeSuffix(".$extension")
+        } else {
+            extension = name.substringAfterLast('.', "")
+            stem = if (extension.isEmpty()) name else name.removeSuffix(".$extension")
+        }
         var index = 2
         while (true) {
             val candidate = File(directory, if (extension.isEmpty()) "$stem-$index" else "$stem-$index.$extension")

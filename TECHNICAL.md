@@ -3273,3 +3273,53 @@ codex 0.164 的 provider 配置里只有 `http_headers` 这类字段，没有「
 canary 这种体量（153k 消息）导出一份备份是 **406 MB**、耗时约 75 秒。
 这不是本轮引入的（手动导出同理），但它说明「备份间隔 24 小时 + 保留 3 份」在巨库上
 最多会占 1.2 GB —— 目前没有按大小或仅增量导出的策略，作为已知限制留在这里。
+
+## 自动备份改为压缩 + 总大小上限（fix127 的工程口径）
+
+### 为什么
+
+上一节留了一条已知限制：canary 这种体量（25 会话 / 153k 消息）一份备份 **406 MB**，
+「保留 3 份」最多占 1.2 GB，且导出要 75 秒。备份数据是纯文本 JSON，压缩收益很高。
+
+### 实现
+
+**写（AutoBackupScheduler）**
+
+- 目标文件名改为 `Eta-auto-<stamp>.eta-backup.json.gz`，经
+  `GZIPOutputStream(BufferedOutputStream(FileOutputStream(temp), 64K), 64K)` 写入；
+  明文侧仍受 `EtaBackupJsonStreams.LimitedOutput` 的大小上限保护，压缩不影响那条限制。
+- 先写 `*.part`，成功后整块 rename —— 中断只会留下 `.part`，不会被当成可用备份
+  （文件名不匹配 `FILE_PREFIX*.eta-backup.json*` 的过滤条件）。
+- `uniqueFile` 支持两段后缀：撞名时插在最后一段前（`.json.gz` → `-2.json.gz`），
+  不会生成 `xxx.eta-backup-2.json.gz` 这种解析不了的怪名字。
+- `prune(directory, keep, maxBytes)` 两级：先按份数删超出者，再在保留项内按**总大小**
+  从最旧删，**至少留最新 1 份**（上限比单份还小时宁可超限，也不把最后一份删掉）。
+
+**读（EtaBackupJsonStreams）**
+
+- `stage()` 先 `openMaybeGzip(input)`：peek 两字节 `1F 8B` 判别 gzip，是就解压、否就原样，
+  所以**旧明文备份与手动导出的 JSON 照样能导入**，用户不必区分两种文件。
+- 大小上限必须包在**解压之后**：`LimitedInput(openMaybeGzip(input), MAX_BACKUP_BYTES)`，
+  否则「压缩炸弹」可以绕开 2 GiB 限制（89 MB 文件解开是 406 MB，比例已经 4.35:1）。
+
+### 验证
+
+- 单测 4 例：`gzipBackupsAndPlainJsonAreBothReadable`（双路径 + 魔数）、
+  `emptyInputIsStillEmptyAfterDetection`（探测两字节不能把空文件变“有内容”）、
+  `pruneRespectsTotalSizeBudget`（1200 B 上限 900 → 删最旧）、
+  `pruneAlwaysKeepsTheNewestBackup`（上限 100 B、单份 1000 B → 不删）。
+- 门禁 `STAGES=test`：**1529 用例 0 失败**。
+- canary 真机（25 会话 / 153,678 条消息）：
+  - 手动备份落盘 **93,307,835 B（89.0 MB）**，原明文 406,284,063 B（387.5 MB）→ **省 77%**；
+  - 界面显示「上次备份 17:09 · 89.0 MB」，文案为「…压缩后保留最近 3 份（总量上限 512 MB）」；
+  - 文件选择器选中 `.json.gz` 后，导入预检正确解析出「25 个对话、153,678 条消息、22 个模型提供商」；
+  - 点「取消」后 `cache` 只剩 3.5 KB、无 >8 MB 临时文件 —— **解压用的临时文件被清掉了**；
+  - 旧目录 4 份旧备份一份未少。
+
+### 没验证到的 / 代价
+
+- **512 MB 上限只在单测里触发过**：真机两份合计约 460 MB，没超限，删除行为没在真机见过。
+- gzip 不支持随机访问，导入仍需把整份解压到临时文件（406 MB），
+  峰值占用 =「备份 89 MB + 解压后 406 MB」；取消与失败都会删临时文件（本次已实测取消路径）。
+- 耗时：这次从点击到落盘约 45~65 秒（旧明文约 75 秒），**没有做严格的 A/B 计时**，
+  只能说没变慢，不能声称「快了」。
