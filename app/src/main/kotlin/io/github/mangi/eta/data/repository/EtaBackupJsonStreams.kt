@@ -9,6 +9,8 @@ import io.github.mangi.eta.data.backup.StorageFailures
 import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMessageEntity
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FilterInputStream
 import java.io.FilterOutputStream
@@ -16,6 +18,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PushbackInputStream
+import java.io.SequenceInputStream
 import java.math.BigDecimal
 import java.util.UUID
 import java.util.zip.GZIPInputStream
@@ -168,6 +171,94 @@ internal object EtaBackupJsonStreams {
             magic[0] == 0x1f.toByte() &&
             magic[1] == 0x8b.toByte()
         return if (gzip) GZIPInputStream(peeked) else peeked
+    }
+
+    /** 只读文件开头取统计的上限：超过这个量还没见到 stats，就说明该走完整路径。 */
+    internal const val STATS_PEEK_LIMIT = 64 * 1024
+
+    /**
+     * 只读开局取统计，**同时返回一个能从头再读一遍的流**。
+     *
+     * 为什么要把流还回去：peek 会把输入读掉一段（gz 还要解压），而导入拿到的流只能读一次。
+     * 第一版只返回统计，结果「旧备份（统计不在开头）」在 peek 失败后接着 stage，
+     * 解析从被读过的中间开始，真机直接报 MalformedJsonException——**预览全线坏掉**。
+     * 现在把 peek 期间底层真正读过的字节全缓存下来，再拼上剩余流交给完整路径。
+     *
+     * 缓存的是压缩后的原始字节，量级与 [STATS_PEEK_LIMIT] 相当（几十 KB），
+     * 不是整份备份。
+     */
+    internal fun peekOrReplay(input: InputStream): Pair<EtaBackupStats?, InputStream> {
+        val cached = ByteArrayOutputStream()
+        var capturing = true
+        val recording = object : FilterInputStream(input) {
+            override fun read(): Int = super.read().also {
+                if (capturing && it >= 0 && cached.size() < STATS_PEEK_LIMIT) cached.write(it)
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                super.read(buffer, offset, length).also {
+                    if (capturing && it > 0 && cached.size() < STATS_PEEK_LIMIT) cached.write(buffer, offset, it)
+                }
+        }
+        val stats = try {
+            val stream = openMaybeGzip(recording)
+            val buffer = ByteArray(STATS_PEEK_LIMIT)
+            var total = 0
+            while (total < buffer.size) {
+                val count = stream.read(buffer, total, buffer.size - total)
+                if (count < 0) break
+                total += count
+            }
+            statsFromPrefix(String(buffer, 0, total, Charsets.UTF_8))
+        } catch (failure: Throwable) {
+            // 不是 Eta 备份、开头就坏了：交给完整路径去看真正的错误。
+            null
+        }
+        // 关键：peek 结束后必须停掉捕获，否则 stage 接着把 93 MB 压缩数据全录进内存，
+        // 真机上直接把堆顶到 201 MB 并 OOM（已踩）。
+        capturing = false
+        val replay = SequenceInputStream(ByteArrayInputStream(cached.toByteArray()), recording)
+        return stats to replay
+    }
+
+    /** 从文本前缀里找 `"stats":{...}`；供 [peekStats] 与单测共用。 */
+    internal fun statsFromPrefix(text: String): EtaBackupStats? {
+        val key = "\"stats\":"
+        val keyIndex = text.indexOf(key)
+        if (keyIndex < 0) return null
+        val start = text.indexOf('{', keyIndex + key.length)
+        if (start < 0) return null
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var end = -1
+        for (index in start until text.length) {
+            val char = text[index]
+            when {
+                escaped -> escaped = false
+                inString && char == '\\' -> escaped = true
+                char == '"' -> inString = !inString
+                inString -> Unit
+                char == '{' -> depth++
+                char == '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        end = index
+                        break
+                    }
+                }
+            }
+        }
+        if (end < 0) return null
+        val raw = text.substring(start, end + 1)
+        val stats = runCatching { json.decodeFromString(EtaBackupStats.serializer(), raw) }.getOrNull()
+            ?: return null
+        // 数字不全（fix130 那种只写了对话/消息两项的备份）就当没拿到，
+        // 否则界面上会凭空出现「0 个提供商」。
+        return stats.takeIf {
+            it.providerCount != null && it.modelCount != null &&
+                it.memoryBytes != null && it.characterCount != null
+        }
     }
 
     class StagedDocument(private val directory: File, val header: EtaBackupDocument) : AutoCloseable {

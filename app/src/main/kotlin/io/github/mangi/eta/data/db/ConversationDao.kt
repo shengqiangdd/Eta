@@ -35,6 +35,18 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("SELECT id, title, created_at, updated_at FROM conversations")
     suspend fun conversationIdentities(): List<ConversationIdentity>
 
+    /**
+     * 导出前先数一下规模，写进备份开头。
+     *
+     * 只用来填「将要导入多少」：预览读开头几百字节就能出数字，不必把 15 万条消息
+     * 重新解一遍（实测那要 ~180 秒、Heap 峰值 167 MB）。真实导入仍逐条校验。
+     */
+    @Query("SELECT COUNT(*) FROM conversations")
+    suspend fun countConversations(): Int
+
+    @Query("SELECT COUNT(*) FROM conversation_messages")
+    suspend fun countMessages(): Int
+
     @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt WHERE id = :conversationId")
     suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long)
 

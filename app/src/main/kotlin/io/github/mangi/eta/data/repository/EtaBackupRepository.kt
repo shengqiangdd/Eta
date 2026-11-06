@@ -64,6 +64,12 @@ internal data class EtaBackupDocument(
 internal data class EtaBackupStats(
     val conversationCount: Int = 0,
     val messageCount: Int = 0,
+    // 下面四项是 fix131 加的：只为「只读文件开头就出完整预览」。
+    // 旧备份没有这些字段，读到 null 就回退到完整校验，不会把 0 当成真实值显示。
+    val providerCount: Int? = null,
+    val modelCount: Int? = null,
+    val memoryBytes: Int? = null,
+    val characterCount: Int? = null,
 )
 
 @Serializable
@@ -102,9 +108,20 @@ internal object EtaBackupRepository {
                         EtaBackupProvider(it.provider.withoutOAuthSecrets(), it.models)
                     }
                     val memory = AgentMemoryRepository.snapshot().content
+                    val stats = EtaBackupStats(
+                        conversationCount = dao.countConversations(),
+                        messageCount = dao.countMessages(),
+                        providerCount = providers.size,
+                        modelCount = providers.sumOf { it.models.size },
+                        memoryBytes = memory.toByteArray(Charsets.UTF_8).size,
+                        characterCount = database.characterDao().countCharacters(),
+                    )
                     writer.value("format", String.serializer(), EtaBackupDocument.FORMAT)
                     writer.value("schemaVersion", Int.serializer(), EtaBackupDocument.SCHEMA_VERSION)
                     writer.value("exportedAt", Long.serializer(), System.currentTimeMillis())
+                    // 统计写在最前（只读文件开头就能出预览，见 peekStats）：
+                    // 后面的 providers / conversations 是数组，读到那里就说明该回退完整校验了。
+                    writer.value("stats", EtaBackupStats.serializer().nullable, stats)
                     writer.value("providers", ListSerializer(EtaBackupProvider.serializer()), providers)
                     writer.value("catalogRevision", Int.serializer(), catalogRevision)
                     writer.value("selectedProviderId", String.serializer().nullable, settings.selectedProviderId)
@@ -141,12 +158,6 @@ internal object EtaBackupRepository {
                     phase = "export_roleplay"
                     val roleplay = CharacterBackupTransfer.snapshot(appContext, boundAvatars)
                     writer.value("roleplay", CharacterBackupData.serializer().nullable, roleplay)
-                    // 统计放在最后：导出是流式写，计数要遍历完才知道。
-                    writer.value(
-                        "stats",
-                        EtaBackupStats.serializer().nullable,
-                        EtaBackupStats(conversationCount, messageCount),
-                    )
                     EtaBackupSummary(providers.size, providers.sumOf { it.models.size }, conversationCount,
                         messageCount, memory.toByteArray(Charsets.UTF_8).size, roleplay.characters.size)
                 }
@@ -278,8 +289,22 @@ internal object EtaBackupRepository {
     }
 
     suspend fun inspect(context: Context, input: InputStream): EtaBackupSummary = withContext(Dispatchers.IO) {
+        // 先试「只读开头」：新备份把统计写在最前面，gz 也只需解出开头几百字节。
+        // peek 读过的那段会被缓回来，所以下面的完整路径仍能从字节 0 开始读。
+        val (stats, replay) = EtaBackupJsonStreams.peekOrReplay(input)
+        if (stats != null) {
+            return@withContext EtaBackupSummary(
+                providerCount = stats.providerCount ?: 0,
+                modelCount = stats.modelCount ?: 0,
+                conversationCount = stats.conversationCount,
+                messageCount = stats.messageCount,
+                memoryBytes = stats.memoryBytes ?: 0,
+                characterCount = stats.characterCount ?: 0,
+            )
+        }
+        // 拿不到（旧文件 / 不是 Eta 备份 / 开头损坏）就回退到完整路径，让用户看到真正的错误。
         // fast=true：能读 header 里的统计就不逐条遍历（旧备份无统计则自动回退到全量校验）。
-        EtaBackupJsonStreams.stage(context.applicationContext, input).use {
+        EtaBackupJsonStreams.stage(context.applicationContext, replay).use {
             EtaBackupValidation.validate(it, fast = true)
         }
     }

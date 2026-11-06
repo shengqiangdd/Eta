@@ -3514,3 +3514,56 @@ Java Heap 峰值 167 MB、RSS 447 MB，而 `dalvik.vm.heapgrowthlimit` 只有 25
    `EtaBackupStatsCodecTest`（3 例：往返、缺失回退 null、`stats` 属于已知 header 字段）
    并加进白名单，这 3 例是**真的跑过**的（门禁 1535 → **1538 用例**）。
 2. 那 2 个 Robolectric 用例留在文件里（其他环境能跑），但**本机未验证**，按要求记在这里。
+
+## fix131（预览读开头就出数字）：两个真机 bug，都是「流只能读一次」惹的
+
+fix130 的结论是「耗时下限是解压 + 写盘，不可能秒级」。要破这个下限，只能**不读全文**：
+导出时把规模统计写在**文件开头**，预览读到统计就直接出确认框。
+
+- 导出：`stats{conversationCount,messageCount,providerCount,modelCount,memoryBytes,characterCount}`
+  紧跟在 `format/schemaVersion/exportedAt` 之后、`providers` 之前；数字来自 `SELECT COUNT(*)`。
+  `SCHEMA_VERSION` **没动**——新字段是可选的，旧版本读到会忽略。
+- 预览：`inspect` 先 `peekOrReplay(input)` 读开头 64 KB 找 `stats`；拿不到才回退完整校验。
+
+### 真机抓到的第一个 bug：peek 之后流已经不在开头
+
+第一版 `peekStats(input)` 读到统计就返回，拿不到就返回 null，然后 `stage(context, input)` 接着读
+**同一个流**。gz 情况下 `GZIPInputStream` 还预读了一段——于是完整路径从中间开始解析，
+旧备份（统计在末尾）预览**必然失败**：`MalformedJsonException` / `Incomplete document`。
+
+更糟的是它在界面上表现为「点了没反应」（解析瞬间失败、静默回到备份页），
+我一度以为是坐标点错，白跑了三轮。
+
+### 第二个 bug：回退包装没有「封存」，把整份备份录进内存
+
+改成 `peekOrReplay` 返回 `(统计, 可重放的流)`：peek 期间把**底层**读过的字节缓存下来，
+再 `SequenceInputStream(缓存, 剩余流)` 拼回去。功能对了，但真机第二次直接
+`OutOfMemoryError`（堆 201 MB / 上限 234 MB），栈顶在 `stage → copyValue → nextString`。
+
+根因不在 stage：`recording` 包装器在 peek 结束后**仍在缓存**——stage 接着读，
+于是 93 MB 压缩数据被一条不漏地抄进 `ByteArrayOutputStream`。
+修法两行：peek 结束后 `capturing = false`，并给缓存加 `STATS_PEEK_LIMIT` 上限。
+
+**教训**：给流套「记录层」时，必须在交出去的那一刻停掉记录；
+否则「为了能重读」的那点缓存会变成整份文件的副本。
+
+### 真机结果（本机 PKX110 / Android 16，canary，93 MB gz）
+
+| 备份 | 预览出框 | Java Heap 峰值 | 数字 |
+|---|---|---|---|
+| 1836（统计在开头） | **2~5 秒** | ~44 MB | 25 对话 / 153,678 消息 / 22 提供商 |
+| 1815（统计在末尾，回退全量） | 约 30 秒 | 60 MB | 同上 |
+| fix130 时的 1815（全量） | 56~68 秒 | 131 MB | 同上 |
+
+- 1815 回退路径**修复前是直接失败**，现在能正常出框；数字与 1836 一致。
+- 验证全程 `databases/eta.db` 的 mtime 仍是 16:15，**数据未改动**；取消后 `cache/` 不存在（暂存已清）。
+- logcat 中 `OutOfMemoryError` / `MalformedJsonException` 均为 0 条。
+
+### 覆盖与没覆盖
+
+- 门禁 **1547 用例 0 失败**（fix130 是 1538）。新增 3 例专门钉这次的 bug：
+  `peekLeavesAPlainStreamReadableFromTheStart`、`peekLeavesTheGzipStreamReadableFromTheStart`、
+  `legacyBackupWithStatsAtTheEndStaysReadableAfterPeek`——都是纯 JVM，
+  不依赖 `android.util.JsonReader`，所以在门禁里**真的执行**。
+- `nextString()` 对单条超大字符串仍可能 OOM（那是 `stage()` 本身的性质，不是本次引入）；
+  这次真机上第一次触发正是在「缓存占满堆之后」，封存修复后未再出现，但**没有专门构造超大字段去压**。

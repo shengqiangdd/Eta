@@ -17,6 +17,10 @@ internal interface CharacterDao : ChunkedTextDao {
     @Query("SELECT * FROM roleplay_characters WHERE id = :id")
     suspend fun characterRow(id: String): CharacterEntity?
 
+    /** 备份预览用的角色数量（与 [characters] 的全量快照口径一致）。 */
+    @Query("SELECT COUNT(*) FROM roleplay_characters")
+    suspend fun countCharacters(): Int
+
     @Transaction
     suspend fun character(id: String): CharacterEntity? = characterRow(id)?.let { restoreCharacter(it) }
 
