@@ -1189,6 +1189,7 @@
   <string name="data_backup_import_summary">从备份文件替换对话、模型提供商和 MEMORY.md</string>
   <string name="data_backup_import_parsing">正在解析备份文件，大文件可能要一两分钟</string>
   <string name="data_backup_import_parsing_progress">正在解析备份文件… %1$d%%</string>
+  <string name="data_backup_failed_title">操作没有完成</string>
   <string name="data_backup_import_confirm_title">导入 Eta 数据？</string>
   <string name="data_backup_import_confirm_summary">当前对话、模型提供商和 MEMORY.md 将被替换，备份文件可能包含 API Key。</string>
   <string name="data_backup_import_preview">将导入 %1$d 个对话、%2$d 条消息、%3$d 个模型提供商、%4$d 个角色，记忆 %5$s。当前数据将被替换；点「导入」后先保存整库快照（体积与当前数据库相近，只保留最近 2 份）；导入会先把备份整份解压到应用缓存，需要同量级的临时空间。</string>

@@ -3,6 +3,7 @@ package io.github.mangi.eta.ui.screens.backup
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -44,6 +45,7 @@ import io.github.mangi.eta.ui.components.EtaPreferenceDivider
 import io.github.mangi.eta.ui.components.EtaPreferenceGroup
 import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
 import io.github.mangi.eta.ui.components.EtaSwitchPreference
+import io.github.mangi.eta.ui.components.EtaTextButton
 import io.github.mangi.eta.ui.components.EtaWindowDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -78,6 +80,9 @@ internal fun DataBackupScreen(
     val busy = busyOp != BackupOp.IDLE
     // -1 表示还没读到可估算的比例（文件读不了 / 大小未知）；0~100 是已读的压缩字节占比。
     var parsePercent by remember { mutableStateOf(-1) }
+    // 失败说明放对话框而不是 Toast：Toast 单行约 22 字，长文案会被截成「…数据…」，
+    // 而「数据未改动」恰恰是最不能丢的那半句（真机上就是这样被截掉的）。
+    var failureNotice by remember { mutableStateOf<String?>(null) }
     var pendingImportPath by remember { mutableStateOf<String?>(null) }
     var pendingSummary by remember { mutableStateOf<EtaBackupSummary?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -91,7 +96,7 @@ internal fun DataBackupScreen(
     fun showFailure(throwable: Throwable) {
         if (throwable is CancellationException) throw throwable
         AndroidAgentLogger.error("Agent backup UI failed: type=${throwable.safeLogType()}\n${throwable.safeStackTrace()}")
-        Toast.makeText(context, failureMessage(context, throwable), Toast.LENGTH_LONG).show()
+        failureNotice = failureMessage(context, throwable)
     }
 
     fun exportTo(directory: String) {
@@ -311,6 +316,21 @@ internal fun DataBackupScreen(
                     },
                 )
             }
+        }
+    }
+
+    failureNotice?.let { notice ->
+        EtaWindowDialog(
+            show = true,
+            title = stringResource(R.string.data_backup_failed_title),
+            summary = notice,
+            onDismissRequest = { failureNotice = null },
+        ) {
+            EtaTextButton(
+                text = stringResource(R.string.action_close),
+                onClick = { failureNotice = null },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 
