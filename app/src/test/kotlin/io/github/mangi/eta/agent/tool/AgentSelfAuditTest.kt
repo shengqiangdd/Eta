@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.tool
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,6 +13,44 @@ import org.junit.Test
  * 窗口外的旧崩溃、别的应用的崩溃、有 root 兜底的通知权限，都不算本应用的缺陷。
  */
 class AgentSelfAuditTest {
+
+    // ── 冷启动分段（startupBreakdown）────────────────────────────
+
+    @Test
+    fun startupBreakdownSplitsApplicationWaitAndFirstFrame() {
+        val log = """
+            11-06 12:35:47.965 [1708] startup app-onCreate process=+36ms
+            11-06 12:35:48.030 [1708] startup app-ready process=+101ms
+            11-06 12:35:51.735 [1708] startup activity-created ui=+0ms process=+3806ms
+            11-06 12:35:52.016 [1708] startup first-frame ui=+281ms process=+4087ms
+        """.trimIndent()
+        val note = startupBreakdown(log) ?: error("应当解析出分段")
+        assertTrue(note, note.contains("Application 101ms"))
+        assertTrue(note, note.contains("等待 3705ms"))
+        assertTrue(note, note.contains("首帧 281ms"))
+    }
+
+    @Test
+    fun startupBreakdownKeepsSameProcessOnly() {
+        // :voice 进程的 app-ready 不能被拼进主进程的账里
+        val log = """
+            11-06 12:35:40.000 [900] startup app-ready process=+50ms
+            11-06 12:35:48.030 [1708] startup app-ready process=+101ms
+            11-06 12:35:51.735 [1708] startup activity-created ui=+0ms process=+3806ms
+            11-06 12:35:52.016 [1708] startup first-frame ui=+281ms process=+4087ms
+        """.trimIndent()
+        val note = startupBreakdown(log) ?: error("应当解析出分段")
+        assertTrue(note, note.contains("Application 101ms"))
+        assertFalse(note, note.contains("Application 50ms"))
+    }
+
+    @Test
+    fun startupBreakdownNeedsCompleteRecord() {
+        // 只有 first-frame、没有 app-ready 就不编造数字
+        assertNull(startupBreakdown("11-06 12:35:52.016 [1708] startup first-frame ui=+281ms process=+4087ms"))
+        assertNull(startupBreakdown(null))
+        assertNull(startupBreakdown(""))
+    }
 
     private val now = 1_800_000_000_000L
     private val pkg = "io.github.mangi.eta"
@@ -393,5 +432,23 @@ class AgentSelfAuditTest {
         val split = AgentSelfAudit.splitCrashesByInstall(listOf(atInstall, before), install)
         assertEquals(listOf(atInstall), split.current)
         assertEquals(listOf(before), split.historical)
+    }
+
+    // /workspace 与 /data/local/tmp/eta 是同一个物理目录的两种视角：
+    // 传 Linux 路径时必须映射过去，否则 su -c 那边看不见，会被误报成路径不存在。
+    @Test
+    fun linuxWorkspacePathMapsToDeviceMount() {
+        assertEquals("/data/local/tmp/eta", mapLinuxWorkspace("/workspace"))
+        assertEquals(
+            "/data/local/tmp/eta/eta-v2",
+            mapLinuxWorkspace("/workspace/eta-v2"),
+        )
+    }
+
+    @Test
+    fun otherPathsAreNotRewritten() {
+        assertNull(mapLinuxWorkspace("/sdcard/eta"))
+        // 前缀相似但不是同一个目录：/workspace2 不能被当成 /workspace。
+        assertNull(mapLinuxWorkspace("/workspace2/eta"))
     }
 }

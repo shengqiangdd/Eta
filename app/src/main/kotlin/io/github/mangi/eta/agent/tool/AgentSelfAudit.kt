@@ -81,6 +81,11 @@ internal object AgentSelfAudit {
         val installUpdatedMillis: Long? = null,
         val heapLimitMb: Int? = null,
         val javaHeapPssKb: Int? = null,
+        /**
+         * boot.log 的尾部文本（启动打点在里面）。null 表示没读到文件，
+         * 与「读了但没有冷启动记录」不是同一个意思。
+         */
+        val startupLog: String? = null,
         val capabilities: Map<String, Boolean> = emptyMap(),
         val codeClues: CodeClues? = null,
         /**
@@ -311,6 +316,8 @@ internal object AgentSelfAudit {
         unavailable: MutableList<String>,
         notes: MutableList<String>,
     ) {
+        // 启动分段放在内存判断之前：内存读不到时也该能看到启动账目（第 78 轮同类问题）。
+        startupBreakdown(input.startupLog)?.let { notes += it }
         val limitMb = input.heapLimitMb
         val heapKb = input.javaHeapPssKb
         if (limitMb == null || limitMb <= 0 || heapKb == null || heapKb <= 0) {
@@ -368,7 +375,7 @@ internal object AgentSelfAudit {
     ) {
         val code = input.codeClues
         if (code == null) {
-            unavailable += "代码线索：未提供源码目录（真机发布包通常没有源码，属正常）"
+            unavailable += "代码线索：源码目录不可用（未提供，或设备上找不到该路径；真机发布包通常没有源码，属正常）"
             return
         }
         val todoKnown = code.todoCount >= 0
@@ -432,9 +439,12 @@ internal object AgentSelfAudit {
             stats.toolFailureRate * 100,
         )
         // 只读了一部分追踪明细时必须说清楚，否则 per-tool 归因会漏掉一部分失败却看不出来。
+        // 说清「为什么没读」：实际是按体积预算没选中展开（pickForDetail），
+        // 文件都还在。旧文案写成「文件已回收或损坏」，会把人往「数据丢了」带——
+        // 2026-11-06 我看到这句就去查磁盘和保留策略，结果 80 个文件全在、行数正常。
         if (stats.unreadFailureRuns > 0) {
-            notes += "其中 ${stats.unreadFailureRuns} 次运行的明细没读成（文件已回收或损坏）：" +
-                "它们计入上面的失败总数，但没参与下面的按工具归因"
+            notes += "其中 ${stats.unreadFailureRuns} 次运行的明细未展开（按体积预算只展开了部分，不是数据丢失；" +
+                "要纳入统计就缩小 hours 窗口）：它们计入上面的失败总数，但没参与下面的按工具归因"
         }
 
         // ---- 1. 具体工具的失败集中在哪 ----
@@ -469,6 +479,46 @@ internal object AgentSelfAudit {
                 fix = agentFixFor(tool.name, codeName),
                 verify = "按上面那条改法做之后，新跑的 ${MIN_CALLS_FOR_RATE} 次以上同类调用里该失败码不再出现",
             )
+        }
+
+        // ---- 1.5 耗时：到底哪里慢 ----
+        // 失败率只能回答「哪里错」，回答不了「为什么等那么久」。耗时数据一直在追踪里
+        // （每个工具记录中有 `ms`），但以前只被展示层用，自检看不到，于是「自检全绿」
+        // 完全不代表「不慢」。这里把它接上，并且不拿 calls 当分母（没记录的不算 0 秒）。
+        val timedTools = stats.tools.filter { it.timedCalls > 0 }
+        if (timedTools.isNotEmpty()) {
+            val byMax = timedTools.sortedByDescending { it.maxMs }
+            notes += "耗时（有记录的调用）：最慢单次 " + byMax.take(SLOW_TOOLS_LISTED).joinToString("、") {
+                "${it.name} ${secondsOf(it.maxMs)}"
+            } + "；平均 " + byMax.take(2).joinToString("、") {
+                "${it.name} ${secondsOf(it.avgMs)}"
+            }
+            byMax.firstOrNull { it.maxMs >= SLOW_CALL_MS }?.let { tool ->
+                val waiting = tool.name == "terminal_job"
+                findings += Finding(
+                    id = "agent-tool-slow-${tool.name}",
+                    severity = Severity.P2,
+                    confidence = Confidence.OBSERVED,
+                    title = "${tool.name} 有单次调用花了 ${secondsOf(tool.maxMs)}",
+                    evidence = buildList {
+                        add("工具：${tool.name}")
+                        add("最慢 ${secondsOf(tool.maxMs)}（平均 ${secondsOf(tool.avgMs)}，共 ${tool.timedCalls} 次有耗时记录）")
+                        add("本次窗口内调用 ${tool.calls} 次")
+                        if (waiting) add("terminal_job 的耗时含等待后台任务本身，不一定都是工具开销")
+                    },
+                    impact = if (waiting) {
+                        "长任务占住了这一轮：期间不能做别的，也不知道进行到哪一步"
+                    } else {
+                        "用户要盯着屏幕等这么久，期间看不出进展；接近超时上限时结果还可能是被截断的"
+                    },
+                    fix = if (waiting) {
+                        "把单个后台任务拆小，或断点式检查（多次 read 日志）而不是一次等到结束"
+                    } else {
+                        "拆小命令；预期超过 30 秒的改用 terminal_job 后台跑并分次读日志"
+                    },
+                    verify = "新跑的同类调用里不再出现 ≥ ${secondsOf(SLOW_CALL_MS)} 的单次耗时",
+                )
+            }
         }
 
         // ---- 2. 空转：多轮往返却没调任何工具 ----
@@ -549,12 +599,68 @@ internal object AgentSelfAudit {
      */
     private fun agentFixFor(tool: String, code: String?): String = AgentFailureHints.fixFor(tool, code)
 
+    /** 毫秒转成人看得懂的秒：小于 1 秒给两位小数（否则显示 0.0s）。 */
+    private fun secondsOf(millis: Long): String {
+        val seconds = millis / 1000.0
+        return if (seconds >= 1.0) {
+            String.format(Locale.US, "%.1fs", seconds)
+        } else {
+            String.format(Locale.US, "%.2fs", seconds)
+        }
+    }
+
     /** 样本门槛与阈值。数值取自本仓 72 份真实追踪记录（中位失败率 5.2%）。 */
     private const val MIN_CALLS_FOR_RATE = 8
+    /**
+     * 单次调用多慢值得单独拎出来：30 秒。
+     *
+     * 拿真机最近 40 次运行的实测定的（除 terminal / terminal_job 外，
+     * 所有工具的单次耗时都在 10 秒以内，多数不到 3 秒）；terminal 最慢一次 180.2 秒，
+     * 正好是它的超时上限 —— 那时结果多半已经被截断，用户白等 3 分钟。
+     */
+    private const val SLOW_CALL_MS = 30_000L
+    /** 耗时榜里最多列几个工具：再多也不是「哪里慢」而是全量报表了。 */
+    private const val SLOW_TOOLS_LISTED = 3
     private const val MIN_RUNS_FOR_OVERALL = 10
     private const val HIGH_FAILURE_RATE = 0.12f
     private const val SEVERE_FAILURE_RATE = 0.25f
     private const val IDLE_RUNS_FOR_FINDING = 2
     private const val COMPACTION_RUNS_FOR_CLUE = 3
     private const val RETRY_RUNS_FOR_CLUE = 3
+}
+
+/** boot.log 一行：`11-06 12:35:52.016 [1708] startup first-frame ui=+281ms process=+4087ms` */
+private val STARTUP_LINE = Regex("""\[(\d+)] startup ([\w-]+) (.*)""")
+private val PROCESS_MS = Regex("""process=\+(\d+)ms""")
+private val UI_MS = Regex("""ui=\+(\d+)ms""")
+
+/**
+ * 最近一次冷启动的分段账。
+ *
+ * 为什么要单独算：实测冷启 4 秒，但 Application 只占 101ms、首帧 281ms，
+ * **中间 3.7 秒在系统侧**（进程起来到 Activity 创建之间），代码里根本没有执行点。
+ * 不把这个口径写清楚，看到 4 秒只会去优化渲染和初始化，方向从一开始就是错的。
+ *
+ * 返回 null 表示日志里找不到完整的同进程记录（比如只写了 first-frame 却没写 app-ready）。
+ */
+internal fun startupBreakdown(log: String?): String? {
+    if (log.isNullOrBlank()) return null
+    val rows = log.lineSequence().mapNotNull { line ->
+        val match = STARTUP_LINE.find(line) ?: return@mapNotNull null
+        Triple(match.groupValues[1], match.groupValues[2], match.groupValues[3])
+    }.toList()
+    // 取最后一条 first-frame，再按它的 pid 回找同一进程的其它打点：
+    // 混进别的进程会把两个进程的时间拼成一个假的耗时。
+    val firstFrame = rows.lastOrNull { it.second == "first-frame" } ?: return null
+    val pid = firstFrame.first
+    fun processMsOf(label: String): Int? = rows
+        .lastOrNull { it.first == pid && it.second == label }
+        ?.third
+        ?.let { PROCESS_MS.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+    val appReady = processMsOf("app-ready") ?: return null
+    val activityCreated = processMsOf("activity-created") ?: return null
+    val firstFrameUi = UI_MS.find(firstFrame.third)?.groupValues?.get(1)?.toIntOrNull()
+    val wait = (activityCreated - appReady).coerceAtLeast(0)
+    return "最近冷启：Application ${appReady}ms → 等待 ${wait}ms → 首帧 ${firstFrameUi?.toString() ?: "?"}ms" +
+        "（等待段在系统侧，代码里没有执行点；优化渲染／初始化改不到它）"
 }

@@ -25,8 +25,20 @@ internal object AgentSelfStats {
         val failures: Int,
         /** 失败码 → 次数；只统计能从结果 JSON 里解析出 code 的失败。 */
         val failureCodes: Map<String, Int>,
+        /**
+         * 有耗时记录的调用数。
+         *
+         * 不能拿 calls 当分母：早期追踪格式没有 `ms`，被杀掉的那次调用也来不及写，
+         * 这些都会把平均值拉低，看上去「工具很快」——那是没测到，不是快。
+         */
+        val timedCalls: Int = 0,
+        val totalMs: Long = 0,
+        val maxMs: Long = 0,
     ) {
         val failureRate: Float get() = if (calls <= 0) 0f else failures.toFloat() / calls
+
+        /** 平均耗时；没有任何耗时记录时为 0（调用方必须先看 [timedCalls]）。 */
+        val avgMs: Long get() = if (timedCalls <= 0) 0L else totalMs / timedCalls
     }
 
     /**
@@ -143,6 +155,12 @@ internal object AgentSelfStats {
                 if (summaries.isEmpty()) toolCalls += 1
                 val behavior = byTool.getOrPut(name) { MutableBehavior() }
                 behavior.calls += 1
+                // 耗时：`ms` 是执行结束时写下的；缺失或 ≤ 0 就不计入，绝不当成 0 秒。
+                entry.elapsedMs?.takeIf { it > 0L }?.let { ms ->
+                    behavior.timedCalls += 1
+                    behavior.totalMs += ms
+                    if (ms > behavior.maxMs) behavior.maxMs = ms
+                }
                 if (entry.ok == false) {
                     if (summaries.isEmpty()) toolFailures += 1
                     behavior.failures += 1
@@ -166,6 +184,9 @@ internal object AgentSelfStats {
                 failureCodes = b.codes.toList()
                     .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
                     .toMap(),
+                timedCalls = b.timedCalls,
+                totalMs = b.totalMs,
+                maxMs = b.maxMs,
             )
         }.sortedWith(
             compareByDescending<ToolBehavior> { it.failures }
@@ -224,6 +245,9 @@ internal object AgentSelfStats {
     private class MutableBehavior {
         var calls: Int = 0
         var failures: Int = 0
+        var timedCalls: Int = 0
+        var totalMs: Long = 0
+        var maxMs: Long = 0
         val codes = LinkedHashMap<String, Int>()
     }
 }

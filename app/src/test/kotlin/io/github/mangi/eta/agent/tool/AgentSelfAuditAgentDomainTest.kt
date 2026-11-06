@@ -15,8 +15,23 @@ import org.junit.Test
  */
 class AgentSelfAuditAgentDomainTest {
 
-    private fun tool(name: String, calls: Int, failures: Int, codes: Map<String, Int> = emptyMap()) =
-        AgentSelfStats.ToolBehavior(name = name, calls = calls, failures = failures, failureCodes = codes)
+    private fun tool(
+        name: String,
+        calls: Int,
+        failures: Int,
+        codes: Map<String, Int> = emptyMap(),
+        timedCalls: Int = 0,
+        totalMs: Long = 0,
+        maxMs: Long = 0,
+    ) = AgentSelfStats.ToolBehavior(
+        name = name,
+        calls = calls,
+        failures = failures,
+        failureCodes = codes,
+        timedCalls = timedCalls,
+        totalMs = totalMs,
+        maxMs = maxMs,
+    )
 
     private fun stats(
         runs: Int = 20,
@@ -124,6 +139,56 @@ class AgentSelfAuditAgentDomainTest {
     }
 
     // ---- 改法必须与失败码对应 ----
+
+    // ---- 耗时：自检要能回答「哪里慢」 ----
+
+    @Test
+    fun `单次超过 30 秒的工具会报出来，并给拆分建议`() {
+        val report = audit(
+            stats(
+                tools = listOf(
+                    tool("terminal", calls = 10, failures = 0, timedCalls = 10, totalMs = 250_000, maxMs = 180_200),
+                ),
+            ),
+        )
+        val finding = report.findings.first { it.id == "agent-tool-slow-terminal" }
+        // 找到归因：标题里带具体秒数，不能只说「有点慢」。
+        assertTrue("标题应含 180.2s，实际=${finding.title}", finding.title.contains("180.2s"))
+        assertTrue(finding.evidence.any { it.contains("平均") })
+        // 改法必须可执行：直接把「改用 terminal_job」写出来。
+        assertTrue("fix 应指向 terminal_job，实际=${finding.fix}", finding.fix.contains("terminal_job"))
+        // 耗时榜也要写进 notes，让人一眼看到全貌而不只一条 finding。
+        assertTrue(report.notes.any { it.startsWith("耗时（有记录的调用）") })
+    }
+
+    @Test
+    fun `不到 30 秒不报 finding，但耗时仍然写进 notes`() {
+        val report = audit(
+            stats(
+                tools = listOf(
+                    tool("read_file", calls = 20, failures = 0, timedCalls = 20, totalMs = 22_000, maxMs = 3_100),
+                ),
+            ),
+        )
+        assertTrue(report.findings.none { it.id.startsWith("agent-tool-slow-") })
+        assertTrue(report.notes.any { it.contains("read_file") })
+    }
+
+    @Test
+    fun `terminal_job 的耗时注明是在等后台任务，不当成工具开销`() {
+        val report = audit(
+            stats(
+                tools = listOf(
+                    tool("terminal_job", calls = 5, failures = 0, timedCalls = 5, totalMs = 300_000, maxMs = 60_900),
+                ),
+            ),
+        )
+        val finding = report.findings.first { it.id == "agent-tool-slow-terminal_job" }
+        assertTrue(
+            "evidence 应说明耗时含等待任务本身，实际=${finding.evidence}",
+            finding.evidence.any { it.contains("等待后台任务") },
+        )
+    }
 
     @Test
     fun `READ_REQUIRED 的改法指向先读再改`() {

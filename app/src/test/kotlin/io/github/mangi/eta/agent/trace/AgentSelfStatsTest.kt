@@ -13,12 +13,14 @@ class AgentSelfStatsTest {
         ok: Boolean = true,
         result: String? = null,
         at: Long = 1_000,
+        elapsedMs: Long? = null,
     ) = AgentRunTraceStore.Entry(
         kind = AgentRunTraceStore.KIND_TOOL,
         at = at,
         name = name,
         ok = ok,
         result = result,
+        elapsedMs = elapsedMs,
     )
 
     private fun round(at: Long = 1_000) = AgentRunTraceStore.Entry(
@@ -325,6 +327,45 @@ class AgentSelfStatsTest {
         error = null,
         sizeBytes = 100,
     )
+
+    @Test
+    fun `耗时只算有记录的调用，缺失的不当成 0 秒`() {
+        // 真实陷阱：拿 calls 做分母，缺 ms 的调用会把平均值拉低，
+        // 看上去「这个工具很快」——那是没测到，不是快。
+        val stats = AgentSelfStats.aggregate(
+            traces = listOf(
+                trace(
+                    runId = "r1",
+                    entries = arrayOf(
+                        tool("terminal", ok = true, elapsedMs = 180_200),
+                        tool("terminal", ok = true, elapsedMs = 4_600),
+                        // 被中断或早期格式：没有 ms。
+                        tool("terminal", ok = false, result = null),
+                    ),
+                ),
+            ),
+            summaries = listOf(summary("r1", toolCalls = 3, toolFailures = 1)),
+        )
+        val terminal = stats.tools.first { it.name == "terminal" }
+        assertEquals(3, terminal.calls)
+        assertEquals(2, terminal.timedCalls)
+        assertEquals(184_800L, terminal.totalMs)
+        assertEquals(180_200L, terminal.maxMs)
+        // 分母是 2：92.4s。若错用 3，会变成 61.6s。
+        assertEquals(92_400L, terminal.avgMs)
+    }
+
+    @Test
+    fun `完全没有耗时记录时平均耗时为 0 而不是假装很快`() {
+        val stats = AgentSelfStats.aggregate(
+            traces = listOf(trace(runId = "r1", entries = arrayOf(tool("read_file")))),
+            summaries = listOf(summary("r1", toolCalls = 1, toolFailures = 0)),
+        )
+        val read = stats.tools.first { it.name == "read_file" }
+        assertEquals(0, read.timedCalls)
+        assertEquals(0L, read.maxMs)
+        assertEquals(0L, read.avgMs)
+    }
 
     @Test
     fun `总数用头部 meta，不会被只读完的子集低估`() {

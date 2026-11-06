@@ -45,6 +45,9 @@ internal class RootShellTerminalController(
         const val USER_STORAGE = "/storage/emulated/0"
         const val MAX_TIMEOUT_SECONDS = 180
         const val MAX_OUTPUT_CHARS = 16_000
+
+        /** 同步命令超过这个耗时就在返回里提醒改用 terminal_job。 */
+        const val SLOW_TERMINAL_MS = 30_000L
         const val MAX_COMMAND_OUTPUT_BYTES = 256 * 1024
     }
 
@@ -75,17 +78,46 @@ internal class RootShellTerminalController(
             cwd = args.optString("cwd").ifBlank { null },
             environment = args.optString("environment", "android"),
         )
-        "exec" -> execInTerminal(
-            command = args.requiredText("command"),
-            cwd = args.optString("cwd").ifBlank { null },
-            timeoutMs = args.optInt("timeout_ms", 30_000),
-            identity = args.optString("identity"),
-            environment = args.optString("environment", "android"),
-            mergeStderr = args.optBoolean("merge_stderr", false),
-            sessionId = args.optString("session_id").ifBlank { null },
-        )
+        "exec" -> withElapsedHint {
+            execInTerminal(
+                command = args.requiredText("command"),
+                cwd = args.optString("cwd").ifBlank { null },
+                timeoutMs = args.optInt("timeout_ms", 30_000),
+                identity = args.optString("identity"),
+                environment = args.optString("environment", "android"),
+                mergeStderr = args.optBoolean("merge_stderr", false),
+                sessionId = args.optString("session_id").ifBlank { null },
+            )
+        }
         "close" -> closeTerminal(args.optString("session_id"))
         else -> errorJson("UNSUPPORTED_TERMINAL_ACTION", "terminal action 仅支持 exec/open/close")
+    }
+
+    /**
+     * 跑得久的命令在返回里自报耗时，并推荐改用后台任务。
+     *
+     * 自检挖到过一次 180s 的单次 terminal：调用方（我自己）当时什么也看不到，
+     * 只能干等；而且超过 30s 的活本来就不适合同步跑。光靠说明书改不了习惯，
+     * 要把提醒放在**返回里**——下一次拿到结果时就能看到。
+     *
+     * 只在慢的时候打，快命令不增加噪声。
+     */
+    private inline fun withElapsedHint(block: () -> String): String {
+        val startedAt = System.nanoTime()
+        val output = block()
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+        if (elapsedMs < SLOW_TERMINAL_MS) return output
+        return runCatching {
+            JSONObject(output)
+                .put("elapsed_ms", elapsedMs)
+                .put(
+                    "slow_hint",
+                    "这次同步跑了 ${elapsedMs / 1000}s（共 ${elapsedMs}ms）：" +
+                        "预期超过 ${SLOW_TERMINAL_MS / 1000} 秒的命令改用 terminal_job(start)，" +
+                        "能边跑边读日志；同步等只能看到最后一帧",
+                )
+                .toString()
+        }.getOrDefault(output)
     }
 
     private fun terminalJob(args: JSONObject): String {

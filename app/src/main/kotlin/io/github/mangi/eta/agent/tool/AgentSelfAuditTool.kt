@@ -48,6 +48,7 @@ internal class AgentSelfAuditTool(
             installUpdatedMillis = lastUpdateMillis(),
             heapLimitMb = heapLimitMb(),
             javaHeapPssKb = meminfo,
+            startupLog = if (AgentSelfAudit.Domain.RESOURCE in domains) readStartupTail() else null,
             capabilities = readCapabilities(),
             codeClues = if (AgentSelfAudit.Domain.CODE in domains) readCodeClues(args) else null,
             selfStats = if (AgentSelfAudit.Domain.AGENT in domains) readSelfStats(hours) else null,
@@ -127,6 +128,18 @@ internal class AgentSelfAuditTool(
         return line.trim().split(WHITESPACE).getOrNull(2)?.toIntOrNull()
     }
 
+    /**
+     * boot.log 的尾部。启动打点写在这里（会滚动截半，128 KiB 上限），
+     * 只取最后几百行就够了：冷启动记录都在末尾。
+     */
+    private fun readStartupTail(): String? = runCatching {
+        val file = File(context.filesDir, "diagnostics/boot.log")
+        if (!file.isFile) return@runCatching null
+        val lines = file.readLines()
+        if (lines.isEmpty()) return@runCatching null
+        lines.takeLast(STARTUP_TAIL_LINES).joinToString("\n")
+    }.getOrNull()
+
     private fun heapLimitMb(): Int? {
         val max = Runtime.getRuntime().maxMemory()
         if (max <= 0L) return null
@@ -191,7 +204,12 @@ internal class AgentSelfAuditTool(
         if (!rootAvailable()) return null
         val configured = args.optString("source_root", "").trim()
         val root = if (configured.isNotEmpty() && SAFE_SOURCE_PATH.matches(configured)) {
-            configured
+            // /workspace 是 Linux 环境视角的路径；本工具通过 su 在 Android 侧执行，
+            // 那边看到的是挂载点 /data/local/tmp/eta。先映射再判存在——
+            // 不映射就会把「传对了但视角不同」报成「路径不存在」。
+            val candidate = mapLinuxWorkspace(configured) ?: configured
+            if (rootExecutor.execute("test -d $candidate && echo yes").stdout.trim() != "yes") return null
+            candidate
         } else {
             DEFAULT_SOURCE_ROOTS.firstOrNull { candidate ->
                 rootExecutor.execute("test -d $candidate && echo yes").stdout.trim() == "yes"
@@ -207,6 +225,10 @@ internal class AgentSelfAuditTool(
         // 下面这串模式文本本身就满足「斜杠 + 待办标记」，不排除就永远把自己算进去。
         val files = rootExecutor.execute(
             "grep -rIl --include=*.kt " +
+                // 排除构建与缓存目录：源码树带 build/ 和 .git/ 时会把 8 秒预算吃光，
+                // 而待办注释只可能写在源码里。
+                "--exclude-dir=build --exclude-dir=.git --exclude-dir=.gradle " +
+                "--exclude-dir=.tooling --exclude-dir=.idea " +
                 "-e '//.*TODO' -e '//.*FIXME' " +
                 "-e '[[:space:]]\\*.*TODO' -e '[[:space:]]\\*.*FIXME' " +
                 "$root",
@@ -278,6 +300,9 @@ internal class AgentSelfAuditTool(
     private companion object {
         // 追踪取数参数统一在 AgentSelfStatsLoader（与系统提示注入共用同一口径）。
         const val DEFAULT_HOURS = AgentSelfStatsLoader.DEFAULT_HOURS
+
+        /** 只看 boot.log 尾部：冷启动记录都写在末尾，读全文件没必要。 */
+        private const val STARTUP_TAIL_LINES = 400
         const val MAX_HOURS = AgentSelfStatsLoader.MAX_HOURS
         const val MAX_CRASH_FILES = 8
         const val MAX_CRASH_CHARS = 8_000
@@ -315,3 +340,20 @@ internal val SELF_SCAN_FILE_NAMES = listOf(
     "AgentSelfAuditToolCatalog.kt",
     "AgentSelfAudit.kt",
 )
+
+/**
+ * Linux 环境视角的 `/workspace` → Android 侧挂载点。
+ *
+ * 两边是同一个物理目录（bind mount），但 `su -c` 在 Android 侧执行，看不到 `/workspace`。
+ * 返回 null 表示不是这个前缀，调用方用原路径。
+ *
+ * 放顶层而不是 companion 里：companion 是 private，单测访问不到，
+ * 而这恰好是最该被单测盯住的纯函数。
+ */
+internal fun mapLinuxWorkspace(path: String): String? {
+    if (path != LINUX_WORKSPACE_ROOT && !path.startsWith("$LINUX_WORKSPACE_ROOT/")) return null
+    return DEVICE_WORKSPACE_ROOT + path.removePrefix(LINUX_WORKSPACE_ROOT)
+}
+
+private const val LINUX_WORKSPACE_ROOT = "/workspace"
+private const val DEVICE_WORKSPACE_ROOT = "/data/local/tmp/eta"

@@ -406,6 +406,8 @@ internal class RootShellDeviceController(
                     nodeCount = nodes.size,
                     source = elementObservation?.source,
                     uiDumpFailure = uiDumpFailure,
+                    treeTruncated = elementObservation?.truncated ?: false,
+                    nodeLimit = nodeLimit,
                 ),
             )
             .put(
@@ -1927,6 +1929,18 @@ internal class RootShellDeviceController(
         if (packageName.isBlank()) return false
         if (!packageName.matches(Regex("[A-Za-z0-9_.:]+"))) return null
         if (!rootAvailable()) return null
+        val first = queryProcess(packageName)
+        // 只有「查到了、且没有进程」才值得重试：
+        // `am start` 返回时进程经常还没 fork 完，pidof 会短暂返回退出码 1。
+        // 直接据此报「崩溃或被系统回收」会误导调用方（2026-11-06 虚拟屏首屏实测：
+        // 自动观察报进程不在，紧接着 virtual_display_launch 却说应用已在该屏上，
+        // 再观察一次 alive 又是 true）。真死掉的应用只会多花这 350ms。
+        if (first != false) return first
+        Thread.sleep(PROCESS_RETRY_DELAY_MS)
+        return queryProcess(packageName)
+    }
+
+    private fun queryProcess(packageName: String): Boolean? {
         val result = runSuText("pidof $packageName", timeoutSeconds = 4)
         return when (result.exitCode) {
             0 -> result.output.isNotBlank()
@@ -1948,6 +1962,8 @@ internal class RootShellDeviceController(
         nodeCount: Int,
         source: ElementSource?,
         uiDumpFailure: String?,
+        treeTruncated: Boolean,
+        nodeLimit: Int,
     ): JSONObject {
         val accessibility = AgentAccessibilityService.current()
         val diagnostics = JSONObject()
@@ -1961,6 +1977,18 @@ internal class RootShellDeviceController(
             diagnostics.put("foreground_process_alive", foregroundAlive ?: JSONObject.NULL)
         }
         if (uiDumpFailure != null) diagnostics.put("uiautomator_failure", uiDumpFailure)
+        // 节点在上限处被截断时，必须说清「是你自己少要了」：
+        // 2026-11-06 我为了省 token 把 max_nodes 设成 3~6，返回里只有一枚
+        // ui_tree_truncated=true，于是误判成「抽屉底部那排图标没有无障碍节点」，
+        // 改用截图量坐标、连点空两次。真实原因是节点被截在了上限处。
+        if (treeTruncated && nodeCount > 0) {
+            diagnostics.put(
+                "hint",
+                "节点在上限处被截断（max_nodes=$nodeLimit，实际返回 $nodeCount）：" +
+                    "要更多节点就调大 max_nodes 重新观察，不要改用截图估算坐标——" +
+                    "被截掉的部分往往正是要点的控件。",
+            )
+        }
         if (nodeCount == 0) {
             val deadProcess = foregroundPackage.isNotEmpty() && foregroundAlive == false
             diagnostics.put(
@@ -1982,6 +2010,20 @@ internal class RootShellDeviceController(
                 } else {
                     "改用 include_screenshot=true 看画面，或先 wait 再重新观察；坐标动作以截图为准"
                 },
+            )
+        }
+        // 自绘控件（底部图标行、Canvas 图表、地图上的标记）本来就不会出现在节点树里。
+        // 节点数很少时主动提醒：否则调用方会以为「这屏就这么点东西」，
+        // 直接按坐标盲点，而盲点中了的是列表项或遮罩（2026-11-06 实测：设置入口图标
+        // 在节点树里根本不存在，连点两次都落在了别处）。
+        // 但「被 max_nodes 截断」和「真的稀疏」是两回事：上限设成 3 时同样只读到 3 个节点，
+        // 此时该说「调大 max_nodes」（上面已写进 hint），不该把人引去截图量坐标。
+        // 2026-11-06 实测：max_nodes=3 时两条提示同时出现，自相矛盾。
+        if (virtualDisplayId != null && nodeCount in 1..4 && !treeTruncated) {
+            diagnostics.put(
+                "sparse_tree_hint",
+                "这块虚拟屏只读到 $nodeCount 个节点：自绘控件（底部图标行、图表、Canvas）不会出现在节点树里。" +
+                    "要点它们之前先 include_screenshot=true；取不准位置时用 region 放大目标区域再换算坐标。",
             )
         }
         return diagnostics
@@ -2932,6 +2974,8 @@ internal class RootShellDeviceController(
     companion object {
         private const val TASK_CLEANUP_SETTLE_MS = 2_500L
         private const val TASK_CLEANUP_POLL_MS = 120L
+        /** pidof 短暂返回「没有」时的重试间隔（见 packageHasProcess）。 */
+        private const val PROCESS_RETRY_DELAY_MS = 350L
 
         /** IME 切换是全局状态；多个会话并发操作虚拟屏时串行化。 */
         private val IME_SWITCH_LOCK = Any()
