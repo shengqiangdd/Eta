@@ -304,6 +304,81 @@ class EtaBackupRepositoryTest {
     }
 
     @Test
+    fun exportedBackupCarriesStatsSoPreviewCanSkipFullScan() = runBlocking {
+        val conversation = ConversationEntity(
+            id = "conversation-stats",
+            title = "统计",
+            thinkingEnabled = false,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        EtaDatabase.get(context).conversationDao().replaceAll(
+            conversations = listOf(conversation),
+            messages = (0 until 3).map { index ->
+                ConversationMessageEntity(
+                    id = "message-stats-$index",
+                    conversationId = conversation.id,
+                    sortIndex = index,
+                    type = "user",
+                    content = "hi $index",
+                )
+            },
+            contextCheckpoints = emptyList(),
+            state = null,
+        )
+
+        val output = ByteArrayOutputStream()
+        val exported = EtaBackupRepository.export(context, output)
+        assertEquals(3, exported.messageCount)
+        val text = output.toString("UTF-8")
+        assertTrue("导出要把统计写进 header", text.contains("\"stats\""))
+
+        val fresh = EtaBackupRepository.inspect(context, ByteArrayInputStream(text.toByteArray()))
+        assertEquals(3, fresh.messageCount)
+
+        // 把统计改成一个不可能的值：预览若直接采信 header，说明它没有逐条遍历；
+        // 而真正的导入仍以实际记录为准（全量校验）。
+        val tampered = text.replace("\"messageCount\":3", "\"messageCount\":999")
+        val previewed = EtaBackupRepository.inspect(context, ByteArrayInputStream(tampered.toByteArray()))
+        assertEquals(999, previewed.messageCount)
+        val imported = EtaBackupRepository.import(context, ByteArrayInputStream(tampered.toByteArray()))
+        assertEquals(3, imported.messageCount)
+    }
+
+    @Test
+    fun backupWithoutStatsStillFallsBackToFullScan() = runBlocking {
+        val conversation = ConversationEntity(
+            id = "conversation-nostats",
+            title = "无统计",
+            thinkingEnabled = false,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        EtaDatabase.get(context).conversationDao().replaceAll(
+            conversations = listOf(conversation),
+            messages = (0 until 2).map { index ->
+                ConversationMessageEntity(
+                    id = "message-nostats-$index",
+                    conversationId = conversation.id,
+                    sortIndex = index,
+                    type = "user",
+                    content = "legacy $index",
+                )
+            },
+            contextCheckpoints = emptyList(),
+            state = null,
+        )
+
+        val output = ByteArrayOutputStream()
+        EtaBackupRepository.export(context, output)
+        // 去掉 stats 段，模拟旧版写出的备份：预览必须回退到全量校验。
+        val legacy = output.toString("UTF-8").replace(Regex(",\"stats\":\\{[^}]*\\}"), "")
+        assertFalse("测试数据应已去掉统计", legacy.contains("\"stats\""))
+        val summary = EtaBackupRepository.inspect(context, ByteArrayInputStream(legacy.toByteArray()))
+        assertEquals(2, summary.messageCount)
+    }
+
+    @Test
     fun oldBackupReceivesOnlyModelsAddedAfterItsCatalogRevision() = runBlocking {
         ProviderRepository.ensureBuiltInsMerged()
         val providers = EtaDatabase.get(context).providerDao().providers().map { row ->

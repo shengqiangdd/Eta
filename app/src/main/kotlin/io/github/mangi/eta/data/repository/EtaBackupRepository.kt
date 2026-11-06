@@ -45,6 +45,13 @@ internal data class EtaBackupDocument(
     val conversationState: ConversationStateEntity? = null,
     val memoryMd: String = "",
     val roleplay: CharacterBackupData? = null,
+    /**
+     * 导出时顺手记下的规模。
+     *
+     * 预览只需要「将要导入多少」，而旧实现为此把 15 万条消息全解一遍（堆峰值 167 MB、
+     * 约 3 分钟）。写进 header 后预览只读这一段。【旧备份没有这个字段】，于是回退到全量。
+     */
+    val stats: EtaBackupStats? = null,
 ) {
     companion object {
         const val FORMAT = "eta-backup"
@@ -52,6 +59,12 @@ internal data class EtaBackupDocument(
         const val SCHEMA_VERSION = 4
     }
 }
+
+@Serializable
+internal data class EtaBackupStats(
+    val conversationCount: Int = 0,
+    val messageCount: Int = 0,
+)
 
 @Serializable
 internal data class EtaBackupProvider(
@@ -128,6 +141,12 @@ internal object EtaBackupRepository {
                     phase = "export_roleplay"
                     val roleplay = CharacterBackupTransfer.snapshot(appContext, boundAvatars)
                     writer.value("roleplay", CharacterBackupData.serializer().nullable, roleplay)
+                    // 统计放在最后：导出是流式写，计数要遍历完才知道。
+                    writer.value(
+                        "stats",
+                        EtaBackupStats.serializer().nullable,
+                        EtaBackupStats(conversationCount, messageCount),
+                    )
                     EtaBackupSummary(providers.size, providers.sumOf { it.models.size }, conversationCount,
                         messageCount, memory.toByteArray(Charsets.UTF_8).size, roleplay.characters.size)
                 }
@@ -259,7 +278,10 @@ internal object EtaBackupRepository {
     }
 
     suspend fun inspect(context: Context, input: InputStream): EtaBackupSummary = withContext(Dispatchers.IO) {
-        EtaBackupJsonStreams.stage(context.applicationContext, input).use { EtaBackupValidation.validate(it) }
+        // fast=true：能读 header 里的统计就不逐条遍历（旧备份无统计则自动回退到全量校验）。
+        EtaBackupJsonStreams.stage(context.applicationContext, input).use {
+            EtaBackupValidation.validate(it, fast = true)
+        }
     }
 
     /**

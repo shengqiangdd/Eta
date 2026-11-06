@@ -5,9 +5,21 @@ import io.github.mangi.eta.data.model.ProviderAuthModes
 
 /** 校验只保留标识与角色关联所需的消息类型，正文和检查点逐条读取后释放。 */
 internal object EtaBackupValidation {
-    suspend fun validate(staged: EtaBackupJsonStreams.StagedDocument): EtaBackupSummary {
+    suspend fun validate(
+        staged: EtaBackupJsonStreams.StagedDocument,
+        fast: Boolean = false,
+    ): EtaBackupSummary {
         val header = staged.header
         validateHeader(header)
+        // 预览走快路径：新备份把统计写进了 header，没必要为了一句「将导入 15 万条消息」
+        // 把 15 万条全解一遍。实测全量遍历的堆峰值 167 MB、耗时约 3 分钟，
+        // 而快路径只读 header。结构完整性仍由 stage() 保证（数组必须完整、末尾不能有残留），
+        // 逐条去重与角色绑定留给真正的导入（事务内、失败回滚，且已有整库快照）。
+        if (fast) {
+            header.stats?.let { stats ->
+                return summaryOf(header, stats.conversationCount, stats.messageCount)
+            }
+        }
         val conversationIds = mutableSetOf<String>()
         val revisionConversationIds = mutableSetOf<String>()
         val bindingIds = mutableSetOf<String>()
@@ -44,19 +56,26 @@ internal object EtaBackupValidation {
                 if (!checkpointIds.add(row.conversationId)) throw EtaBackupException("备份中的上下文检查点重复")
             }
             header.roleplay?.let { CharacterBackupTransfer.validate(it, bindingIds) }
-            return EtaBackupSummary(
-                providerCount = header.providers.size,
-                modelCount = header.providers.sumOf { it.models.size },
-                conversationCount = conversationIds.size,
-                messageCount = messageCount,
-                memoryBytes = header.memoryMd.toByteArray(Charsets.UTF_8).size,
-                characterCount = header.roleplay?.characters?.size ?: 0,
-            )
+            return summaryOf(header, conversationIds.size, messageCount)
         } catch (failure: IllegalArgumentException) {
             if (failure is EtaBackupException) throw failure
             throw EtaBackupException("备份中的记录或角色数据无效", failure)
         }
     }
+
+    /** 预览与实际导入共用同一套数字口径，避免两边说法不一致。 */
+    private fun summaryOf(
+        header: EtaBackupDocument,
+        conversationCount: Int,
+        messageCount: Int,
+    ) = EtaBackupSummary(
+        providerCount = header.providers.size,
+        modelCount = header.providers.sumOf { it.models.size },
+        conversationCount = conversationCount,
+        messageCount = messageCount,
+        memoryBytes = header.memoryMd.toByteArray(Charsets.UTF_8).size,
+        characterCount = header.roleplay?.characters?.size ?: 0,
+    )
 
     private fun validateHeader(document: EtaBackupDocument) {
         if (document.format != EtaBackupDocument.FORMAT) throw EtaBackupException("这不是 Eta 备份文件")

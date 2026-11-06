@@ -3445,3 +3445,72 @@ EACCES 判定，于是**读文件失败会被说成“目标目录不可写”**
 - 导入预览把 93 MB 的 gz 解开后**整份留在内存里**（实测进程 RSS 397 MB），
   低内存设备有 OOM 风险；改成流式解析是结构性改动，单列一轮再做。
 - 预览没有进度百分比，只有一句“可能要一两分钟”。
+
+## 备份预览不再把 15 万条消息重解一遍（fix130）
+
+### 为什么
+
+上一节留下的未解决项是「预览把整份备份解开后留在内存里」。根因不在内存，而在**做了一件没必要的事**：
+
+导入预览只需要四个数字（对话数、消息数、提供商数、角色数），
+原实现却走 `stage()` + `validate()`，把 `messages` 数组里 **153,678 条消息逐条反序列化**，
+只为把它们数一遍。真机实测（display 21，93 MB 的 `.gz`）：**约 180 秒**，
+Java Heap 峰值 167 MB、RSS 447 MB，而 `dalvik.vm.heapgrowthlimit` 只有 256 MB ——
+低内存设备上这是实打实的 OOM 风险。
+
+### 实现
+
+- 导出时在文件末尾写一段可选统计：`"stats":{"conversationCount":25,"messageCount":153678}`。
+  只能写在末尾，因为流式导出要遍历完才知道计数。
+- `EtaBackupDocument.stats: EtaBackupStats? = null`；`SCHEMA_VERSION` **不动**——
+  可选字段带默认值，旧版本读到未知字段会跳过（`stage()` 的 `knownFields` 来自序列化描述符，
+  旧版把它当未知字段丢掉），新旧二进制混用安全。
+- `EtaBackupRepository.inspect` 改为 `validate(staged, fast = true)`：
+  header 里有 `stats` 就直接用它，不再遍历；**没有 `stats` 的旧备份自动回退全量校验**。
+- `import` 完全不变（仍全量校验）——预览是估计，真正落库必须逐条验。
+
+### 验证（canary，真机，同一份数据）
+
+先点「立即备份一次」生成带统计的新备份 `Eta-auto-20261106-1815`（93,307,859 B），
+用 `gzip -dc | tail` 直接看文件尾部确认：
+
+```
+..."roleplay":{"characters":[],"persona":null,"assets":[]},"stats":{"conversationCount":25,"messageCount":153678}
+```
+
+旧备份 `Eta-auto-20261106-1744` 尾部是 `...}}`，**没有 stats**。
+
+| 选中的文件 | 预览出确认框 | Java Heap 峰值 | 预览显示 |
+|---|---|---|---|
+| 1815（有 stats） | **约 60~88 秒** | 131 MB | 25 对话 / 153,678 消息 / 22 提供商 |
+| 1744（无 stats，回退全量） | 约 150~210 秒 | 139 MB | 同上 |
+
+两者数字一致；验证期间 `databases/eta.db` 的 mtime 始终是 16:15，**数据未被改动**；
+取消后 `cacheDir` 已清空（没有留下 406 MB 暂存）。
+
+### 一个必须说清的负面结论
+
+**内存没有降下来。** 36 秒时堆就到 131 MB，而那时还停在「正在解析」——
+真正吃内存的是 `stage()`：它要把 `messages` 数组落盘成 `messages.json`（明文 406 MB），
+逐条 `nextString()` 的临时对象把堆顶到增长上限附近。
+
+所以这次改动省的是**时间**（少解析一遍 15 万条），不是内存；
+耗时下限也由「解压 406 MB + 写 406 MB」决定，**不可能做到秒级**。
+要再往下走只有两条路，都不是小改动：
+
+1. 把 `stats` 挪到文件开头（导出前先 `SELECT COUNT(*)`），预览读到统计后**跳过 `messages` 不落盘**——
+   省掉 406 MB 磁盘写，但解压仍需扫全文，预计 40 秒量级；
+2. 末尾追加**独立的 gzip member**（类似 zip 的中央目录），预览 seek 到文件尾部只解几 KB ——
+   这才是真正的秒级，但要自己处理 gzip member 拼接与 seek，且旧文件仍需回退。
+
+### 检查门禁时发现的两件事（比这次的功能改动更重要）
+
+1. **我加的两个 Robolectric 测试在本机根本没跑。** `EtaBackupRepositoryTest` 不在
+   `tools/gate.sh` 的 `FAST_TEST_FILTERS` 白名单里，而门禁又对本机跳过了 88 个 Robolectric 类
+   （提示「Linux aarch64 没有 native runtime」）。把它们加进白名单会直接让门禁报
+   `No tests found`；用 `-Peta.runRobolectric=true` 强跑则是 14 个用例全挂在
+   `DefaultNativeRuntimeLoader`，与逻辑无关。
+   → 结论：**带 Room/Context 的备份测试在本机无法执行**。改用纯 JVM 的
+   `EtaBackupStatsCodecTest`（3 例：往返、缺失回退 null、`stats` 属于已知 header 字段）
+   并加进白名单，这 3 例是**真的跑过**的（门禁 1535 → **1538 用例**）。
+2. 那 2 个 Robolectric 用例留在文件里（其他环境能跑），但**本机未验证**，按要求记在这里。
