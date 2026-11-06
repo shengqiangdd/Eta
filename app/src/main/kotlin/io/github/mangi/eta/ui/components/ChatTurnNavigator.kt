@@ -3,11 +3,9 @@ package io.github.mangi.eta.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -18,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
@@ -102,53 +99,62 @@ internal fun moveTurnIndex(currentIndex: Int?, total: Int, step: Int): Int? {
     return (currentIndex + step).takeIf { it in 0 until total }
 }
 
+
 /**
- * 回合导航的尺寸事实源。
+ * 回合导航条的尺寸。
  *
- * 导航条浮在消息区右侧，**不参与列表布局**。如果内容区不主动留出同样宽的槽位，
- * 正文就会画到它下面：真机截图里行尾被不透明背景切掉，那几行读不全。
- * 所以「导航条实际占多宽」只在这里定义一次，列表按 [ContentGutter] 留白，
- * 改按钮尺寸或边距时两边不会单边漂移。
+ * 这条导航原先贴在消息区右侧，列表必须为它让出 44dp 宽的槽位：
+ * 本机 347dp 宽的屏幕上，每一行正文因此少 13%，用户直接指出「多轮消息时消息内容被挤掉一块」。
+ * 现在它改到输入框上方，只占高度、不占宽度 —— 尺寸仍只在这里定义一次。
  */
-internal object ChatTurnNavigatorMetrics {
-    /** 上下箭头的点击区（与 [TurnStepButton] 一致）。 */
-    val StepButtonSize = 32.dp
+internal object ChatTurnStripMetrics {
+    /** 单个方向按钮的点击区（也是胶囊高度的组成部分）。 */
+    val StepButtonSize = 30.dp
 
-    /** 导航条内边距（上下左右同值）。 */
-    val ColumnPadding = 2.dp
+    /** 胶囊上下内边距。 */
+    val VerticalPadding = 2.dp
 
-    /** 导航条最小宽度：`7/7` 这类短标签也要撑住，不能比按钮还窄。 */
-    val ColumnMinWidth = 40.dp
+    /** 胶囊总高度；bottomBar 会按它给列表留出可滚动的余量。 */
+    val Height = StepButtonSize + VerticalPadding * 2
 
-    /** 导航条与屏幕右缘的间距（调用方 `padding(end = ...)`）。 */
-    val EndGap = 4.dp
-
-    /** 导航条自身宽度（与 [ChatTurnNavigator] 的 `widthIn` + `padding` 一致）。 */
-    val Width: Dp = maxOf(ColumnMinWidth, StepButtonSize + ColumnPadding * 2)
-
-    /** 内容区要为它让出的总宽度：导航条 + 贴边间距。 */
-    val ContentGutter: Dp = Width + EndGap
+    /** 计数器左右留白：数字与箭头贴在一起会被读成「3/12↑」。 */
+    val LabelHorizontalPadding = 4.dp
 }
 
 /**
- * 消息列表右侧要让出的宽度；导航条不显示时返回 0。
+ * 是否显示回合导航条。
  *
- * 给不可见的控件留白，会让每一行都白窄一截 —— 所以判据必须与绘制处完全一致
- * （同一份 `turnNavigationEnabled && turnCount > 1`）。
+ * 判据只剩这一处：上一版的「画不画」和「列表让多少」是两个地方各写一遍，
+ * 于是同时出现过「没画导航但每行都窄一截」和「画了却压住正文」。
+ * 现在它只影响输入框上方多一行，列表宽度完全与之无关。
  */
-internal fun chatTurnNavigatorGutter(visible: Boolean): Dp =
-    if (visible) ChatTurnNavigatorMetrics.ContentGutter else 0.dp
+internal fun chatTurnStripVisible(turnNavigationEnabled: Boolean, total: Int): Boolean =
+    turnNavigationEnabled && total > 1
 
 /**
- * 贴在消息区右侧的回合导航条。
+ * 计数器文案。
  *
- * 位置刻意避开右下角的「回到底部」：那个按钮属于「我在跟最新内容」，这个是「我要去别处」，
- * 两者语义相反，挤在一起容易点错。
+ * [currentTurn] 为 null 表示视口还停在第一个提问之前（开场卡片、系统通知那一屏）：
+ * 显示「—/N」而不是「1/N」，后者会让用户以为自己正看着第 1 回合。
+ */
+internal fun chatTurnStripLabel(currentTurn: Int?, total: Int): String {
+    if (total <= 0) return "—/0"
+    val current = currentTurn?.coerceIn(0, total - 1)
+    return if (current == null) "—/$total" else "${current + 1}/$total"
+}
+
+/**
+ * 输入框上方的回合导航条。
  *
- * 宽度由 [ChatTurnNavigatorMetrics] 统一管理 —— 消息列表按同一份数值留出右侧槽位。
+ * 为什么不再浮在消息区右侧：那个位置要么压住正文，要么让列表让出 44dp 宽的槽位，
+ * 而「让出宽度」在手机上等于每一行都变短。挪到输入框上方后：
+ * - 正文拿到整屏宽度；
+ * - 只占一行高度，且由 Scaffold 的 bottomBar 统一计入 inset，列表能滚到它下面，
+ *   不会出现「最后一行被盖住」；
+ * - 位置靠近拇指，翻回合不用把手伸到屏幕中部。
  */
 @Composable
-internal fun ChatTurnNavigator(
+internal fun ChatTurnStrip(
     /** 当前视口所属的回合（0 基）；null 表示还停在第一个提问之前。 */
     currentTurn: Int?,
     total: Int,
@@ -158,18 +164,12 @@ internal fun ChatTurnNavigator(
 ) {
     if (total <= 1) return
     val current = currentTurn?.coerceIn(0, total - 1)
-    Column(
+    Row(
         modifier = modifier
-            .widthIn(min = ChatTurnNavigatorMetrics.ColumnMinWidth)
-            .background(
-                color = MiuixTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(20.dp),
-            )
-            .padding(
-                horizontal = ChatTurnNavigatorMetrics.ColumnPadding,
-                vertical = ChatTurnNavigatorMetrics.ColumnPadding,
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .clip(RoundedCornerShape(ChatTurnStripMetrics.Height / 2))
+            .background(MiuixTheme.colorScheme.surfaceContainerHigh)
+            .padding(vertical = ChatTurnStripMetrics.VerticalPadding),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         TurnStepButton(
             icon = Icons.Rounded.KeyboardArrowUp,
@@ -177,16 +177,13 @@ internal fun ChatTurnNavigator(
             enabled = current != null && current > 0,
             onClick = onPrevious,
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                // 还没进入任何回合时显示「—/N」而不是「1/N」：后者会让用户以为自己正看着
-                // 第 1 回合，实际那一屏还在开场卡片上。
-                text = if (current == null) "—/$total" else "${current + 1}/$total",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                maxLines = 1,
-            )
-        }
+        Text(
+            text = chatTurnStripLabel(current, total),
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = ChatTurnStripMetrics.LabelHorizontalPadding),
+        )
         TurnStepButton(
             icon = Icons.Rounded.KeyboardArrowDown,
             contentDescription = stringResource(R.string.chat_turn_next),
@@ -210,8 +207,8 @@ private fun TurnStepButton(
     }
     Box(
         modifier = Modifier
-            .size(ChatTurnNavigatorMetrics.StepButtonSize)
-            .clip(RoundedCornerShape(ChatTurnNavigatorMetrics.StepButtonSize / 2))
+            .size(ChatTurnStripMetrics.StepButtonSize)
+            .clip(RoundedCornerShape(ChatTurnStripMetrics.StepButtonSize / 2))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

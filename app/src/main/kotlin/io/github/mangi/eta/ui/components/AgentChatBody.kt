@@ -858,6 +858,18 @@ private fun AgentChatScaffold(
         }
     }
 
+    // 回合导航放在输入框上方（见 ChatTurnStrip）：它不再浮在正文右侧，列表可以把整屏宽度还给正文。
+    // 当前回合由消息列表按真实滚动位置回报 —— 归属要用「折叠后的条目标记」算，
+    // 在这里重算一遍不但多一次 O(n)，还会和列表的实际位置不同步。
+    var turnCurrent by remember { mutableStateOf<Int?>(null) }
+    val turnAnchors = remember(visibleMessages) { chatTurnAnchorIds(visibleMessages) }
+    val jumpToTurnIndex: (Int) -> Unit = { target ->
+        turnAnchors.getOrNull(target)?.let(onJumpToTurn)
+    }
+    val clampedCurrentTurn = {
+        turnCurrent?.coerceIn(0, (turnCount - 1).coerceAtLeast(0))
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
@@ -924,6 +936,15 @@ private fun AgentChatScaffold(
                 onAttachFilePath = onAttachFilePath,
                 onRemoveFileReference = onRemoveFileReference,
                 onCancelMessageEdit = onCancelMessageEdit,
+                turnCurrent = clampedCurrentTurn(),
+                turnTotal = turnCount,
+                turnNavigationEnabled = turnNavigationEnabled,
+                onTurnPrevious = {
+                    moveTurnIndex(clampedCurrentTurn(), turnCount, -1)?.let(jumpToTurnIndex)
+                },
+                onTurnNext = {
+                    moveTurnIndex(clampedCurrentTurn(), turnCount, 1)?.let(jumpToTurnIndex)
+                },
                 )
             }
         },
@@ -961,9 +982,7 @@ private fun AgentChatScaffold(
                 scrollRequest = scrollRequest,
                 searchMatchIds = searchMatchIds,
                 highlightMessageId = highlightMessageId,
-                turnCount = turnCount,
-                turnNavigationEnabled = turnNavigationEnabled,
-                onJumpToTurn = onJumpToTurn,
+                onTurnPositionChanged = { turnCurrent = it },
                 isStreaming = isStreaming,
                 bottomInset = bottomPadding,
                 keepBottomAnchored = keepBottomAnchored,
@@ -1004,9 +1023,8 @@ internal fun AgentConversationMessages(
     searchMatchIds: Set<String> = emptySet(),
     /** 当前跳转到的那一条，渲染时高亮；为空表示没有正在进行的搜索。 */
     highlightMessageId: String? = null,
-    turnCount: Int = 0,
-    turnNavigationEnabled: Boolean = true,
-    onJumpToTurn: (String) -> Unit = {},
+    /** 当前回合（0 基）变化时回报给外层：导航条画在输入框上方，不在本函数里。 */
+    onTurnPositionChanged: (Int?) -> Unit = {},
     isStreaming: Boolean,
     bottomInset: Dp,
     keepBottomAnchored: Boolean,
@@ -1341,6 +1359,8 @@ internal fun AgentConversationMessages(
                 currentTurnIndex(entryTurns, scrollState.firstVisibleItemIndex, atEnd = isAtBottom)
             }
         }
+        // 上个回合号只在变化时回报一次，不跟着每帧滚动重组外层。
+        LaunchedEffect(currentTurn) { onTurnPositionChanged(currentTurn) }
         val historyPaging = rememberChatHistoryPaging(
             scrollState = scrollState,
             entries = timelineEntries,
@@ -1355,10 +1375,6 @@ internal fun AgentConversationMessages(
             onLoadEarlier = onLoadEarlierMessages,
             onViewportChanged = onHistoryViewportChanged,
         )
-        // 回合导航浮在列表右侧，不参与布局。同一份判据同时决定「画不画导航条」和
-        // 「列表右侧留多少槽位」：两处各写一遍，早晚会出现「没画导航但每行都窄一截」
-        // 或「画了却压住正文」——后者是真机上实际发生过的截断。
-        val showTurnNavigator = turnNavigationEnabled && turnCount > 1
         LazyColumn(
             state = scrollState,
             verticalArrangement = Arrangement.Top,
@@ -1374,7 +1390,6 @@ internal fun AgentConversationMessages(
             contentPadding = PaddingValues(
                 top = 16.dp,
                 bottom = bottomInset + 16.dp,
-                end = chatTurnNavigatorGutter(showTurnNavigator),
             ),
             overscrollEffect = null,
         ) {
@@ -1514,31 +1529,6 @@ internal fun AgentConversationMessages(
                         .height(1.dp),
                 )
             }
-        }
-
-        if (showTurnNavigator) {
-            // currentTurn 来自上一帧的滚动状态，turnCount 来自当前帧的消息列表。编辑消息会把
-            // 后续消息截掉（visibleMessagesForEdit），回合数可能从 21 掉到 5，而 currentTurn
-            // 还是上一帧的 19 —— 直接拿它算目标会整体越界，「上一个 / 下一个」变成哑按钮，
-            // 箭头却因为显示端夹取而亮着。这里按当前 total 夹取，与显示口径保持一致。
-            val clampedTurn = currentTurn?.coerceIn(0, turnCount - 1)
-            ChatTurnNavigator(
-                currentTurn = clampedTurn,
-                total = turnCount,
-                onPrevious = {
-                    moveTurnIndex(clampedTurn, turnCount, -1)?.let { target ->
-                        chatTurnAnchorIds(visibleMessages).getOrNull(target)?.let(onJumpToTurn)
-                    }
-                },
-                onNext = {
-                    moveTurnIndex(clampedTurn, turnCount, 1)?.let { target ->
-                        chatTurnAnchorIds(visibleMessages).getOrNull(target)?.let(onJumpToTurn)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = ChatTurnNavigatorMetrics.EndGap),
-            )
         }
 
         AnimatedVisibility(
@@ -1830,6 +1820,12 @@ private fun AgentChatBottomBar(
     onAttachFilePath: (String) -> Unit,
     onRemoveFileReference: (String) -> Unit,
     onCancelMessageEdit: () -> Unit,
+    /** 回合导航（见 ChatTurnStrip）：放在输入框上方，不再浮在正文右侧占宽度。 */
+    turnCurrent: Int? = null,
+    turnTotal: Int = 0,
+    turnNavigationEnabled: Boolean = true,
+    onTurnPrevious: () -> Unit = {},
+    onTurnNext: () -> Unit = {},
     /** 待发送的引用；输入框上方会显示一行可取消的引用条。 */
     quotedMessage: ComposerQuoteUi? = null,
     onClearQuote: () -> Unit = {},
@@ -1932,6 +1928,19 @@ private fun AgentChatBottomBar(
             )
             pendingAsk?.let { ask ->
                 AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (chatTurnStripVisible(turnNavigationEnabled, turnTotal)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    ChatTurnStrip(
+                        currentTurn = turnCurrent,
+                        total = turnTotal,
+                        onPrevious = onTurnPrevious,
+                        onNext = onTurnNext,
+                    )
+                }
             }
             AgentChatInputBar(
                 input = input,

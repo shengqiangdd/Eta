@@ -117,7 +117,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.data.repository.ConversationHistoryExportTest
   --tests io.github.mangi.eta.data.backup.AutoBackupSchedulerTest
   --tests io.github.mangi.eta.ui.components.AgentChatTimelineEntriesTest
-  --tests io.github.mangi.eta.ui.components.ChatTurnNavigatorGutterTest
+  --tests io.github.mangi.eta.ui.components.ChatTurnStripTest
   --tests io.github.mangi.eta.ui.components.ConversationPaneLayoutTest
   --tests io.github.mangi.eta.ui.components.ToolIconMappingTest
   --tests io.github.mangi.eta.ui.model.ComposerQuoteTest
