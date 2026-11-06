@@ -114,11 +114,23 @@ internal fun DataBackupScreen(
         scope.launch {
             busyOp = BackupOp.EXPORT
             exportWritten = 0L
-            val target = uniqueBackupFile(File(directory), defaultBackupFileName())
+            val targetDir = File(directory)
+            // 上一次若在导出途中被杀，catch 里的 partial.delete() 根本不会执行，用户的目录里
+            // 会留下一个几十到几百 MB 的 `.part`。它既不是可用备份，也不会被 uniqueBackupFile
+            // 当成重名（那个只看正式名），所以只会一直占着空间。动手前先扫掉自家的临时文件。
+            val cleaned = cleanOrphanPartials(targetDir)
+            if (cleaned > 0) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.data_backup_cleaned_partials, cleaned),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            val target = uniqueBackupFile(targetDir, defaultBackupFileName())
             // 先写 .part，成功后才改名：中途失败或被杀只会留下一个显而易见的临时文件，
             // 不会让用户把「写了一半的备份」当成能用的备份。旧实现靠 cache 中转来保证
             // 「目标要么完整要么没动」，代价是同一份数据写两遍、磁盘要两份。
-            val partial = File(target.parentFile, target.name + ".part")
+            val partial = File(target.parentFile, target.name + PARTIAL_SUFFIX)
             try {
                 val summary = FileOutputStream(partial).use { raw ->
                     onExport(CountingOutputStream(raw) { written -> exportWritten = written })
@@ -628,6 +640,37 @@ private class CountingOutputStream(
     private companion object {
         const val REPORT_STEP = 4L * 1024 * 1024
     }
+}
+
+/** 导出时先写这个后缀，成功后才改名。 */
+private const val PARTIAL_SUFFIX = ".part"
+
+/**
+ * 孤儿临时文件的完整后缀（正式名 + [PARTIAL_SUFFIX]），用来判断「这是上次导出留下的」。
+ *
+ * 不能只看 `.part`：那个后缀太通用，目录里用户的别的临时文件会被误删。
+ * 与 [defaultBackupFileName] 的命名绑定，改命名时 `DataBackupPartialCleanupTest` 会红。
+ */
+internal const val BACKUP_PARTIAL_SUFFIX = ".eta-backup.json" + PARTIAL_SUFFIX
+
+/**
+ * 删掉目录里上次中断留下的导出临时文件，返回删掉的个数。
+ *
+ * 进程被杀时 `partial.delete()` 之前那段 catch 根本不会跑到，所以清理只能放到下一次
+ * 动手之前做。目录读不了（不存在 / 无权限）时返回 0 —— 清理失败不该挡住导出本身。
+ */
+internal fun cleanOrphanPartials(directory: File): Int {
+    val children = directory.listFiles() ?: return 0
+    var removed = 0
+    for (child in children) {
+        if (!child.isFile || !child.name.endsWith(BACKUP_PARTIAL_SUFFIX)) continue
+        if (child.delete()) {
+            removed++
+        } else {
+            AndroidAgentLogger.error("Agent backup: cannot delete stale partial ${child.name.take(80)}")
+        }
+    }
+    return removed
 }
 
 /**

@@ -3739,3 +3739,36 @@ fix130 的结论是「耗时下限是解压 + 写盘，不可能秒级」。要�
 
 门禁 `STAGES=test`：**1547 用例 0 失败**，资源 2261（新增 `data_backup_export_progress`、
 `data_backup_error_rename` 两条 × 三语），死文案 0。
+
+### 真机验证（2026-11-07，canary / 390 MB 真实库）
+
+被测数据是 canary 从自动备份恢复出来的真实库：`eta.db` = 390,193,152 B，导出产物 406,284,189 B
+（连续两次导出逐字节一致）。
+
+每 0.5 秒采样一次目标文件，「一开始就在长」有直接证据：
+
+| 时刻 | `.part` 大小 |
+|---|---|
+| t+8s | 882,993 B |
+| t+20s | 120 MB |
+| t+48s | 386 MB |
+| t+49s | 改名成 `.json` = 406,284,189 B |
+
+约 8 MB/s，49 秒完成。修前同一场景是「32 秒后目标仍是 0 字节」。界面进度实测从 8 MB 递增到
+344 MB；两次导出结束后 `cache` 里只剩 `eta.db.lck`（3.5 KB），没有 `eta_backup_*` 目录。
+
+### 补：被 kill 会留下大 `.part`（本次已修）
+
+真机强杀（导出第 6 秒 `am force-stop`）：目标目录里确实留下
+`Eta-backup-20261107-0021.eta-backup.json.part` = **38,912,497 B**，cache 干净。
+
+这是「用 `.part` 换原子性」的代价，但**孤儿没有任何回收机制**：`uniqueBackupFile` 只看正式名，
+不会把它当重名；用户只要不再往同一目录导出，它就永远占着空间。
+
+修法：`exportTo()` 动手前先 `cleanOrphanPartials(目录)` —— 只匹配 `BACKUP_PARTIAL_SUFFIX`
+（`.eta-backup.json` + `.part`），不碰目录里别的文件；目录读不了时返回 0，清理失败不挡导出；
+删掉 ≥1 个时 Toast 告知条数（新增 `data_backup_cleaned_partials` × 三语）。
+
+单测 `DataBackupPartialCleanupTest`（5 例）：正常清理且不动正式备份 / 不误删 `notes.part` 与
+`*.eta-backup.json.bak` / 目录不存在返回 0 / 同名目录不当文件删 / 后缀常量与导出命名绑定
+（改命名会红）。已加入 `gate.sh` 的 `FAST_TEST_FILTERS`（纯 JVM，不依赖 Robolectric）。
