@@ -93,6 +93,29 @@ internal fun ToolActivityInline(
 }
 
 /**
+ * 工具折叠行的标题。
+ *
+ * 后端给的是参数预览：长命令（尤其是多行 shell / SQL）会带换行和整段参数，原样当标题时
+ * 第一行只剩半截语句，看起来像乱码。这里只取第一行、折叠空白并限长；完整命令仍在展开后的详情里。
+ */
+internal fun toolRowTitle(argumentsSummary: String, fallback: String): String {
+    val firstLine = argumentsSummary.lineSequence()
+        .map(String::trim)
+        .firstOrNull(String::isNotEmpty)
+        .orEmpty()
+    val compact = firstLine.replace(TOOL_TITLE_WHITESPACE_RUNS, " ")
+    if (compact.isEmpty()) return fallback
+    return if (compact.length > TOOL_TITLE_MAX_CHARS) {
+        compact.take(TOOL_TITLE_MAX_CHARS).trimEnd() + "…"
+    } else {
+        compact
+    }
+}
+
+private val TOOL_TITLE_WHITESPACE_RUNS = Regex("\\s+")
+private const val TOOL_TITLE_MAX_CHARS = 60
+
+/**
  * 工具的折叠形态是两行：做了什么，以及一行结论。命令、完整结果和浏览器预览只在展开后
  * 组合，长会话中成百上千个工具行保持轻量。
  */
@@ -157,7 +180,10 @@ internal fun ToolActivityRow(
         null
     }
     val failed = message.status == ToolActivityStatusUi.Failed
-    val title = message.argumentsSummary.ifBlank { toolDisplayName(message.toolName) }
+    val toolLabel = toolDisplayName(message.toolName)
+    val title = remember(message.argumentsSummary, toolLabel) {
+        toolRowTitle(message.argumentsSummary, toolLabel)
+    }
     val outcome = remember(message.status, message.resultSummary) { message.outcomeLine() }
     val browserLine = browserSnapshot?.let { snapshot ->
         when {

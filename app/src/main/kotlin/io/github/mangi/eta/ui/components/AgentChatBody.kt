@@ -766,6 +766,15 @@ private fun AgentChatScaffold(
     modifier: Modifier = Modifier,
 ) {
     val missingPermissionCount = missingPermissionIds.size
+    // 列表真的能滚时才显示回合导航：会话短到一屏放得下时，箭头点了也不会动。
+    // layoutInfo 为空表示还没布局完，此时先按住 total 的判据，避免首帧闪一下再消失。
+    val turnStripCanScroll by remember(scrollState) {
+        derivedStateOf {
+            scrollState.layoutInfo.totalItemsCount == 0 ||
+                scrollState.canScrollForward ||
+                scrollState.canScrollBackward
+        }
+    }
     val surfaceColor = MiuixTheme.colorScheme.surface
     val frostEnabled = hasMessages && LocalBlurEnabled.current && isRuntimeShaderSupported()
     val messageBackdrop = rememberLayerBackdrop {
@@ -939,6 +948,7 @@ private fun AgentChatScaffold(
                 turnCurrent = clampedCurrentTurn(),
                 turnTotal = turnCount,
                 turnNavigationEnabled = turnNavigationEnabled,
+                turnNavigationScrollable = turnStripCanScroll,
                 onTurnPrevious = {
                     moveTurnIndex(clampedCurrentTurn(), turnCount, -1)?.let(jumpToTurnIndex)
                 },
@@ -1824,6 +1834,8 @@ private fun AgentChatBottomBar(
     turnCurrent: Int? = null,
     turnTotal: Int = 0,
     turnNavigationEnabled: Boolean = true,
+    /** 列表是否真的能滚：一屏放得下时导航条只占一行，点了也不会动。 */
+    turnNavigationScrollable: Boolean = true,
     onTurnPrevious: () -> Unit = {},
     onTurnNext: () -> Unit = {},
     /** 待发送的引用；输入框上方会显示一行可取消的引用条。 */
@@ -1929,7 +1941,7 @@ private fun AgentChatBottomBar(
             pendingAsk?.let { ask ->
                 AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))
             }
-            if (chatTurnStripVisible(turnNavigationEnabled, turnTotal)) {
+            if (chatTurnStripVisible(turnNavigationEnabled, turnTotal, turnNavigationScrollable)) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                     horizontalArrangement = Arrangement.Center,

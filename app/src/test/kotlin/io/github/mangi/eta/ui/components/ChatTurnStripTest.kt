@@ -33,6 +33,13 @@ class ChatTurnStripTest {
     }
 
     @Test
+    fun stripHiddenWhenListFitsOnOneScreen() {
+        // 一屏放得下时上下箭头没有可跳的目标：画出来只会白占一行高度，点了也不动。
+        assertFalse(chatTurnStripVisible(turnNavigationEnabled = true, total = 2, canScroll = false))
+        assertTrue(chatTurnStripVisible(turnNavigationEnabled = true, total = 2, canScroll = true))
+    }
+
+    @Test
     fun labelShowsDashBeforeTheFirstTurn() {
         // 视口停在开场卡片上时显示「—/N」：显示 1/N 会让人以为自己正看着第 1 回合。
         assertEquals("—/12", chatTurnStripLabel(currentTurn = null, total = 12))

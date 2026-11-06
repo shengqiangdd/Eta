@@ -247,6 +247,12 @@ internal class AgentRunMessageProjector(
     ): List<AgentChatMessageUi> {
         if (delta.isEmpty()) return messages
 
+        // 纯空白增量不凭空建节点：模型偶尔只发一个空格或换行，落库后就是一条空「思考」。
+        // 已有节点时仍照常追加 —— 段落之间的空行是正文格式的一部分，不能在这里吃掉。
+        val thinkingId = thinkingMessageId(runId, round, index)
+        val hasThinkingMessage = messages.any { it is ThinkingMessageUi && it.id == thinkingId }
+        if (!hasThinkingMessage && delta.isBlank()) return messages
+
         val transitioned = transitionVisibleBlock(
             runId = runId,
             round = round,
@@ -254,7 +260,6 @@ internal class AgentRunMessageProjector(
             index = index,
             messages = messages,
         )
-        val thinkingId = thinkingMessageId(runId, round, index)
         val elapsedSeconds = elapsedSeconds(thinkingId)
         var updated = false
         val next = transitioned.map { message ->
@@ -293,6 +298,8 @@ internal class AgentRunMessageProjector(
         ) {
             return finalizeThinkingRound(runId, round, messages)
         }
+        // 收尾事件里只有空白时补写节点，等于给这一轮加一条永远展开不出内容的「思考」。
+        if (content.isBlank()) return messages
 
         val thinkingId = thinkingFallbackMessageId(runId, round)
         return messages.insertBeforeFirstAssistant(

@@ -3175,3 +3175,47 @@ codex 0.164 的 provider 配置里只有 `http_headers` 这类字段，没有「
 
 真机效果要装包后跑一次 `eta_self_audit`：预期 findings 从 2 条降到 0 条，
 线索里出现「另有 2 次崩溃发生在当前安装包之前」。本轮只到单测。
+
+## 回合导航只在真的能滚时出现，工具行标题不再是一整段参数（fix125）
+
+三处都是「界面上看起来像坏了」的小问题，根因各不相同，一起修。
+
+### 一、空思考生成了空节点
+
+模型偶尔只发一个空格或换行（有时是 reasoning 结束的收尾换行）。原先 `appendReasoningDelta`
+见到 thinking 字段就开始建节点，`ensureCompletedThinking` 又在结尾补一个「兜底」节点——
+两者都会在对话里留下一块**什么都没有**的折叠区。
+
+- `appendReasoningDelta`：还没有 thinking 节点且 `delta.isBlank()` → 直接返回，不建节点；
+  **已有节点仍追加空白**（保留段落的空行，别把正常换行的思考吞掉）。
+- `ensureCompletedThinking`：命中已有节点但内容全空白 → 不补 fallback 节点。
+
+旧数据不受影响：已经落库的空思考仍按原样显示（这次只防新增），没有做清理。
+
+### 二、工具行标题塞了整段参数
+
+`ToolActivityRow` 的标题原先直接取 `argumentsSummary`，SQL 或长命令会把整段参数塞进一行，
+在窄屏上被挤成两三行，行高跳动。
+
+新增 `toolRowTitle()`：取**首个非空行**、把连续空白折叠成单个空格、超过 60 字截断加 `…`，
+全空白时回退到工具名。参数原文仍在展开后的详情里，没有丢信息。
+
+### 三、列表撑不满一屏时，导航条仍然在
+
+回合导航条（`ChatTurnStrip`）判据只有「开了开关 && 回合数 > 1」。两三轮的短会话、
+或内容很短的一屏，本来就没有可滚动的距离，导航条却照样占一行，点了也没反应。
+
+- `chatTurnStripVisible()` 增加 `canScroll` 参数（默认 true，保持既有调用语义）。
+- `AgentChatBody` 用 `derivedStateOf { totalItemsCount == 0 || canScrollForward || canScrollBackward }`
+  作为可滚判据：**未布局时按 total 判据**，避免首帧闪一下。
+
+### 验证
+
+- 单测：新增 8 例（`blankReasoningDeltaDoesNotCreateEmptyThinkingMessage`、
+  `blankCompletedReasoningDoesNotAppendFallbackThinking`、`ToolRowTitleTest` 5 例、
+  `stripHiddenWhenListFitsOnOneScreen`）。
+- 门禁 `STAGES=test`：契约检查 524 个测试类、快速子集 169，**1521 用例 0 失败**。
+- 装机：canary 包 `pm install -r` Success，启动、首页、会话历史页渲染正常，无崩溃。
+- 真机有数据场景**未验证**：canary 与主包数据隔离，把主包 `eta.db`（390 MB、25 个会话）
+  复制过去后会话列表仍为空，原因未查明（进程确实打开了该 DB、文件未被改写、无 SQLite 报错），
+  因此「空思考不再出现 / 工具行标题首行化 / 导航条隐藏」三处的实际渲染只到逻辑层与空态。

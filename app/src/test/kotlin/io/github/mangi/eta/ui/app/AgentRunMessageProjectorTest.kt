@@ -821,4 +821,35 @@ class AgentRunMessageProjectorTest {
         assertEquals(1_700_000_000_000L, tool.startedAtMs)
         assertEquals(ToolActivityStatusUi.Running, tool.status)
     }
+
+    /**
+     * 纯空白增量不建节点，已存在的节点仍保留空白。
+     *
+     * 模型偶尔在工具调用前后只吐一个空格或换行（本机实测全库有近三千条这样的空思考），
+     * 原样建节点会在聊天记录里留下永远展不开内容的「思考」行。
+     */
+    @Test
+    fun blankReasoningDeltaDoesNotCreateEmptyThinkingMessage() {
+        val projector = AgentRunMessageProjector(nowElapsedRealtime = { 1_000L })
+        assertTrue(
+            projector.appendReasoningDelta("run-blank", round = 1, index = 0, delta = " \n ", emptyList())
+                .isEmpty()
+        )
+
+        var messages = projector.appendReasoningDelta("run-blank", round = 1, index = 0, delta = "第一段", emptyList())
+        messages = projector.appendReasoningDelta("run-blank", round = 1, index = 0, delta = "\n\n", messages)
+        messages = projector.appendReasoningDelta("run-blank", round = 1, index = 0, delta = "第二段", messages)
+        assertEquals("第一段\n\n第二段", messages.filterIsInstance<ThinkingMessageUi>().single().content)
+    }
+
+    /** 收尾事件只有空白时也不能补写思考节点——那是「思考完成」却展开不出任何内容的空行。 */
+    @Test
+    fun blankCompletedReasoningDoesNotAppendFallbackThinking() {
+        val projector = AgentRunMessageProjector(nowElapsedRealtime = { 1_000L })
+        val messages = listOf<AgentChatMessageUi>(UserMessageUi(id = "user-run-blank-done", content = "跑一下"))
+        assertSame(
+            messages,
+            projector.ensureCompletedThinking("run-blank-done", round = 1, content = " \n", messages = messages),
+        )
+    }
 }

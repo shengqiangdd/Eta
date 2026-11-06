@@ -128,8 +128,11 @@ internal object ChatTurnStripMetrics {
  * 于是同时出现过「没画导航但每行都窄一截」和「画了却压住正文」。
  * 现在它只影响输入框上方多一行，列表宽度完全与之无关。
  */
-internal fun chatTurnStripVisible(turnNavigationEnabled: Boolean, total: Int): Boolean =
-    turnNavigationEnabled && total > 1
+internal fun chatTurnStripVisible(
+    turnNavigationEnabled: Boolean,
+    total: Int,
+    canScroll: Boolean = true,
+): Boolean = turnNavigationEnabled && total > 1 && canScroll
 
 /**
  * 计数器文案。
