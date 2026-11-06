@@ -73,7 +73,8 @@ internal fun DataBackupScreen(
     onImport: suspend (InputStream) -> EtaBackupSummary,
 ) {
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
+    var busyOp by remember { mutableStateOf(BackupOp.IDLE) }
+    val busy = busyOp != BackupOp.IDLE
     var pendingImportPath by remember { mutableStateOf<String?>(null) }
     var pendingSummary by remember { mutableStateOf<EtaBackupSummary?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -92,7 +93,7 @@ internal fun DataBackupScreen(
 
     fun exportTo(directory: String) {
         scope.launch {
-            busy = true
+            busyOp = BackupOp.EXPORT
             try {
                 val target = uniqueBackupFile(File(directory), defaultBackupFileName())
                 val summary = FileOutputStream(target).use { onExport(it) }
@@ -108,7 +109,7 @@ internal fun DataBackupScreen(
             } catch (throwable: Throwable) {
                 showFailure(throwable)
             } finally {
-                busy = false
+                busyOp = BackupOp.IDLE
             }
         }
     }
@@ -117,7 +118,7 @@ internal fun DataBackupScreen(
         pendingImportPath = path
         // 先只读解析：把「将要导入什么」摆到确认框里。解析失败不弹框，也不碰库。
         scope.launch {
-            busy = true
+            busyOp = BackupOp.IMPORT_PARSING
             try {
                 pendingSummary = openSelectedBackup(context, path).use { onInspect(it) }
                 showImportDialog = true
@@ -125,7 +126,7 @@ internal fun DataBackupScreen(
                 pendingImportPath = null
                 showFailure(throwable)
             } finally {
-                busy = false
+                busyOp = BackupOp.IDLE
             }
         }
     }
@@ -220,7 +221,7 @@ internal fun DataBackupScreen(
                 EtaPreferenceDivider(hasLeading = true)
                 EtaArrowPreference(
                     title = stringResource(R.string.data_backup_auto_run_now),
-                    summary = if (busy) {
+                    summary = if (busyOp == BackupOp.BACKUP) {
                         stringResource(R.string.data_backup_working)
                     } else {
                         stringResource(R.string.data_backup_auto_run_now_summary)
@@ -229,12 +230,12 @@ internal fun DataBackupScreen(
                     startAction = {
                         BackupIcon(
                             icon = Icons.Rounded.Download,
-                            loading = busy,
+                            loading = busyOp == BackupOp.BACKUP,
                         )
                     },
                     onClick = {
                         scope.launch {
-                            busy = true
+                            busyOp = BackupOp.BACKUP
                             try {
                                 val outcome = AutoBackupRepository.runNow(context)
                                 Toast.makeText(
@@ -247,7 +248,7 @@ internal fun DataBackupScreen(
                             } catch (throwable: Throwable) {
                                 showFailure(throwable)
                             } finally {
-                                busy = false
+                                busyOp = BackupOp.IDLE
                             }
                         }
                     },
@@ -261,7 +262,7 @@ internal fun DataBackupScreen(
             EtaPreferenceGroup(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
                 EtaArrowPreference(
                     title = stringResource(R.string.data_backup_export),
-                    summary = if (busy) {
+                    summary = if (busyOp == BackupOp.EXPORT) {
                         stringResource(R.string.data_backup_working)
                     } else {
                         stringResource(R.string.data_backup_export_summary)
@@ -270,7 +271,7 @@ internal fun DataBackupScreen(
                     startAction = {
                         BackupIcon(
                             icon = Icons.Rounded.Download,
-                            loading = busy,
+                            loading = busyOp == BackupOp.EXPORT,
                         )
                     },
                     onClick = {
@@ -280,12 +281,16 @@ internal fun DataBackupScreen(
                 EtaPreferenceDivider(hasLeading = true)
                 EtaArrowPreference(
                     title = stringResource(R.string.data_backup_import),
-                    summary = stringResource(R.string.data_backup_import_summary),
+                    summary = when (busyOp) {
+                        BackupOp.IMPORT_PARSING -> stringResource(R.string.data_backup_import_parsing)
+                        BackupOp.IMPORTING -> stringResource(R.string.data_backup_working)
+                        else -> stringResource(R.string.data_backup_import_summary)
+                    },
                     enabled = !busy,
                     startAction = {
                         BackupIcon(
                             icon = Icons.Rounded.Description,
-                            loading = false,
+                            loading = busyOp == BackupOp.IMPORT_PARSING || busyOp == BackupOp.IMPORTING,
                         )
                     },
                     onClick = {
@@ -336,7 +341,7 @@ internal fun DataBackupScreen(
                     val path = pendingImportPath ?: return@MiuixDialogActions
                     showImportDialog = false
                     scope.launch {
-                        busy = true
+                        busyOp = BackupOp.IMPORTING
                         try {
                             // 覆盖前先落一份整库快照：导入中途失败时还有原样可回退的副本。
                             // 快照失败就不导入 —— 没有回退点的破坏性操作不做；并且要明确告诉用户
@@ -369,7 +374,7 @@ internal fun DataBackupScreen(
                         } finally {
                             pendingImportPath = null
                             pendingSummary = null
-                            busy = false
+                            busyOp = BackupOp.IDLE
                         }
                     }
                 },
@@ -489,6 +494,9 @@ private fun defaultBackupFileName(): String =
 
 /** 备份页自己的两种选择：导出选目录、导入选文件。 */
 private enum class BackupPickerMode { EXPORT_DIRECTORY, IMPORT_FILE }
+
+/** 哪个操作正在跑：三个按钮互斥，但「处理中」只能出现在真正在跑的那一个上。 */
+private enum class BackupOp { IDLE, BACKUP, EXPORT, IMPORT_PARSING, IMPORTING }
 
 /**
  * 同名文件不覆盖：追加 -2、-3 …。

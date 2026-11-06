@@ -1170,6 +1170,7 @@
   <string name="data_backup_export_summary">將對話、模型供應商與 MEMORY.md 儲存為 JSON 檔案</string>
   <string name="data_backup_import">匯入資料</string>
   <string name="data_backup_import_summary">從備份檔案取代對話、模型供應商與 MEMORY.md</string>
+  <string name="data_backup_import_parsing">正在解析備份檔案，大檔案可能要一兩分鐘</string>
   <string name="data_backup_import_confirm_title">匯入 Eta 資料？</string>
   <string name="data_backup_import_confirm_summary">目前的對話、模型供應商與 MEMORY.md 將被取代，備份檔案可能包含 API Key。</string>
   <string name="data_backup_import_preview">將匯入 %1$d 個對話、%2$d 則訊息、%3$d 個模型供應商、%4$d 個角色，記憶 %5$s。目前的資料將被取代；按下「匯入」後會先儲存整庫快照（體積與目前資料庫相近，只保留最近 2 份）；匯入前會先把備份整份解壓到應用程式快取，需要同量級的暫存空間。</string>
