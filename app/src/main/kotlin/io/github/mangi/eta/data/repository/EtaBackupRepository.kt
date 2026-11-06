@@ -101,7 +101,7 @@ internal object EtaBackupRepository {
             val database = EtaDatabase.get(appContext)
             val settings = SettingsDataStore.settings()
             val catalogRevision = SettingsDataStore.officialModelCatalogRevision()
-            EtaBackupJsonStreams.export(appContext, output, onPhase = { phase = it }) { writer ->
+            EtaBackupJsonStreams.export(output, onPhase = { phase = it }) { writer ->
                 database.withTransaction {
                     val dao = database.conversationDao()
                     val providers = database.providerDao().providers().map {

@@ -47,38 +47,23 @@ internal object EtaBackupJsonStreams {
     val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     suspend fun export(
-        context: Context,
         output: OutputStream,
         maxBytes: Long = MAX_BACKUP_BYTES,
         onPhase: (String) -> Unit = {},
         write: suspend (DocumentWriter) -> EtaBackupSummary,
     ): EtaBackupSummary {
-        onPhase("stage_export")
-        val directory = createDirectory(context)
-        try {
-            val file = File(directory, "export.json")
-            val summary = file.outputStream().buffered().use { stream ->
-                val writer = DocumentWriter(LimitedOutput(stream, maxBytes))
-                val result = write(writer)
-                writer.finish()
-                result
-            }
-            onPhase("copy_export")
-            currentCoroutineContext().ensureActive()
-            file.inputStream().use { input ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                }
-            }
-            output.flush()
-            return summary
-        } finally {
-            removeDirectory(directory)
-        }
+        onPhase("write_export")
+        // 直接写目标流。旧实现先把整个文档写成 cache/export.json，再逐字节复制到用户选的目录：
+        // 同一份数据写两遍（真机 406 MB 要 40 秒以上才轮到目标文件出现第一个字节），
+        // 磁盘要双份，而且进程被杀时 finally 不执行，cache 里会留下一整份备份。
+        val target = output.buffered()
+        val writer = DocumentWriter(LimitedOutput(target, maxBytes))
+        val result = write(writer)
+        // 取消检查点：写入本身是同步的，不主动检查的话，用户点了取消也要等整份写完。
+        currentCoroutineContext().ensureActive()
+        writer.finish()
+        target.flush()
+        return result
     }
 
     suspend fun stage(context: Context, input: InputStream, onPhase: (String) -> Unit = {}): StagedDocument {

@@ -212,20 +212,23 @@ class EtaBackupStreamingTest {
         val output = ByteArrayOutputStream()
         var rejected = false
         try {
-            EtaBackupJsonStreams.export(context, output, maxBytes = 64) { writer ->
+            EtaBackupJsonStreams.export(output, maxBytes = 64) { writer ->
                 writer.value("memoryMd", String.serializer(), "x".repeat(128))
                 EtaBackupSummary(0, 0, 0, 0, 128)
             }
         } catch (_: EtaBackupException) { rejected = true }
         assertTrue(rejected)
+        // 目标流仍然是空的：写入经过 BufferedOutputStream（8 KB 缓冲），64 字节的上限在 flush
+        // 之前就抛了；正式导出那条路还会先写 .part、成功后改名，所以用户永远看不到半份备份。
         assertEquals(0, output.size())
+        // cache 里不再有暂存目录 —— 旧实现会在这里留一整份备份，进程被杀就再也清不掉。
         assertCleanStaging()
 
         val job = Job()
         var cancelled = false
         try {
             withContext(job) {
-                EtaBackupJsonStreams.export(context, output) { writer ->
+                EtaBackupJsonStreams.export(output) { writer ->
                     writer.value("memoryMd", String.serializer(), "内容")
                     job.cancel()
                     EtaBackupSummary(0, 0, 0, 0, 6)

@@ -1185,6 +1185,8 @@
   <string name="data_backup_warning_summary">文件包含模型提供商 API Key，仅包含对话、模型提供商和 MEMORY.md。</string>
   <string name="data_backup_export">导出数据</string>
   <string name="data_backup_export_summary">将对话、模型提供商和 MEMORY.md 保存为 JSON 文件</string>
+  <string name="data_backup_export_progress">正在导出…已写入 %1$d MB</string>
+  <string name="data_backup_error_rename">无法把文件保存到所选目录，换一个目录再试</string>
   <string name="data_backup_import">导入数据</string>
   <string name="data_backup_import_summary">从备份文件替换对话、模型提供商和 MEMORY.md</string>
   <string name="data_backup_import_parsing">正在解析备份文件，大文件可能要一两分钟</string>

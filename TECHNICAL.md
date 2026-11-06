@@ -3696,3 +3696,46 @@ fix130 的结论是「耗时下限是解压 + 写盘，不可能秒级」。要�
 - 备份目录回到原有 3 份（1744 / 1815 / 1836，字节数不变），`Eta-zz-*` 与 0 字节测试文件全删；
 - `Android/data/io.github.mangi.eta.canary/files` 与 `Download` 根下的临时文件一并清掉；
 - `databases/eta.db` 的 mtime 仍是 16:15 —— 全程没有改动真实数据。
+
+## fix135（导出不再写两遍：从 cache 中转改成直写 + .part）
+
+### 为什么
+
+查 fix134 留下的「导出后目标文件长时间 0 字节」时发现的：`EtaBackupJsonStreams.export()`
+原来先把**整个文档**写成 `cache/eta_backup_*/export.json`，再逐字节复制到用户选的目录。
+
+真机上表现为：点了「导出数据」之后 **32 秒目标文件仍然是 0 字节**（数据还在缓存里没开始搬），
+一次 406 MB 的导出等于同样 406 MB 写两遍、磁盘要留双份；更糟的是进程被杀时
+`finally { removeDirectory() }` 根本不执行，cache 里会留下一整份完整备份，谁也不会去清。
+
+之前那些「0 字节的 `Eta-backup-*.json`」正是这样来的。
+
+### 改法
+
+1. **直写目标流**：`export(output)` 直接把 `DocumentWriter` 接到调用方给的流上，
+   不再有 `stage_export` → `copy_export` 两段。顺便删掉了 `context` 参数（不再需要建缓存目录）。
+2. **用 `.part` 保住「目标要么完整要么没动」**：这个保证原来是靠「先写缓存、成功才复制」
+   换来的，现在改由 `DataBackupScreen.exportTo` 承担 —— 先写 `xxx.json.part`，
+   `renameTo` 成功才变成正式文件名；失败或取消只删 `.part`。
+   差别在于：被 kill 时留下的是一个一眼能看出是临时文件的 `.part`，而不是「看起来写完了」的半份备份。
+3. **补取消检查点**：原来 `ensureActive()` 在复制循环里，删掉循环后取消就没地方检查了；
+   在 `write(writer)` 之后补一处。
+4. **导出有进度了**：新增 `CountingOutputStream`（`FilterOutputStream`，每 4 MB 回调一次，
+   必须重写 `write(ByteArray, off, len)` —— 默认实现会逐字节转调 `write(int)`，回调会被拆碎），
+   界面显示「正在导出…已写入 N MB」。
+   注意这里**没有百分比**：目标文件事先不知道会多大，导入那边的分母是文件大小，导出这边没有分母，
+   只报「已经写了多少」不假装知道总量。
+
+### 测试
+
+`EtaBackupStreamingTest.exportLimitsAndCancellationKeepTheDestinationUntouched` 里的
+`assertEquals(0, output.size())` **仍然成立**，但成立的原因变了，已在用例里写明：
+
+- 旧实现：目标流压根没被写（内容都在 cache 里）；
+- 新实现：写入经过 8 KB 的 `BufferedOutputStream`，64 字节的上限在 flush 之前就抛了。
+
+`assertCleanStaging()`（cache 里没有 `eta_backup_*` 目录）从「建了又删」变成了「根本不会建」，
+是这条改动的直接证据。
+
+门禁 `STAGES=test`：**1547 用例 0 失败**，资源 2261（新增 `data_backup_export_progress`、
+`data_backup_error_rename` 两条 × 三语），死文案 0。

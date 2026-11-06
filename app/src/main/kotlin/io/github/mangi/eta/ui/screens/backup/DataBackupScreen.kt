@@ -53,6 +53,7 @@ import io.github.mangi.eta.ui.components.WorkspacePathPicker
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FilterInputStream
+import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -80,6 +81,9 @@ internal fun DataBackupScreen(
     val busy = busyOp != BackupOp.IDLE
     // -1 表示还没读到可估算的比例（文件读不了 / 大小未知）；0~100 是已读的压缩字节占比。
     var parsePercent by remember { mutableStateOf(-1) }
+    // 导出已写入的字节数。目标文件事先不知道会多大，所以只报「写了多少」，
+    // 不假装有百分比 —— 导入那边分母是文件大小，导出这边没有分母。
+    var exportWritten by remember { mutableStateOf(0L) }
     // 失败说明放对话框而不是 Toast：Toast 单行约 22 字，长文案会被截成「…数据…」，
     // 而「数据未改动」恰恰是最不能丢的那半句（真机上就是这样被截掉的）。
     var failureNotice by remember { mutableStateOf<String?>(null) }
@@ -109,9 +113,19 @@ internal fun DataBackupScreen(
     fun exportTo(directory: String) {
         scope.launch {
             busyOp = BackupOp.EXPORT
+            exportWritten = 0L
+            val target = uniqueBackupFile(File(directory), defaultBackupFileName())
+            // 先写 .part，成功后才改名：中途失败或被杀只会留下一个显而易见的临时文件，
+            // 不会让用户把「写了一半的备份」当成能用的备份。旧实现靠 cache 中转来保证
+            // 「目标要么完整要么没动」，代价是同一份数据写两遍、磁盘要两份。
+            val partial = File(target.parentFile, target.name + ".part")
             try {
-                val target = uniqueBackupFile(File(directory), defaultBackupFileName())
-                val summary = FileOutputStream(target).use { onExport(it) }
+                val summary = FileOutputStream(partial).use { raw ->
+                    onExport(CountingOutputStream(raw) { written -> exportWritten = written })
+                }
+                if (!partial.renameTo(target)) {
+                    throw EtaBackupException(context.getString(R.string.data_backup_error_rename))
+                }
                 Toast.makeText(
                     context,
                     context.getString(
@@ -122,9 +136,11 @@ internal fun DataBackupScreen(
                     Toast.LENGTH_SHORT,
                 ).show()
             } catch (throwable: Throwable) {
+                partial.delete()
                 showFailure(throwable)
             } finally {
                 busyOp = BackupOp.IDLE
+                exportWritten = 0L
             }
         }
     }
@@ -284,7 +300,14 @@ internal fun DataBackupScreen(
                 EtaArrowPreference(
                     title = stringResource(R.string.data_backup_export),
                     summary = if (busyOp == BackupOp.EXPORT) {
-                        stringResource(R.string.data_backup_working)
+                        if (exportWritten > 0L) {
+                            stringResource(
+                                R.string.data_backup_export_progress,
+                                (exportWritten / (1024 * 1024)).toInt(),
+                            )
+                        } else {
+                            stringResource(R.string.data_backup_working)
+                        }
                     } else {
                         stringResource(R.string.data_backup_export_summary)
                     },
@@ -567,6 +590,43 @@ private class ProgressInputStream(
             lastPercent = percent
             onPercent(percent)
         }
+    }
+}
+
+/**
+ * 数字节并降频回调：直接写目标流之后，界面得能看到「真的在动」。
+ *
+ * 每 4 MB 回报一次（406 MB 的备份约 100 次，界面不费力）；
+ * 必须重写 `write(ByteArray, off, len)` —— `FilterOutputStream` 的默认实现是逐字节
+ * 转调 `write(int)`，那样一次批量写会被记成上万次，回调也会被拆碎。
+ */
+private class CountingOutputStream(
+    target: OutputStream,
+    private val onWritten: (Long) -> Unit,
+) : FilterOutputStream(target) {
+    private var written = 0L
+    private var reported = 0L
+
+    override fun write(b: Int) {
+        out.write(b)
+        account(1L)
+    }
+
+    override fun write(buffer: ByteArray, offset: Int, length: Int) {
+        out.write(buffer, offset, length)
+        account(length.toLong())
+    }
+
+    private fun account(count: Long) {
+        written += count
+        if (written - reported >= REPORT_STEP) {
+            reported = written
+            onWritten(written)
+        }
+    }
+
+    private companion object {
+        const val REPORT_STEP = 4L * 1024 * 1024
     }
 }
 

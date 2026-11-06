@@ -1200,6 +1200,8 @@
   <string name="data_backup_warning_summary">The file contains provider API keys. It only includes conversations, model providers, and MEMORY.md.</string>
   <string name="data_backup_export">Export data</string>
   <string name="data_backup_export_summary">Save conversations, providers, and MEMORY.md to a JSON file</string>
+  <string name="data_backup_export_progress">Exporting… %1$d MB written</string>
+  <string name="data_backup_error_rename">Could not save the file to the selected folder. Try another one.</string>
   <string name="data_backup_import">Import data</string>
   <string name="data_backup_import_summary">Replace conversations, providers, and MEMORY.md from a backup file</string>
   <string name="data_backup_import_parsing">Parsing the backup file; a large one can take a minute or two</string>
