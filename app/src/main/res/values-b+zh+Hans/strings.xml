@@ -213,6 +213,8 @@
   <string name="conversation_retry_earlier_messages">加载失败，点击重试</string>
   <string name="conversation_search_hint">搜索对话</string>
   <string name="conversation_empty">还没有对话</string>
+  <string name="conversation_empty_restore_hint">检测到 %1$d 份自动备份（最新 %2$s）</string>
+  <string name="conversation_empty_restore_action">去恢复</string>
   <string name="conversation_no_results">没有匹配的对话</string>
   <string name="conversation_rename_title">重命名对话</string>
   <string name="conversation_rename_hint">对话名称</string>
@@ -1194,7 +1196,7 @@
   <string name="data_backup_failed">备份操作失败</string>
   <string name="data_backup_auto_title">自动备份</string>
   <string name="data_backup_auto_enable">自动备份</string>
-  <string name="data_backup_auto_enable_summary">保存到 Download/Eta/backups，只保留最近 3 份</string>
+  <string name="data_backup_auto_enable_summary">保存到 Download/Eta/backups（每个应用一个子目录），只保留最近 3 份</string>
   <string name="data_backup_auto_interval">备份间隔</string>
   <string name="data_backup_auto_interval_6h">每 6 小时</string>
   <string name="data_backup_auto_interval_12h">每 12 小时</string>
@@ -1209,6 +1211,7 @@
   <string name="data_backup_auto_never">还没有备份过</string>
   <string name="data_backup_auto_failed">上次自动备份失败：%1$s</string>
   <string name="data_backup_auto_done">已备份 %1$s（清理 %2$d 份旧备份）</string>
+  <string name="data_backup_auto_skipped_empty">没有可备份的对话，这次跳过（不写空备份）</string>
   <string name="data_backup_auto_run_now">立即备份一次</string>
   <string name="data_backup_auto_run_now_summary">不看间隔，马上生成一份</string>
   <string name="voice_audio_permission">请在 Eta 应用权限中允许麦克风，然后重新唤醒；点击麦克风可打开设置</string>

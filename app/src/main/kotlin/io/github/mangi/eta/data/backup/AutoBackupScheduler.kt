@@ -21,6 +21,8 @@ internal data class AutoBackupOutcome(
     val file: File? = null,
     val pruned: Int = 0,
     val error: String? = null,
+    /** 库是空的（0 会话 0 消息）：这次没有写盘，也不算失败。 */
+    val skippedEmpty: Boolean = false,
 )
 
 /**
@@ -51,12 +53,27 @@ internal object AutoBackupScheduler {
     private const val BACKUPS_SUBDIR = "backups"
     private const val TEMP_SUFFIX = ".part"
 
-    /** 自动备份目录：`<外部存储>/Download/Eta/backups`。 */
-    fun backupDirectory(): File {
+    /** 自动备份目录：`<外部存储>/Download/Eta/backups/<applicationId>`。
+     *
+     * 按包名分子目录是必须的：主包与边车包（applicationIdSuffix 为 .canary）共用外部存储，
+     * 混在同一个目录里时，边车包空库启动写出的 0 会话备份会被「只保留最近 N 份」当成有效备份，
+     * 把主包的真备份挤掉。 */
+    fun backupDirectory(packageName: String): File =
+        backupDirectoryUnder(downloadsRoot(), packageName)
+
+    /** 旧版本只写到 `Download/Eta/backups`，各包混装且无法区分归属；只读兼容，不再往里写。 */
+    fun legacyBackupDirectory(): File = File(File(downloadsRoot(), DOWNLOADS_SUBDIR), BACKUPS_SUBDIR)
+
+    internal fun backupDirectoryUnder(root: File, packageName: String): File =
+        File(File(File(root, DOWNLOADS_SUBDIR), BACKUPS_SUBDIR), sanitizePackage(packageName))
+
+    private fun downloadsRoot(): File {
         @Suppress("DEPRECATION")
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        return File(File(downloads, DOWNLOADS_SUBDIR), BACKUPS_SUBDIR)
+        return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
     }
+
+    private fun sanitizePackage(packageName: String): String =
+        packageName.trim().ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
     /**
      * 是否到期。
@@ -78,6 +95,19 @@ internal object AutoBackupScheduler {
             ?.sortedByDescending { it.lastModified() }
             .orEmpty()
 
+    /** 本包目录 + 旧混合目录里的自动备份，最新在前。旧目录是只读兼容，只为不让老备份「消失」。 */
+    fun autoBackupsFor(packageName: String): List<File> =
+        mergeAutoBackups(backupDirectory(packageName), legacyBackupDirectory())
+
+    internal fun mergeAutoBackups(primary: File, legacy: File): List<File> =
+        (autoBackups(primary) + autoBackups(legacy))
+            .distinctBy { it.absolutePath }
+            .sortedByDescending { it.lastModified() }
+
+    /** 空库不值得写盘：0 会话的备份恢复出来等于什么都没恢复，还会占用保留名额。 */
+    internal fun shouldPersistAutoBackup(conversationCount: Int, messageCount: Int): Boolean =
+        conversationCount > 0 || messageCount > 0
+
     /** 只保留最近 [keep] 份自动备份，返回实际删掉的份数。 */
     fun prune(directory: File, keep: Int): Int {
         var removed = 0
@@ -95,7 +125,7 @@ internal object AutoBackupScheduler {
      */
     suspend fun run(context: Context, keep: Int = KEEP_COUNT): AutoBackupOutcome =
         withContext(Dispatchers.IO) {
-            val directory = backupDirectory()
+            val directory = backupDirectory(context.packageName)
             try {
                 if (!directory.isDirectory && !directory.mkdirs()) {
                     return@withContext AutoBackupOutcome(
@@ -107,8 +137,12 @@ internal object AutoBackupScheduler {
                 val target = uniqueFile(directory, "$FILE_PREFIX$stamp.eta-backup.json")
                 val temp = File(directory, target.name + TEMP_SUFFIX)
                 try {
-                    FileOutputStream(temp).use { output ->
+                    val summary = FileOutputStream(temp).use { output ->
                         EtaBackupRepository.export(context, output)
+                    }
+                    if (!shouldPersistAutoBackup(summary.conversationCount, summary.messageCount)) {
+                        temp.delete()
+                        return@withContext AutoBackupOutcome(ran = true, skippedEmpty = true)
                     }
                     if (!temp.renameTo(target)) {
                         throw IllegalStateException("备份文件改名失败：${target.name}")

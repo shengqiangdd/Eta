@@ -3219,3 +3219,57 @@ codex 0.164 的 provider 配置里只有 `http_headers` 这类字段，没有「
 - 真机有数据场景**未验证**：canary 与主包数据隔离，把主包 `eta.db`（390 MB、25 个会话）
   复制过去后会话列表仍为空，原因未查明（进程确实打开了该 DB、文件未被改写、无 SQLite 报错），
   因此「空思考不再出现 / 工具行标题首行化 / 导航条隐藏」三处的实际渲染只到逻辑层与空态。
+
+## 自动备份按包隔离，空库不再静默（fix126）
+
+### 一、主包与边车包在同一个备份目录里互相挤占
+
+`AutoBackupScheduler` 把自动备份写到 `Download/Eta/backups`，不区分包名；
+`prune()` 又按 `lastModified` 全局只保留最近 3 份。结果：边车包（`.canary`）空库启动时
+写出的 0 会话备份（33 KB）也会被当成有效备份占名额，按时间把主包前几天的真备份挤掉。
+现场就是这个形状：11-04 14:01（6 会话 / 319 KB）、11-06 00:02（14 会话 / 467 KB）
+被两份 16:15 / 16:21 的空备份压在后面，下次备份就会删掉 11-04。
+
+- `backupDirectory(packageName)` 改为 `<外部存储>/Download/Eta/backups/<applicationId>`；
+  `backupDirectoryUnder(root, packageName)` 是纯函数（便于单测），包名做 `[^A-Za-z0-9._-]` 替换、
+  空白回退 `unknown`。
+- `prune()` 仍然只扫传进来的目录 —— 调用方现在传本包目录，**天然不跨包**。
+- 旧目录 `legacyBackupDirectory()` **只读兼容**：`autoBackupsFor(packageName)` 合并新旧两个目录，
+  老备份在界面上不会「消失」，但不再往里写、也不再删。
+
+### 二、0 会话的备份不值得写盘
+
+空库导出出来是一份 33 KB、恢复后等于什么都没恢复的文件，还会占掉保留名额。
+
+- `shouldPersistAutoBackup(conversationCount, messageCount)`：两者都为 0 时不落盘。
+- `run()` 导出到 `.part` 后先看摘要，空库直接删临时文件并返回 `skippedEmpty = true`；
+  界面提示「没有可备份的对话，这次跳过（不写空备份）」。
+- `lastBackupAt` 仍然更新（否则每次回前台都重试空备份），但 `lastBackupPath` **保留上一次有效路径**，
+  避免界面显示「备份过但没有文件」。
+
+### 三、空库时不再只说「还没有对话」
+
+会话列表空态原本只有一句话。现在 `EmptyConversations` 会读一次备份目录
+（`produceState` + IO 线程，仅在真正空库且非搜索时）：
+
+- 有备份 → 显示「检测到 N 份自动备份（最新 <时间>）」+「去恢复」入口（进设置找数据备份）。
+- 搜索无结果 / 历史未载入 → 保持原样，不误导。
+
+### 验证
+
+- 单测新增 4 例：`backupDirectoryIsPerPackage`、`packageNameIsSanitizedForPathUse`、
+  `mergeAutoBackupsReadsLegacyDirectoryButIgnoresManualExports`、`emptyDatabaseIsNotWorthWritingABackup`。
+- 门禁 `STAGES=test`：**1525 用例 0 失败**（占位符 196 条、死文案 0 条）。
+- canary 真机（数据完整：25 会话 / 153,386 条消息）手动「立即备份一次」：
+  - 新文件落在 `Download/Eta/backups/io.github.mangi.eta.canary/Eta-auto-20261106-1654.eta-backup.json`；
+  - **旧目录 4 份一份未少**（这是关键回归：本次 prune 若仍扫旧目录，11-04 那份会被删）；
+  - 界面文案生效：「保存到 Download/Eta/backups（每个应用一个子目录），只保留最近 3 份」，
+    上次备份显示「16:54 · 387.5 MB」。
+- **未实测**：0 会话跳过与空态提示需要在空库上看，而 canary 的数据是刚恢复的、不能再清；
+  这两处只有单测与代码走查覆盖，记为未验证。
+
+### 顺带记下的代价
+
+canary 这种体量（153k 消息）导出一份备份是 **406 MB**、耗时约 75 秒。
+这不是本轮引入的（手动导出同理），但它说明「备份间隔 24 小时 + 保留 3 份」在巨库上
+最多会占 1.2 GB —— 目前没有按大小或仅增量导出的策略，作为已知限制留在这里。

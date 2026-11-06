@@ -421,14 +421,18 @@ private fun autoBackupSummary(context: Context, settings: AutoBackupSettings?): 
     }
 }
 
-private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcome): String =
-    outcome.error?.let { error ->
-        context.getString(R.string.data_backup_auto_failed, error)
-    } ?: context.getString(
-        R.string.data_backup_auto_done,
-        outcome.file?.name.orEmpty(),
-        outcome.pruned,
-    )
+private fun autoBackupOutcomeMessage(context: Context, outcome: AutoBackupOutcome): String {
+    val error = outcome.error
+    return when {
+        error != null -> context.getString(R.string.data_backup_auto_failed, error)
+        outcome.skippedEmpty -> context.getString(R.string.data_backup_auto_skipped_empty)
+        else -> context.getString(
+            R.string.data_backup_auto_done,
+            outcome.file?.name.orEmpty(),
+            outcome.pruned,
+        )
+    }
+}
 
 private fun formatFileSize(bytes: Long): String = when {
     bytes <= 0L -> "0 B"

@@ -45,12 +45,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -66,8 +68,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.data.backup.AutoBackupScheduler
+import io.github.mangi.eta.ui.app.ConversationTimeLabels
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.DropdownDefaults
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.DropdownItem
@@ -83,6 +89,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.window.WindowListPopup
+import java.io.File
 
 private object ConversationPanelMetrics {
     val PaneHorizontalPadding = 16.dp
@@ -205,6 +212,7 @@ internal fun ConversationPanePanel(
                         EmptyConversations(
                             isSearching = query.isNotBlank(),
                             historyIncomplete = query.isNotBlank() && state.unsearchedConversationCount > 0,
+                            onOpenSettings = onOpenSettings,
                         )
                     }
                 } else {
@@ -665,24 +673,62 @@ private fun ConversationTextRow(
 }
 
 @Composable
-private fun EmptyConversations(isSearching: Boolean, historyIncomplete: Boolean = false) {
-    Text(
-        text = stringResource(
-            when {
-                // 有会话没载入时，「没有匹配」只能代表已载入的范围，不能说得像全库都没有。
-                historyIncomplete -> R.string.conversation_no_results_partial
-                isSearching -> R.string.conversation_no_results
-                else -> R.string.conversation_empty
-            },
-        ),
-        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        style = MiuixTheme.textStyles.body2,
-        fontWeight = FontWeight.Medium,
+private fun EmptyConversations(
+    isSearching: Boolean,
+    historyIncomplete: Boolean = false,
+    onOpenSettings: () -> Unit,
+) {
+    val context = LocalContext.current
+    // 库是空的并不等于「从来没有备份」：把现成的自动备份摆出来，比只说「还没有对话」有用。
+    val backups by produceState(initialValue = emptyList<File>(), context) {
+        value = withContext(Dispatchers.IO) {
+            AutoBackupScheduler.autoBackupsFor(context.packageName)
+        }
+    }
+    Column(
         modifier = Modifier.padding(
             horizontal = ConversationPanelMetrics.RowHorizontalPadding,
             vertical = ConversationPanelMetrics.EmptyVerticalPadding,
         ),
-    )
+    ) {
+        Text(
+            text = stringResource(
+                when {
+                    // 有会话没载入时，「没有匹配」只能代表已载入的范围，不能说得像全库都没有。
+                    historyIncomplete -> R.string.conversation_no_results_partial
+                    isSearching -> R.string.conversation_no_results
+                    else -> R.string.conversation_empty
+                },
+            ),
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2,
+            fontWeight = FontWeight.Medium,
+        )
+        if (!isSearching && !historyIncomplete && backups.isNotEmpty()) {
+            val latest = backups.first()
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = stringResource(
+                    R.string.conversation_empty_restore_hint,
+                    backups.size,
+                    ConversationTimeLabels.label(latest.lastModified()),
+                ),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                style = MiuixTheme.textStyles.footnote1,
+            )
+            Text(
+                text = stringResource(R.string.conversation_empty_restore_action),
+                color = MiuixTheme.colorScheme.primary,
+                style = MiuixTheme.textStyles.footnote1,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onOpenSettings)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+    }
 }
 
 @Composable

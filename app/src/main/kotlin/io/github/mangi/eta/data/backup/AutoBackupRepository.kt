@@ -63,7 +63,8 @@ internal object AutoBackupRepository {
             } else {
                 current.copy(
                     lastBackupAt = System.currentTimeMillis(),
-                    lastBackupPath = outcome.file?.absolutePath,
+                    // 空库跳过一次备份时不要抹掉上一份有效路径，否则界面会显示「备份过但没有文件」。
+                    lastBackupPath = outcome.file?.absolutePath ?: current.lastBackupPath,
                     lastError = null,
                 )
             }

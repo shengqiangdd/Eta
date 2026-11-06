@@ -132,4 +132,65 @@ internal class AutoBackupSchedulerTest {
             dir.deleteRecursively()
         }
     }
+
+    // ---- 目录隔离 ----
+
+    @Test
+    fun backupDirectoryIsPerPackage() {
+        val root = tempDir()
+        try {
+            val main = AutoBackupScheduler.backupDirectoryUnder(root, "io.github.mangi.eta")
+            val canary = AutoBackupScheduler.backupDirectoryUnder(root, "io.github.mangi.eta.canary")
+            assertEquals(File(File(File(root, "Eta"), "backups"), "io.github.mangi.eta"), main)
+            assertEquals(File(File(File(root, "Eta"), "backups"), "io.github.mangi.eta.canary"), canary)
+            // 边车包的备份绝不能落在主包目录里，否则会出现「谁后备份谁把对方挤掉」。
+            assertTrue(main.absolutePath != canary.absolutePath)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun packageNameIsSanitizedForPathUse() {
+        val root = tempDir()
+        try {
+            // 包名理论上是合法应用 ID，但这是外部存储路径拼接，不能假设调用方一定传对。
+            val escaped = AutoBackupScheduler.backupDirectoryUnder(root, "../..")
+            assertEquals(".._..", escaped.name)
+            assertEquals("backups", escaped.parentFile?.name)
+            assertEquals(
+                "unknown",
+                AutoBackupScheduler.backupDirectoryUnder(root, "   ").name,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun mergeAutoBackupsReadsLegacyDirectoryButIgnoresManualExports() {
+        val root = tempDir()
+        try {
+            val primary = File(root, "new").apply { mkdirs() }
+            val legacy = File(root, "legacy").apply { mkdirs() }
+            val fresh = seed(primary, "${AutoBackupScheduler.FILE_PREFIX}fresh.eta-backup.json", 5_000L)
+            val old = seed(legacy, "${AutoBackupScheduler.FILE_PREFIX}old.eta-backup.json", 1_000L)
+            // 旧混合目录里的手动导出不该被当成自动备份。
+            seed(legacy, "Eta-backup-manual.eta-backup.json", 9_000L)
+
+            val merged = AutoBackupScheduler.mergeAutoBackups(primary, legacy)
+
+            assertEquals(listOf(fresh.name, old.name), merged.map { it.name })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun emptyDatabaseIsNotWorthWritingABackup() {
+        // 0 会话的备份恢复出来等于什么都没恢复，还会占掉「保留最近 3 份」的名额。
+        assertFalse(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 0, messageCount = 0))
+        assertTrue(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 1, messageCount = 0))
+        assertTrue(AutoBackupScheduler.shouldPersistAutoBackup(conversationCount = 0, messageCount = 3))
+    }
 }
