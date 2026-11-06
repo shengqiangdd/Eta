@@ -3650,3 +3650,49 @@ fix130 的结论是「耗时下限是解压 + 写盘，不可能秒级」。要�
 
 下次再碰这里，先做两件事：让 `showFailure` 的日志带上 `message`；把 `stage()` 阶段
 的失败也换成明确的领域文案（「这个文件不是 Eta 备份」），而不是把底层 message 直接抛给用户。
+
+## fix134（补齐上面两件事 + 定性那个「读不了」）
+
+### 改了什么
+
+1. `showFailure` 的日志带上 `message` 与 `cause.message`（各截 200 字）。
+2. `stagingFailure()` 的兜底不再把底层异常文本抛给用户，改说人话：
+   「这个文件不是 Eta 备份（内容无法解析或已损坏），数据未改动」；
+   空文件单独一句「这个备份文件是空的，数据未改动」。
+3. `BackupFailureTextTest` 同步 `stagingFailure(IllegalStateException("bad json"))` 的期望。
+
+### 「读不了」的根因：不是 Eta 的问题，是 ColorOS 的 FUSE
+
+上一轮那个 0 字节文件打开就 EACCES，一直没解释。这轮把 owner 一路追下来：
+
+| 做法 | `chown 10620` 后实际 owner | App 能否打开 |
+|---|---|---|
+| root 在 `/Download` 写文件 | **被忽略，仍是 10193** | 否（EACCES） |
+| root 在 `Android/data/<pkg>/files` 写文件 | **成功保持 10620** | **仍然否（EACCES）** |
+| App 自己导出的 0 字节文件 | 10193（App 写入） | **能**（进而正确报「这个备份文件是空的」） |
+
+即：**owner 对不对不重要，关键是这个文件有没有被 MediaStore 登记过**。
+`/storage/emulated/0` 下的普通目录会把 root 的 `chown` 直接吞掉（一律显示 10193），
+`Android/data/<pkg>` 因为是 pass-through 到真实 ext4 才能保留 10620 ——
+但即便 owner 完全正确，未经 MediaStore 登记的文件被 App 打开时 FUSE 仍返回 EACCES。
+
+**结论**：这是平台/存储层行为，不是 Eta 的缺陷，也不是 scoped storage 拒绝。
+之所以真实用户几乎撞不到：用户的备份要么是 Eta 自己写的（有登记），要么经系统文件选择器/SAF 导入。
+
+### 三条失败文案的真机状态
+
+| 文案 | 真机能否触发 | 结果 |
+|---|---|---|
+| 这个备份文件是空的 | 能（点 App 自己导出的 0 字节文件） | 对话框完整显示，不截断 |
+| 无法读取所选备份文件（权限不足或已被移走） | 能（点 root 造的文件） | 对话框完整显示，**且提示与实际原因一致** |
+| 这个文件不是 Eta 备份（内容无法解析或已损坏） | **造不出来** | 只有单测覆盖：任何非 App 写入的文件都会先被 FUSE 拒绝打开，走不到 `stage()` 的解析分支 |
+
+顺带记一个观察：Eta 自研的目录选择器能进 `Android/data` 并列出所有应用的目录名
+（Android 11+ 系统 SAF 会隐藏这一层）。只能列名、进不去别人的目录（权限仍由 FUSE 管），
+但「看见哪些 App 存在」这件事本身在界面上是可见的。
+
+### 收尾
+
+- 备份目录回到原有 3 份（1744 / 1815 / 1836，字节数不变），`Eta-zz-*` 与 0 字节测试文件全删；
+- `Android/data/io.github.mangi.eta.canary/files` 与 `Download` 根下的临时文件一并清掉；
+- `databases/eta.db` 的 mtime 仍是 16:15 —— 全程没有改动真实数据。

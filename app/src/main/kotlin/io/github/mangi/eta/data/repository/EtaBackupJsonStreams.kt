@@ -91,11 +91,11 @@ internal object EtaBackupJsonStreams {
             val source = openMaybeGzip(input)
             val checked = PushbackInputStream(LimitedInput(source, MAX_BACKUP_BYTES, cancellation::ensureActive))
             val first = checked.read()
-            if (first < 0) throw EtaBackupException("备份文件为空")
+            if (first < 0) throw EtaBackupException("这个备份文件是空的，数据未改动")
             checked.unread(first)
             JsonReader(checked.reader(Charsets.UTF_8)).use { reader ->
                 JsonWriter(header.writer(Charsets.UTF_8).buffered()).use { writer ->
-                    if (reader.peek() == JsonToken.END_DOCUMENT) throw EtaBackupException("备份文件为空")
+                    if (reader.peek() == JsonToken.END_DOCUMENT) throw EtaBackupException("这个备份文件是空的，数据未改动")
                     reader.beginObject()
                     writer.beginObject()
                     val seen = mutableSetOf<String>()
@@ -148,7 +148,7 @@ internal object EtaBackupJsonStreams {
             EtaBackupException("存储空间不足：导入要先把备份完整解压到应用缓存，清理空间后重试（数据未改动）", failure)
         StorageFailures.isNotWritable(failure) ->
             EtaBackupException("无法写入应用缓存（目录只读或权限不足），导入未开始，数据未改动", failure)
-        else -> EtaBackupException("备份文件格式无效", failure)
+        else -> EtaBackupException("这个文件不是 Eta 备份（内容无法解析或已损坏），数据未改动", failure)
     }
 
     /**

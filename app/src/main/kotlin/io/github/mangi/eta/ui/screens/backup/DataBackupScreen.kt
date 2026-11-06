@@ -95,7 +95,14 @@ internal fun DataBackupScreen(
 
     fun showFailure(throwable: Throwable) {
         if (throwable is CancellationException) throw throwable
-        AndroidAgentLogger.error("Agent backup UI failed: type=${throwable.safeLogType()}\n${throwable.safeStackTrace()}")
+        // 带上 message 与 cause：只打类型时，`EtaBackupException` 本身什么都不说明，
+        // 而真正的原因（EACCES？ENOENT？格式？）全在 message / cause 里。截断 200 字避免长行。
+        val detail = throwable.message?.take(200)?.replace('\n', ' ').orEmpty()
+        val causeDetail = throwable.cause?.message?.take(200)?.replace('\n', ' ').orEmpty()
+        AndroidAgentLogger.error(
+            "Agent backup UI failed: type=${throwable.safeLogType()} message=$detail cause=$causeDetail\n" +
+                throwable.safeStackTrace(),
+        )
         failureNotice = failureMessage(context, throwable)
     }
 

@@ -59,7 +59,7 @@ class BackupFailureTextTest {
 
         // 真正的格式问题仍报格式无效：别把「库坏了」说成「磁盘满了」。
         assertEquals(
-            "备份文件格式无效",
+            "这个文件不是 Eta 备份（内容无法解析或已损坏），数据未改动",
             EtaBackupJsonStreams.stagingFailure(IllegalStateException("bad json")).message,
         )
     }
