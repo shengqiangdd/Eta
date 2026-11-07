@@ -190,6 +190,36 @@ internal class RootShellTerminalController(
         val sessionRootfs = rootfsPathFor(normalizedEnvironment)
         environmentPreflight(normalizedIdentity, normalizedEnvironment, sessionRootfs)?.let { return it }
         val safeCwd = normalizeCwd(cwd, normalizedEnvironment, normalizedIdentity)
+        // 同一个 (环境, 身份, cwd) 上已有活会话就直接复用。
+        //
+        // 原来每次都 `UUID.randomUUID()` 开一个新 shell：
+        // 1. 每次都要重启 shell 进程，反而更慢；
+        // 2. 会话级状态（`cd`、`export`）全部丢失 —— 模型以为自己在一个终端里连续操作；
+        // 3. `runtimeIfChanged` 的去重永远不生效（新会话的 `runtimeSignature` 是空）。
+        //    真机验证正是这一条：连着两次 `echo` 都把 384 字符的 runtime 重发了一遍。
+        synchronized(sessions) {
+            sessions.values.firstOrNull {
+                TerminalSessionReusePolicy.reusable(
+                    existingEnvironment = it.environment.wireName,
+                    existingIdentity = it.identity,
+                    existingCwd = it.cwd,
+                    closed = it.closed,
+                    environment = normalizedEnvironment.wireName,
+                    identity = normalizedIdentity,
+                    cwd = safeCwd,
+                )
+            }
+        }?.let { existing ->
+            return JSONObject()
+                .put("ok", true)
+                .put("session_id", existing.id)
+                .put("environment", normalizedEnvironment.wireName)
+                .put("identity", normalizedIdentity)
+                .put("cwd", existing.cwd)
+                .put("reused", true)
+                .put("note", "复用同一环境下已有的会话（保留 cd/export 等状态）")
+                .toString()
+        }
         val id = "term_" + UUID.randomUUID().toString().take(8)
         val process = startSessionProcess(normalizedIdentity, normalizedEnvironment, sessionRootfs)
             ?: return errorJson(

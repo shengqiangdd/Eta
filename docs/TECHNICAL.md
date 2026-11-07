@@ -4088,3 +4088,31 @@ Anthropic 的 `{"type":"tool_result","content":...}`（含嵌套 block）。
 
 **验证**：门禁 `STAGES=test` —— 用例 **1587** 个、失败 0。新增
 `TerminalRuntimeDedupTest` 4 例（首次必发 / 一致时不发 / 变化时重发 / 文案不再冗长）。
+
+### fix141：`terminal` 每次调用都新建会话，去重因此从未生效
+
+装完 fix140 后真机验证，连着两次 `echo` **都把 384 字符的 runtime 块重发了一遍** ——
+`runtimeIfChanged()` 明明写了，却一次都没命中。
+
+根因：`open` 每次都 `val id = "term_" + UUID.randomUUID()`，**新建一个会话对象**。
+新对象的 `runtimeSignature` 是 null，于是每次都是「首次下发」。fix140 的去重逻辑本身没错，
+只是永远走不到第二个分支。
+
+由此还带出两个一直存在的问题：
+
+1. **每次调用都重启一个 shell 进程**，比复用慢；
+2. **`cd` / `export` 等会话状态全部丢失** —— 模型以为自己在同一个终端里连续操作，其实不是。
+
+**改法**：按 `(环境, 身份, cwd)` 复用活会话（`TerminalSessionReusePolicy`）。
+三条判据缺一不可 —— 环境决定命令去哪里执行、身份决定权限、cwd 决定命令落在哪；
+任何一条不同都必须开新会话，把命令送错地方比慢一点危险得多。
+
+复用命中时返回 `reused: true` 并说明「保留 cd/export 等状态」，
+让模型知道它的上下文还在。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1592** 个、失败 0。新增
+`TerminalSessionReusePolicyTest` 5 例（同路由复用 / 环境不同 / 身份不同 / cwd 不同 / 已关闭）。
+
+**备注**：这次是「测试通过但真机没效果」的典型。fix140 的 4 个单测全绿，
+但它们只测 `TerminalRuntimeDedup.diff` 这个纯函数，**测不到「调用方每次都给它一个新对象」**。
+教训：单测覆盖了逻辑，不代表覆盖了接入点。
