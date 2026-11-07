@@ -264,6 +264,89 @@ class DetachedTaskSupervisorTest {
         )
     }
 
+    /**
+     * 自定义工作区下的日志路径换算。
+     *
+     * 真机故障：用户把终端工作区设成 `/storage/emulated/0/Download/xxx`，`buildLinuxPayload`
+     * 就把那个目录 bind 成 guest 的 `/workspace`，日志真实落在 `<自定义工作区>/daemon/`。
+     * 而 `startCommand` 曾把 `hostWorkspace` 写死成 `ROOT_WORKSPACE_PATH`，`hostDaemonPath`
+     * 于是拼出 `/data/local/tmp/eta/daemon/` —— 一个不存在的路径。直读失败后回退到
+     * `runOneShotShell`，最终表现就是 `日志不可用：exit=-1（无法启动进程）`，
+     * 而日志其实好好地躺在用户自己的工作区里。
+     *
+     * 上一个用例（`linuxTaskPathsTranslateToHostDaemonDir`）用的是 `hostWorkspace = null`，
+     * 恰好回了默认值，所以曾经全绿而故障照旧 —— 这里必须显式给一个**非默认**的工作区。
+     */
+    @Test
+    fun linuxLogsFollowCustomWorkspaceRatherThanRootDefault() {
+        val supervisor = newSupervisor()
+        // 用真实存在的临时目录当自定义工作区：记录值与当前实际工作区一致时不能被改写。
+        val customWorkspace = File(temporaryFolder.root, "custom-workspace").apply { mkdirs() }.absolutePath
+        File(customWorkspace, "daemon").mkdirs()
+        val linuxTask = DetachedTask(
+            id = "job_custom01",
+            pid = 1234,
+            token = "token",
+            command = "sh tools/gate.sh",
+            cwd = "/workspace",
+            identity = "root",
+            environment = TerminalEnvironment.DEBIAN,
+            logPath = "/workspace/daemon/job_custom01.log",
+            startedAt = 0L,
+            hostWorkspace = customWorkspace,
+        )
+
+        assertEquals(
+            "$customWorkspace/daemon/job_custom01.log",
+            supervisor.hostDaemonPath(linuxTask, linuxTask.logPath),
+        )
+        assertEquals(
+            "$customWorkspace/daemon/job_custom01.exit",
+            supervisor.hostDaemonPath(linuxTask, "/workspace/daemon/job_custom01.exit"),
+        )
+        // 不能退回默认目录：那正是故障时的错误路径。
+        assertFalse(
+            supervisor.hostDaemonPath(linuxTask, linuxTask.logPath).startsWith("/data/local/tmp/eta/daemon"),
+        )
+    }
+
+    /**
+     * 旧记录里写错的 `hostWorkspace` 要被纠正，且不能把“日志真的还在老位置”误判成错误。
+     *
+     * 两种情况必须区分开：
+     * - 记录值指向的 `daemon` 目录**不存在** —— 典型的旧版本写死默认目录，应改用当前实际工作区；
+     * - 记录值指向的 `daemon` 目录**还存在** —— 用户换过工作区、旧日志确实留在老位置，保持原样。
+     */
+    @Test
+    fun staleRecordedWorkspaceIsCorrectedOnlyWhenItNoLongerExists() {
+        val supervisor = newSupervisor()
+
+        val missing = File(temporaryFolder.root, "gone-workspace").absolutePath
+        val staleTask = DetachedTask(
+            id = "job_stale01",
+            pid = 1,
+            token = "t",
+            command = "true",
+            cwd = "/workspace",
+            identity = "root",
+            environment = TerminalEnvironment.DEBIAN,
+            logPath = "/workspace/daemon/job_stale01.log",
+            startedAt = 0L,
+            hostWorkspace = missing,
+        )
+        val corrected = supervisor.hostDaemonPath(staleTask, staleTask.logPath)
+        assertFalse("目录不存在时不能继续用记录值：$corrected", corrected.startsWith(missing))
+
+        val kept = File(temporaryFolder.root, "kept-workspace").apply { mkdirs() }.absolutePath
+        File(kept, "daemon").mkdirs()
+        val keptTask = staleTask.copy(id = "job_kept01", hostWorkspace = kept,
+            logPath = "/workspace/daemon/job_kept01.log")
+        assertEquals(
+            "$kept/daemon/job_kept01.log",
+            supervisor.hostDaemonPath(keptTask, keptTask.logPath),
+        )
+    }
+
     @Test
     fun recordSaveAdvancesChangesSignal() {
         // 界面刷新依赖这个信号：任务结束时只改记录，不会产生新的会话消息。

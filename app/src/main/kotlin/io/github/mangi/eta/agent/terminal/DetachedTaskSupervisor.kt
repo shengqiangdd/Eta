@@ -354,7 +354,18 @@ internal class DetachedTaskSupervisor(
     private fun startCommand(id: String, command: String, cwd: String, identity: String,
         environment: TerminalEnvironment, description: String, timeoutMs: Long,
         envPrefix: String? = null, sessionScope: String? = null): DaemonStartResult {
-        val workspace = if (identity == "user") TerminalRuntime.userWorkspacePath else TerminalRuntime.ROOT_WORKSPACE_PATH
+        // Linux 的 guest `/workspace` 由 buildLinuxPayload bind 自宿主某个目录，那个目录
+        // 不一定是 ROOT_WORKSPACE_PATH：用户设了自定义工作区时它会变。hostWorkspace 的用途
+        // 就是把 guest 日志路径换算回宿主物理路径（见 hostDaemonPath），所以必须跟着**实际
+        // bind 源**走。用 ROOT_WORKSPACE_PATH 写死时，读日志会拼出一条不存在的路径，
+        // 直读失败再回退起进程，真机表现为 `日志不可用：exit=-1（无法启动进程）`。
+        val linuxWorkspace = if (environment.isLinux) {
+            TerminalRuntime.linuxWorkspacePathFor(rootfsPath(environment))
+        } else {
+            null
+        }
+        val workspace = linuxWorkspace
+            ?: if (identity == "user") TerminalRuntime.userWorkspacePath else TerminalRuntime.ROOT_WORKSPACE_PATH
         val wireDir = when {
             environment.isLinux -> LINUX_DAEMON_DIR
             identity == "user" && daemonDir == DEFAULT_DAEMON_DIR -> "$workspace/daemon"
@@ -721,10 +732,33 @@ internal class DetachedTaskSupervisor(
      */
     internal fun hostDaemonPath(task: DetachedTask, wirePath: String): String =
         if (task.environment.isLinux && wirePath.startsWith(LINUX_DAEMON_DIR)) {
-            (task.hostWorkspace?.let { "$it/daemon" } ?: DEFAULT_DAEMON_DIR) + wirePath.removePrefix(LINUX_DAEMON_DIR)
+            (effectiveHostWorkspace(task)?.let { "$it/daemon" } ?: DEFAULT_DAEMON_DIR) +
+                wirePath.removePrefix(LINUX_DAEMON_DIR)
         } else {
             wirePath
         }
+
+    /**
+     * 记录里的 `hostWorkspace`，必要时用**当前实际工作区**纠正。
+     *
+     * v3.4.0 早期版本把 `hostWorkspace` 写死成 `ROOT_WORKSPACE_PATH` 落盘，那些错误值
+     * 不会因为升级而消失。直接拿它拼路径会指向一个不存在的目录，`read` 报
+     * `LOGS_UNAVAILABLE`、`output_path` 也显示错的。
+     *
+     * 只有在“记录值与当前实际工作区不同”**且**“按记录值拼出的目录确实不存在”时才改用
+     * 当前值：既不改新任务的准确记录，也不把“用户真的把工作区换走了、旧日志留在老位置”
+     * 这种情况误判成错误 —— 老位置的目录还在，就继续用它。
+     */
+    private fun effectiveHostWorkspace(task: DetachedTask): String? {
+        val recorded = task.hostWorkspace ?: return null
+        if (!task.environment.isLinux) return recorded
+        val current = runCatching { TerminalRuntime.linuxWorkspacePathFor(rootfsPath(task.environment)) }
+            .getOrNull()
+            ?: return recorded
+        if (current == recorded) return recorded
+        // 记录值仍然可用（目录真的存在）就不动它。
+        return if (File("$recorded/daemon").isDirectory) recorded else current
+    }
 
     private fun rootfsPath(environment: TerminalEnvironment): String? =
         linuxRootfsPathProvider?.invoke(environment) ?: linuxRootfsPath
