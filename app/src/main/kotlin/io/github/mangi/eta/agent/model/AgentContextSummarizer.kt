@@ -132,16 +132,16 @@ internal class AgentContextSummarizer(
             // 各批摘要已经很短时，直接拼起来就够用，**不必再发一次模型请求去合并**。
             //
             // 实测（2026-11 真机，1.44M 字符压缩成 3 批）：合并后正文只有 1,482 字符，
-            // 远低于 MAX_SUMMARY_CHARS=12,000。为这点文字再跑一轮请求，要多等一整轮模型延迟。
-            // 而且合并本身也有风险：多一次可能失败、可能需要重试的调用。
+            // 远低于 MERGE_SKIP_MAX_CHARS。为这点文字再跑一轮（单次按秒计）的模型请求不值得。
             //
             // 拼接仍按「老 → 新」顺序（plan.batches 已排好），读起来和合并版一致，
-            // 只是少了模型做的去重与收束 —— 当总量远低于上限时，那点冗余不值得一轮等待。
+            // 代价是少了模型做的跨批去重与收束 —— 总量很低时，那点冗余远小于一轮延迟。
+            // 一旦超过阈值，仍然回到合并：该步本来就是合并的正当职责，不是"额外风险"。
             val joined = parts.joinToString("\n\n")
-            if (joined.length <= SUMMARY_TARGET_CHARS) {
+            if (joined.length <= MERGE_SKIP_MAX_CHARS) {
                 onBatch(
                     "上下文摘要跳过合并：${parts.size} 批拼接后 ${joined.length} 字符，" +
-                        "未超目标 $SUMMARY_TARGET_CHARS，省一轮模型调用",
+                        "未超 $MERGE_SKIP_MAX_CHARS，省一轮模型调用",
                 )
                 joined
             } else {
@@ -363,6 +363,19 @@ internal class AgentContextSummarizer(
 
         /** 第一次摘要的目标长度：比硬上限低一半，给模型留出「写多几百字」的余量。 */
         const val SUMMARY_TARGET_CHARS = 6_000
+
+        /**
+         * 多批摘要拼接后，低于这个长度就不必再发一轮合并请求。
+         *
+         * 注意它和 [SUMMARY_TARGET_CHARS] 不是一回事：后者是**单批**的目标长度，
+         * 这里问的是**所有批拼起来**能不能直接用。拿单批目标去卡总量是概念错位。
+         *
+         * 定为 2 倍单批目标（约 3 千 token）的理由：
+         * - 真机实测（1.44M 字符 → 3 批）拼接后只有 1,482 字符，远低于此；
+         * - 即使各批都写满，总量到这里仍然很小，占不下压缩腾出的空间；
+         * - 超过它说明各批写得都不短，批间重复的概率也随之上升，合并的去重价值开始兑现。
+         */
+        const val MERGE_SKIP_MAX_CHARS = 12_000
 
         /** 重试时要求更短，逼模型收束而不是继续堆细节。 */
         const val SUMMARY_RETRY_CHARS = 4_000

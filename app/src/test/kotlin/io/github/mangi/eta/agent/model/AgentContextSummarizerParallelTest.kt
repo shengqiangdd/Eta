@@ -127,7 +127,7 @@ class AgentContextSummarizerParallelTest {
 
     @Test
     fun longBatchSummariesStillGoThroughMerge() {
-        // 反向守卫生机：拼接后**超过**目标长度时必须回到合并，
+        // 反向守卫生机：拼接后**超过** MERGE_SKIP_MAX_CHARS 时必须回到合并，
         // 否则摘要会无限膨胀，最后又被 MAX_SUMMARY_CHARS 判不合格。
         val requests = AtomicInteger()
         val summarizer = AgentContextSummarizer(
@@ -138,7 +138,7 @@ class AgentContextSummarizerParallelTest {
                     if (request.messages.toString().contains("此前摘要：")) {
                         "合并后的摘要"
                     } else {
-                        // 每批 5,000 字符：3 批拼接 = 15,000 > SUMMARY_TARGET_CHARS(6,000)
+                        // 每批 5,000 字符：3 批拼接 = 15,000 > MERGE_SKIP_MAX_CHARS(12,000)
                         "细".repeat(5_000)
                     }
                 },
@@ -152,6 +152,56 @@ class AgentContextSummarizerParallelTest {
         assertEquals(3, outcome.batches)
         assertEquals("超长时必须多一次合并请求", 4, requests.get())
         assertEquals("合并后的摘要", outcome.text)
+    }
+
+    @Test
+    fun oneCharOverTheSkipThresholdGoesThroughMerge() {
+        // 边界：拼接接头也占长度（joinToString("\n\n")，3 批多出 4 个字符），
+        // 所以每批 4,000 时实际是 12,004 —— 已经超过 12,000，必须走合并。
+        // 这个测试就是用真实字符串长度守住阈值的闭合端，不依赖"差一点"的巧合。
+        val requests = AtomicInteger()
+        val summarizer = AgentContextSummarizer(
+            config,
+            provider(
+                requests = requests,
+                text = { request ->
+                    if (request.messages.toString().contains("此前摘要：")) "合并后的摘要"
+                    else "细".repeat(4_000)
+                },
+            ),
+            AgentRunController(),
+            roleplay = false,
+        )
+
+        val outcome = summarizer.summarize(history())
+
+        assertEquals(3, outcome.batches)
+        assertEquals("12,004 已超 12,000，必须合并", 4, requests.get())
+        assertEquals("合并后的摘要", outcome.text)
+    }
+
+    @Test
+    fun justUnderTheSkipThresholdSkips() {
+        // 反向边界：每批 3,998 字符，3 批 + 4 个接头 = 11,998 < 12,000，应当跳过。
+        val requests = AtomicInteger()
+        val summarizer = AgentContextSummarizer(
+            config,
+            provider(
+                requests = requests,
+                text = { request ->
+                    if (request.messages.toString().contains("此前摘要：")) "合并后的摘要"
+                    else "细".repeat(3_998)
+                },
+            ),
+            AgentRunController(),
+            roleplay = false,
+        )
+
+        val outcome = summarizer.summarize(history())
+
+        assertEquals(3, outcome.batches)
+        assertEquals("11,998 未超 12,000，应跳过合并", 3, requests.get())
+        assertEquals(11_998, outcome.text.length)
     }
 
     @Test
@@ -169,10 +219,10 @@ class AgentContextSummarizerParallelTest {
                         "合并后的摘要"
                     } else {
                         // 每批的回执带上自己的批号，合并输入里就能看出顺序。
-                        // 同时要足够长（3 × 3000 = 9000 > SUMMARY_TARGET_CHARS 6000），
+                        // 同时要足够长（3 × 5000 = 15000 > MERGE_SKIP_MAX_CHARS 12000），
                         // 否则会被「短摘要跳过合并」逻辑接走，这里就永远测不到顺序。
                         val batchTag = Regex("第 (\\d+) 问").find(dumped)?.groupValues?.get(1) ?: "?"
-                        "第 $batchTag 批摘要" + "细".repeat(3_000)
+                        "第 $batchTag 批摘要" + "细".repeat(5_000)
                     }
                 },
             ),
