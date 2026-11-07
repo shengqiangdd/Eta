@@ -4176,7 +4176,12 @@ fix142 验证成功后，同样的方法量了返回体骨架：
 同时验证「首次返回 runtime、第二次返回 null」——它原本断言 `status == "exited"`，
 正好会被这次改动打红，是真实的行为变更而非测试噪音。
 
-### fix144：窗口未知就永不压缩 —— 21.4 万 token 的真正成因
+### fix144：窗口未知就永不压缩 —— 曾以为是 21.4 万 token 的成因
+
+> **此改动单独不生效。** 它假设「用户没填 `contextWindow`」，但 `eta.db` 里
+> `knownContextWindow` 确实存在且配得很大，于是 `tokens >= window * 0.85` 永不成立。
+> 装上后真机**毫无变化**，根因另有其事，见 [fix145](#fix145窗口配得大压缩永不触发)。
+> 保留此节的价值在于：它记录了一条**被证伪的假设**，以及单测全绿却无法反映真机配置的教训。
 
 真机 trace（`run-f1358776`，同一条历史线，1422 条消息）：22 轮、**21.4 万 token**，
 `k` 字段里**一次 `compact` 都没有**。
@@ -4207,6 +4212,34 @@ if (window == null) return false   // 旧代码
 **验证**：门禁 `STAGES=test` —— 用例 **1599** 个、失败 0。`AgentContextBudgetTest`
 新增 `unknownWindowStillCompactsAtTheAssumedBudget`：达到保守预算要压缩、
 远低于预算时**不**白花一次摘要请求。
+
+### fix146：短摘要不再多跑一轮合并请求
+
+fix145 的真机数据里有个细节值得再看：1.44M 字符切成 3 批，但**合并后的正文只有 1,482 字符**。
+
+3 批各自的目标是 `SUMMARY_TARGET_CHARS = 6_000`，硬上限 `MAX_SUMMARY_CHARS = 12_000`。
+也就是说，拼接后的总量离上限还差得很远 —— **为这点文字再发一次模型请求，纯粹是白等一整轮延迟**。
+
+**改法**：各批摘要拼接后若 ≤ `SUMMARY_TARGET_CHARS`，直接拼接返回，跳过合并；
+超过才走原来的合并分支。拼接顺序仍是「老 → 新」（`plan.batches` 已排好）。
+
+代价要说清楚：**省掉的是模型做的跨批去重与收束**。当总量远低于上限时，
+那点冗余不值得一轮等待；一旦超限，仍然回到合并，摘要不会无限膨胀。
+
+**测试**（`AgentContextSummarizerParallelTest`）：
+
+- `batchesRunInParallelWithinTheConfiguredLimit` 从「3 批 + 合并 = 4 次请求」改为断言 3 次；
+- 新增 `shortBatchSummariesSkipTheMergeRequest`：短摘要时请求数 == 批数，且正文保留各批内容；
+- 新增 `longBatchSummariesStillGoThroughMerge`：3 × 5,000 字符 > 6,000，必须回到合并（4 次请求）；
+- `mergeStillSeesBatchesInOldestFirstOrder` 的 fixture 加长到 3 × 3,000，否则会落入跳过分支，永远测不到顺序。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1601** 个、失败 0（新增 2 条）。
+
+**这一条的真机行为还没有被观测到**：当前会话每轮约 7 万 token，要攒到 10 万才会触发压缩。
+已确认的是新逻辑确实编进了安装包（dex 内 `跳过合并`、`未超目标`、`省一轮模型调用`
+三个新字符串与保留的 `批合成一段` 同时存在，`lastUpdateTime=12:41:02` 晚于构建时间 12:39）。
+**代码在包里 ≠ 行为已验证** —— 下次真机压缩触发时，应检查是否出现
+「上下文摘要跳过合并：N 批拼接后 X 字符」及其耗时变化。
 
 ### fix145：窗口配得大，压缩永不触发
 

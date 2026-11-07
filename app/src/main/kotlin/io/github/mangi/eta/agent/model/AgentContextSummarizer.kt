@@ -129,16 +129,33 @@ internal class AgentContextSummarizer(
         val text = if (parts.size == 1) {
             parts.first()
         } else {
-            // 合并阶段只处理各段摘要（每段 ≤ MAX_SUMMARY_CHARS），体量可控。
-            val merged = parts.map {
-                AgentModelClient.ConversationMessage(role = "user", content = "此前摘要：$it")
+            // 各批摘要已经很短时，直接拼起来就够用，**不必再发一次模型请求去合并**。
+            //
+            // 实测（2026-11 真机，1.44M 字符压缩成 3 批）：合并后正文只有 1,482 字符，
+            // 远低于 MAX_SUMMARY_CHARS=12,000。为这点文字再跑一轮请求，要多等一整轮模型延迟。
+            // 而且合并本身也有风险：多一次可能失败、可能需要重试的调用。
+            //
+            // 拼接仍按「老 → 新」顺序（plan.batches 已排好），读起来和合并版一致，
+            // 只是少了模型做的去重与收束 —— 当总量远低于上限时，那点冗余不值得一轮等待。
+            val joined = parts.joinToString("\n\n")
+            if (joined.length <= SUMMARY_TARGET_CHARS) {
+                onBatch(
+                    "上下文摘要跳过合并：${parts.size} 批拼接后 ${joined.length} 字符，" +
+                        "未超目标 $SUMMARY_TARGET_CHARS，省一轮模型调用",
+                )
+                joined
+            } else {
+                // 合并阶段只处理各段摘要（每段 ≤ MAX_SUMMARY_CHARS），体量可控。
+                val merged = parts.map {
+                    AgentModelClient.ConversationMessage(role = "user", content = "此前摘要：$it")
+                }
+                val mergeStartedAt = System.currentTimeMillis()
+                val mergedText = summarizeOnce(merged, omittedNote)
+                onBatch(
+                    "上下文摘要合并：${parts.size} 批合成一段，耗时 ${System.currentTimeMillis() - mergeStartedAt}ms",
+                )
+                mergedText
             }
-            val mergeStartedAt = System.currentTimeMillis()
-            val mergedText = summarizeOnce(merged, omittedNote)
-            onBatch(
-                "上下文摘要合并：${parts.size} 批合成一段，耗时 ${System.currentTimeMillis() - mergeStartedAt}ms",
-            )
-            mergedText
         }
         return SummaryOutcome(text = text, batches = parts.size, omittedChars = plan.omittedChars)
     }

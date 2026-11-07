@@ -82,7 +82,13 @@ class AgentContextSummarizerParallelTest {
         val outcome = summarizer.summarize(history())
 
         assertEquals("三条 200K 字符的历史应切成 3 批", 3, outcome.batches)
-        assertEquals("每批一次请求 + 合并一次", outcome.batches + 1, requests.get())
+        // 各批摘要都很短（“此前任务已完成。”）时，拼接后远低于 SUMMARY_TARGET_CHARS，
+        // 于是**跳过合并**：只发 3 次请求，而不是 3 + 1。
+        assertEquals(
+            "短摘要应跳过合并：${outcome.batches} 批 → ${requests.get()} 次请求",
+            outcome.batches,
+            requests.get(),
+        )
         assertTrue(
             "应真的同时进行（峰值 ${maxInFlight.get()}）：串行实现下这里恒为 1",
             maxInFlight.get() >= 2,
@@ -91,6 +97,61 @@ class AgentContextSummarizerParallelTest {
             "并发度不能超过常量：峰值 ${maxInFlight.get()} > ${AgentContextSummarizer.MAX_PARALLEL_BATCHES}",
             maxInFlight.get() <= AgentContextSummarizer.MAX_PARALLEL_BATCHES,
         )
+    }
+
+    @Test
+    fun shortBatchSummariesSkipTheMergeRequest() {
+        // 真机依据（2026-11）：1.44M 字符压缩成 3 批，合并后正文只有 1,482 字符，
+        // 远低于 MAX_SUMMARY_CHARS=12,000 —— 为这点文字再跑一轮模型请求纯属白等。
+        val requests = AtomicInteger()
+        val batches = StringBuilder()
+        val summarizer = AgentContextSummarizer(
+            config,
+            provider(
+                requests = requests,
+                text = { request ->
+                    val dumped = request.messages.toString()
+                    if (dumped.contains("此前摘要：")) "合并后的摘要" else "简短摘要"
+                },
+            ),
+            AgentRunController(),
+            roleplay = false,
+        )
+
+        val outcome = summarizer.summarize(history())
+
+        assertEquals(3, outcome.batches)
+        assertEquals("3 批各一次，不应有第 4 次合并请求", 3, requests.get())
+        assertTrue("跳过合并时应保留各批的内容", outcome.text.contains("简短摘要"))
+    }
+
+    @Test
+    fun longBatchSummariesStillGoThroughMerge() {
+        // 反向守卫生机：拼接后**超过**目标长度时必须回到合并，
+        // 否则摘要会无限膨胀，最后又被 MAX_SUMMARY_CHARS 判不合格。
+        val requests = AtomicInteger()
+        val summarizer = AgentContextSummarizer(
+            config,
+            provider(
+                requests = requests,
+                text = { request ->
+                    if (request.messages.toString().contains("此前摘要：")) {
+                        "合并后的摘要"
+                    } else {
+                        // 每批 5,000 字符：3 批拼接 = 15,000 > SUMMARY_TARGET_CHARS(6,000)
+                        "细".repeat(5_000)
+                    }
+                },
+            ),
+            AgentRunController(),
+            roleplay = false,
+        )
+
+        val outcome = summarizer.summarize(history())
+
+        assertEquals(3, outcome.batches)
+        assertEquals("超长时必须多一次合并请求", 4, requests.get())
+        assertEquals("合并后的摘要", outcome.text)
     }
 
     @Test
@@ -108,8 +169,10 @@ class AgentContextSummarizerParallelTest {
                         "合并后的摘要"
                     } else {
                         // 每批的回执带上自己的批号，合并输入里就能看出顺序。
+                        // 同时要足够长（3 × 3000 = 9000 > SUMMARY_TARGET_CHARS 6000），
+                        // 否则会被「短摘要跳过合并」逻辑接走，这里就永远测不到顺序。
                         val batchTag = Regex("第 (\\d+) 问").find(dumped)?.groupValues?.get(1) ?: "?"
-                        "第 $batchTag 批摘要"
+                        "第 $batchTag 批摘要" + "细".repeat(3_000)
                     }
                 },
             ),
