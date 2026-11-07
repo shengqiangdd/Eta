@@ -4358,3 +4358,36 @@ fix145 的真机数据里有个细节值得再看：1.44M 字符切成 3 批，�
 **局限（必须说清）**：这 99 次调用绝大部分是我在这次会话里做代码勘察产生的，
 样本偏向「大量读源码」。日常跑构建/测试时输出会更大，那时 16,000 才可能真正起作用。
 这批数据不足以对「通用场景要不要调阈值」下结论。
+
+### fix148：备份页两个 State 用原生类型，去掉 Int/Long 装箱
+
+门禁一直有两条 lint 没消（`AutoboxingStateCreation`），跑一次全量才发现它们真实存在：
+
+```
+- [AutoboxingStateCreation] DataBackupScreen.kt:83
+- [AutoboxingStateCreation] DataBackupScreen.kt:86
+```
+
+```kotlin
+var parsePercent by remember { mutableStateOf(-1) }      // Int → 装箱成 Integer
+var exportWritten by remember { mutableStateOf(0L) }     // Long → 装箱成 Long
+```
+
+**为什么值得改**：`exportWritten` 在导出时**每写一个缓冲块就更新一次**（`CountingOutputStream`
+的回调），值每次变化都会新建一个装箱对象；`parsePercent` 在导入解析进度里同理。
+这两个量都在高频路径上，装箱是纯粹的额外分配。这次只是把类型改对，收益不大但确定。
+
+**改法**（项目里已有 48 处同样写法，跟随既有约定）：
+
+```kotlin
+var parsePercent by remember { mutableIntStateOf(-1) }
+var exportWritten by remember { mutableLongStateOf(0L) }
+```
+
+**验证**：门禁 `STAGES=lint` —— 两条告警消失，baseline 账目保持一致（116 条命中），
+`✓ 门禁通过`。没有改动任何读写点（第 118/133/159/168/174/181/319/322/345/346 行的赋值与读取
+类型不变），所以不涉及行为。
+
+**顺带说明这条是怎么被发现的**：先是门禁整体变红，我确认了 `DataBackupScreen.kt`
+最后一次改动来自 `2ec24589 fix135c`（不是我这次的提交），才判定是既有问题而非自己带出来的。
+—— 这个顺序很重要：先排除「是不是我改坏的」，再决定要不要顺手修。
