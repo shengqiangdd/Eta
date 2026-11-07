@@ -287,8 +287,29 @@ internal class AgentFileOperations(
      * 回滚是「尽力而为」：如果回滚时文件已被外部改过，会明确返回 WRITE_FAILED_PARTIAL，
      * 列出哪些文件可能仍是新内容，而不是把部分成功说成成功。
      */
-    fun editFiles(patches: List<FilePatch>, dryRun: Boolean = false): String =
-        fileOp("edit_files", patches.firstOrNull()?.path) {
+    fun editFiles(patches: List<FilePatch>, dryRun: Boolean = false): String {
+        val normalized = normalizeDuplicatePaths(patches)
+        return fileOp("edit_files", normalized.firstOrNull()?.path) { editFilesBody(normalized, dryRun) }
+    }
+
+    /**
+     * 同一文件出现多条时合并成一条（edits 按出现顺序叠加）。
+     *
+     * 以前直接报 `DUPLICATE_PATH` 拒掉；实测这是 `edit_files` 最主要的失败之一，
+     * 而调用方真正想要的显然是「把这些编辑都应用上」——语义与「对同一文件连发多次
+     * edit_file」完全一致，没必要让模型多跑几轮。
+     */
+    private fun normalizeDuplicatePaths(patches: List<FilePatch>): List<FilePatch> {
+        val paths = patches.map { it.path }
+        if (paths.toSet().size == paths.size) return patches
+        val merged = LinkedHashMap<String, MutableList<FileEdit>>()
+        patches.forEach { patch -> merged.getOrPut(patch.path) { mutableListOf() }.addAll(patch.edits) }
+        return merged.map { (path, edits) ->
+            patches.first { it.path == path }.copy(edits = edits.toList())
+        }
+    }
+
+    private fun editFilesBody(patches: List<FilePatch>, dryRun: Boolean): JSONObject {
         if (patches.isEmpty()) throw FileToolException("INVALID_ARGUMENT", "files 不能为空")
         if (patches.size > MAX_BATCH_FILES) throw FileToolException("TOO_MANY_FILES", "单次最多 $MAX_BATCH_FILES 个文件")
         if (patches.sumOf { it.edits.size } > MAX_BATCH_EDITS) {
@@ -299,7 +320,7 @@ internal class AgentFileOperations(
         if (paths.any { "://" in it }) {
             throw FileToolException("UNSUPPORTED_FILE_REFERENCE", "请使用已授权的文件系统路径；文档 URI 需先导入")
         }
-        if (paths.toSet().size != paths.size) throw FileToolException("DUPLICATE_PATH", "同一文件不能在一次批量编辑里出现多次")
+        // 重复路径已在 [normalizeDuplicatePaths] 合并，这里不再拒绝。
 
         val prepared = patches.mapIndexed { fileIndex, patch ->
             if (patch.edits.isEmpty()) {
@@ -337,7 +358,7 @@ internal class AgentFileOperations(
         // 所有文件都验证通过后再复核一次，尽量缩小「验证后又被外部改动」的窗口。
         prepared.forEach { verifyUnchanged(it.stat) }
         if (dryRun) {
-            return@fileOp base("edit_files")
+            return base("edit_files")
                 .put("dry_run", true).put("would_write", true)
                 .put("files", editFilesSummary(prepared, dryRun = true).getJSONArray("files"))
                 .put("file_count", prepared.size)
@@ -390,7 +411,7 @@ internal class AgentFileOperations(
         }
 
         val summary = editFilesSummary(written, dryRun = false)
-        base("edit_files").put("files", summary.getJSONArray("files"))
+        return base("edit_files").put("files", summary.getJSONArray("files"))
             .put("file_count", summary.getInt("file_count"))
             .put("total_replacements", summary.getInt("total_replacements"))
             .put("total_lines_added", summary.getInt("total_lines_added"))

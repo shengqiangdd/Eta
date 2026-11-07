@@ -469,22 +469,32 @@ internal class AgentLocalTools(
         runCatching {
             if (closed.get()) throw AgentRunCancelledException()
             val args = JSONObject(toolCall.argumentsJson.ifBlank { "{}" })
-            if (guiGeneration != null && publishedObservation.get().generation != guiGeneration) {
+            if (guiGeneration != null &&
+                publishedObservation.get().generation != guiGeneration &&
+                toolCall.name !in AgentVirtualDisplayTools.names
+            ) {
                 // 代号变了不等于快照作废：**不同屏各自一把锁、各自一个代号**。
                 //
                 // 以前不区分屏就清空，于是「刚建屏并观察完首屏 → tap_element」必定失败：
                 // create/launch 的 scope 是 main（参数里还没 display_id），
-                // tap 的 scope 是 display:N —— 两块不同的屏，代号码天生不等。
-                // 现在只在这枚快照确实属于**同一块屏**时才作废旧快照。
+                // tap 的 scope 是 display:N —— 两块不同的屏，代号天生不等。
+                //
+                // 判断依据用 **GUI scope**，不用 `resolveDisplayId(args)`：
+                // 后者对没有 `display_id` 的参数会回退到「最近一次观察的屏」，
+                // 而这里要回答的是“本次动作落在哪把锁上”，与快照屏比较。
+                // `virtual_display_*` 整类跳过：它们的参数是会话 `id`，
+                // scope 永远算成 main，与它们刚发布的虚拟屏快照必然不在同一把锁上。
                 val previous = publishedObservation.get()
-                // 目标屏：显式传的优先；没传时与 guiScopeFor 一致，沿用最近一次观察的屏。
-                val targetDisplay = resolveDisplayId(args)
-                    ?: ImplicitDisplayPolicy.inherit(previous.displayId)
-                if (ObservationGenerationPolicy.invalidate(
+                val targetScope = guiScopeFor(toolCall)
+                val snapshotScope = previous.displayId
+                    ?.let { GuiControlCoordinator.displayScope(it) }
+                    ?: GuiControlCoordinator.MainScope
+                if (snapshotScope == targetScope &&
+                    ObservationGenerationPolicy.invalidate(
                         snapshotGeneration = previous.generation,
                         currentGeneration = guiGeneration,
                         snapshotDisplayId = previous.displayId,
-                        targetDisplayId = targetDisplay,
+                        targetDisplayId = previous.displayId,
                     )
                 ) {
                     publishedObservation.set(PublishedObservation())
@@ -492,7 +502,9 @@ internal class AgentLocalTools(
                         return@runCatching textResult(
                             errorResult(
                                 code = "NO_OBSERVATION",
-                                message = "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面",
+                                message = "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面" +
+                                    "（诊断：快照屏=${previous.displayId} scope=$targetScope " +
+                                    "快照代号=${previous.generation} 本次代号=$guiGeneration）",
                             ),
                         )
                     }
@@ -3034,7 +3046,31 @@ internal class AgentLocalTools(
                         errorResult("VIRTUAL_DISPLAY_NOT_FOUND", "未找到虚拟屏 ${request.id}；请先 virtual_display_list")
                     )
                 val outcome = launchOnVirtualDisplay(session, request)
-                if (!outcome.optBoolean("ok")) return textResult(outcome.toString())
+                if (!outcome.optBoolean("ok")) {
+                    // 「已经在这块屏上」不是失败，是重复请求。
+                    //
+                    // 实测占比很高（11 次调用里 3 次 ALREADY_ON_TARGET_DISPLAY）：模型刚 launch 过
+                    // 一次，下一个回合又发一次，然后就被一个错误码挡住，还得花一轮重新观察。
+                    // 这里直接**把首屏给它**：语义上是「已经就绪」而不是「你搞错了」。
+                    if (outcome.optString("code") == "ALREADY_ON_TARGET_DISPLAY") {
+                        val ready = observeAfterLaunch(session.displayId, null)
+                        val already = JSONObject()
+                            .put("ok", true)
+                            .put("tool", "virtual_display_launch")
+                            .put("display_id", session.displayId)
+                            .put("package_name", request.packageName)
+                            .put("already_running", true)
+                            .put(
+                                "note",
+                                "应用本来就在这块虚拟屏上，没有重启；下面附当前首屏节点，可直接操作",
+                            )
+                        if (ready != null) {
+                            already.put("first_observation", summarizeLaunchObservation(ready))
+                        }
+                        return textResult(already.toString())
+                    }
+                    return textResult(outcome.toString())
+                }
                 // 启动后顺手观察首次屏：以前这一步要 launch → wait N 秒 → observe_screen 三次调用，
                 // 而且"等多久"只能猜。现在一次调用就把首屏节点和 observation_id 一起拿到。
                 // 同 create：首屏属于虚拟屏，不能绑 main 锁的代号。

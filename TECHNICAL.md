@@ -3922,3 +3922,44 @@ SCREEN_BRIGHT_WAKE_LOCK 'Eta:agent-keep-screen'     ACQ=-51s (uid=10629 pid=2749
 **验证**：门禁 `STAGES=test` —— 用例 **1570** 个、失败 0。新增
 `ObservationGenerationPolicyTest`（9 例）与 `SecretRedactorTest` 3 例
 （`$PWD` 系列不改写 / 真实密码仍打码 / 引号形态保持）。
+
+### fix136：Token 消耗与「同样的错反复犯」
+
+真机自审（`eta_self_audit(scope="agent")`，72 小时）给出的实测数据：
+
+| 工具 | 调用 | 失败 | 主要失败码 |
+|---|---|---|---|
+| `edit_files` | 8 | 5（63%） | `INVALID_ARGUMENT`×3、`DUPLICATE_PATH`、`READ_REQUIRED` |
+| `scroll_element` | 21 | 8（38%） | `ACTION_OUTCOME_UNKNOWN`×8 |
+| `virtual_display_launch` | 11 | 4（36%） | `ALREADY_ON_TARGET_DISPLAY`×3、`APP_ALREADY_RUNNING` |
+| `tap_element` | 38 | 11（29%） | `NO_OBSERVATION`×9 |
+
+**一、动作后不再重发整屏（最大的一处 token 浪费）**
+
+`afterAction` 每次动作后重新观察并把**整屏节点表**（最多 30 个、约 5,000 字）塞进结果。
+`tap_element` 一次会话调 38 次 → 约 19 万字符的重复上下文。
+
+改法：`AgentAfterActionSummary.pickNodesToReport` 按优先级选节点 ——
+新增的 → 内容变化的 → 剩余可点击的，上限 `DEFAULT_NODES_AFTER_ACTION = 8`。
+**界面没有可见变化时返回 0 个节点**：那种情况下重发整屏的信息量是零。
+跨屏或没有前一张快照时仍给足（模型对当前界面一无所知）。
+
+`ui_nodes` 的语义随之变成「与本次操作相关的节点」，`note` 里已写明，
+避免模型以为看到的是整屏。
+
+**二、把「可自动处理的失败」改成成功**
+
+- `virtual_display_launch` 收到 `ALREADY_ON_TARGET_DISPLAY` 不再返回错误：
+  直接观察并返回 `ok=true` + `already_running=true` + `first_observation`。
+  模型拿到的语义从「你搞错了」变成「已经就绪，接着做」。
+- `edit_files` 的重复路径不再报 `DUPLICATE_PATH`：按出现顺序合并成一条，
+  `edits` 依次叠加（语义与对同一文件连发多次 `edit_file` 一致）。
+
+**为什么不做「再多写一句提示」**：`AgentSelfBrief` 已经把失败码与改法注入系统提示
+（每会话最多 700 字，且有稳定性约束不能带实时计数），但这几个码仍然高频复发。
+说明瓶颈不在「模型不知道」，而在「工具把本可自动完成的事变成了错误」。
+所以这次改的是工具行为，不是文案。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1573** 个、失败 0。新增/更新：
+`AgentAfterActionSummaryVolumeTest` 3 例（界面不变时 0 节点 / 变化时 ≤8 节点且含新增项 /
+无前快照时仍可操作）、`AgentFileOperationsTest.multiFileEditMergesDuplicatePathsInOrder`。

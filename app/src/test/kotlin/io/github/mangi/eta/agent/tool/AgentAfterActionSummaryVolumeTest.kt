@@ -46,6 +46,47 @@ class AgentAfterActionSummaryVolumeTest {
         assertTrue(node.getString("text").endsWith("…"))
     }
 
+    /**
+     * 真机数据：一次会话里 `tap_element` 调 38 次，每次回整屏（最多 30 节点、约 5,000 字），
+     * 单这一项就是约 19 万字符的重复上下文，而模型需要的只是「刚点的那个东西变没变」。
+     */
+    @Test
+    fun unchangedScreenSendsNoNodesAtAll() {
+        val nodes = (0 until 20).map { node(it, "条目 $it") }
+        val summary = AgentAfterActionSummary.build(observation("o1", nodes), observation("o2", nodes))
+
+        assertTrue("界面没变就不该重发整屏", !summary.getBoolean("screen_changed"))
+        assertTrue(
+            "界面没变时不该带节点（实际 ${summary.getInt("ui_nodes_shown")} 个）",
+            summary.getInt("ui_nodes_shown") == 0,
+        )
+    }
+
+    @Test
+    fun changedScreenSendsOnlyAFewNodes() {
+        val before = observation("o1", (0 until 20).map { node(it, "条目 $it") })
+        val after = observation("o2", (0 until 20).map { node(it, "条目 $it") } + node(20, "新增一行"))
+        val summary = AgentAfterActionSummary.build(before, after)
+
+        val shown = summary.getInt("ui_nodes_shown")
+        assertTrue("动作后不该重发整屏（实际 $shown 个）", shown <= 8)
+        assertTrue("至少要给一个可操作的节点", shown >= 1)
+        val texts = summary.getJSONArray("ui_nodes").let { array ->
+            (0 until array.length()).map { array.getJSONObject(it).optString("text") }
+        }
+        assertTrue("新增的那一项要包含在回传节点里，实际=$texts", texts.any { it.contains("新增一行") })
+    }
+
+    @Test
+    fun firstActionWithoutSnapshotStillReturnsOperableNodes() {
+        val after = observation("o1", (0 until 20).map { node(it, "条目 $it") })
+        val summary = AgentAfterActionSummary.build(null, after)
+        assertTrue(
+            "没有前一张快照时也要能继续操作（实际 ${summary.getInt("ui_nodes_shown")} 个）",
+            summary.getInt("ui_nodes_shown") in 1..8,
+        )
+    }
+
     private fun observation(id: String, nodes: List<UiNode>) = ElementObservation(
         id = id,
         source = ElementSource.ACCESSIBILITY,

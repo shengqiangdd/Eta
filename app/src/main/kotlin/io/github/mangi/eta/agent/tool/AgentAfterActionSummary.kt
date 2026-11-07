@@ -23,6 +23,18 @@ internal object AgentAfterActionSummary {
      */
     private const val NODES_BUDGET_CHARS = 5_000
 
+    /**
+     * 动作后默认只带这么多个节点。
+     *
+     * 以前每次都把整屏（最多 30 个、约 5,000 字）重发一遍：一次会话里 `tap_element`
+     * 调 38 次就是 19 万字符的重复上下文，而模型真正需要的往往只是「刚点过的那个东西
+     * 变没变」与「新增了什么」。
+     *
+     * 这里保留少量节点不是为了“好看”：动作后常见下一步就是点相邻项，
+     * 给 0 个会逼模型立刻 observe_screen 一次，反而更贵。
+     */
+    private const val DEFAULT_NODES_AFTER_ACTION = 8
+
     fun build(
         before: ElementObservation?,
         after: ElementObservation,
@@ -31,8 +43,19 @@ internal object AgentAfterActionSummary {
     ): JSONObject {
         val changed = before == null || signature(before.nodes) != signature(after.nodes)
         val diff = before?.let { diff(it.nodes, after.nodes) }
+        // 只给「值得给」的节点：整屏重发是上下文里最大的一块重复。
+        // 跨屏或界面大改时给多一点（模型此时确实需要看清新界面），否则只给变化涉及的。
+        val nodeBudget = when {
+            crossDisplay -> DEFAULT_NODES_AFTER_ACTION
+            changed && diff != null && diff.added.size + diff.changed.size > DEFAULT_NODES_AFTER_ACTION ->
+                DEFAULT_NODES_AFTER_ACTION
+            changed -> DEFAULT_NODES_AFTER_ACTION
+            // 界面没变：这次动作没造成任何可见变化，全量重发毫无信息量。
+            else -> 0
+        }
+        val candidateNodes = pickNodesToReport(after.nodes, diff, changed, crossDisplay)
         val nodes = UiNodeWire.toArray(
-            nodes = after.nodes,
+            nodes = candidateNodes.take(nodeBudget),
             foregroundPackage = after.packageName,
             includeNodeId = true,
             includeBounds = false,
@@ -68,7 +91,8 @@ internal object AgentAfterActionSummary {
                             "与动作前观察的不是同一块屏：这次没有做前后比较（跨屏差异没有意义）；" +
                             "要刚才那块屏请重新 observe_screen"
                     changed && nodes.shown > 0 ->
-                        "以上为动作后的新界面，可直接用该 observation_id 继续操作；需要更多节点或截图时再调用 observe_screen"
+                        "以上是动作后与本次操作相关的节点（不是整屏）：可直接用该 observation_id 继续操作；" +
+                            "要完整节点或截图时再调用 observe_screen"
                     // 页面跳转途中常见：界面确实变了（screen_changed=true），但这一帧一个节点都没取到。
                     // 原来照样说「可直接继续」，模型拿着空节点列表只能盲试或反复报错。
                     changed ->
@@ -86,6 +110,42 @@ internal object AgentAfterActionSummary {
                     )
                 }
             }
+    }
+
+    /**
+     * 选出「这次动作后真值得给模型看」的节点。
+     *
+     * 优先级：新增的（界面刚出来的）→ 内容变化的（刚点过的东西状态变了）→ 剩余节点里
+     * 可点击的（下一步可能要点）。`removed` 不参与：已经不在界上了，给了也没法操作。
+     *
+     * 界面没变时返回空：那说明动作没有造成任何可见后果，重发整屏只会白占上下文。
+     */
+    private fun pickNodesToReport(
+        afterNodes: List<UiNode>,
+        diff: Diff?,
+        changed: Boolean,
+        crossDisplay: Boolean,
+    ): List<UiNode> {
+        if (!changed) return emptyList()
+        // 跨屏或没有前一张快照：模型对当前界面一无所知，按界面顺序给前面的节点。
+        if (crossDisplay || diff == null) return afterNodes
+
+        // 按节点 index 去重：UiNode 是 data class，它的 hashCode 会落到
+        // android.graphics.Rect（纯 JVM 单测里没 mock 会直接抛），而 index 在本快照内唯一。
+        val picked = LinkedHashSet<Int>()
+        val ordered = LinkedHashMap<Int, UiNode>()
+        fun add(node: UiNode): Boolean {
+            if (picked.size >= DEFAULT_NODES_AFTER_ACTION) return false
+            if (!picked.add(node.index)) return false
+            ordered[node.index] = node
+            return true
+        }
+        diff.added.forEach(::add)
+        diff.changed.forEach { (_, new) -> add(new) }
+        // 再把剩余可点的补上（按界面顺序，保证 index 可用）。
+        afterNodes.filter { it.clickable }.forEach(::add)
+        afterNodes.forEach(::add)
+        return ordered.values.toList()
     }
 
     private data class Diff(

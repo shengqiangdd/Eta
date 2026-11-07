@@ -343,19 +343,21 @@ class AgentFileOperationsTest {
         assertEquals("alpha", second.readText())
     }
 
-    @Test fun multiFileEditRejectsDuplicatePaths() {
-        val file = temporary.newFile("same.txt").apply { writeText("a") }
+    @Test fun multiFileEditMergesDuplicatePathsInOrder() {
+        // 以前这里报 DUPLICATE_PATH 把整批拒掉（实测是 edit_files 最主要的失败之一）。
+        // 调用方真正想要的是「把这些编辑都应用上」，语义与对同一文件连发两次 edit_file 一致。
+        val file = temporary.newFile("same.txt").apply { writeText("a then b") }
         val result = JSONObject(
             operations().editFiles(
                 listOf(
                     FilePatch(file.name, listOf(FileEdit("a", "A"))),
-                    FilePatch(file.name, listOf(FileEdit("a", "B"))),
+                    FilePatch(file.name, listOf(FileEdit("b", "B"))),
                 ),
             ),
         )
-        assertFalse(result.getBoolean("ok"))
-        assertEquals("DUPLICATE_PATH", result.getString("code"))
-        assertEquals("a", file.readText())
+        assertTrue("重复路径应自动合并而不是拒绝：$result", result.getBoolean("ok"))
+        assertEquals(1, result.getInt("file_count"))
+        assertEquals("A then B", file.readText())
     }
 
     @Test fun multiFileWriteFailureRollsBackFilesAlreadyWritten() {
