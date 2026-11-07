@@ -3872,3 +3872,53 @@ SCREEN_BRIGHT_WAKE_LOCK 'Eta:agent-keep-screen'     ACQ=-51s (uid=10629 pid=2749
 
 **验证**：门禁 `STAGES=test` —— 用例 **1558** 个、失败 0
 （新增 `AgentKeepScreenOnPolicyTest` 4 例：服务端说空闲才纠正 / 查不到不纠正 / 还在跑不纠正 / 没得纠正）。
+
+### fix135e：三处「工具自己把话说少/说错」
+
+**一、`scroll_element` 的兜底把验证信息全丢了**
+
+虚拟屏上节点只支持手势时会改走 `scroll()`（坐标滑动，结果由锚点位移验证）。但兜底成功时
+返回的 JSON 只有 `ok=true`：`moved`、`verified_by`、`at_boundary`、`direction_confirmed`
+一个都没带。模型看到 `ok` 就当滑对了 —— 哪怕其实只是「手势发出去了」。
+
+现在把这几项原样透出，并补 `target_index`（滑的是哪个节点）。`ok` 也改成跟随真实的 `moved`，
+不再无条件为 true。
+
+**注**：核查时发现 `scroll` 与无障碍节点两条路径本来就有 `anchor_motion` / `scroll_event`
+验证，无法确认时返回 `ACTION_OUTCOME_UNKNOWN` 并要求重新观察。此前记录里「`scroll_element`
+误报 9/24」在现有代码中找不到对应证据，因此**没有**按那条结论改动验证逻辑。
+
+**二、建屏后紧接的 `tap_element` 报 `NO_OBSERVATION`**
+
+`virtual_display_create` / `virtual_display_launch` 会顺手观察首屏并发布快照
+（`first_observation`），但紧接着 `tap_element` 却要求先 `observe_screen`。
+
+根因是 GUI 代号（generation）的适用范围被当成了全局：`GuiControlCoordinator` 每块屏一把锁、
+各有一个代号。这两条工具的参数里还没有 `display_id`，scope 是 `main`；`tap_element` 带
+`display_id=<新屏>`，scope 是 `display:N`。两把锁的代号**天生不相等**，旧代码只比代号就
+清空快照。
+
+修法两层：
+
+1. 这类「跨屏发布」的首屏快照显式不绑代号（`publishObservation(..., generation = null)`）；
+2. 代号比对抽成纯函数 `ObservationGenerationPolicy.invalidate`：**先比屏、再比代号**。
+   屏不一致直接不可用；同一块屏代号不同才算过期；快照无代号则只看屏。
+
+**三、脱敏把命令文本改坏了**
+
+真机现象：`git config --add safe.directory "$PWD"` 报 `safe.directory 'D' not absolute`。
+
+根因：`SecretRedactor` 的凭据名列表里有 `pwd`，`\b` 边界让它命中 shell 的 `$PWD` /
+`export PWD=...`，命令文本被改写成 `PWD=<mask>`，之后 `$PWD` 就不再是路径。
+
+修法：
+
+- 把 `pwd` 从凭据名里去掉（真实密码变量通常是 `password` / `passwd` / `DB_PWD`）；
+- 名字左边加 `(?<![$\w-])`，`$PWD`、`${PWD}`、`FOO=$PWD/x` 一律不动；
+- 另加 `PREFIXED_ASSIGNMENT` 覆盖 `DB_PASSWD=` / `MYSQL_PASSWORD=` 这类带下划线前缀的名字，
+  它要求**必须有下划线前缀**，所以仍不会误伤 `PWD`；
+- 保留原引号形态：`password="..."` → `password="<mask>"`，不额外套引号。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1570** 个、失败 0。新增
+`ObservationGenerationPolicyTest`（9 例）与 `SecretRedactorTest` 3 例
+（`$PWD` 系列不改写 / 真实密码仍打码 / 引号形态保持）。

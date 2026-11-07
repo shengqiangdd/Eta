@@ -470,14 +470,32 @@ internal class AgentLocalTools(
             if (closed.get()) throw AgentRunCancelledException()
             val args = JSONObject(toolCall.argumentsJson.ifBlank { "{}" })
             if (guiGeneration != null && publishedObservation.get().generation != guiGeneration) {
-                publishedObservation.set(PublishedObservation())
-                if (AgentToolRequirements.requiresFreshObservation(toolCall.name)) {
-                    return@runCatching textResult(
-                        errorResult(
-                            code = "NO_OBSERVATION",
-                            message = "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面",
-                        ),
+                // 代号变了不等于快照作废：**不同屏各自一把锁、各自一个代号**。
+                //
+                // 以前不区分屏就清空，于是「刚建屏并观察完首屏 → tap_element」必定失败：
+                // create/launch 的 scope 是 main（参数里还没 display_id），
+                // tap 的 scope 是 display:N —— 两块不同的屏，代号码天生不等。
+                // 现在只在这枚快照确实属于**同一块屏**时才作废旧快照。
+                val previous = publishedObservation.get()
+                // 目标屏：显式传的优先；没传时与 guiScopeFor 一致，沿用最近一次观察的屏。
+                val targetDisplay = resolveDisplayId(args)
+                    ?: ImplicitDisplayPolicy.inherit(previous.displayId)
+                if (ObservationGenerationPolicy.invalidate(
+                        snapshotGeneration = previous.generation,
+                        currentGeneration = guiGeneration,
+                        snapshotDisplayId = previous.displayId,
+                        targetDisplayId = targetDisplay,
                     )
+                ) {
+                    publishedObservation.set(PublishedObservation())
+                    if (AgentToolRequirements.requiresFreshObservation(toolCall.name)) {
+                        return@runCatching textResult(
+                            errorResult(
+                                code = "NO_OBSERVATION",
+                                message = "手机操作权已变化，请先调用 observe_screen 重新观察，再操作当前页面",
+                            ),
+                        )
+                    }
                 }
             }
             if (AgentToolRequirements.find(toolCall.name) != null &&
@@ -2813,7 +2831,10 @@ internal class AgentLocalTools(
                         created
                             .put("package_name", request.packageName)
                             .put("component", launched.optString("component"))
-                        observeAfterLaunch(session.displayId, generation)?.let { observation ->
+                        // 注意：这里的 generation 是 **main 锁**的代号，而首屏属于虚拟屏。
+                        // 存下来会让紧接着的 tap_element（display:N 锁）比对不等而报 NO_OBSERVATION。
+                        // 传 null：不绑任何锁代号，让后续动作按屏去校验。
+                        observeAfterLaunch(session.displayId, null)?.let { observation ->
                             created.put("first_observation", summarizeLaunchObservation(observation))
                         }
                     } else {
@@ -3016,7 +3037,8 @@ internal class AgentLocalTools(
                 if (!outcome.optBoolean("ok")) return textResult(outcome.toString())
                 // 启动后顺手观察首次屏：以前这一步要 launch → wait N 秒 → observe_screen 三次调用，
                 // 而且"等多久"只能猜。现在一次调用就把首屏节点和 observation_id 一起拿到。
-                val firstObservation = observeAfterLaunch(session.displayId, generation)
+                // 同 create：首屏属于虚拟屏，不能绑 main 锁的代号。
+                val firstObservation = observeAfterLaunch(session.displayId, null)
                 outcome
                     .put("tool", "virtual_display_launch")
                     .put("display_id", session.displayId)
@@ -3244,9 +3266,15 @@ internal class AgentLocalTools(
                 elements = elements,
                 coordinateSpace = observation.coordinateSpace,
                 displayId = displayId,
-                // 与 observeScreen 保持一致：必须登记当时的 GUI 代号。
-                // 漏了它，紧接着的 tap_element / type_text 会因「代号不匹配」被判成
-                // NO_OBSERVATION —— 建屏后第一次操作必然失败一次（真机连踩两次才发现）。
+                // generation 只在**同一块屏的同一把锁**内有意义。
+                //
+                // 这里有几个工具是在“屏还不存在”时就调用的：
+                // `virtual_display_create` / `virtual_display_launch` 的参数里没有 display_id，
+                // 所以它们的 scope 是 main，代号来自 main 锁；而紧接着的 tap_element 带
+                // display_id=<新屏>，scope 是 display:N，**另一把锁、另一个代号**。
+                // 以前这里把 main 的代号存下来，下次 tap_element 一比对就不相等 →
+                // 清空快照 → 报 NO_OBSERVATION（“首屏白观察了”就是这个）。
+                // 传 null 表示「不绑任何锁代号」，让动作按屏去校验。
                 generation = generation,
             ),
         )

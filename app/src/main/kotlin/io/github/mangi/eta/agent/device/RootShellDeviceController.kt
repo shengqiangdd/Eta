@@ -1284,15 +1284,28 @@ internal class RootShellDeviceController(
             }
             val fallback = attempt.getOrNull()
             if (fallback != null && fallback.optBoolean("ok")) {
-                return JSONObject()
-                    .put("ok", true)
+                // 不能只回 ok=true：兜底走的是坐标滑动，模型必须知道
+                // 「位移是不是真的被验证过」（verified_by）、「是不是到头了」（at_boundary）、
+                // 「是不是方向没确认」（direction_confirmed=false）。
+                // 旧实现把这些全丢了，只剩 ok —— 模型看到 ok 就当成功，哪怕其实只是“发出去了”。
+                val fallbackMoved = fallback.optBoolean("moved", true)
+                val fallbackVerifiedBy = fallback.optString("verified_by").ifBlank { "none" }
+                val json = JSONObject()
+                    .put("ok", fallbackMoved)
                     .put("tool", "scroll_element")
                     .put("direction", parsed.name.lowercase())
                     .put("display_id", snapshot.displayId)
+                    .put("moved", fallbackMoved)
                     .put("method", "ROOT_SCROLL_FALLBACK")
+                    .put("verified_by", fallbackVerifiedBy)
                     .put("fallback_reason", nodeResult.code)
-                    .put("fallback", fallback)
-                    .toString()
+                    .put("target_index", index)
+                fallback.opt("at_boundary")?.let { json.put("at_boundary", it) }
+                fallback.opt("direction_confirmed")?.let { json.put("direction_confirmed", it) }
+                fallback.opt("note")?.let { json.put("note", it) }
+                fallback.opt("elapsed_ms")?.let { json.put("elapsed_ms", it) }
+                json.put("fallback", fallback)
+                return json.toString()
             }
             // 兜底也失败：不能像以前那样直接丢掉，只把原始错误码回给模型 ——
             // 那样看不出「已经试过另一条路」，下次它还会原样重试。这里把尝试与原因一并带回。
