@@ -21,6 +21,32 @@ class AgentKeepScreenOnPolicyTest {
     }
 
     /**
+     * 真机报的缺陷：会话结束后屏幕一直亮。
+     *
+     * 根因有两层：
+     * 1. 自愈只重算本地镜像，而镜像本身没被纠正（事件流断了就不会再有事件改它）；
+     * 2. 窗口的 KEEP_SCREEN_ON flag 在退到后台后仍然挂着（真机 7 小时 36 分）。
+     *
+     * 第 1 层靠服务端权威状态纠正；这里锁住那个纯函数。
+     */
+    @Test fun serverSaysIdleReconcilesStaleStreaming() {
+        assertTrue(AgentKeepScreenOnPolicy.shouldReconcileStreaming(serverReportsRunning = false, localStreamingCount = 1))
+    }
+
+    @Test fun unknownServerStateNeverReconciles() {
+        // null = 连不上/超时：不能当成「没跑」，否则会在任务中途把锁放掉（屏幕熄）。
+        assertFalse(AgentKeepScreenOnPolicy.shouldReconcileStreaming(serverReportsRunning = null, localStreamingCount = 3))
+    }
+
+    @Test fun serverStillRunningNeverReconciles() {
+        assertFalse(AgentKeepScreenOnPolicy.shouldReconcileStreaming(serverReportsRunning = true, localStreamingCount = 2))
+    }
+
+    @Test fun nothingStreamingNeedsNoReconcile() {
+        assertFalse(AgentKeepScreenOnPolicy.shouldReconcileStreaming(serverReportsRunning = false, localStreamingCount = 0))
+    }
+
+    /**
      * 真机报的缺陷：「会话运行中保持亮屏」没问题，但**会话结束后屏幕一直常亮**。
      *
      * 根因：renew() 在锁未持有时会 acquire()。用户停止 / 会话结束的那一刻，

@@ -273,7 +273,13 @@ internal class BackgroundTerminalJobs(
         .put("status", task.commandStatus).put("running", task.completedAt == null)
         .put("started_at", task.startedAt).put("completed_at", task.completedAt ?: JSONObject.NULL)
         .put("exit_code", task.exitCode ?: JSONObject.NULL).put("end_reason", task.endReason ?: JSONObject.NULL)
-        .put("output_path", supervisor.hostDaemonPath(task, task.logPath)).put("output_environment", "android")
+        // output_path 是**宿主物理路径**（hostDaemonPath 换出来的），所以它总是 android 侧；
+        // 但 Linux 任务的 guest 路径不同（/workspace/daemon/x.log），模型拿宿主路径去 `cat`
+        // 就会落空。两个都给，并明说哪个能在哪侧用。
+        .put("output_path", supervisor.hostDaemonPath(task, task.logPath))
+        .put("output_environment", "android")
+        .put("guest_output_path", task.logPath)
+        .put("guest_output_environment", task.environment.wireName)
         .put("timeout_ms", task.timeoutMs)
         .put("output_mode", task.outputMode.ifBlank { "file" })
         .put("completion_notifications_enabled", completionNotificationsEnabled())

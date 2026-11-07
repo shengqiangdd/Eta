@@ -349,26 +349,60 @@ internal class AgentAppState(
     }
 
     /**
-     * 保屏自愈：把锁强度与决策对齐。
+     * 保屏自愈：把锁强度与**服务端权威状态**对齐。
      *
-     * 为什么不能只靠「状态变化时调 applyKeepScreenLock」：
-     * 锁是**系统级**资源，一旦因为某条异常路径（续期与释放的竞态、被杀的 run、
-     * 状态镜像漏刷）多持了一把，就再没有任何事件会来纠正它——
-     * 用户看到的是「会话已结束，屏幕一直亮着」，只能等到 12 小时上限。
+     * 旧实现的自愈是假的：它只是把 `conversationsById` 里同一个镜像再算一遍。
+     * 镜像失真时（run 已在服务端结束，但本地 `isStreaming` 没被改回来）自愈也跟着错，
+     * 用户看到的是「会话已结束，屏幕一直亮着」，直到 12 小时上限。真机实测：
+     * `dumpsys power` 里 `Eta:agent-keep-screen` 在会话结束后仍在续期。
      *
-     * 定时重算而不是只看标志位：这正是本次缺陷的教训——
-     * 状态镜像可能和真实列表不一致，以现场计算为准。
-     * 间隔取 1 分钟：发现漏锁够快，又不会带来可见开销。
+     * 现在每分钟向 `AgentRuntimeService` 问一次「还有几条 run 真的活着」，
+     * 只在**查询成功**时采信：服务端没起/超时要按本地判定，
+     * 不能因为「查不到」把锁放掉，让任务中途熄屏。
      */
     private fun ensureKeepScreenLockSettles() {
         if (keepScreenSettleJob?.isActive == true) return
         keepScreenSettleJob = scope.launch {
             while (true) {
                 delay(KEEP_SCREEN_SETTLE_INTERVAL_MS)
-                val shouldHold = keepScreenEnabled &&
-                    conversationsById.values.any { it.isStreaming && !it.isPaused }
-                screenWakeLock.setHeld(shouldHold)
+                val serverRunning = withContext(Dispatchers.IO) {
+                    (AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRun()
+                        as? AgentRuntimeClient.ActiveRunQuery.Known)
+                        ?.let { it.runId != null || it.runningCount > 0 }
+                }
+                // 查不到：不改锁，也不改镜像。曾因「查不到就当没跑」误杀过后台会话。
+                if (AgentKeepScreenOnPolicy.shouldReconcileStreaming(
+                        serverReportsRunning = serverRunning,
+                        localStreamingCount = conversationsById.values.count { it.isStreaming },
+                    )
+                ) {
+                    reconcileFinishedConversations()
+                    // 镜像被纠正了，锁也要跟着走：这时本地判定才与服务端一致。
+                    applyKeepScreenLock()
+                }
             }
+        }
+    }
+
+    /**
+     * 服务端已确认一条 run 都不剩：把还挂着 `isStreaming` 的会话改回真实状态。
+     *
+     * 这是唯一的自愈点：本地没有任何事件会来纠正一个已经断掉的事件流。
+     * 不碰 `currentRunId` 与 `runConversationIds` —— 那两块由 [reconcileStaleRunState]
+     * 负责，它有更完整的依据（checkpoint、局部映射）。
+     */
+    private fun reconcileFinishedConversations() {
+        val stale = conversationsById.filterValues { it.isStreaming }
+        if (stale.isEmpty()) return
+        AndroidAgentLogger.warnThrottled("keep_screen_stale_streaming_reconciled") {
+            "Keep-screen: ${stale.size} conversation(s) still marked streaming while runtime reports none"
+        }
+        stale.forEach { (id, state) ->
+            updateConversation(
+                id,
+                state.copy(isStreaming = false, isPaused = false, isCompacting = false, isGuiWaiting = false),
+                updateTimestamp = false,
+            )
         }
     }
 

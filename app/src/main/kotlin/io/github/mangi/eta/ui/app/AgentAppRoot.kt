@@ -204,7 +204,30 @@ fun AgentAppRoot(
         streaming = agentState.anyRunningUnpausedConversation,
         paused = false,
     )
-    LaunchedEffect(keepScreenOn) { rootView.keepScreenOn = keepScreenOn }
+    // 窗口 flag 必须跟**可见性**挂钩。它只对可见窗口生效，但窗口对象会跨可见性一直活着：
+    // 真机上见过 MainActivity 退到后台 7 小时 36 分后，窗口仍带着 KEEP_SCREEN_ON，
+    // WMS 就一直记着它（dumpsys power 里那把 'WindowManager/displayId:0'），
+    // 屏幕永远不息。Compose 在后台不再重组，LaunchedEffect 根本不会跑到。
+    val lifecycleOwnerForKeepScreen = LocalLifecycleOwner.current
+    var windowVisible by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwnerForKeepScreen) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> windowVisible = true
+                Lifecycle.Event.ON_PAUSE -> {
+                    windowVisible = false
+                    // 同时清掉：后台的窗口 flag 没有任何意义，只会让 WMS 记一笔。
+                    rootView.keepScreenOn = false
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwnerForKeepScreen.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwnerForKeepScreen.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(keepScreenOn, windowVisible) {
+        rootView.keepScreenOn = keepScreenOn && windowVisible
+    }
     DisposableEffect(rootView) { onDispose { rootView.keepScreenOn = false } }
     val skills = appViewModel.skills
     val plugins = appViewModel.plugins

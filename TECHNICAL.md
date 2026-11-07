@@ -3816,3 +3816,59 @@ Android 用新 Toast 替换旧的，先弹的那条必然被「已导出…」�
 
 **验证**：门禁 `STAGES=test` —— 用例 **1554** 个、失败 0（新增 `多个孤儿时个数与字节数都正确`、
 `字节数格式化到人类可读`）。
+
+### fix135d：会话结束了屏幕还亮着
+
+真机 `dumpsys power` 抓到的证据（两条锁同时存在）：
+
+```
+SCREEN_BRIGHT_WAKE_LOCK 'WindowManager/displayId:0' ON_AFTER_RELEASE ACQ=-7h36m11s ws=WorkSource{10629 io.github.mangi.eta}
+SCREEN_BRIGHT_WAKE_LOCK 'Eta:agent-keep-screen'     ACQ=-51s (uid=10629 pid=27492)
+```
+
+`dumpsys window` 里 `MainActivity` 的 `fl=` 仍带 `KEEP_SCREEN_ON`，WMS 也把它记为
+`mHoldScreenWindow`。两条独立的泄漏，各自能单独把屏幕钉住。
+
+**一、窗口 flag 跨可见性残留**
+
+`FLAG_KEEP_SCREEN_ON` 只对**可见窗口**起作用，但窗口对象本身跨可见性一直活着。
+原来只有 `LaunchedEffect(keepScreenOn)` 与 `onDispose`：退到后台时 Compose 不再重组，
+`keepScreenOn` 没变成 false（会话还在跑），flag 就一直挂着；后台撤掉 flag 也没有任何路径。
+
+修法：`AgentAppRoot` 里加 `LifecycleEventObserver`，`ON_PAUSE` 时立刻
+`rootView.keepScreenOn = false`，`ON_RESUME` 时按当时状态重算。
+`LaunchedEffect` 的 key 加上 `windowVisible`，两者同时成立才置 true。
+
+**二、自愈是假的**
+
+`ensureKeepScreenLockSettles()` 每分钟重算一次 `shouldHold`，用的却是 `conversationsById`
+里那份 `isStreaming` 镜像 —— 镜像失真时它跟着一起错。run 已在服务端结束、本地事件流断掉，
+再没有任何事件会把 `isStreaming` 改回 false，于是锁一直续期到 12 小时上限。
+
+修法：自愈改为对照 `AgentRuntimeClient.queryActiveRun()`（服务端权威），
+判据抽成纯函数 `AgentKeepScreenOnPolicy.shouldReconcileStreaming`：
+
+- 服务端**确实**回答了、说一条 run 都没有、本地还有 `isStreaming` → 才纠正；
+- 查不到（`null`，连不上/超时）→ 不采信，**不动锁**。这一条是必须的：
+  把"查不到"当成"没跑"会在任务中途放掉锁，屏幕中途熄灭。
+
+纠正后同时调 `applyKeepScreenLock()`，让锁、状态发布、续期循环三者一起走。
+
+**三、Linux 后台任务的日志读不出来**
+
+`terminal_job read` 对 Linux 任务一律 `LOGS_UNAVAILABLE：exit=1`，而日志文件好好地存在。
+根因：`readLogs` 用 `runOneShotShell`（默认 `environment=ANDROID`，宿主壳）去
+`tail` 一个只存在于 rootfs 里的路径。`hostDaemonPath` 换出来的宿主路径在 chroot 里不存在。
+
+修法：Linux 任务改为在**它自己的环境里**执行 `tail`（传 `environment`、`linuxRootfsPath`、
+`linuxSharedMounts`），命令里用 guest 路径 `task.logPath`；Android 任务保持原样。
+失败时把 stderr 前 120 字带上，不再只报 `exit=1`（区分"文件不在"与"权限不够"）。
+
+**四、`output_environment` 是硬编码的**
+
+`taskJson` 把 `output_environment` 写死成 `"android"`，Linux 任务的日志路径因此被误标。
+现在同时给出 `guest_output_path` + `guest_output_environment`，让模型知道
+"宿主路径在 android 侧、guest 路径在执行侧"，两个都能用。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1558** 个、失败 0
+（新增 `AgentKeepScreenOnPolicyTest` 4 例：服务端说空闲才纠正 / 查不到不纠正 / 还在跑不纠正 / 没得纠正）。

@@ -264,14 +264,35 @@ internal class DetachedTaskSupervisor(
             ?: return DaemonLogsResult(ok = false, code = "TASK_NOT_FOUND", message = "未找到守护任务：$id")
         if (task.identity == "root" && !rootAvailable()) return DaemonLogsResult(ok = false, code = "ROOT_REQUIRED", message = "Root 授权不可用")
         val limit = maxBytes.coerceIn(1_024, MAX_LOG_READ_BYTES)
-        val result = runOneShotShell(
-            processSupervisor = oneShotSupervisor,
-            identity = task.identity,
-            command = "tail -c $limit ${shellQuote(hostDaemonPath(task, task.logPath))} 2>/dev/null",
-            timeoutSeconds = 15,
-        )
+        // Linux 任务的日志写在 rootfs 里的 /workspace/daemon（bind 自宿主），
+        // 只有**在同一个环境里**执行 tail 才能看到；丢给 Android 宿主壳就是 exit=1，
+        // 用户看到「日志不可用：exit=1」而文件其实好好地存在。
+        val result = if (task.environment.isLinux) {
+            runOneShotShell(
+                processSupervisor = oneShotSupervisor,
+                identity = task.identity,
+                command = "tail -c $limit ${shellQuote(task.logPath)} 2>/dev/null",
+                timeoutSeconds = 15,
+                environment = task.environment,
+                linuxRootfsPath = rootfsPath(task.environment),
+                linuxSharedMounts = linuxSharedMountsProvider(),
+            )
+        } else {
+            runOneShotShell(
+                processSupervisor = oneShotSupervisor,
+                identity = task.identity,
+                command = "tail -c $limit ${shellQuote(hostDaemonPath(task, task.logPath))} 2>/dev/null",
+                timeoutSeconds = 15,
+            )
+        }
         if (result.exitCode != 0) {
-            return DaemonLogsResult(ok = false, code = "LOGS_UNAVAILABLE", message = "日志不可用：exit=${result.exitCode}")
+            // 把 stderr 一起带上：只说 exit=1 时无法区分「文件不在」与「权限不够」。
+            val detail = result.stderr.decodeToString().take(120).trim()
+            return DaemonLogsResult(
+                ok = false,
+                code = "LOGS_UNAVAILABLE",
+                message = "日志不可用：exit=${result.exitCode}" + if (detail.isNotEmpty()) "（$detail）" else "",
+            )
         }
         return DaemonLogsResult(
             ok = true,
@@ -648,8 +669,11 @@ internal class DetachedTaskSupervisor(
         if (environment.isLinux) LINUX_DAEMON_DIR else daemonDir
 
     /**
-     * Linux 任务的 /workspace 是宿主工作目录的 bind 视图，日志与 pid 文件的物理位置仍在宿主。
-     * 读写一律走宿主路径，避免为读日志专门进入 chroot。
+     * 宿主物理路径（给 Kotlin 侧 `File`、以及**不在 rootfs 里执行**的宿主 shell 用）。
+     *
+     * Linux 任务的 `/workspace` 是宿主工作目录的 bind 视图，日志与 pid 文件的物理位置仍在宿主。
+     * 注意：[readLogs] 走的是任务的执行环境（chroot/proot），那里要用 guest 路径 `task.logPath`，
+     * 不能用这个换出来的宿主路径 —— 搞反就是“日志不可用：exit=1”。
      */
     internal fun hostDaemonPath(task: DetachedTask, wirePath: String): String =
         if (task.environment.isLinux && wirePath.startsWith(LINUX_DAEMON_DIR)) {
