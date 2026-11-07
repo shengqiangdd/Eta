@@ -247,7 +247,7 @@ internal class RootShellTerminalController(
             .put("identity", normalizedIdentity)
             .put("environment", normalizedEnvironment.wireName)
             .put("cwd", session.cwd)
-            .put("runtime", session.runtime ?: JSONObject.NULL)
+            .put("runtime", session.runtimeIfChanged() ?: JSONObject.NULL)
             .put("status", "open")
             .toString()
     }
@@ -497,7 +497,7 @@ internal class RootShellTerminalController(
             .put("identity", session.identity)
             .put("environment", session.environment.wireName)
             .put("cwd", session.cwd)
-            .put("runtime", session.runtime ?: JSONObject.NULL)
+            .put("runtime", session.runtimeIfChanged() ?: JSONObject.NULL)
             .put("status", when { result.timedOut -> "timed_out"; session.closed -> "cancelled"; result.exitCode == 0 -> "exited"; else -> "failed" })
             .put("exit_code", result.exitCode)
             .put("timed_out", result.timedOut)
@@ -974,8 +974,38 @@ internal class RootShellTerminalController(
 
         var runtime: JSONObject? = null
 
+        /**
+         * 上次已经告诉过模型的 runtime 指纹。
+         *
+         * `runtime` 块约 384 字符，其中 `capability_scope` 是一句固定的免责声明、
+         * `available_commands` / `shell_provider` / `shell_executable` 在同一个 shell 里
+         * **每次调用都完全一致**。真机 trace 里一次 `printf ok` 输出 2 个字符，
+         * 却带回了 384 字符的 runtime —— 几十轮下来就是几万 Token 的纯重复。
+         *
+         * 只在首次（或它真的变了）时下发；否则给一小段标记，模型自己知道「没变」。
+         */
+        var runtimeSignature: String? = null
+
         @Volatile
         var closed: Boolean = false
+
+        /**
+         * 只在首次或真的变化时返回 [runtime] 块。
+         *
+         * **为什么不每次都发**：这个块约 384 字符，其中 `capability_scope` 是一句固定免责声明，
+         * `available_commands` / `shell_provider` / `shell_executable` 在同一个会话里完全不变。
+         * 真机 trace：一条 `printf ok` 的输出是 2 个字符，却带回 384 字符的 runtime ——
+         * 一场几十轮的会话里，光这一项就是几万 Token 的重复。
+         *
+         * 返回 null 表示「和上次一样」，调用方就写 `runtime: null`，模型不知道就在上一轮看到过。
+         * 真正变了（换 shell、换身份、重新 open）时照旧全量下发。
+         */
+        fun runtimeIfChanged(): JSONObject? {
+            val current = runtime ?: return null
+            val (next, payload) = TerminalRuntimeDedup.diff(runtimeSignature, current)
+            runtimeSignature = next
+            return payload
+        }
 
         lateinit var stdoutThread: Thread
         lateinit var stderrThread: Thread

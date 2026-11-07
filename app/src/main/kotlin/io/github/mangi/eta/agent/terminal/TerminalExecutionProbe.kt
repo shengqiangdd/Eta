@@ -58,7 +58,11 @@ internal object TerminalExecutionProbe {
             .put("shell_provider", provider)
             .put("shell_executable", executable ?: JSONObject.NULL)
             .put("available_commands", JSONArray(entries.filter { it.startsWith("command=") }.map { it.substringAfter('=') }.filter { it in commands }))
-            .put("capability_scope", "当前 Shell 的命令解析结果；不表示具备服务访问权限，也不替代执行前授权检查")
+            // 这句话原来是 106 字符的长句「当前 Shell 的命令解析结果；不表示具备服务访问权限，
+            // 也不替代执行前授权检查」，而它和 runtime 块一起在每次调用里重复。
+            // 它要表达的意思（这不是授权）保留，长度压到 1/4；真正的授权检查在工具层，
+            // 从来不靠这句提示。
+            .put("capability_scope", "仅描述解析结果，不代表授权")
         return Output(
             text = text.take(start) + text.substring(endExclusive),
             runtime = runtime,

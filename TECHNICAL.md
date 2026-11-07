@@ -4056,3 +4056,35 @@ Anthropic 的 `{"type":"tool_result","content":...}`（含嵌套 block）。
 
 **注意**：这一项的真实收益（省下多少 token）要等下一场长会话才能从 trace 里量出来。
 现在能确定的只有行为正确性 —— 不要把「测试通过」当成「token 已省下」。
+
+### fix140：`terminal` 结果的 runtime 样板块
+
+真机 trace 抓到的对比（同一次会话）：
+
+| 调用 | stdout | 返回里的 `runtime` 块 |
+|---|---|---|
+| `printf ok` | 2 字符 | **384 字符** |
+| `git status --short` | 几十字符 | **384 字符** |
+
+`runtime` 里那些字段 —— `host_identity`、`uid`、`uid_scope`、`shell_provider`、
+`shell_executable`、`available_commands`、`capability_scope` —— 在同一个会话里
+**每次调用都完全相同**。几十轮下来是几万 token 的纯重复。
+
+**改法**：
+
+1. `TerminalRuntimeDedup.diff` 记住上次下发的指纹，一致时不再下发（`runtime: null`）。
+   真的变了（换 shell、换身份、重新 open）时照旧全量。
+2. `capability_scope` 从 106 字符压到 12 字符（「仅描述解析结果，不代表授权」）。
+   原句每次调用都重复，而它要表达的意思只有一层；真正的授权检查在工具层，不靠这句提示。
+
+**顺带修掉 `terminal_job read` 的 `exit=-1`**：上一版让 Linux 任务到 rootfs 里 `tail`，
+那条路要 `su -c` 起进程，在 App 进程里可能直接失败（真机报「无法启动进程」），
+而日志文件其实好好地存在。现在**优先直接读文件**（`RandomAccessFile` 只读尾部
+`limit` 字节），读不到才回退到执行环境。
+
+`truncated` 必须如实上报 —— 漏了它模型会以为看到的是全文。
+这一条是门禁抓出来的：`fullOutputSurvivesPreviewTruncationAndHostRecreation`
+断言 1024 字符截断与 70000 字节文件，直读分支最初没设 `truncated`，直接把这条打红。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1587** 个、失败 0。新增
+`TerminalRuntimeDedupTest` 4 例（首次必发 / 一致时不发 / 变化时重发 / 文案不再冗长）。

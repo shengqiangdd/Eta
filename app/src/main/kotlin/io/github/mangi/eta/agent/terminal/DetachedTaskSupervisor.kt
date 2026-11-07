@@ -4,6 +4,7 @@ import io.github.mangi.eta.core.AgentLogger
 
 import android.content.Context
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -259,14 +260,57 @@ internal class DetachedTaskSupervisor(
         return statuses
     }
 
+    /**
+     * 直接从文件读日志尾部，不启动任何进程。
+     *
+     * 只读最后 [limit] 个**字节**再按 UTF-8 解码：日志可能几 MB（门禁跑一次就上万行），
+     * 整读进内存毫无必要，也容易在多任务并行时把堆顶爆。
+     * 从中间开始的多字节字符会产生一个替换符，它在输出末尾、不影响阅读。
+     *
+     * [truncated] 必须如实上报：调用方用它告诉模型「后面还有」。
+     * 漏了它，模型会以为看到的是全文。
+     *
+     * @return 读不到（文件不存在/无权限）时返回 null，由调用方回退到执行环境。
+     */
+    private fun readLogFileDirect(path: String, limit: Int): DirectLogRead? = runCatching {
+        val file = File(path)
+        if (!file.isFile || !file.canRead()) return@runCatching null
+        val size = file.length()
+        val start = (size - limit).coerceAtLeast(0)
+        val text = RandomAccessFile(file, "r").use { raf ->
+            raf.seek(start)
+            val bytes = ByteArray((size - start).toInt())
+            raf.readFully(bytes)
+            bytes.decodeToString()
+        }
+        DirectLogRead(text = text, truncated = start > 0)
+    }.getOrNull()
+
+    private data class DirectLogRead(val text: String, val truncated: Boolean)
+
     fun readLogs(id: String, maxBytes: Int = MAX_LOG_READ_BYTES): DaemonLogsResult {
         val task = synchronized(RECORDS_LOCK) { loadTasksLocked() }.firstOrNull { it.id == id }
             ?: return DaemonLogsResult(ok = false, code = "TASK_NOT_FOUND", message = "未找到守护任务：$id")
         if (task.identity == "root" && !rootAvailable()) return DaemonLogsResult(ok = false, code = "ROOT_REQUIRED", message = "Root 授权不可用")
         val limit = maxBytes.coerceIn(1_024, MAX_LOG_READ_BYTES)
+        // 优先**直接读文件**：日志就在磁盘上，没必要为它启动一个 shell 进程。
+        //
+        // 原先 Linux 任务走 runOneShotShell 到 rootfs 里 tail —— 那条路要 su -c 起进程，
+        // 在 App 进程里可能直接失败（真机报 `exit=-1（无法启动进程）`），
+        // 而文件其实好好地存在。先试宿主物理路径，读到就直接返回；
+        // 读不到再回退到执行环境，兼容“日志真的只存在于 rootfs 内部”的配置。
+        val direct = readLogFileDirect(hostDaemonPath(task, task.logPath), limit)
+        if (direct != null) {
+            return DaemonLogsResult(
+                ok = true,
+                code = "OK",
+                message = "读取日志尾部",
+                text = direct.text,
+                truncated = direct.truncated,
+            )
+        }
         // Linux 任务的日志写在 rootfs 里的 /workspace/daemon（bind 自宿主），
-        // 只有**在同一个环境里**执行 tail 才能看到；丢给 Android 宿主壳就是 exit=1，
-        // 用户看到「日志不可用：exit=1」而文件其实好好地存在。
+        // 只有**在同一个环境里**执行 tail 才能看到；丢给 Android 宿主壳就是 exit=1。
         val result = if (task.environment.isLinux) {
             runOneShotShell(
                 processSupervisor = oneShotSupervisor,
