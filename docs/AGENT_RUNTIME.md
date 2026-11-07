@@ -10509,3 +10509,81 @@ compactions / failedRuns / idleRuns / tools`。两个关键设计：
   的 `<memory_learnings>`，且**会话内快照必须稳定**，否则前缀缓存每轮失效。
 - `lint` 阶段因内存（2 核 / 15GB + 10GB swap）与耗时（约 21 分钟）未在本轮跑完；
   `test` 与 `assemble` 已绿。
+
+---
+
+## 上下文预算：修好 7 个因 fix145/fix146 语义变更而失效的测试，并补上门禁覆盖（2026-11-07）
+
+### 要解决的问题
+
+全量 `:app:testDebugUnitTest` 报 `3381 tests, 4 failed`，全部集中在上下文预算与压缩：
+
+| 失败用例 | 期望 | 实际 |
+|---|---|---|
+| `AgentContextBudgetTest.largeWindowRaisesTheHardLimit` | 1.3M 字符不压缩 | 压缩 |
+| `AgentContextBudgetTest.observedUsageStillDrivesWindowRatio` | 100K token 不压 / 110K 压 | 都压 |
+| `AgentContextBudgetTest.realSessionRatioDoesNotTriggerCompactionEarly` | 440,850 字符不压 | 压 |
+| `AgentContextCompactionTest.multiBatchCompactionReportsBatchCount` | 请求数 = 批数 + 1 | 请求数 = 批数 |
+
+### 根因（都是「代码有意变更、测试没跟上」，不是产品缺陷）
+
+1. **`ABSOLUTE_COMPACT_TOKENS = 100_000`（fix145）**：只要 token 数 ≥ 10 万就无条件压缩，
+   与窗口无关。上面三个用例的场景分别落在 325,000 / 100,000 / 110,212 token，全部被这条
+   判据吞掉，它们原本想验的「硬上限」「窗口 85% 触发线」「除数 4 折算」根本没有机会生效。
+2. **`MERGE_SKIP_MAX_CHARS = 12,000`（fix146）**：各批摘要拼接后不超过 12,000 字符就不再
+   发合并请求。原用例的桩固定返回 9 字摘要，拼接后约 27 字符，正确跳过合并，于是
+   「批数 + 1 次请求」的断言必然失败。
+
+### 改动
+
+- **`multiBatchCompactionReportsBatchCount`**：断言改为「短摘要只发批数次请求」，并显式校验
+  进度行里出现「跳过合并」以及批数；不再依赖 `batchLines.last()`（跳过合并时最后一行不再是合并行）。
+- **`largeWindowRaisesTheHardLimit`**：`hardLimitFor` 三条断言保留；压缩断言改用
+  `ABSOLUTE_COMPACT_TOKENS * 4 - 1` 字符（同时低于窗口 85% 与绝对上限），并补一条「超过硬上限
+  必须压」的正向断言。
+- **`observedUsageStillDrivesWindowRatio`**：窗口改 100K，使 85% 触发线（85,000）落在绝对
+  上限以下；断言改为 `trigger - 1` 不压、`trigger` 压，并先断言「前提：触发线在绝对上限以下」，
+  防止以后常量变动让用例重新变成测不到。
+- **`realSessionRatioDoesNotTriggerCompactionEarly`** 拆成两条，因为原用例名已经无法覆盖两种
+  真实情形：
+  - `realSessionIsNotCompactedEarlyWhenTheEndpointReportsUsage`：端点回报 92,714 token（36%）不压，
+    这是本用例真正要守的语义。
+  - `realSessionWithoutUsageIsEstimatedAtOneQuarterAndHitsTheAbsoluteLimit`：无 usage 时折算
+    110,212 ≥ 10 万，**会被压缩**——把 fix145 引入的行为变更显式钉成断言，避免误以为无 usage 一定不压。
+
+**没有改动任何产品代码。** 这 7 条（4 个用例，其中 1 个拆成 2 个）修的均是测试与既定语义的偏差。
+
+### 真正的系统性问题：这三个测试类日常门禁根本不跑
+
+排查中发现 `tools/gate.sh` 的 `FAST_TEST_FILTERS`（`STAGES=test` 的白名单）里没有
+`AgentContextBudgetTest`、`AgentContextCompactionTest`、`AgentContextRecoveryTest`。
+它们只在 `tools/wide-tests.txt` 里，即 `STAGES=test-all` 的宽阶段才跑。
+
+`tools/test_subset_baseline.txt` 把这三条标注为「已由 STAGES=test-all 的 wide 阶段覆盖」，
+于是日常门禁的契约检查是绿的——**「覆盖」是真的，但日常不跑也是真的**。
+后果就是 fix145/fix146 改了语义后，全量测试红了很久而日常门禁一直绿。
+
+改动：
+- `tools/gate.sh`：三个类加入 `FAST_TEST_FILTERS`。
+- `tools/test_subset_baseline.txt`：删掉对应的三条（已被快速子集覆盖，棘轮要求「只许收紧」）。
+  `tools/wide-tests.txt` 不动，它们仍是宽阶段的正当成员。
+
+门禁契约阶段随后给出：`534 个测试类，快速子集覆盖 182，基线未覆盖 352 ——
+每个测试类都有归属（快速子集或基线），没有静默不跑的`。
+
+### 验证
+
+- 全量 `:app:testDebugUnitTest`：**3382 用例、0 失败、0 错误**（跳过 8 个为 Robolectric
+  在 Linux aarch64 无 native runtime 的既有跳过；用例数比原来多 1，因为拆分了一条）。
+- `tools/gate.sh STAGES=test`：契约全部通过，单测 **1662 用例、0 失败**（白名单 0 个）。
+- 统计口径用 `app/build/test-results/testDebugUnitTest/TEST-*.xml` 的
+  `tests/failures/errors` 汇总，**不看 `BUILD SUCCESSFUL`**：本轮有一次编译失败
+  （`@Test` 重复导致 `This annotation is not repeatable`），而残留 XML 仍显示全绿。
+  跑之前先 `rm -rf app/build/test-results/testDebugUnitTest`。
+
+### 教训
+
+- **「用例数不变、全绿」有两种来源**：测试真的过了，或者测试根本没被跑到。这个仓库的
+  白名单机制让后者成为常态，判断覆盖率要看契约阶段的「覆盖 N / 未覆盖 M」而不是看绿灯。
+- 一个用例如果同时被多条判据支配，它的断言迟早会被其中一条遮蔽。给边界用例加一句
+  「前提：本判据是唯一生效者」的自检断言，比事后排查便宜。

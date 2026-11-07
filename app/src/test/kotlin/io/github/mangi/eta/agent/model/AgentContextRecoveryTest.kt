@@ -14,50 +14,89 @@ class AgentContextRecoveryTest {
         contextWindow = 900_000,
     )
 
+    /**
+     * 窗口未知时对话照常完成，但压缩按“保守预算”而非“永不压缩”处理。
+     *
+     * 这条用例最初断言“未知窗口永不自动压缩”，那在 fix144 就被推翻了：真机 run-f1358776
+     * 22 轮 / 1422 条消息 / 21.4 万 token 一次都没压，因为绝大多数用户根本不填 `contextWindow`。
+     * 现在未知窗口按 [AgentContextBudget.DEFAULT_ASSUMED_CONTEXT_WINDOW] 保守预算判断，
+     * 本例仍只验证“对话能拿到结果”——压缩是否发生由 AgentContextBudgetTest 守（那里
+     * 有 nearBudget 边界），不再在这里重复一遍。
+     */
     @Test
-    fun unknownWindowStillRunsButNeverAutoCompacts() {
+    fun unknownWindowStillRunsAndUsesTheConservativeBudget() {
         for (window in listOf(null, 0, -1)) {
-            var summaries = 0
             val result = AgentModelClient.complete(config.copy(contextWindow = window), "继续",
                 AgentModelClient.ToolExecutor { error("不应执行工具") },
                 history = history(), provider = provider { request, emit ->
                     if (request.purpose == ProviderRequestPurpose.COMPACTION) {
-                        summaries++
                         response("摘要")
                     } else {
                         emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 10_000_000)))
                         response("完成")
                     }
                 })
-            assertEquals("完成", result.content)
-            assertEquals(0, summaries)
+            // 关键不变式：无论压不压，用户都要拿到这轮的正文，不能被压缩吞掉或多跑一轮。
+            assertEquals("窗口=$window 时对话仍应完成", "完成", result.content)
         }
     }
 
+    /**
+     * 自动压缩的触发完全由 [AgentContextBudget.shouldCompact] 的三条判据决定；
+     * 本例逐条钉死实测 usage 与配置窗口那两条的边界。
+     *
+     * 历史必须小到本地字符估算不会自己触发兜底：78 万字符 ÷ 4 = 19.5 万 token，
+     * 早已越过 [AgentContextBudget.ABSOLUTE_COMPACT_TOKENS]（10 万），那时不管 usage
+     * 报什么都会压，用例就失去了意义。所以这里用 3.2 万字符（约 8000 token）的小历史。
+     *
+     * 注意 [AgentContextBudget.ABSOLUTE_COMPACT_TOKENS] 是**另一条独立判据**：
+     * 超过 10 万 token 直接压，不管窗口配多大。所以“30 万 token 不压”在今天
+     * 不可能成立——把它当作“未达 85%”来断言是错的。
+     */
     @Test
-    fun automaticCompactionUsesOnlyActualInputUsageAndConfiguredWindow() {
-        for (input in listOf(null, 300_000, 764_999, 765_000)) {
+    fun automaticCompactionFollowsAbsoluteLimitThenWindowRatio() {
+        // usage -> 是否应当压缩。null 与 0 表示“没有可用实测值”，退回本地估算。
+        val cases = listOf(
+            null to false,          // 无从得知 → 估算 8000 token，不压
+            0 to false,             // 0 也不该被当成“用量很大”
+            99_999 to false,        // 差一 token 到绝对上限
+            100_000 to true,        // 刚好碰到绝对上限
+            300_000 to true,        // 远超绝对上限，与窗口无关
+            764_999 to true,        // 同样已被绝对上限覆盖
+        )
+        for ((input, expectCompact) in cases) {
             var summaries = 0
             val events = mutableListOf<AgentEvent>()
+            // 3.2 万字符 ≈ 8000 token，低于绝对上限，把变量留给 usage。
+            val source = listOf(
+                AgentModelClient.ConversationMessage("user", "旧任务"),
+                AgentModelClient.ConversationMessage("assistant", "已完成一些步骤。".repeat(4_000)),
+            )
             val result = AgentModelClient.complete(config, "继续",
                 AgentModelClient.ToolExecutor { error("不应执行工具") },
-                history = history(), onEvent = events::add, provider = provider { request, emit ->
+                history = source, onEvent = events::add, provider = provider { request, emit ->
                     if (request.purpose == ProviderRequestPurpose.COMPACTION) {
                         summaries++
                         response("此前任务已完成。")
                     } else {
-                        assertTrue(request.messages.toString().contains("长".repeat(100)))
+                        if (!expectCompact) {
+                            assertTrue(
+                                "未压缩时历史原文应完整发给模型",
+                                request.messages.toString().contains("旧任务"),
+                            )
+                        }
                         emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = input, outputTokens = 800_000)))
                         response("完成")
                     }
                 })
+            assertEquals("usage=$input 时对话仍应完成", "完成", result.content)
             // 分批后一次压缩会发多次摘要请求，这里只看“是否压缩”，请求次数由分批用例守护。
-            if (input == 765_000) assertTrue("达到 85% 应当压缩", summaries > 0)
-            else assertEquals("未达阈值不应压缩", 0, summaries)
-            assertEquals("完成", result.content)
+            if (expectCompact) assertTrue("usage=$input 应触发压缩", summaries > 0)
+            else assertEquals("usage=$input 不应触发压缩", 0, summaries)
             val completed = events.filterIsInstance<AgentEvent.ContextCompaction>().lastOrNull()
-            if (input == 765_000) {
-                assertEquals(765_000, completed!!.tokensBefore)
+            if (expectCompact) {
+                // 追踪里的 tokensBefore 就是本轮实测 usage（或 null），不是恒定的阈值。
+                assertEquals("usage=$input 应原样记入追踪", input, completed!!.tokensBefore)
                 assertNull(completed.tokensAfter)
                 // 字符数是本地精确值：没有它，追踪里只能看到 0 → 0。
                 assertNotNull("压缩前字符数应可追踪", completed.charsBefore)
@@ -300,37 +339,61 @@ class AgentContextRecoveryTest {
 
     @Test
     fun emptyLengthResponseIsNotReplayedEvenWhenInputIsNearWindow() {
-        var requests = 0
+        // 只数 CHAT 请求：本例守护的是“空响应不会被重放”，
+        // 压缩请求是另一回事。850K 已过 900K 窗口的 85%，压缩必然先跑一轮，
+        // 把两者混在一个计数器里，断言就会随压缩策略变化而无关地红。
+        var chatRequests = 0
+        var summaries = 0
         val failure = assertThrows(AgentModelExecutionException::class.java) {
             AgentModelClient.complete(config, "继续", AgentModelClient.ToolExecutor { error("不应执行工具") },
-                history = history(), provider = provider { _, emit ->
-                    requests++
-                    emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 850_000)))
-                    response("", "length")
+                history = history(), provider = provider { request, emit ->
+                    if (request.purpose == ProviderRequestPurpose.COMPACTION) {
+                        summaries++
+                        response("摘要")
+                    } else {
+                        chatRequests++
+                        emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 850_000)))
+                        response("", "length")
+                    }
                 })
         }
         assertEquals("MODEL_OUTPUT_LIMIT", (failure.cause as AgentModelFailure).code)
-        assertEquals(1, requests)
+        assertEquals("空响应不应重放：CHAT 只发一次", 1, chatRequests)
         assertTrue(failure.transcript.isEmpty())
     }
 
+    /**
+     * 重试后的成功轮不能沿用上一次失败尝试上报的 usage 去触发压缩。
+     *
+     * 关键前提：历史必须小到字符估算不会自己触发压缩（否则 78 万字符 ÷ 4 = 19.5 万
+     * token 早已超过 [AgentContextBudget.ABSOLUTE_COMPACT_TOKENS]，压缩与 usage 无关），
+     * 且收尾的 `compact(final = true)` 会再跑一次。这里只用 shortMessages
+     * 把变量控制在“失败尝试报的那一个 usage”上。
+     */
     @Test
     fun failedChatAttemptUsageCannotTriggerCompactionAfterRetry() {
-        var requests = 0
+        var chatRequests = 0
+        var summaries = 0
         val loop = AgentLoop(
-            config, messages(), JSONArray(), provider { request, emit ->
-                assertEquals(ProviderRequestPurpose.CHAT, request.purpose)
-                if (++requests == 1) {
-                    emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 850_000)))
-                    throw AgentModelFailure.incompleteStream("fixture")
+            config, shortMessages(), JSONArray(), provider { request, emit ->
+                if (request.purpose == ProviderRequestPurpose.COMPACTION) {
+                    summaries++
+                    response("摘要")
+                } else {
+                    chatRequests++
+                    if (chatRequests == 1) {
+                        // 失败尝试报了很大的 usage：它不能被算进“本轮上下文占用”。
+                        emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 850_000)))
+                        throw AgentModelFailure.incompleteStream("fixture")
+                    }
+                    response("完成")
                 }
-                response("完成")
             }, AgentModelClient.ToolExecutor { error("不应执行工具") }, AgentRunController(), AgentTraceFormatter(), {},
             modelRetry = AgentModelRetry { _, _ -> }, systemCount = 1,
         )
         assertEquals("完成", loop.run().content)
-        assertEquals(2, requests)
-        assertNull(loop.contextSnapshot())
+        assertEquals("失败一次后重试一次就应成功", 2, chatRequests)
+        assertEquals("失败尝试的 usage 不得触发压缩", 0, summaries)
     }
 
     @Test

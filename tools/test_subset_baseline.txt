@@ -64,10 +64,7 @@ io.github.mangi.eta.agent.memory.AgentMemoryHeadingsTest  # 纯 JVM，已由 STA
 io.github.mangi.eta.agent.model.AgentAskUserToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentCompactionProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentCompactionReasoningTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
-io.github.mangi.eta.agent.model.AgentContextBudgetTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
-io.github.mangi.eta.agent.model.AgentContextCompactionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentContextCompactionUsageTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
-io.github.mangi.eta.agent.model.AgentContextRecoveryTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentDeviceResultFormatterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentDeviceToolCatalogTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.agent.model.AgentFileReferencePromptCodecTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖

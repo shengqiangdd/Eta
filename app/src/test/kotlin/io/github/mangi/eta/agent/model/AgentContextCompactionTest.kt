@@ -39,15 +39,24 @@ class AgentContextCompactionTest {
         val batchLines = mutableListOf<String>()
         val result = AgentContextCompactor(config, provider { _, _ ->
             requests.incrementAndGet()
+            // 摘要故意写短：各批拼接后远低于 MERGE_SKIP_MAX_CHARS，按 fix146 应当跳过合并请求。
             response("此前任务已完成。")
         }, AgentRunController(), onBatch = batchLines::add).compact(messages, 1, emptySet())
         // 批次必须真的发生，并且能被外面看见：以前只返回正文，批次数无从验证。
         assertTrue("应发生分批：requests=${requests.get()}", result.batches >= 2)
-        assertEquals("每批一次请求，最后再合并一次", result.batches + 1, requests.get())
+        // fix146 起，各批摘要拼接后 ≤ MERGE_SKIP_MAX_CHARS 就不再为合并多发一轮请求：
+        // 短摘要场景只花“每批一次”，不再有最后那一次合并。
+        assertEquals("短摘要应跳过合并：只发批数次请求", result.batches, requests.get())
+        assertTrue(
+            "跳过的理由要能被看见：$batchLines",
+            batchLines.any { it.contains("跳过合并") },
+        )
         // 分批进度只能走注入的出口，不能直接调 android.util.Log（纯 JVM 单测里它没实现）。
-        assertEquals("每批一行 + 合并一行", result.batches + 1, batchLines.size)
         assertTrue("进度要带批号：$batchLines", batchLines.any { it.contains("第 1/") })
-        assertTrue("合并行要报批数：$batchLines", batchLines.last().contains("${result.batches} 批合成一段"))
+        assertTrue(
+            "跳过合并也要报批数：$batchLines",
+            batchLines.any { it.contains("${result.batches} 批") },
+        )
     }
 
     private val config = AgentModelClient.ModelConfig(
