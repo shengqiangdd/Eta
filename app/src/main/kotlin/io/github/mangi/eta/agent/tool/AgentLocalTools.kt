@@ -33,6 +33,7 @@ import io.github.mangi.eta.agent.acp.AcpModels
 import io.github.mangi.eta.agent.acp.AcpProvider
 import io.github.mangi.eta.agent.acp.AgentAcpTools
 import io.github.mangi.eta.agent.auth.ProviderAuthException
+import io.github.mangi.eta.agent.memory.AgentFailureHints
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.plugin.AgentPluginTools
 import io.github.mangi.eta.agent.plugin.PluginMcpRegistry
@@ -4205,12 +4206,32 @@ internal class AgentLocalTools(
         errorResult(failure.code, failure.message ?: "GitHub Skill 请求失败")
     }
 
-    private fun errorResult(code: String, message: String): String =
-        JSONObject()
+    /**
+     * 失败结果 + 「下一步该做什么」。
+     *
+     * 光给错误码不够：`AgentSelfBrief` 已经把失败码与改法注入系统提示，但这些码仍然高频复发
+     * （真机：`tap_element` 的 `NO_OBSERVATION` ×9、`virtual_display_launch` 的
+     * `ALREADY_ON_TARGET_DISPLAY` ×3）。原因不在「模型不知道」，而在**失败现场没有下一步**：
+     * 模型只能自己猜要不要重试、重试什么。
+     *
+     * 这里直接把可执行动作写进结果，并显式标出 `retry_same_call=false`，
+     * 因为最常见的错误行为就是原样重放同一调用。
+     */
+    private fun errorResult(code: String, message: String): String {
+        val hint = AgentFailureHints.fixFor("", code)
+        return JSONObject()
             .put("ok", false)
             .put("code", code)
             .put("message", message)
+            .apply {
+                if (AgentFailureHints.hasSpecificFix(code)) {
+                    put("next_step", hint)
+                    // 这些码的共同点：原样重试不会变好。
+                    put("retry_same_call", false)
+                }
+            }
             .toString()
+    }
 
     /**
      * fix168：模型传了本工具不认识的参数时，不要静默丢掉。

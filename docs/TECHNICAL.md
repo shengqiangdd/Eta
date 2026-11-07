@@ -3963,3 +3963,24 @@ SCREEN_BRIGHT_WAKE_LOCK 'Eta:agent-keep-screen'     ACQ=-51s (uid=10629 pid=2749
 **验证**：门禁 `STAGES=test` —— 用例 **1573** 个、失败 0。新增/更新：
 `AgentAfterActionSummaryVolumeTest` 3 例（界面不变时 0 节点 / 变化时 ≤8 节点且含新增项 /
 无前快照时仍可操作）、`AgentFileOperationsTest.multiFileEditMergesDuplicatePathsInOrder`。
+
+### fix137：失败的那一刻就给出下一步
+
+`AgentSelfBrief` 早就在系统提示里写入了失败码与改法（每会话最多 700 字、必须在会话内稳定
+以免破坏前缀缓存），但 `NO_OBSERVATION`（9 次）与 `ALREADY_ON_TARGET_DISPLAY`（3 次）
+仍然复发。**结论：瓶颈不在"模型不知道"，而在失败现场没有下一步** ——
+模型拿到一个裸错误码，只能自己猜要不要重试、重试什么，而最常见的行为就是原样重放。
+
+改法：`errorResult` 在失败结果里直接附：
+
+- `next_step`：来自 `AgentFailureHints.fixFor` 的可执行动作（同一份口径，不另写一套）；
+- `retry_same_call: false`：显式告诉模型原样重试不会变好。
+
+只对**有专属改法**的码附加（`hasSpecificFix`）。未知码不编建议 ——
+一句通用废话会占预算，还会训练模型忽略这个字段。
+
+**边界**：`next_step` 只出现在失败结果里，不改变 `ok`/`code`/`message`，
+也不影响任何动作语义；`AgentSelfBrief` 的稳定性约束（系统提示里不能带实时计数）不受影响。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1576** 个、失败 0。新增
+`AgentFailureHintsNextStepTest` 3 例（已知码必须有可执行改法 / 未知码不许编 / 工具级兜底仍可执行）。
