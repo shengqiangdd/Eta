@@ -4116,3 +4116,33 @@ Anthropic 的 `{"type":"tool_result","content":...}`（含嵌套 block）。
 **备注**：这次是「测试通过但真机没效果」的典型。fix140 的 4 个单测全绿，
 但它们只测 `TerminalRuntimeDedup.diff` 这个纯函数，**测不到「调用方每次都给它一个新对象」**。
 教训：单测覆盖了逻辑，不代表覆盖了接入点。
+
+### fix142：runtime 去重写在了没人走的路径上
+
+fix141 装完后真机验证，连着两次 `echo` **仍各自带回完整的 runtime 块**。查下来是：
+
+`terminal` 的默认动作走的是 **`exec`**，它调 `runText` + `TerminalExecutionProbe.extract`，
+**完全无状态、不经过 `TerminalSession`**。而 fix140/141 的去重逻辑全写在会话上
+（`TerminalSession.runtimeSignature`），那条路只有 `terminal_open` 才会走。
+
+于是连着两次修复都没生效，单测却全绿 —— 因为测的是那个纯函数本身
+（`TerminalRuntimeDedup.diff`），而不是「调用方到底走哪条路」。
+
+**改法**：去重搬到控制器级别，key 是 `环境|身份`，`exec` 与 `open` 共用：
+
+```kotlin
+private val reportedRuntimeSignatures = mutableMapOf<String, String>()
+```
+
+同一 `(环境, 身份)` 下 runtime 里的字段不会变；变了（换 shell、换身份）照旧全量下发。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1594** 个、失败 0。`TerminalRuntimeDedupTest`
+重写为按 `环境|身份` 分组（首次发 / 重复不发 / 变化重发 / 身份不同 / 环境不同）。
+
+**两次返工的教训**（写下来以免再犯）：
+
+- 第一次：把去重放在 `TerminalSession`，但 `exec` 根本不建会话。
+- 第二次：修好了「会话复用」，仍然没意识到 `exec` 走的是完全另一条路。
+- 共同点：**只测了自己写的纯函数，没验证真实调用路径**。
+  以后改这类「输出瘦身」的东西，先在真机上看一眼改动前后的返回长度，
+  再决定要不要写单测。

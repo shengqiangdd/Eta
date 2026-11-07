@@ -52,6 +52,19 @@ internal class RootShellTerminalController(
     }
 
     private val sessions = linkedMapOf<String, TerminalSession>()
+
+    /**
+     * 已经下发过的 runtime 指纹，按 `(环境, 身份)` 分。
+     *
+     * `exec` 每次都重新探测 runtime（`TerminalExecutionProbe.extract`），而探测结果**每次都一样**
+     * —— `host_identity`/`uid`/`shell_provider`/`shell_executable`/`available_commands`
+     * 在同一环境下不会变。真机 trace：一条 `printf ok` 输出 2 个字符，却带回 384 字符的 runtime；
+     * 一场几十轮的会话就是几万 Token 的纯重复。
+     *
+     * 不能把这个状态放在 `TerminalSession` 上：`exec` 根本不走会话（它是无状态的）。
+     * 这正是 fix140 失效的原因 —— 去重写在了会话里，而实际路径一直是 exec。
+     */
+    private val reportedRuntimeSignatures = mutableMapOf<String, String>()
     private val cleanupStarted = AtomicBoolean(false)
     val executionContext: TerminalExecutionContext = executionContext ?: run {
         val linuxEnvironment = selectedLinuxEnvironmentProvider()
@@ -182,6 +195,26 @@ internal class RootShellTerminalController(
         "logs" -> daemonLogs(args.optString("task_id"))
         "stop" -> daemonStop(args.optString("task_id"))
         else -> errorJson("UNSUPPORTED_TERMINAL_ACTION", "terminal_daemon action 仅支持 start/list/logs/stop")
+    }
+
+    /**
+     * exec 路径的 runtime 去重。
+     *
+     * 同一 `(环境, 身份)` 下，runtime 里的字段不会变；重复下发只是白花 Token。
+     * 返回 null 表示「和上次一样」，结果里就写 `runtime: null`。
+     */
+    @Synchronized
+    private fun runtimeIfChanged(
+        identity: String,
+        environment: TerminalEnvironment,
+        runtime: JSONObject?,
+    ): JSONObject? {
+        if (runtime == null) return null
+        val key = "${environment.wireName}|$identity"
+        val signature = runtime.toString()
+        if (reportedRuntimeSignatures[key] == signature) return null
+        reportedRuntimeSignatures[key] = signature
+        return runtime
     }
 
     private fun openSession(identity: String, cwd: String?, environment: String): String {
@@ -705,7 +738,7 @@ internal class RootShellTerminalController(
             .put("identity", normalizedIdentity)
             .put("environment", environment.wireName)
             .put("cwd", safeCwd)
-            .put("runtime", observation.runtime ?: JSONObject.NULL)
+            .put("runtime", runtimeIfChanged(normalizedIdentity, environment, observation.runtime) ?: JSONObject.NULL)
             .put("status", when { processSupervisor.isClosing -> "cancelled"; result.exitCode == -2 -> "timed_out"; result.exitCode == 0 -> "exited"; else -> "failed" })
             .put("exit_code", result.exitCode)
             .put("timed_out", result.exitCode == -2)
