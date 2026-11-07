@@ -4146,3 +4146,32 @@ private val reportedRuntimeSignatures = mutableMapOf<String, String>()
 - 共同点：**只测了自己写的纯函数，没验证真实调用路径**。
   以后改这类「输出瘦身」的东西，先在真机上看一眼改动前后的返回长度，
   再决定要不要写单测。
+
+### fix143：`terminal` 返回体瘦身
+
+fix142 验证成功后，同样的方法量了返回体骨架：
+
+| 命令 | 实际输出 | 完整返回 |
+|---|---|---|
+| `echo x` | 1 字符 | **230 字符** |
+| `printf ok` | 2 字符 | **约 214 字符** |
+
+骨架里 `status`、`timed_out`、`stdout_truncated`、`stderr_truncated`、`output_truncated`、
+`stderr` 在**正常退出时全是可推导的默认值**。一场几十轮的会话，这些字段要重复几百次。
+
+**改法**：只在真的需要时才输出。
+
+- `status` 只在非正常结束（`failed` / `timed_out` / `cancelled`）时出现；
+  正常结束就是 `ok:true` + `exit_code:0`，已经说清楚了。
+- `timed_out` 只在超时（`exit_code == -2`）时出现。
+- `stderr` 只在非空时出现。
+- 三个 `*_truncated` 只在真的截断时出现。
+- `environment_note` 只在真的检测到环境不一致时出现（原本是 `JSONObject.NULL` 占位）。
+
+**保留 `exit_code`**：它是最常用的判断依据，压成「非 0 才出现」会让模型误以为成功。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1599** 个、失败 0。新增
+`TerminalResponseShapeTest` 5 例（成功时省略可推导字段 / 失败仍说清原因 / 超时显式 /
+截断显式 / 确实更小），并把 `RootShellTerminalControllerTest` 的那条断言改成
+同时验证「首次返回 runtime、第二次返回 null」——它原本断言 `status == "exited"`，
+正好会被这次改动打红，是真实的行为变更而非测试噪音。

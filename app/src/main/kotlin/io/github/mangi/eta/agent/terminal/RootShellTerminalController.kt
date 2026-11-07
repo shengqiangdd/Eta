@@ -731,6 +731,22 @@ internal class RootShellTerminalController(
         }
         val stdout = rawStdout.truncateForJson()
         val stderr = if (mergeStderr) "" else result.stderr.truncateForJson()
+        val stdoutTruncated = result.outputTruncated || rawStdout.length > MAX_OUTPUT_CHARS ||
+            (mergeStderr && result.stderrTruncated)
+        val stderrTruncated = !mergeStderr && (result.stderrTruncated || result.stderr.length > MAX_OUTPUT_CHARS)
+        val status = when {
+            processSupervisor.isClosing -> "cancelled"
+            result.exitCode == -2 -> "timed_out"
+            result.exitCode == 0 -> "exited"
+            else -> "failed"
+        }
+        // 只在**真的需要**时才输出这些字段。
+        //
+        // 一条 `echo x` 的输出是 1 个字符，完整返回却有 230 字符 —— 其中
+        // `status`/`timed_out`/`stdout_truncated`/`stderr_truncated`/`output_truncated`/`stderr`
+        // 在正常退出时全是可推导的默认值。一场会话几十轮，这些字段就重复几百次。
+        //
+        // 保留 `exit_code`：它是最常用的判断依据，压成「非 0 才出现」会让模型误以为成功。
         return JSONObject()
             .put("ok", result.exitCode == 0)
             .put("tool", "terminal")
@@ -739,19 +755,21 @@ internal class RootShellTerminalController(
             .put("environment", environment.wireName)
             .put("cwd", safeCwd)
             .put("runtime", runtimeIfChanged(normalizedIdentity, environment, observation.runtime) ?: JSONObject.NULL)
-            .put("status", when { processSupervisor.isClosing -> "cancelled"; result.exitCode == -2 -> "timed_out"; result.exitCode == 0 -> "exited"; else -> "failed" })
             .put("exit_code", result.exitCode)
-            .put("timed_out", result.exitCode == -2)
             .put("stdout", stdout)
-            .put("stderr", stderr)
-            .put("stdout_truncated", result.outputTruncated || rawStdout.length > MAX_OUTPUT_CHARS || (mergeStderr && result.stderrTruncated))
-            .put("stderr_truncated", !mergeStderr && (result.stderrTruncated || result.stderr.length > MAX_OUTPUT_CHARS))
-            .put("output_truncated", result.outputTruncated || result.stderrTruncated || rawStdout.length > MAX_OUTPUT_CHARS || result.stderr.length > MAX_OUTPUT_CHARS)
-            .put(
-                "environment_note",
+            .apply {
+                // 非正常结束时才写 status（正常结束 = ok:true + exit_code:0，已经清楚了）。
+                if (status != "exited") put("status", status)
+                if (result.exitCode == -2) put("timed_out", true)
+                if (stderr.isNotEmpty()) put("stderr", stderr)
+                if (stdoutTruncated || stderrTruncated) {
+                    if (stdoutTruncated) put("stdout_truncated", true)
+                    if (stderrTruncated) put("stderr_truncated", true)
+                    put("output_truncated", true)
+                }
                 EnvironmentMismatchHint.note(environment.wireName, trimmed, result.exitCode, result.stderr)
-                    ?: JSONObject.NULL,
-            )
+                    ?.let { put("environment_note", it) }
+            }
             .toString()
     }
 

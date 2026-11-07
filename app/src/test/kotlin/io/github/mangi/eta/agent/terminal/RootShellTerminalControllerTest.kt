@@ -173,13 +173,24 @@ class RootShellTerminalControllerTest {
             val result = JSONObject(controller.executeTool("terminal", args))
             assertTrue(result.toString(), result.getBoolean("ok"))
             assertEquals("visible_output", result.getString("stdout"))
-            assertEquals("exited", result.getString("status"))
             assertEquals("exec", result.getString("action"))
+            // 正常退出时不写 status（ok:true + exit_code:0 已经说清了）。
+            assertFalse("正常退出不该再带 status：${result}", result.has("status"))
+            assertEquals(0, result.getInt("exit_code"))
             val runtime = result.getJSONObject("runtime")
             assertEquals("user", runtime.getString("host_identity"))
             assertTrue(runtime.toString(), runtime.getInt("uid") >= 0)
             assertFalse(runtime.getString("shell_provider").isBlank())
             assertTrue(runtime.getJSONArray("available_commands").toString().contains("sh"))
+
+            // 第二次同环境同身份：runtime 不该再发（真机 trace：一次 printf 输出 2 字符，
+            // 却带回了 384 字符的 runtime；一场几十轮的会话就是几万 Token 的重复）。
+            val second = JSONObject(controller.executeTool("terminal", args))
+            assertTrue(second.getBoolean("ok"))
+            assertTrue(
+                "同环境下第二次必须省掉 runtime，实际=${second.opt("runtime")}",
+                second.isNull("runtime"),
+            )
         } finally {
             controller.closeAll()
         }
