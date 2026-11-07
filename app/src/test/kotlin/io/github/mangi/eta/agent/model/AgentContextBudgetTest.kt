@@ -167,23 +167,89 @@ class AgentContextBudgetTest {
     }
 
     @Test
-    fun unknownWindowStillCompactsAtTheAssumedBudget() {
+    fun effectiveTriggerIsMinOfWindowRatioAndAbsoluteLimit() {
+        // 单点验证 min 的语义，不再靠给 shouldCompact 传测试专用参数。
+        val absolute = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS.toDouble()
+        val ratio = AgentContextBudget.TRIGGER_RATIO
         val assumed = AgentContextBudget.DEFAULT_ASSUMED_CONTEXT_WINDOW
-        val nearBudget = (assumed * AgentContextBudget.TRIGGER_RATIO).toInt()
 
+        // 1. 小窗口：比例更早，阈值 = 窗口 × 比例。
+        assertEquals(32_000 * ratio, AgentContextBudget.effectiveTriggerTokens(32_000, ratio), 0.0)
+        // 2. 临界窗口：恰好两侧相等。注意不能直接写 (absolute / ratio).toInt()：
+        //    100_000 / 0.85 = 117,647.05，截断后 117,647 × 0.85 = 99,999.95 < 100,000，
+        //    取到的仍是比例侧。真正的临界点是向上取整（本用例就是被这个差错发现的）。
+        val crossover = kotlin.math.ceil(absolute / ratio).toInt()
+        assertEquals(117_648, crossover)
+        assertEquals(absolute, AgentContextBudget.effectiveTriggerTokens(crossover, ratio), 0.0)
+        assertEquals(
+            "临界点以下仍由比例决定",
+            117_647 * ratio,
+            AgentContextBudget.effectiveTriggerTokens(117_647, ratio),
+            0.0,
+        )
+        // 3. 超过临界：绝对上限接管，窗口再大也一样。
+        assertEquals(absolute, AgentContextBudget.effectiveTriggerTokens(900_000, ratio), 0.0)
+        assertEquals(absolute, AgentContextBudget.effectiveTriggerTokens(1_000_000, ratio), 0.0)
+        // 4. 窗口未知：用假设值参与 min（这是该常量**活着**的证明）。
+        assertEquals(
+            minOf(assumed * ratio, absolute),
+            AgentContextBudget.effectiveTriggerTokens(null, ratio),
+            0.0,
+        )
+        // 5. 非正值窗口等同未知，而不是阈值 0（否则传 0 会变成每轮都压）。
+        assertEquals(
+            AgentContextBudget.effectiveTriggerTokens(null, ratio),
+            AgentContextBudget.effectiveTriggerTokens(0, ratio),
+            0.0,
+        )
+        assertEquals(
+            AgentContextBudget.effectiveTriggerTokens(null, ratio),
+            AgentContextBudget.effectiveTriggerTokens(-1, ratio),
+            0.0,
+        )
+    }
+
+    @Test
+    fun assumedWindowOnlyMattersBelowTheAbsoluteLimit() {
+        // 当前取值下这个常量影响不到结果，这是事实，不是巧合：108,800 > 10 万。
+        val ratio = AgentContextBudget.TRIGGER_RATIO
+        val assumed = AgentContextBudget.DEFAULT_ASSUMED_CONTEXT_WINDOW
+        val ratioThreshold = assumed * ratio
         assertTrue(
-            "窗口未知 + 已达保守预算时应该压缩",
+            "前提：假设值 × 比例必须高于绝对上限，否则下面的断言就失去意义",
+            ratioThreshold > AgentContextBudget.ABSOLUTE_COMPACT_TOKENS,
+        )
+        // 因此窗口未知时的真实阈值就是绝对上限，而不是 108,800。
+        assertEquals(
+            AgentContextBudget.ABSOLUTE_COMPACT_TOKENS.toDouble(),
+            AgentContextBudget.effectiveTriggerTokens(null, ratio),
+            0.0,
+        )
+        // 反向锁定：只要比例降到假设值之积低于绝对上限，该常量立刻成为唯一判据。
+        // 0.5 → 128,000 × 0.5 = 64,000 < 100,000，于是 min 取 64,000。
+        assertEquals(
+            64_000.0,
+            AgentContextBudget.effectiveTriggerTokens(null, 0.5),
+            0.0,
+        )
+    }
+
+    @Test
+    fun unknownWindowCompactsExactlyAtTheAbsoluteLimit() {
+        // 端到端锁定 shouldCompact 的实际行为：99,999 不压、100,000 压。
+        assertFalse(
+            "差 1 token 未达绝对上限",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = null,
-                observedInputTokens = nearBudget,
+                observedInputTokens = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS - 1,
                 historyChars = 10_000,
             ),
         )
-        assertFalse(
-            "远低于预算时不该白花一次摘要请求",
+        assertTrue(
+            "恰好达到绝对上限就压",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = null,
-                observedInputTokens = nearBudget / 4,
+                observedInputTokens = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS,
                 historyChars = 10_000,
             ),
         )
@@ -195,27 +261,47 @@ class AgentContextBudgetTest {
         assertEquals(1_800_000L, AgentContextBudget.hardLimitFor(900_000))
         assertEquals(AgentContextBudget.HARD_CONTEXT_CHARS, AgentContextBudget.hardLimitFor(null))
         assertEquals(AgentContextBudget.HARD_CONTEXT_CHARS, AgentContextBudget.hardLimitFor(128_000))
+        // 这里要验的是**硬上限**这条安全阀，不是绝对压缩上限：
+        // 历史必须同时「低于窗口 85%」且「低于 ABSOLUTE_COMPACT_TOKENS 折算的字符数」，
+        // 否则先被别的判据拦下，就测不到硬上限自己。
+        val belowAbsoluteChars = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS.toLong() * 4 - 1
         assertFalse(
+            "未到硬上限、也未触发其他判据时不该压",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = 900_000,
-                observedInputTokens = null, historyChars = 1_300_000,
+                observedInputTokens = null, historyChars = belowAbsoluteChars,
+            ),
+        )
+        // 硬上限本身仍然生效：超过它即使窗口更大也必须压。
+        assertTrue(
+            "超过硬上限必须压",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = 900_000,
+                observedInputTokens = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS * 2,
+                historyChars = 1_800_001,
             ),
         )
     }
 
     @Test
     fun observedUsageStillDrivesWindowRatio() {
-        val window = 128_000
+        // 绝对上限（10 万 token）会吞掉比它高的任何比例边界，所以窗口比例要单独验证，
+        // 窗口必须选得让 85% 触发线落在绝对上限**以下**：100K × 85% = 85,000。
+        val window = 100_000
+        val trigger = (window * AgentContextBudget.TRIGGER_RATIO).toInt()
+        assertTrue("前提：触发线必须在绝对上限以下", trigger < AgentContextBudget.ABSOLUTE_COMPACT_TOKENS)
         assertFalse(
+            "低于触发线",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = window,
-                observedInputTokens = 100_000, historyChars = 1_000,
+                observedInputTokens = trigger - 1, historyChars = 1_000,
             ),
         )
         assertTrue(
+            "恰好到达触发线",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = window,
-                observedInputTokens = 110_000, historyChars = 1_000,
+                observedInputTokens = trigger, historyChars = 1_000,
             ),
         )
     }
@@ -233,11 +319,32 @@ class AgentContextBudgetTest {
     }
 
     @Test
-    fun realSessionRatioDoesNotTriggerCompactionEarly() {
+    fun realSessionIsNotCompactedEarlyWhenTheEndpointReportsUsage() {
         // 真机数据（2026-10-23 生产库）：本会话 history 440,850 字符，端点回报 ctx=92,714，
         // 实际只占 256K 窗口的 36%。旧除数 2 会把它估成 220,425（86%），在没有 usage 的
-        // 端点上白白触发一次压缩；现在按 4 折算为 110,212，仍在 85% 触发线以下。
+        // 端点上白白触发一次压缩；按 4 折算为 110,212。
+        //
+        // 端点**回报了** usage 时以实测为准（92,714），不该压缩——这是本用例真正守的语义。
         assertFalse(
+            "端点回报 36% 时不该压缩",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = 256_000,
+                observedInputTokens = 92_714, historyChars = 440_850,
+            ),
+        )
+    }
+
+    @Test
+    fun realSessionWithoutUsageIsEstimatedAtOneQuarterAndHitsTheAbsoluteLimit() {
+        // 同一个真机会话在没有 usage 时的折算：440,850 / 4 = 110,212。
+        // 该值 ≥ ABSOLUTE_COMPACT_TOKENS（10 万），所以**会被压缩**——这是 fix145 有意
+        // 引入的行为变更（防“窗口填得很大就永不压缩”）。这里把差异钉成断言，
+        // 避免以后有人以为无 usage 也一定不压。
+        assertEquals(110_212L, AgentContextBudget.estimateTokens(440_850))
+        // 旧除数 2 会得到 220,425，差异就是 fix144 改成 4 的意义所在。
+        assertEquals(220_425L, 440_850L / 2)
+        assertTrue(
+            "无 usage 时 110,212 已达绝对上限，压缩是预期的",
             AgentContextBudget.shouldCompact(
                 force = false, autoCompactionEnabled = true, contextWindow = 256_000,
                 observedInputTokens = null, historyChars = 440_850,

@@ -53,6 +53,11 @@ internal object AgentContextBudget {
      *
      * 128K 是主流端点的**下限**。真机上绝大多数人不会去填这个值，而原实现在窗口未知时
      * 直接不压缩，于是上下文一直涨：实测 22 轮 / 1422 条消息 / 21.4 万 token，一次都没压。
+     *
+     * 注意：当前取值下 128,000 × [TRIGGER_RATIO] = 108,800 **高于**
+     * [ABSOLUTE_COMPACT_TOKENS]，所以窗口未知时实际阈值由绝对上限决定，这个常量
+     * 影响不到结果。它不是死代码（调低或调高绝对上限都会生效），但“窗口未知时
+     * 在 10.88 万压”这个读法当前不成立，别照着它推算行为。
      */
     const val DEFAULT_ASSUMED_CONTEXT_WINDOW = 128_000
 
@@ -202,14 +207,34 @@ internal object AgentContextBudget {
      * 三条判据，满足任一条就压缩：
      * 1. [force]：用户或调用方明确要求；
      * 2. 字符数超过**该窗口对应的硬上限**（[hardLimitFor]）：不依赖远端 usage；
-     * 3. 窗口已知且（实测 usage 或本地估算）达到窗口的 [triggerRatio]。
+     * 3. token 数达到**生效阈值**，即 `min(窗口 × [triggerRatio], [ABSOLUTE_COMPACT_TOKENS])`。
      *
      * 第 2 条针对真机实测到的一类端点：请求里带了 `stream_options.include_usage`，
      * 端点却全程不回 usage，于是第 3 条永远不成立，历史一直涨到序列化时 OOM
      * （canary 库实测 1,143 条消息里 1,140 条没有 input_tokens，历史 2.79M 字符）。
      *
+     * ## 为什么第 3 条是 min 而不是单纯的比例
+     *
+     * 两个真实事故方向相反，只能取更早的那个：
+     * - 比例失效（fix145）：用户把 `contextWindow` 填得很大（真机实测 23.9 万 token、
+     *   1533 条消息），`tokens >= window * 0.85` 永不成立，一次 compress 都没触发，
+     *   而每多一轮都在为这几十万 token 付费。
+     * - 比例过早（本轮的旧用例）：若信任窗口，900K 窗口的模型要到 76.5 万 token 才压。
+     *
+     * 真机证据胜过假设场景：无法判断“用户填的大窗口是真的还是夸张”，所以保留 10 万兜底。
+     * 代价是窗口大于 `ABSOLUTE_COMPACT_TOKENS / [triggerRatio]`（临界点 117,648，不是
+     * 117,647：后者 × 0.85 = 99,999.95，仍在比例侧）时，实际触发点固定在 10 万
+     * （例如 256K 窗口在 39% 就压）。这是**有意选择**，不是副作用：
+     * 早压的代价是一次摘要请求，晚压的代价是每轮为几十万 token 付费。
+     *
+     * 窗口未知时见 [effectiveTriggerTokens] 对 [DEFAULT_ASSUMED_CONTEXT_WINDOW] 的说明：
+     * 当前取值下假设值不改变结果，真实阈值是 10 万。
      * 安全阀只在“窗口未知”时越过 [autoCompactionEnabled]：那时用户关掉自动压缩就再没有任何
      * 依据能拦住增长，而窗口已知时仍然尊重用户的开关。
+     *
+     * 不接 `triggerRatio` 参数：生产只有 [AgentContextSession] 一个调用点、永远传
+     * [TRIGGER_RATIO]。以前它开在公开签名上只为让测试绕过绝对上限，那是给生产函数
+     * 开测试后门。需要验比例与上限的边界时直接测 [effectiveTriggerTokens]。
      */
     fun shouldCompact(
         force: Boolean,
@@ -217,7 +242,6 @@ internal object AgentContextBudget {
         contextWindow: Int?,
         observedInputTokens: Int?,
         historyChars: Long,
-        triggerRatio: Double = TRIGGER_RATIO,
     ): Boolean {
         if (force) return true
         val window = contextWindow?.takeIf { it > 0 }
@@ -227,19 +251,31 @@ internal object AgentContextBudget {
         if (!autoCompactionEnabled) return false
         val tokens = observedInputTokens?.takeIf { it >= 0 }
             ?: estimateTokens(historyChars).toInt()
-        // 绝对上限：不管窗口配得多大，超过它就压。
-        //
-        // 真机现状（2026-11）：用户给模型填了很大的 `contextWindow`（或端点声称很长），
-        // 于是 `tokens >= window * 0.85` 永远不成立 —— 实测 23.9 万 token、1533 条消息，
-        // 一次 compress 都没触发。而每多一轮都在为这几十万 token 付费。
-        //
-        // 取 10 万 token：现代端点几乎都能装下，压完仍能保留足够的近期上下文
-        // （`retainTailChars` 另有上限）。这不是“省 token”的调优，而是防止
-        // “配置一填大就无声失控”的兜底。
-        if (tokens >= ABSOLUTE_COMPACT_TOKENS) return true
-        // 窗口未知时也不能放弃（原来直接 `return false`，只剩 1.2M 字符安全阀）。
-        val assumed = window ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
-        return tokens >= assumed * triggerRatio
+        return tokens >= effectiveTriggerTokens(window, TRIGGER_RATIO)
+    }
+
+    /**
+     * 生效触发阈值（token）：`min(窗口 × triggerRatio, [ABSOLUTE_COMPACT_TOKENS])`。
+     *
+     * 抽成纯函数，是为了让“比例与绝对上限谁先到”有单点可测：拿到 [contextWindow]
+     * 就能算出真实阈值，不必靠给 [shouldCompact] 加测试专用参数来验证分支。
+     *
+     * ## [DEFAULT_ASSUMED_CONTEXT_WINDOW] 目前的真实地位
+     *
+     * 它**是活的**：`min` 的两侧都会随它变。只是 128,000 × 0.85 = 108,800 **高于**
+     * 10 万，所以窗口未知时 `min` 取到绝对上限，这个假设值当前影响不了结果。
+     * 换句话说，它现在的唯一作用是“窗口未知时按 128K 估”这一意图的载体，以及一个
+     * 安全阀：**把 [ABSOLUTE_COMPACT_TOKENS] 将来调高到 108,800 以上，它立刻开始生效；
+     * 调低 [DEFAULT_ASSUMED_CONTEXT_WINDOW] 到 117,647 以下，它也立刻生效**（后者会让
+     * 未知窗口比现在更早压缩，属于收紧而非放宽）。两条都在
+     * `AgentContextBudgetTest.effectiveTriggerIsMinOfWindowRatioAndAbsoluteLimit` 里钉住。
+     *
+     * 不删它的理由：删了就得在 [shouldCompact] 里写 `window ?: 128_000`，把这个决定
+     * 藏进表达式，而它在 [AgentMemoryContextBuilder] 里还有一份同值的独立定义。
+     */
+    internal fun effectiveTriggerTokens(contextWindow: Int?, triggerRatio: Double): Double {
+        val assumed = contextWindow?.takeIf { it > 0 } ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
+        return minOf(assumed * triggerRatio, ABSOLUTE_COMPACT_TOKENS.toDouble())
     }
 
     /**

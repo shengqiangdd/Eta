@@ -4213,6 +4213,37 @@ if (window == null) return false   // 旧代码
 新增 `unknownWindowStillCompactsAtTheAssumedBudget`：达到保守预算要压缩、
 远低于预算时**不**白花一次摘要请求。
 
+**补记（fix151）**：上面那条用例当时是**假绿**的。它的 `nearBudget` 取
+`128_000 × 0.85 = 108,800`，已高于 fix145 的绝对上限 10 万，所以走的是绝对上限分支；
+`nearBudget / 4 = 27,200` 又两条线都不碰。也就是说 `DEFAULT_ASSUMED_CONTEXT_WINDOW`
+在那个用例里**从未影响过任何断言**，改它、删它，用例照样绿。
+
+顺带确认了一个容易读错的点：`if (tokens >= ABS) return true; return tokens >= assumed * ratio`
+在**所有**输入上都等价于 `tokens >= min(assumed * ratio, ABS)`（7 种窗口 × 5 个边界逐点验证）。
+所以 fix145 之后“绝对上限覆盖了比例判据”不是某个注释的措辞问题，而是行为本身：
+**窗口大于 117,648 时，实际触发点恒为 10 万**（117,647 × 0.85 = 99,999.95，仍在比例侧）。
+256K 窗口在 39% 就压缩，这是有意选择而非副作用 —— 早压的代价是一次摘要请求，
+晚压的代价是每轮为几十万 token 付费，而 `contextWindow` 是用户手填字段，无法判断真伪。
+
+**本次改动**（均为表达与可测性，行为零变化）：
+
+- `shouldCompact` 里的 `min` 改成显式 `minOf(...)`，不再靠判断顺序产生语义。
+- 抽出 `effectiveTriggerTokens(contextWindow, triggerRatio)`，让“比例与绝对上限谁先到”
+  有单点可测。
+- **删掉 `shouldCompact` 的 `triggerRatio` 参数**。生产只有 `AgentContextSession` 一个
+  调用点、永远传 `TRIGGER_RATIO`；它开在公开签名上原本只为让测试绕过绝对上限，
+  等于给生产函数开测试后门。改完 `AgentContextSession.kt` 少传一个参数。
+- 重写测试：`effectiveTriggerIsMinOfWindowRatioAndAbsoluteLimit` 单点验 min 五种情形
+  （小窗口 / 临界 / 大窗口 / 窗口未知 / 非正值）；`assumedWindowOnlyMattersBelowTheAbsoluteLimit`
+  钉住“当前假设值影响不到结果”这个事实，并用 `triggerRatio = 0.5` 证明它确实活着；
+  `unknownWindowCompactsExactlyAtTheAbsoluteLimit` 端到端验 99,999 不压、100,000 压。
+
+写这个用例时抓到一个自己的算术错：一直写的是临界点 117,647，而
+`ceil(100_000 / 0.85) = 117,648` 才是两侧真正相等的位置。KDoc 里的数字已同步改正。
+
+**变异验证**（两次都为红，确认新用例非假绿）：`min` 改 `max` → 6 个用例失败；
+删掉 `?: DEFAULT_ASSUMED_CONTEXT_WINDOW` 兜底 → 3 个用例失败。
+
 ### fix145：窗口配得大，压缩永不触发
 
 fix144 装完再看 trace：**23.9 万 token、1533 条消息，仍然一次 compress 都没有**。

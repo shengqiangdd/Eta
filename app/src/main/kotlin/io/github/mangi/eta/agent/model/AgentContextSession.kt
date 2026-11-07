@@ -132,7 +132,6 @@ internal class AgentContextSession(
             contextWindow = contextWindow,
             observedInputTokens = before,
             historyChars = historyChars,
-            triggerRatio = TRIGGER_RATIO,
         )
         // 失败一次已经花掉一次（或多次）摘要请求；下一轮立刻重放同一份历史只会再失败一次。
         val coolingDown = shouldCompact && !force && !final && autoCompactionCooldown > 0
