@@ -4017,3 +4017,42 @@ if (roleplayContext == null && todoPlan.isNotBlank()) messages.put(systemMessage
 **验证**：门禁 `STAGES=test` —— 用例 **1577** 个、失败 0。新增
 `dynamicSectionsKeepTheSystemPrefixStable`：直接比对「有清单」与「无清单」两版提示，
 断言目标槽之前的所有系统段逐字相同、两版条数一致。
+
+### fix139：回收旧工具结果（41 万 token 上下文的真正来源）
+
+真机 trace（`run-f64201f5`，deepseek-v4.1-flash，来自 `/data/data/<pkg>/files/run-traces/`）：
+
+```
+r1: msgs=1031  in=410,751  out=1,708
+r2: msgs=1034  in=411,546  out=564   cache=410,624
+r3: msgs=1036  in=411,984  out=189   cache=411,520
+r4: msgs=1038  in=412,620  out=236   cache=411,904
+```
+
+**每轮推 41 万 token，输出只有一二百**。缓存命中率 99.8%，所以**不是缓存问题** ——
+是上下文本身太大：1031 条消息，`tool` 记录的 `res_chars` 常在一千上下（
+一次 `terminal` 结果 673~1,107 字符），几十轮下来累积成几十万 token。
+
+`AgentToolSpill` 只处理「单条结果超过 12,000 字符」——巨大的结果会落盘，
+但**已不再需要的旧结果从不回收**。而绝大多数历史工具输出只对当时那一轮有用。
+
+**改法**：`AgentToolResultPruner` 把末尾之外的旧工具结果换成一句占位。
+四条约束都是踩过的坑：
+
+1. **只动末尾之前**（`PRUNE_KEEP_TAIL = 20`，约最近 10 轮往返）：模型正在推进的任务
+   都在这个范围里，回收它们只会逼模型重跑一次。
+2. **只换内容、不删消息**：删消息会让 `tool_call` 与 `tool_result` 配不上对，端点直接报错。
+3. **幂等且单调**：已经瘦身过的再跑一次结果不变。否则每轮都改写历史，
+   OpenAI 兼容端点的逐字节前缀缓存就白谈了。
+4. **只在上下文确实大时才做**（`PRUNE_MIN_CONTEXT_CHARS = 400_000`，约 10 万 token）：
+   小会话本来不会超窗口，每轮改写反而把缓存全部打碎。
+
+两种消息形状都认：OpenAI 的 `{"role":"tool","content":"..."}` 与
+Anthropic 的 `{"type":"tool_result","content":...}`（含嵌套 block）。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1583** 个、失败 0。新增
+`AgentToolResultPrunerTest` 6 例（旧结果被替换 / 小结果不动 / 二次运行幂等 /
+消息条数与角色不变 / Anthropic 形状 / keepTail 超长安全）。
+
+**注意**：这一项的真实收益（省下多少 token）要等下一场长会话才能从 trace 里量出来。
+现在能确定的只有行为正确性 —— 不要把「测试通过」当成「token 已省下」。

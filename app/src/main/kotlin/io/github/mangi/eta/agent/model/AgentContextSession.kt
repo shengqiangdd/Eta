@@ -109,6 +109,23 @@ internal class AgentContextSession(
                 return
             }
         }
+        // 先做一步几乎免费的回收：把末尾之外的旧工具结果换成占位。
+        //
+        // 真机 trace：7 轮对话，每轮 in≈41 万 token、out≈200 token，缓存命中 99.8%。
+        // 不是缓存问题，是上下文本身太大（1031 条消息，大多是历史工具输出）。
+        //
+        // **只在上下文已经很大时才做**：瘦身会改写历史，而 OpenAI 兼容端点靠逐字节
+        // 前缀匹配命中缓存 —— 小会话（几轮就结束的）本来就不会超窗口，
+        // 每轮都改写反而把缓存全部打碎，得不偿失。
+        if (!final && historyChars >= PRUNE_MIN_CONTEXT_CHARS) {
+            // 不在这里打日志：本类刻意保持无 Android 依赖（纯 JVM 可测），
+            // 摘要进度已经通过 onEvent / 追踪文件可见，回收条数不必再加一条出口。
+            AgentToolResultPruner.prune(
+                messages = messages,
+                keepTail = PRUNE_KEEP_TAIL,
+                keepChars = PRUNE_KEEP_CHARS,
+            )
+        }
         val shouldCompact = AgentContextBudget.shouldCompact(
             force = force,
             autoCompactionEnabled = config.autoCompactionEnabled,
@@ -223,6 +240,26 @@ internal class AgentContextSession(
 
     private companion object {
         const val TRIGGER_RATIO = AgentContextBudget.TRIGGER_RATIO
+
+        /**
+         * 上下文超过这么多字符（约 10 万 token）才开始回收旧工具结果。
+         *
+         * 阈值不能太小：回收本身会改写历史，而改写会让前缀缓存失效。
+         * 只有那些真的会把整段上下文反复推给模型的会话（几十轮、上千条消息）
+         * 才值得这个代价；短会话既不会超窗口，也不会有重复计费问题。
+         */
+        const val PRUNE_MIN_CONTEXT_CHARS = 400_000L
+
+        /**
+         * 末尾保留多少条消息不回收。
+         *
+         * 20 条大约覆盖最近 10 轮工具往返 —— 模型正在推进的任务都在这个范围里。
+         * 回收它们会让模型「刚看到的结果下一轮就没了」，只能重跑一次，反而更贵。
+         */
+        const val PRUNE_KEEP_TAIL = 20
+
+        /** 单个工具结果超过这么多字符才换成占位。 */
+        const val PRUNE_KEEP_CHARS = 240
 
         /** 自动压缩失败后跳过的轮数：避开「每轮都重试同一份失败历史」。 */
         const val AUTO_COMPACTION_COOLDOWN_ROUNDS = 3
