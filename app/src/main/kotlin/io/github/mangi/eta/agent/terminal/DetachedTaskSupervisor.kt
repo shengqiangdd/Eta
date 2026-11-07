@@ -732,7 +732,7 @@ internal class DetachedTaskSupervisor(
      */
     internal fun hostDaemonPath(task: DetachedTask, wirePath: String): String =
         if (task.environment.isLinux && wirePath.startsWith(LINUX_DAEMON_DIR)) {
-            (effectiveHostWorkspace(task)?.let { "$it/daemon" } ?: DEFAULT_DAEMON_DIR) +
+            (effectiveHostWorkspace(task, wirePath)?.let { "$it/daemon" } ?: DEFAULT_DAEMON_DIR) +
                 wirePath.removePrefix(LINUX_DAEMON_DIR)
         } else {
             wirePath
@@ -745,19 +745,28 @@ internal class DetachedTaskSupervisor(
      * 不会因为升级而消失。直接拿它拼路径会指向一个不存在的目录，`read` 报
      * `LOGS_UNAVAILABLE`、`output_path` 也显示错的。
      *
-     * 只有在“记录值与当前实际工作区不同”**且**“按记录值拼出的目录确实不存在”时才改用
-     * 当前值：既不改新任务的准确记录，也不把“用户真的把工作区换走了、旧日志留在老位置”
-     * 这种情况误判成错误 —— 老位置的目录还在，就继续用它。
+     * 判定依据是**这个任务的日志文件在哪个候选目录里真实存在**，而不是“daemon 目录存
+     * 不存在”——这一点是实测纠正过的：`/data/local/tmp/eta/daemon` 作为目录一直存在
+     * （历史上其他任务在里面留了 17 个文件），但如果拿它当“记录值仍可用”的依据，
+     * 真机上 17 个旧任务里会有 14 个仍然指错。目录存在≠这个任务的日志在那里。
+     *
+     * 顺序：
+     * 1. `wirePath` 不是 Linux 日志路径 → 原样返回。
+     * 2. 记录值下的这个日志文件在 → 用它（“用户真的把工作区换走了、旧日志留在老位置”）。
+     * 3. 当前工作区下的这个日志文件在 → 用当前值（旧记录被写死的场景）。
+     * 4. 两者都没有 → 退回当前工作区：路径至少指向正在使用的目录，
+     *    读不到时是“文件不存在”，而不是指着一个无关的历史目录。
      */
-    private fun effectiveHostWorkspace(task: DetachedTask): String? {
+    private fun effectiveHostWorkspace(task: DetachedTask, wirePath: String): String? {
         val recorded = task.hostWorkspace ?: return null
         if (!task.environment.isLinux) return recorded
         val current = runCatching { TerminalRuntime.linuxWorkspacePathFor(rootfsPath(task.environment)) }
             .getOrNull()
             ?: return recorded
         if (current == recorded) return recorded
-        // 记录值仍然可用（目录真的存在）就不动它。
-        return if (File("$recorded/daemon").isDirectory) recorded else current
+        val leaf = wirePath.removePrefix(LINUX_DAEMON_DIR)
+        if (File("$recorded/daemon$leaf").exists()) return recorded
+        return current
     }
 
     private fun rootfsPath(environment: TerminalEnvironment): String? =

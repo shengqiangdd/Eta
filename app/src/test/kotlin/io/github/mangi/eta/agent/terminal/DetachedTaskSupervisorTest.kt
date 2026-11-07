@@ -283,6 +283,10 @@ class DetachedTaskSupervisorTest {
         // 用真实存在的临时目录当自定义工作区：记录值与当前实际工作区一致时不能被改写。
         val customWorkspace = File(temporaryFolder.root, "custom-workspace").apply { mkdirs() }.absolutePath
         File(customWorkspace, "daemon").mkdirs()
+        // 日志文件得真的存在：`effectiveHostWorkspace` 按**这个任务的日志文件**在哪判断，
+        // 而真机上任务跑过就一定有日志。只建目录不建文件，等于模拟一个从没写过的任务。
+        File(customWorkspace, "daemon/job_custom01.log").writeText("out")
+        File(customWorkspace, "daemon/job_custom01.exit").writeText("0")
         val linuxTask = DetachedTask(
             id = "job_custom01",
             pid = 1234,
@@ -313,15 +317,21 @@ class DetachedTaskSupervisorTest {
     /**
      * 旧记录里写错的 `hostWorkspace` 要被纠正，且不能把“日志真的还在老位置”误判成错误。
      *
+     * 判据是**这个任务的日志文件**在哪个候选目录里存在，而不是 daemon 目录在不在。
+     * 这条曾经写错过并真机验证了出来：`/data/local/tmp/eta/daemon` 作为目录一直存在
+     * （历史任务留了 17 个文件），拿目录存在当“记录值仍可用”的依据时，
+     * 17 个旧任务里有 14 个仍然指错。所以本用例**特意把旧目录建出来**，只让日志缺失。
+     *
      * 两种情况必须区分开：
-     * - 记录值指向的 `daemon` 目录**不存在** —— 典型的旧版本写死默认目录，应改用当前实际工作区；
-     * - 记录值指向的 `daemon` 目录**还存在** —— 用户换过工作区、旧日志确实留在老位置，保持原样。
+     * - 旧目录在、但这个任务的日志不在 —— 应改用当前实际工作区；
+     * - 这个任务的日志真在旧目录 —— 用户换过工作区、旧日志留在老位置，保持原样。
      */
     @Test
-    fun staleRecordedWorkspaceIsCorrectedOnlyWhenItNoLongerExists() {
+    fun hostWorkspaceIsCorrectedByLogFileNotByDirectoryExists() {
         val supervisor = newSupervisor()
 
-        val missing = File(temporaryFolder.root, "gone-workspace").absolutePath
+        val oldDir = File(temporaryFolder.root, "old-workspace").apply { mkdirs() }
+        File(oldDir, "daemon").mkdirs()
         val staleTask = DetachedTask(
             id = "job_stale01",
             pid = 1,
@@ -332,18 +342,25 @@ class DetachedTaskSupervisorTest {
             environment = TerminalEnvironment.DEBIAN,
             logPath = "/workspace/daemon/job_stale01.log",
             startedAt = 0L,
-            hostWorkspace = missing,
+            hostWorkspace = oldDir.absolutePath,
         )
-        val corrected = supervisor.hostDaemonPath(staleTask, staleTask.logPath)
-        assertFalse("目录不存在时不能继续用记录值：$corrected", corrected.startsWith(missing))
 
-        val kept = File(temporaryFolder.root, "kept-workspace").apply { mkdirs() }.absolutePath
-        File(kept, "daemon").mkdirs()
-        val keptTask = staleTask.copy(id = "job_kept01", hostWorkspace = kept,
-            logPath = "/workspace/daemon/job_kept01.log")
+        // 1. 旧目录存在，但**这个任务的日志**不在那里 → 必须按当前实际工作区纠正
+        //    （真机上 14 个旧任务是这个形态）。
+        //    当前工作区在测试里取不到自定义值，但可以问代码同一个入口，避免写死路弄。
+        val current = TerminalRuntime.linuxWorkspacePathFor("/workspace/rootfs")
         assertEquals(
-            "$kept/daemon/job_kept01.log",
-            supervisor.hostDaemonPath(keptTask, keptTask.logPath),
+            "目录在但日志不在时，必须按日志实际位置纠正",
+            "$current/daemon/job_stale01.log",
+            supervisor.hostDaemonPath(staleTask, staleTask.logPath),
+        )
+
+        // 2. 旧目录里真有这个任务的日志 → 保留记录值，否则会把能读到的历史日志变成读不到。
+        File(oldDir, "daemon/job_stale01.log").writeText("x")
+        assertEquals(
+            "旧日志文件确实在记录值下时，不能纠正",
+            "${oldDir.absolutePath}/daemon/job_stale01.log",
+            supervisor.hostDaemonPath(staleTask, staleTask.logPath),
         )
     }
 
