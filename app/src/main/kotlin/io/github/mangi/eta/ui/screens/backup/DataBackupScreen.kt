@@ -12,6 +12,8 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,10 +82,10 @@ internal fun DataBackupScreen(
     var busyOp by remember { mutableStateOf(BackupOp.IDLE) }
     val busy = busyOp != BackupOp.IDLE
     // -1 表示还没读到可估算的比例（文件读不了 / 大小未知）；0~100 是已读的压缩字节占比。
-    var parsePercent by remember { mutableStateOf(-1) }
+    var parsePercent by remember { mutableIntStateOf(-1) }
     // 导出已写入的字节数。目标文件事先不知道会多大，所以只报「写了多少」，
     // 不假装有百分比 —— 导入那边分母是文件大小，导出这边没有分母。
-    var exportWritten by remember { mutableStateOf(0L) }
+    var exportWritten by remember { mutableLongStateOf(0L) }
     // 失败说明放对话框而不是 Toast：Toast 单行约 22 字，长文案会被截成「…数据…」，
     // 而「数据未改动」恰恰是最不能丢的那半句（真机上就是这样被截掉的）。
     var failureNotice by remember { mutableStateOf<String?>(null) }
