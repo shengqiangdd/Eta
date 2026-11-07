@@ -413,9 +413,20 @@ run_dead_strings() {
   python3 tools/dead_strings.py || fail=1
 }
 
+# ---- 文档镜像（与 STAGES 无关，始终执行）-----------------------------
+# TECHNICAL.md 与 docs/TECHNICAL.md 是同一份内容的两个副本，文件开头写着要同步，
+# 但这句话靠人记不可靠：2026-11-07 我改完 docs 那份就走了，根目录落后 33 行。
+# 分叉不会让编译、lint、单测里任何一项变红 —— 它只是让两份文档慢慢说不同的话，
+# 而读的人无法判断哪份是真的。代价是一次读取加比较，秒级。
+run_doc_mirror() {
+  echo "==== 文档镜像 ===="
+  python3 tools/doc_mirror.py || fail=1
+}
+
 run_ui_actions
 run_string_format
 run_dead_strings
+run_doc_mirror
 
 if has_stage test || has_stage test-all || has_stage test-wide; then run_test; fi
 if has_stage lint; then run_lint; fi
