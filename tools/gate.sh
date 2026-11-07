@@ -26,14 +26,39 @@ fi
 
 export ANDROID_HOME=${ANDROID_HOME:-/workspace/.tooling/android/sdk}
 export ANDROID_SDK_ROOT=$ANDROID_HOME
-# JDK 固定：外部环境把 JAVA_HOME 指到 25 时，AGP 的 lint 会异常慢
-# （2026-10-30 实测：JDK 25 下 :app:lintAnalyzeDebug 满载跑满 21 分 21 秒才结束；
-# JDK 17 是 AGP 8.x 的受支持版本，因此默认用它）。显式用 ETA_GATE_JAVA_HOME 可覆盖；
-# 没有自带 JDK 的机器仍沿用外部 JAVA_HOME。JDK 17 下的耗时尚无对比数据。
+# JDK 选择：AGP 8.x 支持到 JDK 21，JDK 25 不受支持。
+#
+# 历史教训（2026-10-30）：JDK 25 下 `:app:lintAnalyzeDebug` 实测跑满 **21 分 21 秒**才结束，
+# 忙到看不出结论；后来又在元空间不足时直接 OutOfMemoryError（栈里是 lint 的 symbol 解析）。
+#
+# 2026-11-07 修正：本脚本原来只看 `/workspace/.tooling/jdk17`，而那个目录**在本机并不存在**，
+# 于是静默落回外部 JAVA_HOME（当时是 JDK 25），注释里写的“固定 JDK 17”从未真正生效。
+# 现在按 17 -> 21 的顺序探测常见位置；ETA_GATE_JAVA_HOME 仍可显式覆盖。
+#
+# 探测不到受支持版本时不再静默降级：把这行警告打到日志开头，让“lint 为什么这么慢”
+# 在第一时间有答案，而不是等到 7 分钟后去翻进程命令行。
 if [ -n "${ETA_GATE_JAVA_HOME:-}" ]; then
   export JAVA_HOME=$ETA_GATE_JAVA_HOME
-elif [ -d /workspace/.tooling/jdk17 ]; then
-  export JAVA_HOME=/workspace/.tooling/jdk17
+else
+  for eta_gate_jdk in \
+    /workspace/.tooling/jdk17 \
+    /usr/lib/jvm/java-17-openjdk-arm64 \
+    /usr/lib/jvm/java-17-openjdk-amd64 \
+    /usr/lib/jvm/java-21-openjdk-arm64 \
+    /usr/lib/jvm/java-21-openjdk-amd64; do
+    if [ -x "$eta_gate_jdk/bin/javac" ]; then
+      export JAVA_HOME=$eta_gate_jdk
+      break
+    fi
+  done
+  unset eta_gate_jdk
+fi
+# 走到这里还没有受支持的 JDK，就沿用外部 JAVA_HOME 并明确说出它的版本风险。
+if [ -z "${JAVA_HOME:-}" ]; then
+  echo "  ! 没找到受支持的 JDK（17/21），且外部未设 JAVA_HOME：构建可能直接失败" >&2
+elif ! "$JAVA_HOME/bin/java" -version 2>&1 | head -1 | grep -qE '"(1\.)?(17|21)[."]'; then
+  echo "  ! JAVA_HOME=$JAVA_HOME 不在 AGP 8.x 受支持范围（17/21）：lint 可能异常慢" >&2
+  echo "    可用 ETA_GATE_JAVA_HOME=/path/to/jdk17 sh tools/gate.sh 指定" >&2
 fi
 LOGDIR=${LOGDIR:-/tmp/eta-gate}
 mkdir -p "$LOGDIR"

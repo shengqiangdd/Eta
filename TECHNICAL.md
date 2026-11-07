@@ -198,7 +198,7 @@ Eta 不对浏览器请求执行额外的 URL、DNS、IP、主机数量、请求�
 
 在用户授权下执行 `user` 或 `root` shell 命令，读写文件、列目录、跑脚本、查日志、改配置。会话式 shell 保持 cwd 和环境变量，异步任务后台执行并分段读取输出。聊天中的终端工具卡片可展开查看并复制实际执行的完整命令；运行日志仍只记录长度等受控摘要，不记录命令正文。
 
-需要长期驻留的后台服务（监听端口、Web 面板、定时任务等）通过 terminal 的 `daemon_start` 托管：进程经 setsid 脱离命令会话的进程组，输出写入工作区日志文件，任务记录落盘，不随 run、会话或页面结束回收。App 重启后按 PID 与归属标记校验认领存活进程，`daemon_list`、`daemon_logs`、`daemon_stop` 用于查看状态、读取日志和停止任务，用户也可在终端页的任务面板管理。守护任务数量与单次日志读取设有上限；设备重启后全部任务失效。
+需要长期驻留的后台服务（监听端口、Web 面板、定时任务等）通过 terminal 的 `daemon_start` 托管：进程经 setsid 脱离命令会话的进程组，输出写入工作区日志文件，任务记录落盘，不随 run、会话或页面结束回收。App 重启后按 PID 与归属标记校验认领存活进程，`daemon_list`、`daemon_logs`、`daemon_stop` 用于查看状态、读取日志和停止任务，用户也可在终端页的任务面板管理。守护任务数量与单次日志读取设有上限；设备重启后全部任务失效。守护日志的物理位置跟随 Linux 工作区：`daemon_start` 把实际 bind 源记进任务记录（`hostWorkspace`），读日志时据此把 guest 的 `/workspace/daemon/...` 换算回宿主路径；工作区被改成自定义目录时，换算也要跟着变，写死默认目录会拼出不存在的路径。记录里残留旧版本错误值的任务，会在换算时按当前实际工作区纠正（仅当记录指向的 `daemon` 目录确实不存在；目录还在就继续用它，因为那可能是用户换过工作区后的真实旧位置）。
 
 终端按用途分为三个环境：
 
@@ -4391,3 +4391,124 @@ var exportWritten by remember { mutableLongStateOf(0L) }
 **顺带说明这条是怎么被发现的**：先是门禁整体变红，我确认了 `DataBackupScreen.kt`
 最后一次改动来自 `2ec24589 fix135c`（不是我这次的提交），才判定是既有问题而非自己带出来的。
 —— 这个顺序很重要：先排除「是不是我改坏的」，再决定要不要顺手修。
+
+## fix149：门禁说"固定 JDK 17"，实际一直在用 JDK 25
+
+**症状**：三次全量门禁里 lint 分别占 6、9、7 分钟，是整体的大头（比 1605 个单测加起来还慢）。
+`tools/gate.sh` 的注释写着"JDK 固定：外部环境把 JAVA_HOME 指到 25 时 lint 会异常慢，
+JDK 17 是 AGP 8.x 的受支持版本，因此默认用它"，看上去已经是防过的。
+
+**根因**：那段"固定"代码只探测一个路径：
+
+```sh
+elif [ -d /workspace/.tooling/jdk17 ]; then
+  export JAVA_HOME=/workspace/.tooling/jdk17
+fi
+```
+
+而 `/workspace/.tooling/jdk17` **在本机根本不存在**（`ls /workspace/.tooling/` 只有
+`aarch64-sdk-full` 和 `rustup`）。于是 `elif` 从不命中，静默落回外部 `JAVA_HOME` ——
+当时的 `java -version` 是 **JDK 25.0.4.1**。注释描述的防护从未生效，
+而"没有报错"让这个偏差藏了很久。
+
+**归因实验**（都在本机，同一份源码）：
+
+| 条件 | 耗时 |
+|---|---|
+| JDK 21，完整 `:app:lintDebug`（改过源码触发重分析） | **7m36s** |
+| JDK 21，只指定 `lintAnalyzeDebug` | 6m05s |
+| JDK 21，源码未变（命中 UP-TO-DATE） | 21s |
+| JDK 25（历史记录，注释里） | 21m21s |
+
+结论有两层，**第二层比第一层重要**：
+
+1. JDK 版本确实影响巨大（25 → 21，21 分钟级降到 7 分钟级），修好选择逻辑有确定收益；
+2. **但 6~7 分钟本身不是浪费** —— 这个模块有 840 个 Kotlin 文件、17.7 万行、478 个依赖 jar，
+   lint 要把符号解析全过一遍。这是规模成本，不是配置错误。
+   所以本节**不去调 lint 的检查范围来"省时间"**：放宽检查等于把门禁变绿的方式从
+   "代码合格"改成"少查几条"，那正是门禁最不该做的交换。
+
+**改法**（`tools/gate.sh`）：
+
+- 按 `jdk17 → java-17-openjdk-{arm64,amd64} → java-21-openjdk-{arm64,amd64}` 顺序探测，
+  以 `bin/javac` 可执行为准（`-d` 判目录不够：空目录也会命中）；
+- `ETA_GATE_JAVA_HOME` 仍可显式覆盖，优先级最高；
+- **探测不到受支持版本时不再静默降级**：打一行警告写明当前 `JAVA_HOME` 不在 AGP 8.x
+  支持范围（17/21）、lint 可能异常慢，并给出覆盖用法。
+
+**验证**（真跑选择逻辑，不是读代码）：
+
+- 正常环境：选中 `/usr/lib/jvm/java-21-openjdk-arm64`，无警告 ✓
+- 外部 `JAVA_HOME` 指向 JDK 25：脚本**主动纠正**到 JDK 21（比只警告更好）✓
+- 把所有探测路径换成不存在的：打出「不在 AGP 8.x 受支持范围（17/21）：lint 可能异常慢」
+  + 覆盖用法提示 ✓
+
+**顺带确认的两件事**：
+
+- `checkReleaseBuilds = false` 已关闭 release 变体的 lint，没有重复分析；
+- `abortOnError` 只拦 error，而多数检查默认是 warning —— 项目已用
+  `warningsAsErrors = true` 补上，baseline 116 条过滤正常（本次三轮 lint 都打印
+  `Lint found no new issues (and 116 errors filtered by baseline)`）。
+  这条不是本轮改的，但归因 lint 时一起核过，避免"看着慢就顺手放宽"。
+
+## fix150：直读日志一直在拼一条不存在的路径
+
+`terminal_job read` 报 `日志不可用：exit=-1（无法启动进程）`。
+
+fix140 把读取策略改成「优先直读文件，读不到才起进程」，方向是对的：`su -c` 起进程在
+App 进程里可能直接失败。但直读要先把 guest 路径换算成宿主物理路径，而这一步的输入是错的：
+
+```kotlin
+// startCommand 里，落盘进任务的 hostWorkspace
+val workspace = if (identity == "user") TerminalRuntime.userWorkspacePath
+                else TerminalRuntime.ROOT_WORKSPACE_PATH
+```
+
+**`hostWorkspace` 的语义是「guest `/workspace` 实际 bind 自宿主哪个目录」**
+（`hostDaemonPath` 靠它把 `/workspace/daemon/x.log` 换算回宿主路径）。而 Linux 的
+bind 源由 `buildLinuxPayload` 决定：**用户设了自定义工作区时它会变**，不一定是
+`ROOT_WORKSPACE_PATH`。写死根目录，直读必然拼出不存在的位置。
+
+真机日志是确凿证据，bind 的是自定义工作区：
+
+```
+mount '/storage/emulated/0/Download/1785249992652501794-1864' "$eta_rootfs/workspace" bind
+```
+
+所以直读永远失败 → 回退去起进程 → 那条路也失败 → 统一报成「无法启动进程」。
+**报错信息指向的是回退路径，真凶在前一步的路径拼接**，这是它一直没被查出来的原因。
+
+**改法一：跟随实际 bind 源**。`startCommand` 改用
+`TerminalRuntime.linuxWorkspacePathFor(rootfsPath(environment))`；非 Linux 返回 null，
+仍走原来的身份分支，`wireDir` 语义不变（已核对无回归）。
+
+**改法二：纠正已落盘的坏记录**。写死逻辑产出的错误 `hostWorkspace` 已经存进任务记录，
+升级 APK 不会让它消失。新增 `effectiveHostWorkspace`，但**不能无条件用当前值覆盖**：
+
+```
+记录值 == 当前实际工作区  → 用记录值
+记录值与当前不同，且 "$recorded/daemon" 目录存在  → 仍然用记录值
+记录值与当前不同，且该目录不存在                  → 用当前值纠正
+```
+
+中间那条是关键：用户**真的把工作区换走了、旧日志留在老位置**时，老目录还在，
+那些日志就该继续从老位置读。无条件覆盖会把这种情况一起误伤。
+没有采用「先试记录值、失败再试当前值」的两套逻辑并存方案 —— 两套路径判断
+容易互相冲突，一个明确的优先级更可控。
+
+**验证**：
+
+- 单测：`DetachedTaskSupervisorTest` 14 例 0 失败。新增
+  `staleRecordedWorkspaceIsCorrectedOnlyWhenItNoLongerExists` 覆盖上面两个分支；
+  原有用例原先硬编码 `/storage/...`（依赖真机状态），改为 `temporaryFolder` 下的真实目录。
+- 真机（新 APK 已装）：
+  - 新任务 `job_e8d37491` 的 `output_path` 指向自定义工作区下的 `daemon/job_e8d37491.log`，
+    `read` 返回 `FIX149_PROBE_START\nFIX149_PROBE_END\n` ✓
+  - 旧任务 `job_3995a8bd`（记录里是坏路径 `/data/local/tmp/eta/daemon/...`）现在读通；
+    `output` 为空是因为它的 `.log` 本身 0 字节（曾被 kill 的门禁任务），
+    不再是 `LOGS_UNAVAILABLE` ✓
+- 全量门禁 `EXIT=0`：单测 1605 通过、0 失败，lint 无新增、baseline 116 条一致，打包成功。
+
+**遗留说明**：旧任务 JSON 里的 `output_path` 字段仍显示记录中的旧值
+（该字段在 `BackgroundTerminalJobs.kt:279` 由 `hostDaemonPath` 生成，属旧 APK 写入）。
+**读取已修好**，只是那个展示字段不会自动回填 —— 如果要求展示也准确，得另做一次迁移。
