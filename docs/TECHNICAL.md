@@ -3984,3 +3984,36 @@ SCREEN_BRIGHT_WAKE_LOCK 'Eta:agent-keep-screen'     ACQ=-51s (uid=10629 pid=2749
 
 **验证**：门禁 `STAGES=test` —— 用例 **1576** 个、失败 0。新增
 `AgentFailureHintsNextStepTest` 3 例（已知码必须有可执行改法 / 未知码不许编 / 工具级兜底仍可执行）。
+
+### fix138：让系统提示前缀在整场会话里保持稳定
+
+OpenAI 兼容端点（DeepSeek、OpenAI、绝大多数第三方中转）只做**自动前缀缓存** ——
+命中条件是请求前缀逐字节相同，没有 Anthropic 那种显式 `cache_control` 断点。
+而 Anthropic 侧 `markConversationBreakpoint` 已经把断点打在最后一条消息上，跨轮复用。
+
+**问题**：`buildSystemMessages` 里的动态段落是「有内容才 `put`」：
+
+```kotlin
+if (roleplayContext == null && todoPlan.isNotBlank()) messages.put(systemMessage(todoPlan))
+```
+
+一个不建清单的会话跑到第二十轮，模型第一次调用 `todo_write` —— 清单从「不存在」变成
+「存在」，它之后**每一条系统段**（台账、后台任务、后台事件、项目规则）的位置全部后移，
+于是这之后每一轮都在为同一段系统提示重复付费（前缀缓存全部失效），单轮就是数千 token。
+
+**改法**：动态段落无条件占位，空时给一句极短占位文案（`AgentPromptSlots`）。
+代价是空会话多几十个字符，换的是前缀在整场会话里稳定。
+
+槽位顺序刻意保持：模式 → 目标 → 清单 → 台账 → 后台任务 → 后台事件 → 项目规则。
+越靠后越常变（台账每次派发都会变），所以它们只影响自己之后的字节。
+
+**注意**：`background*` 两个槽只在 `config.terminalTools=true` 时注入。这个开关是会话级设置，
+不随轮变化；关掉终端工具还会提一句「用 terminal_job 的 list」等于指着模型调不到的工具。
+
+**顺带修掉两处测试里的写死下标**：`messages.getJSONObject(2)` / `(3)` / `(4)` 与
+`assertEquals(5, userIndex)`。它们本来就会因为「系统段增减」而误报，而这次的改动正是
+增减系统段。改成按内容/角色查找，不再依赖位置。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1577** 个、失败 0。新增
+`dynamicSectionsKeepTheSystemPrefixStable`：直接比对「有清单」与「无清单」两版提示，
+断言目标槽之前的所有系统段逐字相同、两版条数一致。

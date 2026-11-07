@@ -267,28 +267,35 @@ internal object AgentPromptBuilder {
         }
         // 任务清单放在系统提示末尾：会话内前缀保持稳定，清单变化只影响它之后的字节。
         // 模式段放在清单之后：先说明「本轮是什么模式」，再给出当前清单，避免模型把清单当成执行指令。
+        //
+        // **所有动态段落都无条件占位**（空时给一句短占位）。原因是 OpenAI 兼容端点只做
+        // 自动前缀缓存：一旦某段从「不存在」变成「存在」，它之后的全部字节都会重算。
+        // 实测场景：一个不建清单的会话突然调用 todo_write —— 清单从无到有，
+        // 后面每一轮都得重新计费一次完整前缀。
         if (roleplayContext == null) {
             val modeSection = AgentModePrompt.section(mode)
-            if (modeSection.isNotEmpty()) messages.put(systemMessage(modeSection))
+            messages.put(systemMessage(modeSection.ifEmpty { AgentPromptSlots.EMPTY_MODE }))
         }
-        if (roleplayContext == null && goalPlan.isNotBlank()) messages.put(systemMessage(goalPlan))
-        if (roleplayContext == null && todoPlan.isNotBlank()) messages.put(systemMessage(todoPlan))
+        if (roleplayContext == null) {
+            messages.put(systemMessage(goalPlan.ifBlank { AgentPromptSlots.EMPTY_GOAL }))
+        }
+        if (roleplayContext == null) {
+            messages.put(systemMessage(todoPlan.ifBlank { AgentPromptSlots.EMPTY_TODO }))
+        }
         // 台账紧跟清单：两者都是「当前工作状态」，读起来连贯；它比清单变得勤（每次派发/收尾），
         // 放这里只影响它之后的字节，项目规则仍在最末尾。
-        if (roleplayContext == null && taskLedgerPlan.isNotBlank()) {
-            messages.put(systemMessage(taskLedgerPlan))
+        if (roleplayContext == null) {
+            messages.put(systemMessage(taskLedgerPlan.ifBlank { AgentPromptSlots.EMPTY_TASK_LEDGER }))
         }
-        // 后台任务紧跟台账：两者都是「现在还没收尾的东西」。它比台账更少见变化（起／停时），
-        // 放在台账之后，项目规则仍在最末尾。
+        // 后台任务紧跟台账：两者都是「现在还没收尾的东西」。
         // 只在本轮真的能用终端工具时注入：关掉终端工具还提一句「用 terminal_job 的 list」，
         // 等于指着一个模型根本调不到的工具。
-        if (roleplayContext == null && config.terminalTools && backgroundTasks.isNotBlank()) {
-            messages.put(systemMessage(backgroundTasks))
+        if (roleplayContext == null && config.terminalTools) {
+            messages.put(systemMessage(backgroundTasks.ifBlank { AgentPromptSlots.EMPTY_BACKGROUND_TASKS }))
         }
         // 结束事件紧跟任务段：先知道「还有谁在跑」，再看到「哪些已经结束」。
-        // 与任务段同一条规矩：没有终端工具就不提（不提一个调不到的工具），剧情会话不注入。
-        if (roleplayContext == null && config.terminalTools && backgroundEvents.isNotBlank()) {
-            messages.put(systemMessage(backgroundEvents))
+        if (roleplayContext == null && config.terminalTools) {
+            messages.put(systemMessage(backgroundEvents.ifBlank { AgentPromptSlots.EMPTY_BACKGROUND_EVENTS }))
         }
         projectRulesMessage()?.let(messages::put)
         return messages

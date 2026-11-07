@@ -122,7 +122,13 @@ class AgentPromptBuilderTest {
 
         assertEquals(
             // 多出的一个 system 是「编码任务委派」段（terminalTools=true 时有它）。
-            listOf("system", "system", "system", "system", "system", "user", "assistant", "user"),
+            // 末尾几条是动态槽位（模式/目标/清单/台账/后台任务/后台事件），
+            // 它们无条件占位以保住前缀缓存。
+            listOf(
+                "system", "system", "system", "system", "system",
+                "system", "system", "system", "system", "system", "system",
+                "user", "assistant", "user",
+            ),
             messages.roles(),
         )
         assertEquals("自定义系统约束", messages.getJSONObject(0).getString("content"))
@@ -161,7 +167,7 @@ class AgentPromptBuilderTest {
         // 用「角色序列里的第一条 user」定位，不写死下标：系统段随时可能增减，
         // 写死下标会让一条无关的提示词改动变成这里莫名其妙的失败。
         val userIndex = messages.roles().indexOfFirst { it == "user" }
-        assertEquals(5, userIndex)
+        assertTrue("必须能找到 user 消息", userIndex > 0)
         assertEquals("旧问题", messages.getJSONObject(userIndex).getString("content"))
         assertEquals("旧回答", messages.getJSONObject(userIndex + 1).getString("content"))
 
@@ -198,18 +204,30 @@ class AgentPromptBuilderTest {
             skillContext = SkillContext(installedSkills = listOf(skill)),
         )
 
-        assertEquals(listOf("system", "system", "system", "system", "user"), messages.roles())
+        assertEquals(
+            // terminalTools=false：只有模式/目标/清单/台账 四个动态槽位，
+            // 后台任务与后台事件两个槽只在终端工具开启时注入。
+            listOf(
+                "system", "system", "system", "system", "system", "system",
+                "system", "system", "user",
+            ),
+            messages.roles(),
+        )
         val systemContents = messages.systemContents()
         assertTrue(systemContents.any { it.contains("browser_use") })
         assertFalse(systemContents.any { it.contains("只需 command") })
-        assertTrue(messages.getJSONObject(2).getString("content").contains("可调用 subagent 派发子智能体"))
+        assertTrue(
+            "子代理说明应在某个系统段里（不再假定固定下标）",
+            systemContents.any { it.contains("可调用 subagent 派发子智能体") },
+        )
         val skillMessage = systemContents.single { it.contains("id=screen-audit") }
-        assertEquals(skillMessage, messages.getJSONObject(3).getString("content"))
+        assertTrue("技能段必须真的在列表里", systemContents.contains(skillMessage))
         assertTrue(skillMessage.contains("path=/skills/screen-audit/SKILL.md"))
         assertTrue(skillMessage.contains("capabilities=scripts, assets"))
         assertTrue(skillMessage.contains("description=检查屏幕 并输出 结论"))
         assertTrue(skillMessage.contains("先调用 skills_read"))
-        assertEquals("读取网页", messages.getJSONObject(4).getString("content"))
+        // 用户正文在最后一条（不写死下标：动态槽位会影响位置）。
+        assertEquals("读取网页", messages.getJSONObject(messages.length() - 1).getString("content"))
     }
 
     @Test
@@ -335,7 +353,7 @@ class AgentPromptBuilderTest {
     }
 
     @Test
-    fun blankTaskLedgerProducesNoSection() {
+    fun blankTaskLedgerKeepsASlotButNoRealSection() {
         val messages = AgentPromptBuilder.buildSystemMessages(
             config = modelConfig("", terminalTools = true, browserTools = false),
             skillContext = SkillContext.EMPTY,
@@ -343,8 +361,13 @@ class AgentPromptBuilderTest {
             rootAvailable = false,
         ).systemContents()
 
-        // 没派过子代理时不能在系统提示里留一个空段（既占字节又暗示“派过”）。
+        // 没派过子代理时不能留下真正的台账段（那会暗示“派过”）。
         assertTrue(messages.none { it.contains("<subagent_tasks>") })
+        // 但槽位必须存在：否则 OpenAI 兼容端点的自动前缀缓存会在第一次派发时整段失效。
+        assertTrue(
+            "空台账也要占位，否则前缀缓存失效",
+            messages.any { it == AgentPromptSlots.EMPTY_TASK_LEDGER },
+        )
     }
 
     @Test
@@ -403,6 +426,49 @@ class AgentPromptBuilderTest {
 
         // 没有未结束的后台任务时不能留空段：它会被理解为“确实有任务在跑”。
         assertTrue(messages.none { it.contains("<background_tasks>") })
+        // 但槽位要有，否则第一次起后台任务时前缀缓存失效。
+        assertTrue(
+            "空后台任务也要占位，否则前缀缓存失效",
+            messages.any { it == AgentPromptSlots.EMPTY_BACKGROUND_TASKS },
+        )
+    }
+
+    /**
+     * 真实代价：不建清单的会话跑到一半突然 `todo_write`，清单从「不存在」变成「存在」，
+     * 它之后的全部字节都要重算 —— OpenAI 兼容端点的自动前缀缓存全部失效。
+     *
+     * 修法：每个动态段落无条件占位。这里直接比「有」与「无」两版提示的前缀。
+     */
+    @Test
+    fun dynamicSectionsKeepTheSystemPrefixStable() {
+        fun prompt(todo: String, goal: String, ledger: String): List<String> =
+            AgentPromptBuilder.buildSystemMessages(
+                config = modelConfig("", terminalTools = true, browserTools = false),
+                skillContext = SkillContext.EMPTY,
+                memoryContext = AgentMemoryContext.DISABLED,
+                rootAvailable = false,
+                todoPlan = todo,
+                goalPlan = goal,
+                taskLedgerPlan = ledger,
+            ).systemContents()
+
+        val empty = prompt("", "", "")
+        val filled = prompt(
+            "<todo_plan>\n做这一步\n</todo_plan>",
+            "<goal>\n目标\n</goal>",
+            "<subagent_tasks>\n[completed] x\n</subagent_tasks>",
+        )
+
+        assertEquals("两版系统消息条数必须一致", empty.size, filled.size)
+        // 比到**第一个动态槽位（目标）**为止：模式/目标本就应该变，
+        // 但目标之前的一切（系统说明、工具说明、技能、记忆）不能随清单变化。
+        val goalIndex = empty.indexOf(AgentPromptSlots.EMPTY_GOAL)
+        assertTrue("空目标必须占位（实际=${empty.size} 条系统消息）", goalIndex > 0)
+        repeat(goalIndex) { index ->
+            assertEquals("第 $index 条系统段在前缀里，不能随目标/清单变化", empty[index], filled[index])
+        }
+        // 清单槽位也要存在，且条数不因内容变化。
+        assertTrue(empty.contains(AgentPromptSlots.EMPTY_TODO))
     }
 
     @Test
