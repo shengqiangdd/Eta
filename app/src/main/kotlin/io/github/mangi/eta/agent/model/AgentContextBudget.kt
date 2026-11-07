@@ -57,6 +57,15 @@ internal object AgentContextBudget {
     const val DEFAULT_ASSUMED_CONTEXT_WINDOW = 128_000
 
     /**
+     * 绝对压缩上限（token）：不管配置的窗口多大，超过它就压。
+     *
+     * 真机上「窗口填得很大」比「没填」更常见地导致失控：`tokens >= window * 0.85`
+     * 永远不成立，于是 23.9 万 token、1533 条消息一次都不压（2026-11 实测）。
+     * 10 万是个很保守的值 —— 现代端点几乎都能装，而压完仍保留足够的近期原文。
+     */
+    const val ABSOLUTE_COMPACT_TOKENS = 100_000
+
+    /**
      * 手动压缩的下限（字符）。低于它就不该再花一次模型请求。
      *
      * 依据（canary 真机，2026-10-25）：上下文只有 1,796 字符时点「压缩上下文」，
@@ -216,17 +225,20 @@ internal object AgentContextBudget {
             return autoCompactionEnabled || window == null
         }
         if (!autoCompactionEnabled) return false
-        // 窗口未知时**不能就此放弃**（原来是 `if (window == null) return false`）。
-        //
-        // 真机现场（2026-11，run-f1358776）：会话跑到 22 轮、1422 条消息、21.4 万 token，
-        // 一次压缩都没触发 —— 因为模型配置里没填 contextWindow（绝大多数用户不会填），
-        // 于是只剩「超过 1.2M 字符硬上限」那条安全阀，而那要等到序列化都危险了。
-        //
-        // 默认假设 128K：主流端点窗口的**下限**。窗口真的大于 128K 时只会早一点压缩，
-        // 代价是多一次摘要请求；晚压缩的代价是每一轮都在为几十万 token 付费。
-        val assumed = window ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
         val tokens = observedInputTokens?.takeIf { it >= 0 }
             ?: estimateTokens(historyChars).toInt()
+        // 绝对上限：不管窗口配得多大，超过它就压。
+        //
+        // 真机现状（2026-11）：用户给模型填了很大的 `contextWindow`（或端点声称很长），
+        // 于是 `tokens >= window * 0.85` 永远不成立 —— 实测 23.9 万 token、1533 条消息，
+        // 一次 compress 都没触发。而每多一轮都在为这几十万 token 付费。
+        //
+        // 取 10 万 token：现代端点几乎都能装下，压完仍能保留足够的近期上下文
+        // （`retainTailChars` 另有上限）。这不是“省 token”的调优，而是防止
+        // “配置一填大就无声失控”的兜底。
+        if (tokens >= ABSOLUTE_COMPACT_TOKENS) return true
+        // 窗口未知时也不能放弃（原来直接 `return false`，只剩 1.2M 字符安全阀）。
+        val assumed = window ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
         return tokens >= assumed * triggerRatio
     }
 

@@ -4207,3 +4207,29 @@ if (window == null) return false   // 旧代码
 **验证**：门禁 `STAGES=test` —— 用例 **1599** 个、失败 0。`AgentContextBudgetTest`
 新增 `unknownWindowStillCompactsAtTheAssumedBudget`：达到保守预算要压缩、
 远低于预算时**不**白花一次摘要请求。
+
+### fix145：窗口配得大，压缩永不触发
+
+fix144 装完再看 trace：**23.9 万 token、1533 条消息，仍然一次 compress 都没有**。
+而 `k` 字段里确实没有 `compact` —— 不是压缩失败，是**从未被调用**。
+
+上一轮我以为是「用户没填 `contextWindow`」，查 `eta.db` 后否掉了这个判断：
+`knownContextWindow` **确实存在于数据库**，也就是窗口被显式配置过（而且是个很大的值）。
+
+于是 `tokens >= window * 0.85` 永远不成立：窗口填 1M 就要 85 万 token 才压，
+而 23.9 万还差得远。**配置得越"正确"，上下文越失控** —— 这是比"没填"更隐蔽的一种失效。
+
+**改法**：加绝对上限 `ABSOLUTE_COMPACT_TOKENS = 100_000`。
+不管配置写多大，超过 10 万 token 就压缩。
+
+- 低于 10 万时仍然尊重配置的窗口（不打扰正常设置）；
+- 10 万是个保守值：现代端点几乎都能装下，压完仍保留足够的近期原文；
+- 这不是调优，是防止「配置一填大就无声失控」的兜底。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1599** 个、失败 0。`AgentContextBudgetTest` 新增：
+`hugeConfiguredWindowCannotDisableCompactionForever`（窗口 1M 也要在 10 万时压）、
+`belowAbsoluteLimitStillRespectsTheConfiguredWindow`（低于上限时不打扰）。
+
+**这轮踩的坑值得记**：我先按「窗口未知」写了一个版本的修复并全绿通过，
+装到真机后发现毫无变化，才去数据库里查配置 —— 假设错了方向，白跑了一整轮构建与安装。
+**下次遇到「改了没效果」，第一件事应该是看真实配置值，而不是继续在代码里找原因。**

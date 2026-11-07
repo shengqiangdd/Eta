@@ -136,6 +136,36 @@ class AgentContextBudgetTest {
      * 原因就是这条：模型配置里没填 `contextWindow`（绝大多数用户不填），
      * 旧代码直接 `return false`，只剩 1.2M 字符的安全阀，而那已经是序列化会爆堆的量级。
      */
+    /**
+     * 窗口配得再大，也要有绝对上限。
+     *
+     * 真机实测（2026-11）：模型填了很大的 `contextWindow`，于是 `tokens >= window * 0.85`
+     * 永远不成立 —— 23.9 万 token、1533 条消息，一次 compress 都没触发。
+     */
+    @Test
+    fun hugeConfiguredWindowCannotDisableCompactionForever() {
+        assertTrue(
+            "窗口配成 1M 也要在 10 万 token 时压缩",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = 1_000_000,
+                observedInputTokens = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS,
+                historyChars = 10_000,
+            ),
+        )
+    }
+
+    @Test
+    fun belowAbsoluteLimitStillRespectsTheConfiguredWindow() {
+        assertFalse(
+            "低于绝对上限且远未到窗口 85% 时不该压缩",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = 1_000_000,
+                observedInputTokens = AgentContextBudget.ABSOLUTE_COMPACT_TOKENS / 2,
+                historyChars = 10_000,
+            ),
+        )
+    }
+
     @Test
     fun unknownWindowStillCompactsAtTheAssumedBudget() {
         val assumed = AgentContextBudget.DEFAULT_ASSUMED_CONTEXT_WINDOW
