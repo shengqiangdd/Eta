@@ -129,6 +129,36 @@ class AgentContextBudgetTest {
         )
     }
 
+    /**
+     * 窗口未知时也必须压缩 —— 这是真机现场。
+     *
+     * 2026-11 的 `run-f1358776`：22 轮、1422 条消息、21.4 万 token，**一次压缩都没触发**。
+     * 原因就是这条：模型配置里没填 `contextWindow`（绝大多数用户不填），
+     * 旧代码直接 `return false`，只剩 1.2M 字符的安全阀，而那已经是序列化会爆堆的量级。
+     */
+    @Test
+    fun unknownWindowStillCompactsAtTheAssumedBudget() {
+        val assumed = AgentContextBudget.DEFAULT_ASSUMED_CONTEXT_WINDOW
+        val nearBudget = (assumed * AgentContextBudget.TRIGGER_RATIO).toInt()
+
+        assertTrue(
+            "窗口未知 + 已达保守预算时应该压缩",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = null,
+                observedInputTokens = nearBudget,
+                historyChars = 10_000,
+            ),
+        )
+        assertFalse(
+            "远低于预算时不该白花一次摘要请求",
+            AgentContextBudget.shouldCompact(
+                force = false, autoCompactionEnabled = true, contextWindow = null,
+                observedInputTokens = nearBudget / 4,
+                historyChars = 10_000,
+            ),
+        )
+    }
+
     @Test
     fun largeWindowRaisesTheHardLimit() {
         // 900K token 的模型对应 1.8M 字符，不该被 1.2M 的默认上限提前打断。

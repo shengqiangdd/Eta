@@ -49,6 +49,14 @@ internal object AgentContextBudget {
     const val TRIGGER_RATIO = 0.85
 
     /**
+     * 用户没填 `contextWindow` 时假设的窗口（token）。
+     *
+     * 128K 是主流端点的**下限**。真机上绝大多数人不会去填这个值，而原实现在窗口未知时
+     * 直接不压缩，于是上下文一直涨：实测 22 轮 / 1422 条消息 / 21.4 万 token，一次都没压。
+     */
+    const val DEFAULT_ASSUMED_CONTEXT_WINDOW = 128_000
+
+    /**
      * 手动压缩的下限（字符）。低于它就不该再花一次模型请求。
      *
      * 依据（canary 真机，2026-10-25）：上下文只有 1,796 字符时点「压缩上下文」，
@@ -208,10 +216,18 @@ internal object AgentContextBudget {
             return autoCompactionEnabled || window == null
         }
         if (!autoCompactionEnabled) return false
-        if (window == null) return false
+        // 窗口未知时**不能就此放弃**（原来是 `if (window == null) return false`）。
+        //
+        // 真机现场（2026-11，run-f1358776）：会话跑到 22 轮、1422 条消息、21.4 万 token，
+        // 一次压缩都没触发 —— 因为模型配置里没填 contextWindow（绝大多数用户不会填），
+        // 于是只剩「超过 1.2M 字符硬上限」那条安全阀，而那要等到序列化都危险了。
+        //
+        // 默认假设 128K：主流端点窗口的**下限**。窗口真的大于 128K 时只会早一点压缩，
+        // 代价是多一次摘要请求；晚压缩的代价是每一轮都在为几十万 token 付费。
+        val assumed = window ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
         val tokens = observedInputTokens?.takeIf { it >= 0 }
             ?: estimateTokens(historyChars).toInt()
-        return tokens >= window * triggerRatio
+        return tokens >= assumed * triggerRatio
     }
 
     /**

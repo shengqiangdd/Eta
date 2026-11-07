@@ -4175,3 +4175,35 @@ fix142 验证成功后，同样的方法量了返回体骨架：
 截断显式 / 确实更小），并把 `RootShellTerminalControllerTest` 的那条断言改成
 同时验证「首次返回 runtime、第二次返回 null」——它原本断言 `status == "exited"`，
 正好会被这次改动打红，是真实的行为变更而非测试噪音。
+
+### fix144：窗口未知就永不压缩 —— 21.4 万 token 的真正成因
+
+真机 trace（`run-f1358776`，同一条历史线，1422 条消息）：22 轮、**21.4 万 token**，
+`k` 字段里**一次 `compact` 都没有**。
+
+根因在 `shouldCompact`：
+
+```kotlin
+if (window == null) return false   // 旧代码
+```
+
+`contextWindow` 来自模型配置，**绝大多数用户不会填**。于是自动压缩被永久跳过，
+只剩「历史超过 1.2M 字符」那条安全阀 —— 而那已经是序列化时可能 OOM 的量级
+（注释里记着 canary 实测 2.79M 字符 / 1,143 条消息的先例）。
+
+**改法**：窗口未知时假设 `DEFAULT_ASSUMED_CONTEXT_WINDOW = 128_000`。
+
+选 128K 的理由：它是主流端点上下文窗口的**下限**。窗口真的大于 128K，只会「早一点」压缩，
+代价是多一次摘要请求；而晚压缩的代价是**每一轮**都在为几十万 token 付费。
+两害相权取早。填了 `contextWindow` 的用户完全不受影响。
+
+**安全性**：压缩不是「一刀切掉历史」。`CompactionSplit.choose` 会保证：
+
+- 只在完整工具交换之间切分（不会把 `tool_call` 与 `tool_result` 拆开）；
+- 按 `retainTailChars` 保留近期原文 —— 实测上限是「历史 20%」与「窗口比例」取小，
+  所以压缩后仍然保留足够多的近期上下文；
+- 早期内容变成摘要，而不是消失。
+
+**验证**：门禁 `STAGES=test` —— 用例 **1599** 个、失败 0。`AgentContextBudgetTest`
+新增 `unknownWindowStillCompactsAtTheAssumedBudget`：达到保守预算要压缩、
+远低于预算时**不**白花一次摘要请求。
