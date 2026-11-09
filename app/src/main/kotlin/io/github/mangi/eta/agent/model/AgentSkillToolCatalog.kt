@@ -43,7 +43,7 @@ internal object AgentSkillToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "skills_read",
-                    description = "Read the full SKILL.md body of an installed skill by id, name, or path. Use when you know a skill might be relevant but its full body was not injected this turn.",
+                    description = "Read the full SKILL.md body of an installed skill by id, name, or path. Use when you know a skill might be relevant but its full body was not injected this turn. Long bodies are paginated: check truncated and continue from next_offset_chars.",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -60,6 +60,13 @@ internal object AgentSkillToolCatalog {
                                     JSONObject()
                                         .put("type", "integer")
                                         .put("description", "Max characters of body to return, 512-64000, default 16000.")
+                                )
+                                .put(
+                                    "offset_chars",
+                                    JSONObject()
+                                        .put("type", "integer")
+                                        .put("minimum", 0)
+                                        .put("description", "Start character offset in the body, default 0. When the result has truncated=true, continue from next_offset_chars instead of guessing.")
                                 )
                         )
                         .put("required", JSONArray().put("skillId"))

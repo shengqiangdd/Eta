@@ -494,7 +494,19 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     request
                 } else {
                     val runtimeConfig = runBlocking {
-                        RuntimeConfigRepository.currentRuntimeConfig()
+                        val identity = AgentRuntimeRequestConfigResolver.oauthIdentity(request)
+                        if (identity == null) {
+                            RuntimeConfigRepository.currentRuntimeConfig()
+                        } else {
+                            // 会话绑定的订阅身份优先：全局默认切走不该让旧会话失效。
+                            // 只有它确实不可用（连接停用/删除、模型下架）时才回落到默认，
+                            // 由 applyRuntimeConfig 的身份校验报出可理解的错误。
+                            RuntimeConfigRepository.oauthRuntimeConfigFor(
+                                identity.providerId,
+                                identity.authMode,
+                                identity.model,
+                            ) ?: RuntimeConfigRepository.currentRuntimeConfig()
+                        }
                     } ?: throw RuntimeConfigUnavailableException()
                     AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, runtimeConfig)
                 }

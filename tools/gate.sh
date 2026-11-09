@@ -157,6 +157,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.components.ToolIconMappingTest
   --tests io.github.mangi.eta.ui.components.ToolRowTitleTest
   --tests io.github.mangi.eta.ui.model.ComposerQuoteTest
+  --tests io.github.mangi.eta.ui.model.AgentModelPickerProjectorTest
   --tests io.github.mangi.eta.ui.app.AgentRunRecoveryCoordinatorTest
   --tests io.github.mangi.eta.ui.app.AgentAttachRecoveryTest
   --tests io.github.mangi.eta.ui.app.AgentKeepScreenOnPolicyTest
@@ -246,7 +247,13 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.AgentMessageQueueReducerTest
   --tests io.github.mangi.eta.ui.app.ToolStatusRestoreTest
   --tests io.github.mangi.eta.ui.model.AgentAskUiTest
-  --tests io.github.mangi.eta.ui.app.AgentPendingAskAnswersTest'
+  --tests io.github.mangi.eta.ui.app.AgentPendingAskAnswersTest
+  --tests io.github.mangi.eta.agent.runtime.AgentRuntimeRequestConfigResolverTest
+  --tests io.github.mangi.eta.data.repository.AgentMemoryDuplicateSectionTest
+  --tests io.github.mangi.eta.agent.model.ToolSchemaSizeProbe
+  --tests io.github.mangi.eta.agent.runtime.AgentKeepScreenLockPolicyTest
+  --tests io.github.mangi.eta.data.repository.CatalogContextWindowFillTest
+  --tests io.github.mangi.eta.data.repository.CatalogWindowPersistenceContractTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
 # 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆
@@ -293,6 +300,7 @@ run_test() {
     gw :app:testDebugUnitTest $FAST_TEST_FILTERS > "$LOGDIR/test.log" 2>&1
   fi
   code=$?
+  gradle_code=$code
   python3 - "$LOGDIR/test.log" <<'PY'
 import glob, sys, xml.etree.ElementTree as ET
 
@@ -331,6 +339,13 @@ PY
     1) echo "  ✗ 单测失败，见 $LOGDIR/test.log" ; fail=1 ;;
     *) echo "  ✗ 单测没有可判定的结果，见 $LOGDIR/test.log" ; fail=1 ;;
   esac
+  # 退出码为 0 不代表 gradle 没失败过（报告里可能只留下部分 XML）；
+  # 反之 gradle 非零也可能所有 XML 都无 failure（类被排除、--tests 过滤、配置失败）。
+  # 两边都要看，缺一边就会把失败当成功。
+  if [ "$gradle_code" -ne 0 ]; then
+    echo "  ✗ Gradle 单测退出码 $gradle_code（即使报告里没有 failure 也不能算通过），见 $LOGDIR/test.log"
+    fail=1
+  fi
 }
 
 # ---- lint ---------------------------------------------------------------

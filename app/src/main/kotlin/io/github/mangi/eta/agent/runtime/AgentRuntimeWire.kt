@@ -146,6 +146,11 @@ internal object AgentRuntimeWire {
     private const val KEY_PROVIDER_NAME = "provider_name"
     private const val KEY_PROVIDER_TYPE = "provider_type"
     private const val KEY_PROVIDER_SOURCE_TYPE = "provider_source_type"
+    /**
+     * 认证方式必须随请求过线：漏了它，Runtime 侧重建的 ModelConfig 会回落到 api_key，
+     * 订阅（OAuth）服务商就变成“有地址、无密钥” → 发消息直接报「请先配置 API Key」。
+     */
+    private const val KEY_AUTH_MODE = "auth_mode"
     private const val KEY_BASE_URL = "base_url"
     private const val KEY_API_KEY = "api_key"
     private const val KEY_MODEL = "model"
@@ -420,6 +425,7 @@ internal object AgentRuntimeWire {
         putString(KEY_PROVIDER_NAME, request.config.providerName)
         putString(KEY_PROVIDER_TYPE, request.config.providerType)
         putString(KEY_PROVIDER_SOURCE_TYPE, request.config.providerSourceType)
+        putString(KEY_AUTH_MODE, request.config.authMode)
         putString(KEY_BASE_URL, request.config.baseUrl)
         putString(KEY_API_KEY, request.config.apiKey)
         putString(KEY_MODEL, request.config.model)
@@ -564,6 +570,8 @@ internal object AgentRuntimeWire {
                 providerType = bundle.getString(KEY_PROVIDER_TYPE).orEmpty()
                     .ifBlank { io.github.mangi.eta.data.model.ProviderTypes.OPENAI_COMPATIBLE },
                 providerSourceType = bundle.getString(KEY_PROVIDER_SOURCE_TYPE).orEmpty(),
+                authMode = bundle.getString(KEY_AUTH_MODE).orEmpty()
+                    .ifBlank { io.github.mangi.eta.data.model.ProviderAuthModes.API_KEY },
                 baseUrl = bundle.getString(KEY_BASE_URL).orEmpty(),
                 apiKey = bundle.getString(KEY_API_KEY).orEmpty(),
                 model = bundle.getString(KEY_MODEL).orEmpty(),

@@ -1324,7 +1324,18 @@ internal class AgentAppState(
         scope.launch(Dispatchers.IO) {
             hotSwapLock.withLock {
                 // 串行是为了保序：并发读取配置时，先点的旧值可能后到，把用户最后选的档位覆盖掉。
-                val config = runtimeConfigFor(state.effectiveModelId, effort) ?: return@launch
+                val config = runtimeConfigFor(state.effectiveModelId, effort)
+                if (config == null) {
+                    // 以前这里静默 return：用户切了模型/档位，界面没反应也没有任何解释。
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            appContext,
+                            R.string.state_ui_please_configure_the_model_provider_and_model_fi_a36e15,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return@launch
+                }
                 val sent = AgentRuntimeClient(appContext, AndroidAgentLogger).updateRunModel(runId, config)
                 withContext(Dispatchers.Main) {
                 val label = config.modelDisplayName.ifBlank { config.model }

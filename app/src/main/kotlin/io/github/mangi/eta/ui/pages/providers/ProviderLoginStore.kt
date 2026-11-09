@@ -6,6 +6,7 @@ import io.github.mangi.eta.agent.auth.ProviderAuthException
 import io.github.mangi.eta.agent.auth.ProviderLoginPrompt
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
+import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.repository.ModelRepository
@@ -86,7 +87,28 @@ internal class ProviderLoginStore(
             }
             mutableState.value = mutableState.value.copy(account = account, prompt = null, phase = ProviderLoginPhase.SyncingModels)
             val count = withContext(ioDispatcher) { operations.syncModels(providerId, provider.authMode) }
-            mutableState.value = mutableState.value.copy(message = "已登录，已同步 $count 个远端模型")
+            // 登录只代表「这个账号有凭据」，不等于「用户要把所有会话都换成它」。
+            // 只在没有选择、或本来就选它的时候才接管默认；否则保留用户自己的选择，并明说没改。
+            // 这一步是记账，不是登录本身：读不到设置时宁可不改，也不能把整次登录报成「同步失败」。
+            val tookOverDefault = withContext(ioDispatcher) {
+                try {
+                    val current = SettingsDataStore.settings().selectedProviderId
+                    val takeOver = current.isNullOrBlank() || current == providerId
+                    if (takeOver) RuntimeConfigRepository.setSelectedProviderId(providerId)
+                    takeOver
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            mutableState.value = mutableState.value.copy(
+                message = if (tookOverDefault) {
+                    "已登录，已同步 $count 个远端模型，并设为当前服务商（已有会话请在模型菜单里切换一次）"
+                } else {
+                    "已登录，已同步 $count 个远端模型；当前服务商未改动，需要时在模型菜单里切换"
+                },
+            )
         }
     }
 

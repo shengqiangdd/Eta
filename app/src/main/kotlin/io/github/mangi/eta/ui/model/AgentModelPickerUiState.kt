@@ -13,6 +13,8 @@ internal data class AgentModelPickerUiState(
     val providerGroups: List<AgentModelProviderGroupUi> = emptyList(),
     val selectedModel: AgentModelOptionUi? = null,
     val isChanging: Boolean = false,
+    /** 启用了但还没配密钥的服务商：模型列不出来，但要让用户知道“为什么它不见了”。 */
+    val unconfiguredProviderNames: List<String> = emptyList(),
 )
 
 @Immutable
@@ -59,12 +61,17 @@ internal object AgentModelPickerProjector {
             .filter { it.authMode == ProviderAuthModes.API_KEY || ProviderAuthModes.isOAuth(it.authMode) }
             .sortedBy(ProviderSetting::sortOrder)
             .toList()
-        val selectedProvider = enabledProviders.firstOrNull { it.id == selectedProviderId }
+        // 没密钥的服务商模型仍可能出现在列表里（用户正要去配），但「当前选中项」不能落在
+        // 一个发不出去的服务商上：那种情况下界面显示正常，一点发送才报「请先配置 API Key」。
+        val selectedProvider = enabledProviders
+            .firstOrNull { it.id == selectedProviderId }
+            ?.takeIf { it.canServeModels() }
         val selectedModel = selectedProvider
             ?.models
             ?.firstOrNull { it.id == selectedModelId && it.isEnabled }
             ?.let { model -> selectedProvider.toOption(model) }
             ?: enabledProviders.asSequence()
+                .filter { it.canServeModels() }
                 .flatMap { provider ->
                     provider.models.asSequence()
                         .filter { it.isEnabled }
@@ -73,10 +80,7 @@ internal object AgentModelPickerProjector {
                 .firstOrNull { it.id == selectedModelId }
         val groups = enabledProviders
             .asSequence()
-            .filter {
-                ProviderAuthModes.isOAuth(it.authMode) ||
-                    (it.authMode == ProviderAuthModes.API_KEY && it.apiKey.isNotBlank())
-            }
+            .filter { it.canServeModels() }
             .mapNotNull { provider ->
                 val sourceType = ProviderSourceRegistry.resolve(provider)
                 val models = provider.models
@@ -98,8 +102,22 @@ internal object AgentModelPickerProjector {
         return AgentModelPickerUiState(
             providerGroups = groups,
             selectedModel = selectedModel,
+            unconfiguredProviderNames = enabledProviders
+                .asSequence()
+                .filter { provider ->
+                    provider.authMode == ProviderAuthModes.API_KEY &&
+                        provider.apiKey.isBlank() &&
+                        provider.models.any { model -> model.isEnabled }
+                }
+                .map(ProviderSetting::name)
+                .toList(),
         )
     }
+
+    /** 订阅登录不需要 API Key；API Key 模式必须真的填了（空白不算）。 */
+    private fun ProviderSetting.canServeModels(): Boolean =
+        ProviderAuthModes.isOAuth(authMode) ||
+            (authMode == ProviderAuthModes.API_KEY && apiKey.isNotBlank())
 
     private fun ProviderSetting.toOption(model: Model): AgentModelOptionUi =
         AgentModelOptionUi(

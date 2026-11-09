@@ -178,6 +178,19 @@ class AgentToolCatalogTest {
             memoryTools = true,
         )
         assertTrue("memory_get" in enabled.toolNames())
+        val read = enabled.function("memory_get")
+        val readProperties = read.getJSONObject("parameters").getJSONObject("properties")
+        // 归档以前完全读不到；现在必须能从 schema 里发现它
+        assertEquals(
+            listOf("main", "archive", "all"),
+            readProperties.getJSONObject("source").getJSONArray("enum").stringValues(),
+        )
+        // 技能正文分页：长正文必须能续读，而不是被默默截断
+        val skillRead = enabled.function("skills_read")
+        assertTrue(
+            skillRead.getJSONObject("parameters").getJSONObject("properties")
+                .has("offset_chars"),
+        )
         val write = enabled.function("memory_write")
         val properties = write.getJSONObject("parameters").getJSONObject("properties")
         assertEquals(3_500, properties.getJSONObject("content").getInt("maxLength"))

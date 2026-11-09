@@ -480,7 +480,15 @@
   <string name="ui_core_memory_injection_budget_48b5d5">核心记忆注入预算</string>
   <string name="ui_model_provider_e8c7f5">模型提供商</string>
   <string name="ui_model_management_183414">模型管理</string>
-  <string name="ui_test_connection_10b7d8">测试连接</string>
+  <string name="ui_test_connection_10b7d8">验证模型目录</string>
+  <string name="provider_catalog_test_hint">只检查模型列表能否拉取，不代表聊天能正常发送</string>
+  <string name="ui_send_probe">发送验证</string>
+  <string name="provider_send_probe_hint">真正发一条最小聊天请求，验证发送通道；会消耗少量 token</string>
+  <string name="provider_send_probe_idle">尚未验证</string>
+  <string name="provider_send_probe_running">正在发送…</string>
+  <string name="provider_send_probe_ok">发送成功：%1$s · %2$d ms · 回复「%3$s」</string>
+  <string name="model_picker_needs_provider">还没有可用模型：先在「模型提供商」里填 API Key 或登录订阅账号</string>
+  <string name="model_picker_unconfigured">未配置：%1$s —— 去「模型提供商」填 API Key 或登录后才会出现在这里</string>
   <string name="ui_browse_the_web_da7afb">浏览网页</string>
   <string name="ui_add_custom_model_a5ddc0">添加自定义模型</string>
   <string name="ui_add_attachment_dba9e8">添加附件</string>
@@ -881,7 +889,7 @@
   <string name="provider_delete_summary">删除“%1$s”后将不可恢复。</string>
   <string name="provider_reset_summary">将恢复“%1$s”的默认配置和官方模型列表，API Key 会保留。</string>
   <plurals name="provider_models_fetched">
-    <item quantity="other">成功，拉取到 %d 个模型</item>
+    <item quantity="other">模型目录可访问，共 %d 个模型（未验证实际发送）</item>
   </plurals>
   <string name="provider_models_endpoint_summary">读取 %1$s 的 /models 列表</string>
   <string name="provider_models_up_to_date">已是最新，没有新模型</string>

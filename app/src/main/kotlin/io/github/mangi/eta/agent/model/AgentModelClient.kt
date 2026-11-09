@@ -375,7 +375,14 @@ internal object AgentModelClient {
     private fun ModelConfig.validate() {
         require(baseUrl.isNotBlank()) { "请先配置 API 地址" }
         when {
-            authMode == ProviderAuthModes.API_KEY -> require(apiKey.isNotBlank()) { "请先配置 API Key" }
+            // 同一句报错可能来自任意一个没密钥的内置服务商，必须在消息里点明是谁：
+            // 否则「模型列表能拉到、发消息却说没 Key」会被误读成登录失效。
+            authMode == ProviderAuthModes.API_KEY -> require(apiKey.isNotBlank()) {
+                val where = listOf(providerName, baseUrl)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · ")
+                if (where.isEmpty()) "请先配置 API Key" else "请先配置 API Key（$where）"
+            }
             ProviderAuthModes.isOAuth(authMode) -> {
                 require(providerId.isNotBlank()) { "账号登录缺少服务商标识，请重新选择服务商" }
                 require(apiKey.isEmpty()) { "账号登录配置不能包含 API Key" }

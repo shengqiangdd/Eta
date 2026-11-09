@@ -184,6 +184,17 @@ private fun ModelQuickList(
             .verticalScroll(rememberScrollState())
             .padding(top = if (showLabels) 0.dp else 6.dp, bottom = 6.dp),
     ) {
+        if (state.unconfiguredProviderNames.isNotEmpty()) {
+            Text(
+                text = stringResource(
+                    R.string.model_picker_unconfigured,
+                    state.unconfiguredProviderNames.joinToString("、"),
+                ),
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
         state.providerGroups.forEach { group ->
             if (showLabels) ModelProviderLabel(group.providerName)
             group.models.forEach { model ->
@@ -280,13 +291,36 @@ private fun ModelSheetContent(
             if (sections.isEmpty()) {
                 item(key = "empty") {
                     Text(
-                        text = stringResource(R.string.page_no_matching_model_found_ae7e96),
+                        text = stringResource(
+                            if (state.modelCount > 0) {
+                                R.string.page_no_matching_model_found_ae7e96
+                            } else {
+                                // 一条模型都没有时「没找到匹配的模型」会把人指向搜索，
+                                // 真正要做的却是先去配一个服务商。
+                                R.string.model_picker_needs_provider
+                            },
+                        ),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 48.dp),
+                    )
+                }
+            }
+            if (query.isBlank() && providerFilter == null && state.unconfiguredProviderNames.isNotEmpty()) {
+                item(key = "unconfigured") {
+                    Text(
+                        text = stringResource(
+                            R.string.model_picker_unconfigured,
+                            state.unconfiguredProviderNames.joinToString("、"),
+                        ),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 8.dp),
                     )
                 }
             }

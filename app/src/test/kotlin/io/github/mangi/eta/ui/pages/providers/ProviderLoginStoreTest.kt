@@ -130,7 +130,11 @@ class ProviderLoginStoreTest {
             release.complete(Unit)
             val done = withTimeout(2_000) { store.state.first { !it.isBusy } }
             assertEquals(listOf("save", "login", "sync"), operations.calls.toList())
-            assertEquals("已登录，已同步 2 个远端模型", done.message)
+            val message = done.message.orEmpty()
+            assertTrue(
+                "登录成功后必须说明是否接管了默认服务商：$message",
+                message.startsWith("已登录，已同步 2 个远端模型"),
+            )
         } finally { store.close() }
     }
 

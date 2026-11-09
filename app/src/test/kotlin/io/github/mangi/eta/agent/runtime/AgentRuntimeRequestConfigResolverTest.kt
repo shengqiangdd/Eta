@@ -7,6 +7,7 @@ import io.github.mangi.eta.data.model.ModelReasoningCapabilities
 import io.github.mangi.eta.data.model.CustomHeader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
@@ -135,6 +136,45 @@ class AgentRuntimeRequestConfigResolverTest {
         assertFalse(AgentRuntimeRequestConfigResolver.requiresRuntimeConfig(request))
         assertSame(request, resolved)
         assertSame(entryConfig, resolved.config)
+    }
+
+    @Test
+    fun oauthIdentityFollowsTheConversationBinding() {
+        val config = modelConfig("", ReasoningEffort.DEFAULT).copy(
+            providerId = "account-provider",
+            authMode = ProviderAuthModes.OPENAI_CHATGPT,
+            model = "gpt-5",
+        )
+        val identity = AgentRuntimeRequestConfigResolver.oauthIdentity(
+            request(AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE, config),
+        )
+        assertEquals("account-provider", identity?.providerId)
+        assertEquals(ProviderAuthModes.OPENAI_CHATGPT, identity?.authMode)
+        assertEquals("gpt-5", identity?.model)
+    }
+
+    @Test
+    fun oauthIdentityIsAbsentForApiKeyAndVoiceRequests() {
+        // API Key 走全局配置，没有可绑定的订阅身份。
+        val apiKey = modelConfig("sk-test", ReasoningEffort.DEFAULT).copy(
+            providerId = "account-provider",
+            authMode = ProviderAuthModes.API_KEY,
+        )
+        assertNull(
+            AgentRuntimeRequestConfigResolver.oauthIdentity(
+                request(AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE, apiKey),
+            ),
+        )
+        // 语音入口按设计用全局默认，不跟随任一会话绑定。
+        val oauth = modelConfig("", ReasoningEffort.DEFAULT).copy(
+            providerId = "account-provider",
+            authMode = ProviderAuthModes.OPENAI_CHATGPT,
+        )
+        assertNull(
+            AgentRuntimeRequestConfigResolver.oauthIdentity(
+                request(AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE, oauth),
+            ),
+        )
     }
 
     private fun request(

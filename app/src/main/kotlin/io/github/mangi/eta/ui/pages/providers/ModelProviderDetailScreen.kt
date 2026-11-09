@@ -42,6 +42,7 @@ import io.github.mangi.eta.data.model.OpenAiEndpointMode
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.withId
 import io.github.mangi.eta.data.repository.ProviderRepository
+import io.github.mangi.eta.data.repository.ProviderSendProbe
 import io.github.mangi.eta.data.repository.RemoteModelFetcher
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.components.EtaCard
@@ -202,6 +203,7 @@ private fun ProviderConfigTab(
     var headersExpanded by rememberSaveable { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var testStatus by remember { mutableStateOf<String?>(null) }
+    var sendStatus by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var isWorking by remember { mutableStateOf(false) }
@@ -269,7 +271,8 @@ private fun ProviderConfigTab(
                 EtaPreferenceDivider(hasLeading = false)
                 EtaPreference(
                     title = stringResource(R.string.ui_test_connection_10b7d8),
-                    summary = testStatus,
+                    summary = stringResource(R.string.provider_catalog_test_hint) + "\n" +
+                        (testStatus ?: stringResource(R.string.provider_send_probe_idle)),
                     enabled = !isWorking && !loginState.isBusy,
                     onClick = {
                         val validationError = validateProviderDraft(context, draft)
@@ -284,6 +287,47 @@ private fun ProviderConfigTab(
                                 testStatus = testConnection(
                                     context,
                                     draft.toProvider(provider)
+                                )
+                            } finally {
+                                isWorking = false
+                            }
+                        }
+                    },
+                )
+                EtaPreferenceDivider(hasLeading = false)
+                EtaPreference(
+                    title = stringResource(R.string.ui_send_probe),
+                    summary = stringResource(R.string.provider_send_probe_hint) + "\n" +
+                        (sendStatus ?: stringResource(R.string.provider_send_probe_idle)),
+                    enabled = !isWorking && !loginState.isBusy,
+                    onClick = {
+                        val validationError = validateProviderDraft(context, draft)
+                        if (validationError != null) {
+                            sendStatus = context.getString(R.string.provider_error, validationError)
+                            return@EtaPreference
+                        }
+                        scope.launch {
+                            isWorking = true
+                            sendStatus = context.getString(R.string.provider_send_probe_running)
+                            try {
+                                sendStatus = runCatching {
+                                    ProviderSendProbe.send(draft.toProvider(provider))
+                                }.fold(
+                                    onSuccess = { result ->
+                                        context.getString(
+                                            R.string.provider_send_probe_ok,
+                                            result.model,
+                                            result.latencyMs,
+                                            result.reply.take(40),
+                                        )
+                                    },
+                                    onFailure = { throwable ->
+                                        if (throwable is CancellationException) throw throwable
+                                        context.getString(
+                                            R.string.provider_error,
+                                            throwable.message ?: throwable.javaClass.simpleName,
+                                        )
+                                    },
                                 )
                             } finally {
                                 isWorking = false

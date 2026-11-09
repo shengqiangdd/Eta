@@ -484,7 +484,15 @@
   <string name="ui_core_memory_injection_budget_48b5d5">Core memory injection budget</string>
   <string name="ui_model_provider_e8c7f5">Model providers</string>
   <string name="ui_model_management_183414">Model management</string>
-  <string name="ui_test_connection_10b7d8">Test connection</string>
+  <string name="ui_test_connection_10b7d8">Verify model catalog</string>
+  <string name="provider_catalog_test_hint">Checks the model list only; it does not prove chat can send</string>
+  <string name="ui_send_probe">Send a test message</string>
+  <string name="provider_send_probe_hint">Sends one minimal chat request to verify the chat path. It costs a few tokens.</string>
+  <string name="provider_send_probe_idle">Not verified yet</string>
+  <string name="provider_send_probe_running">Sending…</string>
+  <string name="provider_send_probe_ok">Sent successfully: %1$s · %2$d ms · reply &quot;%3$s&quot;</string>
+  <string name="model_picker_needs_provider">No model available yet — add an API key or sign in under Model providers</string>
+  <string name="model_picker_unconfigured">Not configured: %1$s — open Model providers to add an API key or sign in, then it will appear here</string>
   <string name="ui_browse_the_web_da7afb">Browse the web</string>
   <string name="ui_add_custom_model_a5ddc0">Add custom model</string>
   <string name="ui_add_attachment_dba9e8">Add attachment</string>
@@ -890,8 +898,8 @@
   <string name="provider_delete_summary">“%1$s” will be permanently deleted.</string>
   <string name="provider_reset_summary">Restore the default settings and official model catalog for “%1$s”. The API key will be kept.</string>
   <plurals name="provider_models_fetched">
-    <item quantity="one">Fetched %d model</item>
-    <item quantity="other">Fetched %d models</item>
+    <item quantity="one">Model catalog reachable: %d model (send not verified)</item>
+    <item quantity="other">Model catalog reachable: %d models (send not verified)</item>
   </plurals>
   <string name="provider_models_endpoint_summary">Read the /models list from %1$s</string>
   <string name="provider_models_up_to_date">Up to date, no new models</string>

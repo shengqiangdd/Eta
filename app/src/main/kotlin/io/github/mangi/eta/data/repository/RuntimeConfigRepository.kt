@@ -161,7 +161,7 @@ internal object RuntimeConfigRepository {
         val provider = ProviderRepository.providerById(providerId)
             ?.takeIf { it.isEnabled && it.authMode == authMode } ?: return null
         val model = provider.models.firstOrNull { it.isEnabled && it.modelId == modelName } ?: return null
-        return buildRuntimeConfig(provider, model)
+        return withRetrySettings(buildRuntimeConfig(provider, model))
     }
 
     suspend fun syncToRemotePreferences(service: XposedService?): Boolean {

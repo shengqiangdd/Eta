@@ -463,7 +463,15 @@
   <string name="ui_core_memory_injection_budget_48b5d5">核心記憶注入預算</string>
   <string name="ui_model_provider_e8c7f5">模型供應商</string>
   <string name="ui_model_management_183414">模型管理</string>
-  <string name="ui_test_connection_10b7d8">測試連線</string>
+  <string name="ui_test_connection_10b7d8">驗證模型目錄</string>
+  <string name="provider_catalog_test_hint">只檢查模型清單能否取得，不代表聊天能正常傳送</string>
+  <string name="ui_send_probe">傳送驗證</string>
+  <string name="provider_send_probe_hint">真正傳送一則最小聊天請求，驗證傳送通道；會消耗少量 token</string>
+  <string name="provider_send_probe_idle">尚未驗證</string>
+  <string name="provider_send_probe_running">正在傳送…</string>
+  <string name="provider_send_probe_ok">傳送成功：%1$s · %2$d ms · 回覆「%3$s」</string>
+  <string name="model_picker_needs_provider">還沒有可用模型：先在「模型供應商」裡填 API Key 或登入訂閱帳號</string>
+  <string name="model_picker_unconfigured">未設定：%1$s —— 去「模型提供商」填 API Key 或登入後才會出現在這裡</string>
   <string name="ui_browse_the_web_da7afb">瀏覽網頁</string>
   <string name="ui_add_custom_model_a5ddc0">新增自訂模型</string>
   <string name="ui_add_attachment_dba9e8">新增附件</string>
@@ -864,7 +872,7 @@
   <string name="provider_delete_summary">「%1$s」將永久刪除。</string>
   <string name="provider_reset_summary">將還原「%1$s」的預設設定與官方模型清單，並保留 API Key。</string>
   <plurals name="provider_models_fetched">
-    <item quantity="other">已取得 %d 個模型</item>
+    <item quantity="other">模型目錄可存取，共 %d 個模型（未驗證實際傳送）</item>
   </plurals>
   <string name="provider_models_endpoint_summary">讀取 %1$s 的 /models 清單</string>
   <string name="provider_models_up_to_date">已是最新，沒有新模型</string>

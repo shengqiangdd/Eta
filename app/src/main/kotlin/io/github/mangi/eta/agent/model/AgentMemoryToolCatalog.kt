@@ -11,7 +11,7 @@ internal object AgentMemoryToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "memory_get",
-                    description = "Read persistent cross-conversation memory from MEMORY.md. Core memory and the heading index are already provided at run start, so call this only to inspect details, answer what is remembered, or refresh after a conflict. Use query for just-in-time retrieval instead of reading the whole file.",
+                    description = "Read persistent cross-conversation memory from MEMORY.md (and optionally its archive). Core memory and the heading index are already provided at run start, so call this only to inspect details, answer what is remembered, or refresh after a conflict. Use query for just-in-time retrieval instead of reading the whole file. When has_more is true, continue from next_start_line. Archived content moved out of MEMORY.md is readable with source=archive.",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -45,6 +45,13 @@ internal object AgentMemoryToolCatalog {
                                         .put("minimum", AgentMemoryStore.MIN_READ_CHARS)
                                         .put("maximum", AgentMemoryStore.MAX_READ_CHARS)
                                         .put("description", "Maximum returned characters; default 12000, maximum 32000."),
+                                )
+                                .put(
+                                    "source",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("enum", JSONArray().put("main").put("archive").put("all"))
+                                        .put("description", "Where to read: main = MEMORY.md (default), archive = read-only MEMORY-ARCHIVE.md (older content moved out of MEMORY.md), all = both. Archive results come back under `archive`; when has_more is true, continue from `next_start_line`."),
                                 ),
                         ),
                 ),

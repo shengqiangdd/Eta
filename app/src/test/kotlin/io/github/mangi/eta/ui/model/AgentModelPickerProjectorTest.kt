@@ -49,7 +49,7 @@ class AgentModelPickerProjectorTest {
     }
 
     @Test
-    fun project_hidesProvidersWithoutApiKeyButPreservesCurrentSelection() {
+    fun project_hidesProvidersWithoutApiKeyAndDropsCurrentSelection() {
         val selected = model(id = "selected", displayName = "Selected")
         val result = AgentModelPickerProjector.project(
             providers = listOf(
@@ -68,8 +68,9 @@ class AgentModelPickerProjectorTest {
         )
 
         assertEquals(listOf("configured"), result.providerGroups.map { it.providerId })
-        assertEquals(selected.id, result.selectedModel?.id)
-        assertEquals("missing-key", result.selectedModel?.providerId)
+        // 当前项不能停在发不出去的服务商上：那会显示「已选」但一点发送就报错。
+        assertNull(result.selectedModel)
+        assertEquals(listOf("missing-key"), result.unconfiguredProviderNames)
     }
 
     @Test
@@ -94,6 +95,42 @@ class AgentModelPickerProjectorTest {
         assertEquals(listOf("chatgpt", "grok"), result.providerGroups.map { it.providerId })
         assertEquals(listOf("chatgpt-model", "grok-model"), result.providerGroups.flatMap { it.models }.map { it.id })
         assertEquals("grok-model", result.selectedModel?.id)
+    }
+
+    @Test
+    fun project_listsProvidersMissingApiKeySoUsersKnowWhyTheyDisappear() {
+        val providers = listOf(
+            provider(id = "configured", apiKey = "key", models = listOf(model(id = "m1"))),
+            provider(
+                id = "needs-key",
+                name = "Needs Key",
+                apiKey = "",
+                models = listOf(model(id = "m2")),
+            ),
+            provider(
+                id = "oauth-without-key",
+                name = "OAuth",
+                apiKey = "",
+                authMode = "chatgpt-oauth",
+                models = listOf(model(id = "m3")),
+            ),
+            provider(
+                id = "needs-key-no-models",
+                name = "No models",
+                apiKey = "",
+                models = listOf(model(id = "m4", enabled = false)),
+            ),
+        )
+
+        val result = AgentModelPickerProjector.project(
+            providers = providers,
+            selectedProviderId = null,
+            selectedModelId = null,
+        )
+
+        assertEquals(listOf("configured"), result.providerGroups.map { it.providerId })
+        // 订阅登录不需要 API Key；只有「API Key 模式但没填」才该提示未配置
+        assertEquals(listOf("Needs Key"), result.unconfiguredProviderNames)
     }
 
     @Test

@@ -75,6 +75,11 @@ internal class AgentMemoryStore(
 ) {
     private val memoryDir = File(rootDir, DIRECTORY_NAME)
     private val atomicFile = AtomicFile(File(memoryDir, FILE_NAME))
+    /**
+     * 归档：记忆整理时把旧段落移到这里，但以前代码里根本没有入口，
+     * 写进去就再也读不到（只能靠 root 手看文件）。归档只读，不参与 revision 校验。
+     */
+    private val archiveFile = File(memoryDir, ARCHIVE_FILE_NAME)
     private val lock = Any()
 
     fun snapshot(): AgentMemorySnapshot = synchronized(lock) {
@@ -102,16 +107,67 @@ internal class AgentMemoryStore(
         AgentMemoryDocument.sections(snapshotLocked().content)
     }
 
+    /** 读归档文件；不存在或超出安全上限时返回 null（调用方据此报「没有归档」）。 */
+    fun readArchive(
+        query: String? = null,
+        startLine: Int = DEFAULT_START_LINE,
+        maxChars: Int = DEFAULT_READ_CHARS,
+        section: String? = null,
+    ): AgentMemoryReadResult? = synchronized(lock) {
+        if (!archiveFile.isFile) return null
+        val bytes = try {
+            archiveFile.readBytes()
+        } catch (throwable: IOException) {
+            throw AgentMemoryException(
+                code = "MEMORY_READ_FAILED",
+                message = "无法读取记忆归档文件",
+                cause = throwable,
+            )
+        }
+        if (bytes.size > MAX_FILE_BYTES) {
+            throw AgentMemoryException(
+                code = "MEMORY_TOO_LARGE",
+                message = "记忆归档文件超过 1 MiB 安全上限",
+            )
+        }
+        val snapshot = snapshotOf(bytes.toString(Charsets.UTF_8), bytes)
+        val boundedChars = maxChars.coerceIn(MIN_READ_CHARS, MAX_READ_CHARS)
+        if (!section.isNullOrBlank()) {
+            readSection(snapshot, section.trim(), boundedChars)
+        } else if (query.isNullOrBlank()) {
+            page(snapshot, startLine, boundedChars)
+        } else {
+            search(snapshot, query.trim(), boundedChars)
+        }
+    }
+
+    /**
+     * 由章节名定位唯一章节。
+     *
+     * 重名时以前会静默取第一节，读写都可能落到用户没打算动的那一段；现在直接报歧义并列出行号。
+     */
+    private fun resolveSection(sections: List<AgentMemorySection>, name: String): AgentMemorySection {
+        val candidates = AgentMemoryDocument.candidates(sections, name)
+        if (candidates.size == 1) return candidates.first()
+        if (candidates.isEmpty()) {
+            throw AgentMemoryException(
+                code = "MEMORY_SECTION_NOT_FOUND",
+                message = "没有找到名为「$name」的章节；先调用 memory_get 查看目录",
+            )
+        }
+        val where = candidates.joinToString("、") { "第 ${it.startLine} 行「${it.title}」" }
+        throw AgentMemoryException(
+            code = "MEMORY_SECTION_AMBIGUOUS",
+            message = "有 ${candidates.size} 个章节都匹配「$name」：$where；请用更完整的章节名或行号范围重试（重名会读错/改错段落，所以不自动选第一个）",
+        )
+    }
+
     private fun readSection(
         snapshot: AgentMemorySnapshot,
         section: String,
         maxChars: Int,
     ): AgentMemoryReadResult {
-        val target = AgentMemoryDocument.find(AgentMemoryDocument.sections(snapshot.content), section)
-            ?: throw AgentMemoryException(
-                code = "MEMORY_SECTION_NOT_FOUND",
-                message = "没有找到名为「$section」的章节；先调用 memory_get 查看目录",
-            )
+        val target = resolveSection(AgentMemoryDocument.sections(snapshot.content), section)
         val text = target.text
         val bounded = text.take(maxChars)
         return AgentMemoryReadResult(
@@ -285,11 +341,7 @@ internal class AgentMemoryStore(
         mutation: AgentMemoryMutation.ReplaceSection,
     ): String {
         val sections = AgentMemoryDocument.sections(snapshot.content)
-        val target = AgentMemoryDocument.find(sections, mutation.section)
-            ?: throw AgentMemoryException(
-                code = "MEMORY_SECTION_NOT_FOUND",
-                message = "没有找到名为「${mutation.section}」的章节；先调用 memory_get 查看目录",
-            )
+        val target = resolveSection(sections, mutation.section)
         return AgentMemoryDocument.replaceSection(snapshot.content, target, mutation.content)
     }
 
@@ -403,6 +455,7 @@ internal class AgentMemoryStore(
         const val MAX_WRITE_CONTENT_CHARS = 3_500
         private const val DIRECTORY_NAME = "memory"
         private const val FILE_NAME = "MEMORY.md"
+        private const val ARCHIVE_FILE_NAME = "MEMORY-ARCHIVE.md"
         private const val DEFAULT_START_LINE = 1
         private const val SEARCH_CONTEXT_LINES = 1
     }
@@ -431,6 +484,17 @@ internal object AgentMemoryRepository {
     ): AgentMemoryReadResult {
         ensureInitialized()
         return store.read(query, startLine, maxChars, section)
+    }
+
+    /** 读归档记忆（只读）；没有归档文件时返回 null。 */
+    fun readArchive(
+        query: String? = null,
+        startLine: Int = 1,
+        maxChars: Int = AgentMemoryStore.DEFAULT_READ_CHARS,
+        section: String? = null,
+    ): AgentMemoryReadResult? {
+        ensureInitialized()
+        return store.readArchive(query, startLine, maxChars, section)
     }
 
     /** 记忆目录：标题、行号与字符数，供界面与模型定位。 */

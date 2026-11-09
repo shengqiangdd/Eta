@@ -83,13 +83,24 @@ internal object AgentMemoryDocument {
         }
     }
 
-    /** 章节名匹配：精确 → 忽略大小写 → 唯一前缀；有歧义时返回 null，交给调用方报错。 */
-    fun find(sections: List<AgentMemorySection>, name: String): AgentMemorySection? {
+    /** 章节名匹配：精确 → 忽略大小写 → 唯一前缀。 */
+    fun find(sections: List<AgentMemorySection>, name: String): AgentMemorySection? =
+        candidates(sections, name).singleOrNull()
+
+    /**
+     * 与 [find] 同样的匹配优先级，但保留全部候选。
+     *
+     * 重名（真实数据里「用户偏好」就出现过两次）时 [find] 返回 null，调用方据此报歧义并列出行号，
+     * 而不是像以前那样静默取第一节 —— 那会让读和写都落在用户没打算改的那一段上。
+     */
+    fun candidates(sections: List<AgentMemorySection>, name: String): List<AgentMemorySection> {
         val target = name.trim().trimStart('#').trim()
-        if (target.isEmpty()) return null
-        sections.firstOrNull { it.title == target }?.let { return it }
-        sections.firstOrNull { it.title.equals(target, ignoreCase = true) }?.let { return it }
-        return sections.filter { it.title.startsWith(target, ignoreCase = true) }.singleOrNull()
+        if (target.isEmpty()) return emptyList()
+        val exact = sections.filter { it.title == target }
+        if (exact.isNotEmpty()) return exact
+        val ignoringCase = sections.filter { it.title.equals(target, ignoreCase = true) }
+        if (ignoringCase.isNotEmpty()) return ignoringCase
+        return sections.filter { it.title.startsWith(target, ignoreCase = true) }
     }
 
     fun outlineJson(sections: List<AgentMemorySection>): JSONArray =

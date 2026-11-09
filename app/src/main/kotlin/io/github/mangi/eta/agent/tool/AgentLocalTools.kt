@@ -105,6 +105,7 @@ import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AgentLogger
 import io.github.mangi.eta.core.HookSupport
 import io.github.mangi.eta.data.repository.AgentMemoryException
+import io.github.mangi.eta.data.repository.AgentMemoryReadResult
 import io.github.mangi.eta.data.repository.AgentMemoryMutation
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
 import io.github.mangi.eta.data.repository.AgentMemoryWriteResult
@@ -976,14 +977,49 @@ internal class AgentLocalTools(
     }
 
     private fun memoryGet(args: JSONObject): String = try {
-        val result = AgentMemoryRepository.read(
-            query = args.optString("query").takeIf(String::isNotBlank),
-            startLine = args.optInt("start_line", 1),
-            maxChars = args.optInt("max_chars", 12_000),
-            section = args.optString("section").takeIf(String::isNotBlank),
-        )
+        // source：main（默认，MEMORY.md）/ archive（旧记忆归档，只读）/ all。
+        // 归档文件以前完全没有入口，写进去的内容再也读不到。
+        val source = args.optString("source")
+            .takeIf { it == SOURCE_ARCHIVE || it == SOURCE_ALL }
+            ?: SOURCE_MAIN
+        val query = args.optString("query").takeIf(String::isNotBlank)
+        val startLine = args.optInt("start_line", 1)
+        val maxChars = args.optInt("max_chars", 12_000)
+        val section = args.optString("section").takeIf(String::isNotBlank)
+        val payload = JSONObject().put("ok", true).put("source", source)
+        if (source != SOURCE_ARCHIVE) {
+            val main = memoryReadPayload(
+                AgentMemoryRepository.read(query, startLine, maxChars, section),
+            )
+            payload.put("main", main)
+            // 默认 source=main 时保持旧字段在顶层，老调用方与提示词都不用改。
+            main.keys().forEach { key -> payload.put(key, main.get(key)) }
+        }
+        if (source != SOURCE_MAIN) {
+            val archive = try {
+                AgentMemoryRepository.readArchive(query, startLine, maxChars, section)
+            } catch (failure: AgentMemoryException) {
+                payload.put(
+                    "archive_error",
+                    JSONObject()
+                        .put("code", failure.code)
+                        .put("message", failure.message.orEmpty()),
+                )
+                null
+            }
+            if (archive != null) {
+                payload.put("archive", memoryReadPayload(archive))
+            } else if (!payload.has("archive_error")) {
+                payload.put("archive", JSONObject().put("available", false))
+            }
+        }
+        payload.toString()
+    } catch (failure: AgentMemoryException) {
+        errorResult(failure.code, failure.message ?: "记忆读取失败")
+    }
+
+    private fun memoryReadPayload(result: AgentMemoryReadResult): JSONObject =
         JSONObject()
-            .put("ok", true)
             .put("revision", result.snapshot.revision)
             .put("bytes", result.snapshot.byteSize)
             .put("line_count", result.snapshot.lineCount)
@@ -995,11 +1031,12 @@ internal class AgentLocalTools(
                 JSONArray().also { array -> result.matchedHeadings.forEach(array::put) },
             )
             .put("has_more", result.hasMore)
+            // 续读游标：以前只有 has_more，调用方得自己猜下一页从哪行开始。
+            .put(
+                "next_start_line",
+                if (result.hasMore) (result.endLine ?: 0) + 1 else JSONObject.NULL,
+            )
             .put("content", result.content)
-            .toString()
-    } catch (failure: AgentMemoryException) {
-        errorResult(failure.code, failure.message ?: "记忆读取失败")
-    }
 
     private fun memoryWrite(args: JSONObject): String = try {
         val revision = args.getString("revision")
@@ -3829,11 +3866,11 @@ internal class AgentLocalTools(
         if (!compat.available) return errorResult("INCOMPATIBLE", compat.reason ?: "当前环境不可用")
         val resolved = loader.load(entry, "agent 主动读取 skill")
             ?: return errorResult("READ_FAILED", "读取 SKILL.md 失败：${entry.skillFilePath}")
-        val body = if (resolved.bodyMarkdown.length <= maxChars) {
-            resolved.bodyMarkdown
-        } else {
-            resolved.bodyMarkdown.take(maxChars) + "\n..."
-        }
+        val fullBody = resolved.bodyMarkdown
+        val offset = args.optInt("offset_chars", 0).coerceIn(0, fullBody.length)
+        val end = (offset + maxChars).coerceAtMost(fullBody.length)
+        val body = fullBody.substring(offset, end)
+        val truncated = end < fullBody.length
         val references = JSONArray()
         resolved.loadedReferences.forEach { references.put(it) }
         val frontmatter = JSONObject()
@@ -3850,6 +3887,10 @@ internal class AgentLocalTools(
             .put("references", references)
             .put("frontmatter", frontmatter)
             .put("bodyMarkdown", body)
+            .put("body_chars", fullBody.length)
+            .put("offset_chars", offset)
+            .put("truncated", truncated)
+            .put("next_offset_chars", if (truncated) end else JSONObject.NULL)
             .toString()
     }
 
@@ -4416,6 +4457,11 @@ private val AFTER_ACTION_OPTIONS = AgentScreenObservationContract.Options(
 
 /** append 超过该长度改走粘贴路径；逐字键入的增量重建对长文本既慢又容易被输入法打断。 */
 private const val TYPE_TEXT_INCREMENTAL_CHARS = 200
+
+/** memory_get 的读取范围：主文件 / 旧记忆归档 / 两者。 */
+private const val SOURCE_MAIN = "main"
+private const val SOURCE_ARCHIVE = "archive"
+private const val SOURCE_ALL = "all"
 
 /**
  * 虚拟屏启动后自动观察首屏的时间预算：够冷启动应用画完首屏，又不会把 launch 拖成「卡住」。
