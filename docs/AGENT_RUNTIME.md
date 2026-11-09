@@ -90,6 +90,19 @@ pending steering
 - **可追溯**：每轮写一行 `agent_round_model run=… round=… model=… provider=… effort=…`，
   真正生效另有 `agent_model_hot_swapped run=… model=…`。没有这两行时，
   「切换生效」与「请求碰巧也成功」在日志里无法区分。
+- **压缩判定可追溯**：`AgentContextSession` 在压缩原因**发生变化**时写一行
+  `agent_context_decision run=… compact=yes|no cause=… chars=… tokens=… src=observed|estimated threshold=… hard=… window=…`。
+  这条日志存在的唯一理由：真机出现过「历史 1.4M 字符、单轮 45 万 token 却一次没压缩」的 run，
+  而当时唯一的观测是「没有 compact 事件」——无法从痕迹里区分是开关被关、判据没到、
+  还是别处提前返回，只能事后反推。现在判据的实参（chars／tokens 及其来源／阈值／硬上限／窗口）
+  与结论（cause）写在同一行，`compact=no` 也算一条明确结论。
+  `cause` 取值：`none`（判定要压缩）、`forced`（手动）、`disabled`（用户关了自动压缩，
+  此时即使超硬上限也不压）、`hard_limit`（字符数超过窗口对应硬上限，不依赖远端 usage）、
+  `threshold`（token 达到生效阈值，即 `min(窗口×0.85, 十万)`）。
+  只在原因变化时上报，且走 `infoPersisted`：前者避免 `boot.log` 变成第二个日志洪水源，
+  后者是因为普通 `info` 会被后续 DEBUG 事件顶出 logcat 环形缓冲。手动压缩不计入（它有自己的
+  started/completed/skipped 事件）。判定逻辑抽成了 `AgentContextBudget.compactionDecision()`，
+  `shouldCompact()` 委托它，所以判定与日志不会出现两套口径。
 
 明确不做的两件事：不取消在飞请求（会丢掉已经产生的 token）；不把「已交给 Runtime」
 说成「已生效」——界面文案固定为「从下一步生效」。
@@ -359,9 +372,15 @@ App 按上次成功提交的内容比较会话变更，只更新变化的元数�
 
 ### 上下文摘要
 
-模型窗口只采用设置中保存的值。从远端拉取模型时，若接口标注了窗口且该模型尚未填写，拉取会把标注值写入保存的窗口，用户可再修改；已填写的值不被覆盖，接口未标注则保持空。官方目录不参与运行窗口解析，运行时也不自动补齐缺失配置。未填写窗口时照常对话，只关闭自动压缩；手动压缩仍可用，服务商返回上下文溢出时按 `CONTEXT_OVERFLOW` 报告。记忆、世界书等按窗口比例分配的注入预算在窗口未知时以 128K 为基准。
+模型窗口只采用设置中保存的值（`contextWindowOverride`）。三个写入场景：从远端拉取模型时，若接口标注了窗口且该模型尚未填写，拉取会把标注值写入保存的窗口；内置 provider 首次建立或升级到目录 revision 5 时，会把官方目录标注的窗口写入未填写的模型；用户也可在模型编辑页直接填写。任何来源都不覆盖用户已填写的值，手动添加的模型也不被改动。
 
-设置中的“上下文与扩展”提供“自动压缩上下文”开关，默认开启；配置保存在 App 本地，不依赖 Xposed，聊天与系统助手入口共用，从下一次运行生效。关闭后保留手动压缩。Runtime 会核对本地设置，入口请求不能重新开启已关闭的自动压缩。
+官方目录的 `contextWindow` 是元数据，运行时只认 `contextWindowOverride`，两个字段不会自动打通，所以每条写入路径都必须显式接一次。
+
+自动压缩的触发阈值是 `min(窗口 × 0.85, 100000 token)`：窗口大于约 117,648 时实际触发点固定在 10 万——大窗口不会因此被提前压缩，但也不因此推迟。窗口真正影响的是另外两处：记忆核心预算 `min(32000, max(4000, 窗口/16))` 字符，以及硬上限 `max(1.2M, 窗口×2)` 字符。
+
+未填写窗口时照常对话：自动压缩仍按 128K 假设值计算（此取值下等效于 10 万 token 的绝对上限），手动压缩始终可用，服务商返回上下文溢出时按 `CONTEXT_OVERFLOW` 报告。记忆、世界书等按窗口比例分配的注入预算在窗口未知时以 128K 为基准。
+
+设置中的“上下文与扩展”提供“自动压缩上下文”开关，默认开启；配置保存在 App 本地，不依赖 Xposed，聊天与系统助手入口共用，从下一次运行生效。关闭后保留手动压缩，且**不会**被硬上限越过：即使历史字符数超过硬上限，也不会替你发起一次付费的摘要请求。Runtime 会核对本地设置，入口请求不能重新开启已关闭的自动压缩。
 
 自动压缩只依据当前成功模型请求返回的实际输入 usage，达到用户填写窗口的 85% 时，在完整工具批次结束后的下一次请求前或任务完成后触发。首次请求前不估算文本、工具或图片的 token 数；缺少实际输入 usage 时不猜测容量，也不采用累计用量或输出用量代替输入。失败重试的 usage 不沿用；压缩成功后旧用量失效，等待下一次模型响应更新。
 
@@ -377,7 +396,7 @@ App 会话提供 `conversation_history` 工具，搜索或分页读取当前会�
 
 空闲会话可从上下文用量提示框手动压缩，执行期间本会话禁止发送、模型切换和历史编辑，可停止或浏览其他会话。手动操作不生成虚构用户消息或模型回答；摘要正文不进入思考流、事件或日志，只展示压缩状态。压缩后不显示估算用量，下一次模型响应返回实际 usage 后更新。
 
-Provider 明确返回上下文溢出时直接报告失败，不自动压缩后重放原请求。空正文以长度上限结束时报告输出额度耗尽；内容过滤和普通空响应分别明确失败，不猜成输入溢出。已开始托管工具的请求不自动重放。失败或取消不提交半成品摘要，已经提交的安全快照随取消或失败结果保留。任务已完成时，压缩失败不改变任务成功状态，原始上下文完整保存；实际持久化失败仍报告失败，不用删头方式掩盖。用户停止时先取消网络与工具，收束运行并保存已完成的安全历史，再交付取消终态。
+Provider 明确返回上下文溢出时，**仅在「可压缩历史确实占大头、且没开始托管工具」时压缩一次后重跑同一轮**（见下文「超限救援」），其余情况直接报告失败，不做删头、裁剪正文之类的降级。空正文以长度上限结束时报告输出额度耗尽；内容过滤和普通空响应分别明确失败，不猜成输入溢出。已开始托管工具的请求不自动重放。失败或取消不提交半成品摘要，已经提交的安全快照随取消或失败结果保留。任务已完成时，压缩失败不改变任务成功状态，原始上下文完整保存；实际持久化失败仍报告失败，不用删头方式掩盖。用户停止时先取消网络与工具，收束运行并保存已完成的安全历史，再交付取消终态。
 
 设计依据：[Android Binder 事务限制](https://developer.android.com/reference/android/os/TransactionTooLargeException)、[ParcelFileDescriptor](https://developer.android.com/reference/android/os/ParcelFileDescriptor)、[CursorWindow](https://developer.android.com/reference/android/database/CursorWindow)。参考的会话模式见 [pi 的追加式压缩记录与上下文重建](https://github.com/earendil-works/pi/blob/b215884021491772a1eb7a9f92c6653a2a52a69d/packages/coding-agent/docs/compaction.md) 和 [Kimi Code 的历史恢复指针](https://github.com/MoonshotAI/kimi-code/blob/b1807253c34e12b0ecf60c9b4da3890d0c80ce72/packages/agent-core-v2/src/agent/fullCompaction/contextRecovery.ts)。Eta 使用 Room 分块及当前会话读取工具适配 Android，不依赖桌面文件路径。
 
@@ -4603,32 +4622,41 @@ flag 随之失效，屏幕按系统超时熄灭（本机 60000ms）——这正�
 
 - `AgentScreenWakeLock` 持 `SCREEN_BRIGHT_WAKE_LOCK`（TAG `Eta:agent-keep-screen`），
   `setReferenceCounted(false)`；不申请 `ACQUIRE_CAUSES_WAKEUP`，用户按电源键仍可立即熄屏。
-- 判断只有一处：`AgentKeepScreenOnPolicy.shouldKeep(开关, 有会话运行, 是否暂停)`。
-  状态层在 `updateConversation()` 后刷新，暂停 / 全部结束 / 关闭开关都立即 `setHeld(false)`。
-- 前台窗口 flag 与后台唤醒锁共用同一个布尔值，不会出现「前台亮、切出去灭」。
+- 决策只有一处：`AgentKeepScreenLockPolicy.shouldHold(前台服务存活, 用户开关)`，且**由前台服务持有并续期**，
+  不经过任何 UI 状态镜像。
+- 前台窗口 flag 仍按「有会话在运行且未暂停」控制，但它只负责前台窗口自身；跨应用保屏只看服务的锁。
 
-### 三、真机验证（本机 PKX110 / A16）
+### 三、为什么会失效（本轮修的真缺陷）
 
-| 场景 | 证据 |
-|---|---|
-| 切到其他应用 | canary 窗口 `isOnScreen=false` 期间锁仍持 81 秒（系统超时 60 秒），`mWakefulness=Awake` |
-| 运行开始 → 结束 | 21:01:05.012 ACQ → 21:01:07.419 REL（请求 400 失败即结束） |
-| 开关关闭 | 同一任务无 ACQ；重新开启后 21:04:46 ACQ / 21:04:48 REL |
-| 正式包 | 21:08:12 `pm install` Success；`dumpsys power` 里锁由 `io.github.mangi.eta`（uid 10629）持有 |
+最初的实现把锁和续期协程放在 `AgentAppState`（Activity 作用域的 ViewModel），
+持锁与否由 `conversationsById[*].isStreaming` 这个**本地镜像**决定。失效链条：
 
-### 四、本轮补的两处
+1. 运行态不入库，Activity 被系统回收后重建时 `isStreaming` 恢复为 `false`；
+2. 于是算出「没有任务在跑」，主动 `setHeld(false)`；
+3. 前台服务此时仍然活着、任务仍在推进——用户看到的就是「任务在跑，屏幕却会灭」。
 
-1. **12 小时兜底会「悄悄失效」**：`acquire(12h)` 到期后系统自动释放，而长任务期间状态不再变化、
-   没有新的刷新，屏幕就恢复系统超时。改为运行期间每 30 分钟 `renew()`（`KEEP_SCREEN_RENEW_INTERVAL_MS`），
-   停止保屏时取消循环。
-2. **开关看不出是否生效**：新增 `AgentKeepScreenStatus`，设置页说明文字按实况显示
-   「当前正在保持屏幕唤醒」或「已开启，当前没有运行中的会话」。
+配套的第二个缺陷：`AgentScreenWakeLock.acquire()` 里有 `if (lock?.isHeld == true) return`，
+于是续期**完全无效**，12 小时上限永远推不后。
+
+修法：锁归前台服务（生命周期就是运行期，不受 Activity 存亡影响），
+决策函数只接受「服务是否在前台 + 用户开关」两个布尔；删除 `acquire()` 的提前返回，
+同一实例每次 `setHeld(true)` 都重新 `acquire(timeout)` 以重置超时。
+用户中途关掉开关时，`AgentExecutionService.refreshKeepScreen()` 立即重算，不必等下一轮续期。
+
+### 四、单测
+
+`AgentKeepScreenLockPolicyTest`：开关关闭 / 服务不在前台 / 决策签名只能有两个布尔
+（最后一条是回归护栏——一旦有人再引入运行态镜像入参就会失败）。
 
 ### 五、未验证
 
-- **暂停按钮没有真机点过**：canary 未配置模型，任务发出即 400（约 1.7 秒结束），没有可暂停的窗口。
-  暂停与结束走同一判断（`isStreaming && !isPaused → setHeld(false)`），有 `AgentKeepScreenOnPolicyTest` 覆盖，
-  但「点暂停 → 锁消失」仍缺一次真机观察。
+- **没有真机端到端跑通**：canary 包复制了主包数据库（含 provider key），
+  但在 canary 内无法稳定取得输入焦点发任务（GUI 焦点会被主包抢回），
+  因此「跑任务 → 切应用 → Activity 被回收重建 → 锁仍在」这条完整链路
+  只做了编译 + 单测 + 代码路径核对，缺一次真机观察。
+- 旧版 `dumpsys power` 历史里有 45 段持锁记录，其中 5 段短于 1 秒，
+  与「重建后主动释放」的推断一致，但这是间接证据，不是定点复现。
+
 - 30 分钟续期只有代码与编译验证，没有等真实 12 小时。
 
 ### 六、收尾：冷启动状态错报（已修）
@@ -10587,3 +10615,98 @@ compactions / failedRuns / idleRuns / tools`。两个关键设计：
   白名单机制让后者成为常态，判断覆盖率要看契约阶段的「覆盖 N / 未覆盖 M」而不是看绿灯。
 - 一个用例如果同时被多条判据支配，它的断言迟早会被其中一条遮蔽。给边界用例加一句
   「前提：本判据是唯一生效者」的自检断言，比事后排查便宜。
+---
+
+## 上下文压缩：触发线随窗口放大 + 超限救援（2026-11-09）
+
+### 症状
+
+用户原话：「压缩太慢了，700K 上下文才到 120K 就压缩，每次压缩都要几十秒」。
+
+### 根因（有证据）
+
+旧阈值 `min(窗口 × 0.85, ABSOLUTE_COMPACT_TOKENS = 100_000)`：**绝对上限盖住了窗口比例**，
+所以 256K 窗口和 720K 窗口都在十万 token 处触发。
+
+- run-traces 里 `window=720000` 的 41 个 run 也都在 `before≈100,055–101,961` 触发；
+- `720000` 不是代码常量，是 DB `provider_models.context_window_override`
+  （`deepseek-v4.1-flash` / `-1017`）里的窗口值 —— 也就是说**用户把窗口填大了，行为没变**。
+
+用户说的「120K」是字符/token 口径差异，不是另一个常量。
+
+### 改动
+
+1. `AgentContextBudget.absoluteLimitFor(contextWindow, peakObservedTokens)`：
+   - 窗口 ≤0/未知 → 100,000（保守兜底不变）；
+   - 天花板 = `max(100_000, 窗口 × 0.5)` → 720K 窗口 = 360K，1M = 500K，256K = 128K；
+   - 有实测峰值时取 `min(天花板, max(100_000, 峰值 × 1.5))` —— 按「已跑通的最大入参」
+     逐级放大，1.5× 是给增长留的余量。
+2. `AgentContextSession.peakInputTokens`：**单调不回退**（压缩成功会把 `inputTokens` 清空，
+   峰值必须留着），阈值因此不会在压缩后又缩回 10 万。
+3. **超限救援**（下面单独说）。放大上限把「压得太早」换成了「可能撞端点硬顶」，
+   不补这一步就是把一个体验问题换成一次整轮失败。
+
+### 超限救援：为什么必须有，以及三条不变量
+
+`CONTEXT_OVERFLOW` 是 `retryable=false`，旧的行为是**整个 run 直接失败**
+（`AgentModelFailure.kt` 分类 + `AgentModelRetry` 原样抛出），没有任何恢复分支。
+窗口填得比端点真实容量大时，1.5× 余量仍可能超。
+
+实现（`AgentModelFailure.isContextOverflow()` / `AgentContextSession.noteContextOverflow()` /
+`AgentLoop` 的 `catch (overflow: AgentModelFailure)`）：
+
+- 溢出后把绝对上限**钉在「最近一次成功入参的 token 数」**（那次确实通过了），并要求下一轮
+  无条件压缩；然后 `continue` 回循环顶部重跑**同一轮**。
+- 必须回到循环顶部，不能原地重试：`requestMessages` 是压缩前的 JSON 快照，
+  原地重试等于把同一份超大请求再发一次（这也是最初想省掉的一次无用请求）。
+
+五条不变量，各有用例守着：
+
+| 不变量 | 理由 | 用例 |
+|---|---|---|
+| 只救一次 | 第二次仍溢出 = 上限估错（端点真实容量小于声明的窗口），再试是死循环 | `secondContextOverflowFailsInsteadOfLooping` |
+| 签名工具待续不救 | 这种状态下强制压缩会抛，救不成只会换个错误码 | `canRecoverFromOverflow()` 里判 |
+| 历史不占大头不救 | 历史很小时仍溢出 = 固定开销（系统提示／工具定义／单条超长）超了容量，压历史救不回来，白花一次摘要 | `explicitOverflowFailsWithoutCompactionOrReplay`（旧用例原样通过） |
+| 托管工具已开始不救 | 服务端可能已产生副作用／已计费，重放就是重复执行（`AgentModelFailure.replayUnsafe`） | `hostedToolOverflowDoesNotReplayOrStartCompaction`（旧用例原样通过） |
+| 救援用的压缩失败必须抛 | 否则静默返回、重放同尺寸请求，等于白花一次费用 | `compact()` 里 `if (forced) throw failure` |
+
+「历史不占大头」的判据：除系统提示以外的历史估算 token 是否 ≥ 生效上限的一半。低于一半时，
+即使压完也省不到「一次压缩的量」，说明溢出不是历史造成的，压了也白压。
+后两条门禁故意**不改旧契约的断言**：`explicitOverflow…` 用的是 6 轮小历史（进不了救援），
+`hostedTool…` 被 `replayUnsafe` 挡住 —— 它们继续是「溢出不重放」的回归测试。
+
+### 单次压缩耗时：这次只加了尺子，没有盲调
+
+先把已有的度量摊开（用量账本 11-01~11-09 共 38,646 行，`purpose=compact`）：
+
+| 模型 | compact 请求 | 输出 token | reasoning 占比 | 同模型 chat 的 reasoning 占比 |
+|---|---|---|---|---|
+| `cn:deepseek-v4.1-flash` | 412 | 1,570,353 | **40.3%** | 58.3% |
+| `deepseek-flash` | 147 | 580,887 | **40.9%** | 61.0% |
+| `deepseek-v4.1-flash-1017` | 211 | 546,820 | **45.8%** | 46.3% |
+
+结论：**降档已经在生效**（compact 的思考占比明显低于同模型普通对话），而且用户模型的
+`reasoningCapabilities` 是 `{supportedEfforts:[medium,high,max], mandatory:true}` ——
+`summaryReasoningEffort` 能做的极限就是降到 `medium`，**没有 OFF 可关**。
+「关掉思考」这条路已经到底，继续压 effort 只会破坏请求合法性。
+
+所以单次耗时只剩两个杠杆：**请求次数**与**输出长度**。这两个都需要真实分批数据才能动
+（`MAX_PARALLEL_BATCHES`、`SUMMARY_TARGET_CHARS`），盲调没有依据。为此在
+`AgentContextSummarizer.attempt()` 里加了一行（走已有的 `onBatch` 通道）：
+
+```
+摘要请求 model=... effort=medium 目标=6000字符 历史=12条 耗时=8342ms
+```
+
+下一次真实压缩就能直接读出「一批慢」还是「跑了好几批」，再决定是抬并发还是缩目标长度。
+
+### 验证
+
+- `AgentContextRecoveryTest` **19/19**（新增 2 条：救援成功一次、第二次溢出即失败不循环；
+  都用「235,000 字符历史 + 100,000 窗口」构造 —— 够大到能进救援，又小到不会被开头的自动压缩吃掉）。
+- `AgentContextCompactionTest` **20/20**、`AgentContextBudgetTest` **39/39**；
+  两个旧契约用例（`explicitOverflowFailsWithoutCompactionOrReplay`、
+  `hostedToolOverflowDoesNotReplayOrStartCompaction`）**断言一字未改就通过**。
+- 全量 `:app:testDebugUnitTest` 通过。
+- **未验证**：真机要到 36 万 token 才看得出触发线差别；观察点=决策日志里的 `absolute=`。
+  端点真实容量是否 ≥ 窗口的一半，只能等真溢出发生时看救援日志是否触发。

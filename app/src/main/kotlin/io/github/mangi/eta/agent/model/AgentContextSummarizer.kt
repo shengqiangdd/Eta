@@ -288,9 +288,13 @@ internal class AgentContextSummarizer(
                     append(json).append('\n')
                 }
             }))
+        val request = ProviderRequest(
+            config, messages, JSONArray(), purpose = ProviderRequestPurpose.COMPACTION,
+        )
+        val startedAt = System.currentTimeMillis()
         val response = try {
             provider.complete(
-                ProviderRequest(config, messages, JSONArray(), purpose = ProviderRequestPurpose.COMPACTION),
+                request,
                 controller,
             ) { event ->
                 // 先记账再判形状：即便这次尝试因为「模型想调工具」被判失败，请求也已经发生、
@@ -306,6 +310,15 @@ internal class AgentContextSummarizer(
             // 形状问题要重试；网络 / HTTP 错误照旧向上抛，交给外层报告，不做无意义重放。
             if (failure.code == CODE_INVALID) return Attempt.Invalid(failure.message.orEmpty(), "", false)
             throw failure
+        } finally {
+            // 每次摘要请求一行。压缩的总耗时就是这些请求之和（含被丢弃的尝试），
+            // 没有这一行只能靠用量账本的时间戳反推，分不清「一批慢」还是「跑了好几批」。
+            onBatch(
+                "摘要请求 model=${request.effectiveConfig.model} " +
+                    "effort=${request.effectiveConfig.effectiveReasoningEffort} " +
+                    "目标=${targetChars}字符 历史=${history.size}条 " +
+                    "耗时=${System.currentTimeMillis() - startedAt}ms"
+            )
         }
         controller.throwIfCancelled()
         val text = AgentConversationCodec.stripContextSummaryPrefix(response.assistantMessage.optString("content")).trim()

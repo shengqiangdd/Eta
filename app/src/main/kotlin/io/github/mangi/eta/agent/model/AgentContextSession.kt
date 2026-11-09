@@ -22,6 +22,13 @@ internal class AgentContextSession(
     private val onBatch: (String) -> Unit = {},
     /** 摘要请求的 token 用量出口；交给 [AgentContextCompactor]。 */
     private val onUsage: (AgentTokenUsage) -> Unit = {},
+    /**
+     * 压缩判定依据出口；默认静默，真实运行里接 AndroidAgentLogger。
+     *
+     * 只在**自动判定**这一条路径上输出（手动压缩有明确的 skipped/started 事件），
+     * 目的是让「为什么没压缩」在事后可读，而不必靠反推。
+     */
+    private val onDecision: (String) -> Unit = {},
 ) {
     private val contextWindow: Int?
         get() = config.knownContextWindow
@@ -38,7 +45,22 @@ internal class AgentContextSession(
         provider = ProviderClientFactory.getClient(next)
     }
     private var inputTokens: Int? = null
+    /**
+     * 本会话已跑通的峰值输入 token。
+     *
+     * 用于 [AgentContextBudget.absoluteLimitFor] 的峰值锚定：阈值只抬到「已验证过 × 1.5」，
+     * 不会因为用户把 `context_window_override` 填得比端点实际容量大而一次性跳到溢出。
+     * 压缩不回退该值，所以阈值单调不降。
+     */
+    private var peakInputTokens: Int? = null
     private var compacted = false
+    /**
+     * 上一次上报过的压缩判定原因。
+     *
+     * 用于去重：只在上报结论变化时才发一条日志，避免每轮都写一次。
+     * 初始为 null（而不是 NONE）：第一轮无论结论如何都要上报一次，供事后对齐基准。
+     */
+    private var lastDecisionCause: AgentContextBudget.CompactionCause? = null
     private var consumedSupplementCount = 0
     private var consumedUserTurns = (systemCount until messages.length()).sumOf {
         val message = messages.getJSONObject(it)
@@ -52,7 +74,13 @@ internal class AgentContextSession(
     fun snapshot(): AgentContextSnapshot? = committedSnapshot
 
     fun observeInputTokens(tokens: Int?) {
-        inputTokens = tokens?.takeIf { it >= 0 }
+        // 0 不当作有效实测值：部分兼容端点在流式首块会回 `usage: {prompt_tokens: 0}` 占位。
+        // 若当成真值，判定会以为上下文是空的，于是一直不压缩——实测同一份 40 万字符历史，
+        // usage=0 得到 tokens=0 且 compact=no，而 usage=null 时能按估算正确压缩。
+        inputTokens = tokens?.takeIf { it > 0 }
+        inputTokens?.let { current ->
+            if ((peakInputTokens ?: 0) < current) peakInputTokens = current
+        }
     }
 
     fun userAppended() {
@@ -80,10 +108,59 @@ internal class AgentContextSession(
         )
     }
 
+    /**
+     * 端点报 `CONTEXT_OVERFLOW` 之后钉住的上限（token）。
+     *
+     * 失败的那次请求不回 usage，所以「被拒的尺寸」本身没有测量值；能确证的只有
+     * 「最近一次成功的入参量可以通过」。用它当新上限：保守，但绝不会再把上下文
+     * 放大回刚被拒的量级。
+     */
+    private var overflowCeilingTokens: Int? = null
+    /** 溢出救援只给一次：第二次仍溢出说明上限估错（端点真实容量比声明的窗口小），再试是死循环。 */
+    private var overflowRecoveries = 0
+    /** 下一轮压缩无条件执行。和用户手动压缩分开记，因为两者的失败处理不同。 */
+    private var forceAfterOverflow = false
+
+    /**
+     * 溢出后能否自救。四个条件少一个都别试：
+     *
+     * 1. 只救一次 —— 第二次仍溢出等于上限估错，继续试就是死循环；
+     * 2. 签名工具待续 —— 那种状态下强制压缩会抛，救不成只会换个错误码；
+     * 3. 托管工具已开始 —— 那个失败标记了 `replayUnsafe`，不在这里判也在 Loop 里判；
+     * 4. **历史本身得占大头** —— 历史很小时仍然溢出，说明是固定开销（系统提示、
+     *    工具定义、单条超长消息）超过了端点容量，压历史救不回来。这时按既有契约
+     *    （docs/AGENT_RUNTIME.md：「溢出直接报告失败，不自动压缩后重放」）直接失败，
+     *    不白花一次摘要请求。阈值取生效上限的一半：低于它说明可压缩的部分
+     *    连一次压缩能省下的量都凑不出来。
+     */
+    fun canRecoverFromOverflow(): Boolean {
+        if (overflowRecoveries > 0) return false
+        if (SignedToolContext.hasPendingResponse(messages)) return false
+        val limit = AgentContextBudget.absoluteLimitFor(contextWindow, peakInputTokens)
+        val historyTokens = AgentContextBudget.estimateTokens(
+            AgentContextBudget.contextChars(messages, systemCount),
+        )
+        return historyTokens * 2 >= limit
+    }
+
+    /** 记录一次端点容量溢出：钉住上限，并要求下一轮无条件压缩。 */
+    fun noteContextOverflow() {
+        overflowRecoveries++
+        forceAfterOverflow = true
+        overflowCeilingTokens = maxOf(
+            AgentContextBudget.ABSOLUTE_COMPACT_TOKENS,
+            (peakInputTokens ?: inputTokens) ?: 0,
+        )
+    }
+
     fun compact(force: Boolean = false, final: Boolean = false) {
         val before = inputTokens
+        // 溢出救援是一次性标志，取用即清；`force` 参数（用户手动压缩）语义不变。
+        val overflowRecovery = forceAfterOverflow
+        forceAfterOverflow = false
+        val forced = force || overflowRecovery
         if (SignedToolContext.hasPendingResponse(messages)) {
-            if (force) {
+            if (forced) {
                 throw SignedToolContext.compactionFailure(messages)
             }
             return
@@ -126,15 +203,28 @@ internal class AgentContextSession(
                 keepChars = PRUNE_KEEP_CHARS,
             )
         }
-        val shouldCompact = AgentContextBudget.shouldCompact(
-            force = force,
+        val decision = AgentContextBudget.compactionDecision(
+            force = forced,
             autoCompactionEnabled = config.autoCompactionEnabled,
             contextWindow = contextWindow,
             observedInputTokens = before,
             historyChars = historyChars,
+            peakObservedTokens = peakInputTokens,
+            // 溢出过就把上限夹到「被证明确实能通过」的量级，覆盖窗口比例与峰值放大。
+            absoluteLimit = overflowCeilingTokens?.let { ceiling ->
+                minOf(AgentContextBudget.absoluteLimitFor(contextWindow, peakInputTokens), ceiling)
+            },
         )
+        val shouldCompact = decision.compact
+        // 只在结论或原因**发生变化**时上报：每轮都打会把 boot.log 变成第二个日志洪水源，
+        // 而降级（能压 → 不能压）与升级（不能压 → 能压）才是需要事后追溯的事件。
+        // 第一轮必报：那一次决定了本会话的初始基准。
+        if (!forced && !final && decision.cause != lastDecisionCause) {
+            lastDecisionCause = decision.cause
+            onDecision(decision.describe())
+        }
         // 失败一次已经花掉一次（或多次）摘要请求；下一轮立刻重放同一份历史只会再失败一次。
-        val coolingDown = shouldCompact && !force && !final && autoCompactionCooldown > 0
+        val coolingDown = shouldCompact && !forced && !final && autoCompactionCooldown > 0
         if (coolingDown) autoCompactionCooldown--
         if (!shouldCompact || coolingDown) {
             try {
@@ -205,8 +295,9 @@ internal class AgentContextSession(
                 // 失败也要给耗时：慢到最后才报错，比一开始就报错更值得让用户看见。
                 durationMs = System.currentTimeMillis() - startedAt,
             ))
-            // 手动压缩：用户主动点的，必须把失败告诉用户。
-            if (force) throw failure
+            // 手动压缩与溢出救援：都是「非压不可」，失败必须让上层看见。
+            // 溢出救援尤其不能静默重放 —— 请求已经证明超容量，再来一次只是再花一次费用。
+            if (forced) throw failure
             // 自动压缩失败**不再中断整轮回答**：真机上这会把一个 86% 用量、本来还能跑完的
             // 回合直接变成「模型未返回完整且有界的摘要」。先保留原始上下文继续，冷却几轮再试。
             if (!final) {

@@ -71,6 +71,57 @@ internal object AgentContextBudget {
     const val ABSOLUTE_COMPACT_TOKENS = 100_000
 
     /**
+     * 窗口够大时 [ABSOLUTE_COMPACT_TOKENS] 最多放大到窗口的这个比例。
+     *
+     * 为什么必须放大：10 万本来是「**窗口未知**」时的保守兜底，但在
+     * `min(窗口 × [TRIGGER_RATIO], 10 万)` 里它成了盖住一切的天花板 ——
+     * 用户填 720,000 的窗口，实际仍然 10 万就压缩，窗口的 86% 永远用不到。
+     * 真机账本（usage 2026-10-31～11-09，776 次压缩请求）证据：窗口 720,000 的 trace
+     * 同样在 `before≈100,055–101,961` 触发；压缩事件里 `tokens=100,596 / chars=112,391`
+     * 说明触发点由 token 判据决定、与窗口无关。用户体感即「700K 的上下文才到 120K 就压缩了」。
+     *
+     * 取 0.5 而不是 0.85：0.85 是**窗口比例判据自己**的阈值，绝对上限再取 0.85 就与它重合、
+     * 等于取消上限；留一半空间是给 [PROVEN_PEAK_GROWTH] 的逐级放大留余地 ——
+     * 实际生效值通常低于这个天花板（见 [absoluteLimitFor]）。
+     */
+    const val ABSOLUTE_LIMIT_WINDOW_RATIO = 0.5
+
+    /**
+     * 绝对上限相对**已经跑通**的峰值输入 token 的放大倍率。
+     *
+     * 为什么需要这道锚：窗口是**用户填的**，可以填得比端点真实容量大（`720000` 这个值
+     * 在 provider_models 里就是 `context_window_override`，不是端点自报）。直接把阈值
+     * 提到窗口的一半，下一次请求就可能被端点以 `CONTEXT_OVERFLOW` 打回，而该错误
+     * `retryable=false` —— 整个 run 直接失败。
+     *
+     * 所以取「最多是已跑通峰值的 1.5 倍」：每压缩一轮阈值抬 1.5 倍，逐级逼近窗口天花板。
+     * 720K 窗口从 10 万爬到 36 万约需 4 次压缩，之后稳定在天花板上。代价是多压几次，
+     * 收益是**不会向端点索要它没接受过的量级**。没有实测 usage 时峰值未知，直接用天花板
+     * （端点不回 usage 时也就没别的依据可用）。
+     */
+    const val PROVEN_PEAK_GROWTH = 1.5
+
+    /**
+     * 当前配置下绝对压缩上限的**实际值**（token）。
+     *
+     * 两步取小：
+     * 1. 天花板 = `max(10 万, 窗口 × [ABSOLUTE_LIMIT_WINDOW_RATIO])`；窗口未知时就是 10 万。
+     * 2. 已跑通峰值 × [PROVEN_PEAK_GROWTH]，即「不索要没验证过的量级」。
+     *
+     * 单调性：压缩后峰值不回退，所以阈值只会往上走，不会在两档之间来回抖。
+     */
+    fun absoluteLimitFor(contextWindow: Int?, peakObservedTokens: Int? = null): Int {
+        val window = contextWindow?.takeIf { it > 0 } ?: return ABSOLUTE_COMPACT_TOKENS
+        val ceiling = maxOf(
+            ABSOLUTE_COMPACT_TOKENS,
+            (window * ABSOLUTE_LIMIT_WINDOW_RATIO).toInt(),
+        )
+        val peak = peakObservedTokens?.takeIf { it > 0 } ?: return ceiling
+        val proven = maxOf(ABSOLUTE_COMPACT_TOKENS, (peak * PROVEN_PEAK_GROWTH).toInt())
+        return minOf(ceiling, proven)
+    }
+
+    /**
      * 手动压缩的下限（字符）。低于它就不该再花一次模型请求。
      *
      * 依据（canary 真机，2026-10-25）：上下文只有 1,796 字符时点「压缩上下文」，
@@ -229,8 +280,14 @@ internal object AgentContextBudget {
      *
      * 窗口未知时见 [effectiveTriggerTokens] 对 [DEFAULT_ASSUMED_CONTEXT_WINDOW] 的说明：
      * 当前取值下假设值不改变结果，真实阈值是 10 万。
-     * 安全阀只在“窗口未知”时越过 [autoCompactionEnabled]：那时用户关掉自动压缩就再没有任何
-     * 依据能拦住增长，而窗口已知时仍然尊重用户的开关。
+     *
+     * 硬上限（[HARD_CONTEXT_CHARS]）只在“用户没关自动压缩”时生效；关闭后不再越过
+     * [autoCompactionEnabled]。这里曾经写的是 `autoCompactionEnabled || window == null`，
+     * 让窗口未知时无视用户显式关闭——那是把 fix144「窗口没填就别永久跳过压缩」的意图
+     * 扩大成了「忽略用户开关」。真实危害不是 OOM：关掉开关的用户顶到硬上限时会收到
+     * 一次**非自愿的摘要请求**（花 token、等一轮模型调用、改动历史），而沉默越权正是不满来源。
+     * 用户关掉自动压缩即接受了增长的代价；溢出时服务商报 `CONTEXT_OVERFLOW`，那是
+     * 用户选择的、可见的失败，优于替他做一个没同意的昂贵决定。
      *
      * 不接 `triggerRatio` 参数：生产只有 [AgentContextSession] 一个调用点、永远传
      * [TRIGGER_RATIO]。以前它开在公开签名上只为让测试绕过绝对上限，那是给生产函数
@@ -242,16 +299,128 @@ internal object AgentContextBudget {
         contextWindow: Int?,
         observedInputTokens: Int?,
         historyChars: Long,
-    ): Boolean {
-        if (force) return true
+        /** 本会话已跑通的峰值输入 token，语义同 [compactionDecision]。 */
+        peakObservedTokens: Int? = null,
+    ): Boolean = compactionDecision(
+        force = force,
+        autoCompactionEnabled = autoCompactionEnabled,
+        contextWindow = contextWindow,
+        observedInputTokens = observedInputTokens,
+        historyChars = historyChars,
+        peakObservedTokens = peakObservedTokens,
+    ).compact
+
+    /**
+     * 压缩判定的**结构化**结果，含不压缩的原因。
+     *
+     * 为什么要把原因也带出来：真机上出现过「历史 1.4M 字符、单轮 45 万 token，却一次都没压缩」
+     * 的 run，而当时唯一的观测只是「没有 compact 事件」——无法区分是开关关了、判据没到、
+     * 还是别处提前返回。事后只能靠反推，代价很高。把判据的实参和结论一起记下来，
+     * 下次遇到同类现象能直接读出是哪一条不成立。
+     *
+     * 判定顺序与语义必须与旧 [shouldCompact] 完全一致；[shouldCompact] 已改为委托本函数，
+     * 两者不会漂移。
+     */
+    fun compactionDecision(
+        force: Boolean,
+        autoCompactionEnabled: Boolean,
+        contextWindow: Int?,
+        observedInputTokens: Int?,
+        historyChars: Long,
+        /**
+         * 生效阈值用的绝对上限（token）。为 null 时按窗口与峰值推算 [absoluteLimitFor]。
+         *
+         * 暴露成参数是为了让「比例与绝对上限谁先到」的边界语义能被独立验证：
+         * 测试要钉住的是 min 的取舍顺序，而不是某个具体常量值。以前测试直接引用常量，
+         * 于是调一次上限就有 5 个用例失败——它们锁住的是数值，不是逻辑。
+         * 生产调用点一律省略本参数。
+         */
+        absoluteLimit: Int? = null,
+        /** 本会话已跑通的峰值输入 token；见 [PROVEN_PEAK_GROWTH]。 */
+        peakObservedTokens: Int? = null,
+    ): CompactionDecision {
         val window = contextWindow?.takeIf { it > 0 }
-        if (historyChars > hardLimitFor(window)) {
-            return autoCompactionEnabled || window == null
+        val hardLimit = hardLimitFor(window)
+        val absoluteCap = absoluteLimit ?: absoluteLimitFor(window, peakObservedTokens)
+        val threshold = effectiveTriggerTokens(window, TRIGGER_RATIO, absoluteCap)
+        val observed = observedInputTokens?.takeIf { it > 0 }
+        // 远端 usage 缺失时只能用本地估算值兜底；cause 里要能看出用的是哪一种。
+        val tokens = observed ?: estimateTokens(historyChars).toInt()
+        val base = CompactionDecision(
+            compact = false,
+            cause = CompactionCause.NONE,
+            tokens = tokens,
+            tokenSource = if (observed != null) TokenSource.OBSERVED else TokenSource.ESTIMATED,
+            threshold = threshold,
+            hardLimit = hardLimit,
+            historyChars = historyChars,
+            contextWindow = window,
+            absoluteLimit = absoluteCap,
+        )
+        if (force) return base.copy(compact = true, cause = CompactionCause.FORCED)
+        if (!autoCompactionEnabled) return base.copy(cause = CompactionCause.DISABLED)
+        // 与旧实现一致：硬上限用严格大于，阈值用 >=。
+        if (historyChars > hardLimit) return base.copy(compact = true, cause = CompactionCause.HARD_LIMIT)
+        if (tokens >= threshold) return base.copy(compact = true, cause = CompactionCause.THRESHOLD)
+        return base
+    }
+
+    /** 不压缩的具体原因；[NONE] 表示「判定过了、确实不需要压缩」，此时 [CompactionDecision.compact] 为 false。 */
+    enum class CompactionCause {
+        /** 所有条件都不成立，不需要压缩。 */
+        NONE,
+
+        /** 调用方明确要求（手动压缩）。 */
+        FORCED,
+
+        /** 用户关闭了自动压缩：尊重开关，不越过它花钱。 */
+        DISABLED,
+
+        /** 字符数超过窗口对应的硬上限，不依赖远端 usage。 */
+        HARD_LIMIT,
+
+        /** token 数达到生效阈值。 */
+        THRESHOLD,
+    }
+
+    /** 判定所用 token 数的来源：远端 usage 还是本地估算。 */
+    enum class TokenSource { OBSERVED, ESTIMATED }
+
+    /**
+     * 一次压缩判定的完整依据。
+     *
+     * [tokens] 与 [threshold] 都按 Double 参与比较（阈值是比例算出来的），但记录时保留
+     * 各自的原始形态，便于直接对照日志与代码常量。
+     */
+    data class CompactionDecision(
+        val compact: Boolean,
+        val cause: CompactionCause,
+        val tokens: Int,
+        val tokenSource: TokenSource,
+        val threshold: Double,
+        val hardLimit: Long,
+        val historyChars: Long,
+        val contextWindow: Int?,
+        /** 生效的绝对上限（token）；见 [absoluteLimitFor]。0 表示调用方未提供（旧数据）。 */
+        val absoluteLimit: Int = 0,
+    ) {
+        /**
+         * 单行诊断文本，直接进 logcat / 追踪。
+         *
+         * 字段名取短、值取全：这条日志的目的就是让人在不翻代码的情况下判断
+         * 「为什么压 / 为什么不压」。
+         */
+        fun describe(): String = buildString {
+            append("compact=").append(if (compact) "yes" else "no")
+            append(" cause=").append(cause.name.lowercase())
+            append(" chars=").append(historyChars)
+            append(" tokens=").append(tokens)
+            append(" src=").append(tokenSource.name.lowercase())
+            append(" threshold=").append(threshold.toLong())
+            append(" absolute=").append(absoluteLimit)
+            append(" hard=").append(hardLimit)
+            append(" window=").append(contextWindow ?: 0)
         }
-        if (!autoCompactionEnabled) return false
-        val tokens = observedInputTokens?.takeIf { it >= 0 }
-            ?: estimateTokens(historyChars).toInt()
-        return tokens >= effectiveTriggerTokens(window, TRIGGER_RATIO)
     }
 
     /**
@@ -273,9 +442,15 @@ internal object AgentContextBudget {
      * 不删它的理由：删了就得在 [shouldCompact] 里写 `window ?: 128_000`，把这个决定
      * 藏进表达式，而它在 [AgentMemoryContextBuilder] 里还有一份同值的独立定义。
      */
-    internal fun effectiveTriggerTokens(contextWindow: Int?, triggerRatio: Double): Double {
+    internal fun effectiveTriggerTokens(
+        contextWindow: Int?,
+        triggerRatio: Double,
+        absoluteLimit: Int? = null,
+        peakObservedTokens: Int? = null,
+    ): Double {
         val assumed = contextWindow?.takeIf { it > 0 } ?: DEFAULT_ASSUMED_CONTEXT_WINDOW
-        return minOf(assumed * triggerRatio, ABSOLUTE_COMPACT_TOKENS.toDouble())
+        val absolute = absoluteLimit ?: absoluteLimitFor(contextWindow, peakObservedTokens)
+        return minOf(assumed * triggerRatio, absolute.toDouble())
     }
 
     /**

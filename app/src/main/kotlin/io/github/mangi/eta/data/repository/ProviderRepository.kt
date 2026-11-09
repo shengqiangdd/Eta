@@ -149,6 +149,9 @@ internal object ProviderRepository {
             val current = allProviders()
             if (current.isEmpty()) {
                 insertProviders(BuiltinProviders.PROVIDERS.map(::seedOfficialModelsIfEmpty))
+                // 新装用户不走下面的 revision 分支，窗口要在这里补一次，否则新装的
+                // Claude/Kimi/Qwen 等目录窗口同样永远是死的。
+                allProviders().forEach { fillCatalogContextWindows(it) }
                 SettingsDataStore.setOfficialModelCatalogRevision(OfficialModelCatalog.CURRENT_REVISION)
                 return@withLock
             }
@@ -160,6 +163,7 @@ internal object ProviderRepository {
                 insertProviders(missing.mapIndexed { index, provider ->
                     seedOfficialModelsIfEmpty(provider.withSortOrder(nextOrder + index))
                 })
+                missing.forEach { provider -> fillCatalogContextWindows(requireNotNull(providerById(provider.id))) }
             }
             val appliedRevision = SettingsDataStore.officialModelCatalogRevision()
             if (appliedRevision < OfficialModelCatalog.CURRENT_REVISION) {
@@ -183,7 +187,20 @@ internal object ProviderRepository {
                 }
                 if (appliedRevision < 3) {
                     current.filter { ProviderSourceRegistry.resolve(it) == ProviderSourceTypes.OPENAI }.forEach { provider ->
-                        fillOpenAiContextWindows(requireNotNull(providerById(provider.id)))
+                        fillCatalogContextWindows(requireNotNull(providerById(provider.id)))
+                    }
+                }
+                // revision 5：其余七个内置 provider 的目录窗口一直是死的（<3 那档只填 OpenAI，
+                // 且 OpenAI/Gemini 在目录里自带了 override）。补全后再统一改版本号，否则
+                // 用户永远停在 appliedRevision=4，这段不会重跑。
+                //
+                // 不能按 authMode == API_KEY 过滤：OpenAI/xAI 用 OAuth 登录后 authMode 会变成
+                // openai_chatgpt/xai_grok（ProviderConfigDraft.withAuthMode 经 updateProvider 落库），
+                // 整个 provider 因此被跳过，这批用户的窗口永远补不上。窗口补全不碰凭据，
+                // 只依据模型是否带窗口，所以按 isBuiltIn 过滤即可。
+                if (appliedRevision < 5) {
+                    current.filter(::shouldFillCatalogContextWindows).forEach { provider ->
+                        fillCatalogContextWindows(requireNotNull(providerById(provider.id)))
                     }
                 }
                 SettingsDataStore.setOfficialModelCatalogRevision(OfficialModelCatalog.CURRENT_REVISION)
@@ -207,17 +224,55 @@ internal object ProviderRepository {
         if (updated != provider.models) replaceModels(provider.id, updated)
     }
 
-    private suspend fun fillOpenAiContextWindows(provider: ProviderSetting) {
-        val presets = OfficialModelCatalog.modelsForProvider(provider).associateBy { it.modelId.normalizedModelId() }
-        val updated = provider.models.map { model ->
+    /**
+     * 把官方目录里标注的窗口写进运行时窗口（[Model.contextWindowOverride]）。
+     *
+     * 官方目录的 `contextWindow` 只是元数据：运行时只认 `contextWindowOverride`（见
+     * [Model.effectiveContextWindow]）。两个值不会自动打通，所以每个目录都必须显式接一次，
+     * 否则标注值永远不生效。这里对**所有**内置 provider 做，不再只限 OpenAI——以前
+     * 只有 OpenAI/Gemini 在目录里自带了 `copy(contextWindowOverride = ...)`，其余七个
+     * provider 的 28 个模型（Claude 1M、Kimi 256K、Qwen 1M 等）窗口全部是死的。
+     *
+     * 收益不在压缩触发点（那条是 `min(窗口×0.85, 10 万)`，大窗口本来就被绝对上限定住），
+     * 而在两处用户能直接感知的地方：
+     * - 记忆核心预算 `min(32000, max(4000, 窗口/16))`：1M 窗口从 8,000 字符提到 32,000；
+     * - 硬上限 `max(1.2M, 窗口×2)`：1M 窗口从 1.2M 字符提到 2M，安全阀不会过早触发。
+     *
+     * 不覆盖用户手填值：`contextWindowOverride != null` 直接跳过，MANUAL 模型也不动。
+     */
+    private suspend fun fillCatalogContextWindows(provider: ProviderSetting) {
+        val updated = withCatalogContextWindows(
+            models = provider.models,
+            presets = OfficialModelCatalog.modelsForProvider(provider),
+        )
+        if (updated != provider.models) replaceModels(provider.id, updated)
+    }
+
+    /**
+     * 判断某 provider 是否需要做一次目录窗口补全。
+     *
+     * 故意**不看** `authMode`：OpenAI/xAI 用 OAuth 登录后 `authMode` 会变成
+     * openai_chatgpt/xai_grok（`ProviderConfigDraft.withAuthMode` 经 `updateProvider` 落库）。
+     * 曾经这里写 `authMode == API_KEY`，结果这批用户的窗口永远补不上——补全不碰凭据，
+     * 只看模型本身，与该用哪种登录方式无关。
+     */
+    internal fun shouldFillCatalogContextWindows(provider: ProviderSetting): Boolean =
+        provider.isBuiltIn && BuiltinProviders.providerById(provider.id) != null && provider.models.isNotEmpty()
+
+    /**
+     * [fillCatalogContextWindows] 的纯函数内核，抽出来是为了能在未安装 Robolectric native
+     * runtime 的开发机（Linux aarch64）上直接单测：整个逻辑只涉及 list 与 copy，不需要数据库。
+     */
+    internal fun withCatalogContextWindows(models: List<Model>, presets: List<Model>): List<Model> {
+        val byModelId = presets.associateBy { it.modelId.normalizedModelId() }
+        return models.map { model ->
             if (model.contextWindowOverride != null || model.source == ModelSource.MANUAL) return@map model
-            val preset = presets[model.modelId.normalizedModelId()] ?: return@map model
+            val preset = byModelId[model.modelId.normalizedModelId()] ?: return@map model
             val window = model.contextWindow
                 ?: preset.contextWindow.takeIf { model.source == ModelSource.CATALOG }
                 ?: return@map model
             model.copy(contextWindow = window, contextWindowOverride = window)
         }
-        if (updated != provider.models) replaceModels(provider.id, updated)
     }
 
     suspend fun repairSelection(): Settings {
@@ -280,7 +335,6 @@ internal object ProviderRepository {
         val seededModels = OfficialModelCatalog.modelsForProvider(provider)
         return if (seededModels.isEmpty()) provider else provider.withModels(seededModels)
     }
-
     private suspend fun refreshLegacyCatalogReasoningCapabilities(provider: ProviderSetting) {
         val legacyCapabilities = when (provider.id) {
             BuiltinProviders.ANTHROPIC_ID -> mapOf("claude-fable-5" to ModelReasoningCapabilities(

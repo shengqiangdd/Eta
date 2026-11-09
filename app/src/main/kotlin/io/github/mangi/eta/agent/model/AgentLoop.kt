@@ -92,6 +92,9 @@ internal class AgentLoop(
         roleplay = roleplayContext != null,
         onBatch = compactionLog,
         onUsage = compactionUsage,
+        // 复用同一个出口，但加前缀：压缩判定每轮都输出，而摘要分批只在真正压缩时有，
+        // 混在一起会让日志读不清。
+        onDecision = { detail -> compactionLog("agent_context_decision run=$operationId $detail") },
     )
     private var supplementIndex = initialSupplementIndex
 
@@ -227,6 +230,22 @@ internal class AgentLoop(
                     rejectContentFilter(response.response)
                     if (purpose == ProviderRequestPurpose.CHAT) validateChatResponse(response.response)
                 }
+            } catch (overflow: AgentModelFailure) {
+                // 端点报容量硬超（retryable=false，原本直接把整个 run 判死）：
+                // 本轮已经证明「这个量级的请求会被拒」。强制压缩、把上限钉在能通过的峰值，
+                // 然后重跑**同一轮**。requestMessages 是压缩前的快照，必须重建，
+                // 所以是 continue 回循环顶部，不是原地重试。
+                if (!overflow.isContextOverflow() || overflow.replayUnsafe ||
+                    !purpose.allowsTools || !context.canRecoverFromOverflow()
+                ) {
+                    throw overflow
+                }
+                context.noteContextOverflow()
+                roundLog(
+                    "agent_context_overflow run=$operationId round=$round " +
+                        "tokens=${roundInputTokens ?: -1} rescued=true"
+                )
+                continue
             } finally {
                 // 同一回合的重试仍需原始观察；整个回合结束后才移除截图。
                 discardPendingToolImageMessage()

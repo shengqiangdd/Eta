@@ -14,8 +14,22 @@ internal class AgentModelFailure(
     val retryable: Boolean,
     message: String,
     cause: Throwable? = null,
+    /**
+     * 这次请求**不能重放**：已经开始的托管工具（服务端搜索等）可能已产生副作用 /
+     * 已经计费，再发一遍就是重复执行。由 AgentModelRetry 在归类时标出。
+     */
+    val replayUnsafe: Boolean = false,
 ) : IllegalStateException(message, cause) {
+    /**
+     * 端点明确回报上下文容量不足：**唯一**一种「压缩之后可以原地重试」的失败。
+     *
+     * 其余失败重试只会重复犯错，所以只有这一类会回到循环顶部重建请求
+     * （见 AgentLoop 的溢出救援分支）。
+     */
+    fun isContextOverflow(): Boolean = code == CODE_CONTEXT_OVERFLOW
+
     companion object {
+        const val CODE_CONTEXT_OVERFLOW = "CONTEXT_OVERFLOW"
         const val CODE_TLS_INTERRUPTED = "MODEL_TLS_INTERRUPTED"
         const val CODE_PROTOCOL_INTERRUPTED = "MODEL_PROTOCOL_INTERRUPTED"
 
@@ -44,7 +58,7 @@ internal class AgentModelFailure(
             }
             authenticationFailure(error)?.let { return it }
             if (isContextOverflow(error)) return AgentModelFailure(
-                "CONTEXT_OVERFLOW", false, "模型上下文超过容量限制。",
+                CODE_CONTEXT_OVERFLOW, false, "模型上下文超过容量限制。",
             )
             val permanent = isPermanent(error, body)
             if (status == 400 && includeParameterDetails && !permanent) {
@@ -72,7 +86,7 @@ internal class AgentModelFailure(
         fun stream(error: JSONObject, message: String): AgentModelFailure {
             authenticationFailure(error)?.let { return it }
             if (isContextOverflow(error)) return AgentModelFailure(
-                "CONTEXT_OVERFLOW", false, "模型上下文超过容量限制。",
+                CODE_CONTEXT_OVERFLOW, false, "模型上下文超过容量限制。",
             )
             val codes = listOf(
                 error.optString("code"),

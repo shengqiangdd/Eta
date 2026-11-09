@@ -56,13 +56,18 @@ class AgentContextRecoveryTest {
     @Test
     fun automaticCompactionFollowsAbsoluteLimitThenWindowRatio() {
         // usage -> 是否应当压缩。null 与 0 表示“没有可用实测值”，退回本地估算。
+        // 绝对上限随窗口放大：900K 窗口的天花板是 45 万（见 absoluteLimitFor），不再是固定的 10 万。
+        // 首轮还没有「已跑通峰值」，所以直接用天花板。
+        val ceiling = AgentContextBudget.absoluteLimitFor(config.contextWindow)
+        assertEquals(450_000, ceiling)
         val cases = listOf(
             null to false,          // 无从得知 → 估算 8000 token，不压
             0 to false,             // 0 也不该被当成“用量很大”
-            99_999 to false,        // 差一 token 到绝对上限
-            100_000 to true,        // 刚好碰到绝对上限
-            300_000 to true,        // 远超绝对上限，与窗口无关
-            764_999 to true,        // 同样已被绝对上限覆盖
+            99_999 to false,        // 旧实现里的绝对上限，现在远不够
+            ceiling - 1 to false,   // 差一 token 到天花板
+            ceiling to true,        // 刚好碰到天花板
+            ceiling * 2 to true,    // 远超天花板
+            764_999 to true,        // 旧上限下面被当成“超上限”，现在只是正常区间
         )
         for ((input, expectCompact) in cases) {
             var summaries = 0
@@ -415,6 +420,76 @@ class AgentContextRecoveryTest {
         assertEquals(300_000, AgentHttpClient.modelClient(ProviderRequestPurpose.COMPACTION).callTimeoutMillis)
         assertEquals(0, AgentHttpClient.modelClient(ProviderRequestPurpose.CHAT).callTimeoutMillis)
     }
+
+    /**
+     * 端点回报容量硬超时必须「压缩一次 + 重跑同一轮」，而不是把整个 run 判死。
+     *
+     * 这是上限放大（窗口 × 0.5、峰值 × 1.5）带进来的真实风险：窗口填得比端点真实
+     * 容量大时，那个余量仍可能撞硬顶。判据：CHAT 只发两次、摘要只跑一次、拿到回复。
+     */
+    @Test
+    fun contextOverflowIsRescuedByCompactingAndRetryingTheSameRound() {
+        var chatRequests = 0
+        var summaries = 0
+        val summary = "目标：完成溢出救援。\n" + "已完成的步骤与真实结果。".repeat(80) + "\n下一步：装包验证。"
+        val result = AgentModelClient.complete(
+            config.copy(contextWindow = 100_000), "继续", AgentModelClient.ToolExecutor { error("不应执行工具") },
+            provider = provider { request, emit ->
+                if (request.purpose == ProviderRequestPurpose.COMPACTION) {
+                    summaries++
+                    response(summary)
+                } else {
+                    chatRequests++
+                    if (chatRequests == 1) {
+                        emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 260_000)))
+                        throw AgentModelFailure(
+                            AgentModelFailure.CODE_CONTEXT_OVERFLOW, false, "模型上下文超过容量限制。",
+                        )
+                    }
+                    emit(ProviderEvent.Usage(AgentTokenUsage(inputTokens = 60_000)))
+                    response("完成")
+                }
+            },
+            history = rescueHistory(),
+        )
+        assertEquals("溢出只该救一次：摘要请求一个", 1, summaries)
+        assertEquals("CHAT 两次：一次溢出、一次成功", 2, chatRequests)
+        assertEquals("完成", result.content)
+    }
+
+    /** 救援只给一次：第二次仍溢出说明端点真实容量比声明的窗口小，继续试就是死循环。 */
+    @Test
+    fun secondContextOverflowFailsInsteadOfLooping() {
+        var chatRequests = 0
+        val failure = assertThrows(AgentModelExecutionException::class.java) {
+            AgentModelClient.complete(
+                config.copy(contextWindow = 100_000), "继续", AgentModelClient.ToolExecutor { error("不应执行工具") },
+                provider = provider { request, emit ->
+                    if (request.purpose == ProviderRequestPurpose.COMPACTION) {
+                        response("目标：完成溢出救援。\n" + "已完成的步骤。".repeat(80))
+                    } else {
+                        chatRequests++
+                        throw AgentModelFailure(
+                            AgentModelFailure.CODE_CONTEXT_OVERFLOW, false, "模型上下文超过容量限制。",
+                        )
+                    }
+                },
+                history = rescueHistory(),
+            )
+        }
+        assertEquals("只救一次：CHAT 两次", 2, chatRequests)
+        assertEquals("CONTEXT_OVERFLOW", (failure.cause as AgentModelFailure).code)
+    }
+
+    /**
+     * 溢出救援的前提是「历史确实占大头」：235,000 字符 ≈ 58,750 token，
+     * 在 100,000 token 上限的一半以上（能进救援），又低于触发线 85,000
+     * （不会被开头的自动压缩吃掉），且小于单批 240K（摘要请求只发一个）。
+     */
+    private fun rescueHistory() = listOf(
+        AgentModelClient.ConversationMessage("user", "旧任务"),
+        AgentModelClient.ConversationMessage("assistant", "长".repeat(235_000)),
+    )
 
     private fun history() = listOf(
         AgentModelClient.ConversationMessage("user", "旧任务"),

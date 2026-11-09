@@ -230,7 +230,7 @@ private val ProviderSetting.storageType: String
         is CustomProviderSetting -> ProviderTypes.CUSTOM
     }
 
-private fun Model.toEntity(providerId: String): ProviderModelEntity =
+internal fun Model.toEntity(providerId: String): ProviderModelEntity =
     ProviderModelEntity(
         id = id,
         providerId = providerId,
@@ -260,7 +260,7 @@ private fun Model.toEntity(providerId: String): ProviderModelEntity =
         createdAt = createdAt,
     )
 
-private fun ProviderModelEntity.toDomain(): Model =
+internal fun ProviderModelEntity.toDomain(): Model =
     Model(
         id = id,
         modelId = modelId,

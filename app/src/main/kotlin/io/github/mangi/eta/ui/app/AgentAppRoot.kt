@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.runtime.AgentExecutionService
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceLocationProvider
@@ -190,6 +191,8 @@ fun AgentAppRoot(
                     val enabled = Prefs.isEnabled(Prefs.Keys.AGENT_KEEP_SCREEN_ON)
                     keepScreenEnabled = enabled
                     agentState.updateKeepScreenEnabled(enabled)
+                    // 锁由前台服务持有；开关一变就通知它立刻重算，别等下一轮续期。
+                    AgentExecutionService.refreshKeepScreen()
                 }
             }
         }
@@ -198,12 +201,11 @@ fun AgentAppRoot(
     }
     // 保屏用「有会话在跑」而不是 homeState：homeState 只反映当前选中的会话，
     // 任务运行中切到别的会话时它会变成不运行的状态，屏幕就会照常息屏。
-    // 暂停同样按全局算：只有「运行且未暂停」的会话才需要保屏，否则暂停任务后一直常亮。
-    val keepScreenOn = AgentKeepScreenOnPolicy.shouldKeep(
-        enabled = keepScreenEnabled,
-        streaming = agentState.anyRunningUnpausedConversation,
-        paused = false,
-    )
+    //
+    // 但**不能用 agentState.anyRunningUnpausedConversation 这个本地镜像**：运行态不入库，
+    // Activity 被系统回收重建后镜像恢复为 false，窗口 flag 就会跟服务持有的唤醒锁说两套话。
+    // 现在两边共用 AgentExecutionService 的权威判断，只留一个决策点。
+    val keepScreenOn = AgentExecutionService.keepScreenOnState
     // 窗口 flag 必须跟**可见性**挂钩。它只对可见窗口生效，但窗口对象会跨可见性一直活着：
     // 真机上见过 MainActivity 退到后台 7 小时 36 分后，窗口仍带着 KEEP_SCREEN_ON，
     // WMS 就一直记着它（dumpsys power 里那把 'WindowManager/displayId:0'），

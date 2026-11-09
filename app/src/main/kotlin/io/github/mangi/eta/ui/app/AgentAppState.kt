@@ -117,13 +117,20 @@ internal class AgentAppState(
      */
     private val bootSnapshot = initialConversations ?: AgentConversationStore.Snapshot.empty()
     private val appContext = context.applicationContext
-    // 保屏唤醒锁归状态层持有：Compose 在后台会停止重组，靠 UI 副作用释放会一直拖到用户回前台。
-    private val screenWakeLock = AgentScreenWakeLock(appContext)
+    /*
+     * 保屏不在这里做。
+     *
+     * 旧实现把屏幕唤醒锁和续期协程放在这个 ViewModel 里，靠 `isStreaming` 这个本地镜像决策。
+     * 但 Agent 去操作别的应用时，Eta 的 Activity 会被系统回收，重建后 `isStreaming` 从数据库
+     * 恢复成 false（运行态本来就不入库），于是算出「没有任务在跑」并主动释放锁——
+     * 表现就是「切到别的应用，屏幕就开始正常息屏」。
+     *
+     * 现在由 AgentExecutionService 持有：前台服务是运行态的权威，它的生命周期就是运行期，
+     * 不受 Activity 存亡影响。这里只负责把开关变化透传给它。
+     */
     private var keepScreenEnabled = agentBooleanForUi(Prefs.Keys.AGENT_KEEP_SCREEN_ON)
-    /** 长任务运行期间的保屏续期循环；不再需要保屏时取消。 */
-    private var keepScreenRenewJob: Job? = null
-    /** 保屏自愈任务：周期性把锁强度与决策对齐（见 [ensureKeepScreenLockSettles]）。 */
-    private var keepScreenSettleJob: Job? = null
+    /** 本地运行态镜像的自愈任务（见 [ensureStreamingMirrorSettles]）。 */
+    private var streamingMirrorSettleJob: Job? = null
     private val runConversationIds = mutableMapOf<String, String>()
     private val runMessageProjector = AgentRunMessageProjector()
     private val runEventCoalescer = AgentRunEventCoalescer()
@@ -310,61 +317,43 @@ internal class AgentAppState(
     var anyRunningConversation by mutableStateOf(false)
         private set
 
-    /**
-     * 是否有会话仍在推进（运行且未暂停）。
-     *
-     * 暂停中的 run 不会再产生新内容，保屏只跟随「还会变化」的 run；否则用户暂停任务后
-     * 屏幕会继续常亮，白白耗电。
-     */
-    var anyRunningUnpausedConversation by mutableStateOf(false)
-        private set
-
     private fun refreshAnyRunningConversation() {
         anyRunningConversation = conversationsById.values.any { it.isStreaming }
-        anyRunningUnpausedConversation = conversationsById.values.any { it.isStreaming && !it.isPaused }
-        applyKeepScreenLock()
+        publishKeepScreenStatus()
     }
 
-    /** 设置页的保屏开关变化时由界面层同步进来；开关关掉要立刻释放唤醒锁。 */
+    /** 设置页的保屏开关变化时由界面层同步进来。 */
     fun updateKeepScreenEnabled(enabled: Boolean) {
         keepScreenEnabled = enabled
-        applyKeepScreenLock()
+        publishKeepScreenStatus()
     }
 
     /**
-     * 把保屏锁切到“当前应该的状态”。
+     * 把开关状态发布给设置页。
      *
-     * 这是**唯一**决定锁开/关的地方；[AgentScreenWakeLock.renew] 只负责把已有的锁续期。
-     * 两者分工必须分明：旧实现的 renew 会自己 acquire，于是决策层与执行层各有一套判断，
-     * 结果就是「会话已经结束，锁还在」。
-     *
-     * 调用点（状态变化时）之外，还有一条自愈：见 [ensureKeepScreenLockSettles]。
+     * 注意：这里**不再**根据本地镜像推算「是否正在保屏」——锁由 `AgentExecutionService`
+     * 按服务端权威状态持有，[AgentKeepScreenStatus.holding] 直接转发它的值。
+     * 旧实现用一个失真的 `isStreaming` 镜像自己算一遍，设置页于是会显示错误的实况。
      */
-    private fun applyKeepScreenLock() {
-        val runningUnpaused = conversationsById.values.count { it.isStreaming && !it.isPaused }
-        val shouldHold = keepScreenEnabled && runningUnpaused > 0
-        screenWakeLock.setHeld(shouldHold)
-        AgentKeepScreenStatus.publish(keepScreenEnabled, shouldHold, runningUnpaused)
-        if (shouldHold) startKeepScreenRenew() else stopKeepScreenRenew()
+    private fun publishKeepScreenStatus() {
+        AgentKeepScreenStatus.publish(enabled = keepScreenEnabled)
     }
 
     /**
-     * 保屏自愈：把锁强度与**服务端权威状态**对齐。
+     * 本地镜像自愈：用**服务端权威状态**纠正失真的 `isStreaming`。
      *
-     * 旧实现的自愈是假的：它只是把 `conversationsById` 里同一个镜像再算一遍。
-     * 镜像失真时（run 已在服务端结束，但本地 `isStreaming` 没被改回来）自愈也跟着错，
-     * 用户看到的是「会话已结束，屏幕一直亮着」，直到 12 小时上限。真机实测：
-     * `dumpsys power` 里 `Eta:agent-keep-screen` 在会话结束后仍在续期。
+     * 它不再碰锁——锁的开关由前台服务按自己的存活状态决定。
+     * 这里只解决「事件流断了以后没有事件会来改 `isStreaming`」，
+     * 否则会话结束后列表会一直显示运行中，设置页的保屏文案也跟着错。
      *
-     * 现在每分钟向 `AgentRuntimeService` 问一次「还有几条 run 真的活着」，
-     * 只在**查询成功**时采信：服务端没起/超时要按本地判定，
-     * 不能因为「查不到」把锁放掉，让任务中途熄屏。
+     * 每分钟向 `AgentRuntimeService` 问一次「还有几条 run 真的活着」，
+     * 只在**查询成功**时采信：服务端没起 / 超时不能当成「没跑」。
      */
-    private fun ensureKeepScreenLockSettles() {
-        if (keepScreenSettleJob?.isActive == true) return
-        keepScreenSettleJob = scope.launch {
+    private fun ensureStreamingMirrorSettles() {
+        if (streamingMirrorSettleJob?.isActive == true) return
+        streamingMirrorSettleJob = scope.launch {
             while (true) {
-                delay(KEEP_SCREEN_SETTLE_INTERVAL_MS)
+                delay(STREAMING_MIRROR_SETTLE_INTERVAL_MS)
                 val serverRunning = withContext(Dispatchers.IO) {
                     (AgentRuntimeClient(appContext, AndroidAgentLogger).queryActiveRun()
                         as? AgentRuntimeClient.ActiveRunQuery.Known)
@@ -377,8 +366,7 @@ internal class AgentAppState(
                     )
                 ) {
                     reconcileFinishedConversations()
-                    // 镜像被纠正了，锁也要跟着走：这时本地判定才与服务端一致。
-                    applyKeepScreenLock()
+                    publishKeepScreenStatus()
                 }
             }
         }
@@ -406,34 +394,6 @@ internal class AgentAppState(
         }
     }
 
-    /**
-     * 12 小时上限只是防泄漏兜底：长任务里锁会被系统到期释放，而状态不再变化时也没有新的刷新，
-     * 结果就是「任务还在跑，屏幕却开始按系统超时熄灭」。运行期间每 30 分钟续期一次。
-     */
-    private fun startKeepScreenRenew() {
-        if (keepScreenRenewJob?.isActive == true) return
-        keepScreenRenewJob = scope.launch {
-            while (true) {
-                delay(KEEP_SCREEN_RENEW_INTERVAL_MS)
-                // 不信任缓存标志，每轮重新算一次：anyRunningUnpausedConversation
-                // 是状态镜像，而这里要回答的是“现在还需不需要保屏”。
-                // 两者不一致时以现场计算为准，否则一次漏刷就可能把锁挂到 12 小时。
-                val stillNeeded = keepScreenEnabled &&
-                    conversationsById.values.any { it.isStreaming && !it.isPaused }
-                if (!stillNeeded) {
-                    // 还有锁残余就收掉——会话已经停了，没有理由继续亮屏。
-                    screenWakeLock.setHeld(false)
-                    break
-                }
-                screenWakeLock.renew()
-            }
-        }
-    }
-
-    private fun stopKeepScreenRenew() {
-        keepScreenRenewJob?.cancel()
-        keepScreenRenewJob = null
-    }
 
     var modelPickerState by mutableStateOf(AgentModelPickerUiState())
         private set
@@ -464,12 +424,10 @@ internal class AgentAppState(
                 debugForgetLocalRunState(conversationId)
             }
         }
-        // 冷启动就先把“开着但当前没有任务”的真实状态发布给设置页：
-        // 以前只有“运行状态变化”才会发布，冷启动且没跑过任务时设置页会错报“已关闭”。
-        applyKeepScreenLock()
-        // 保屏自愈：启动就开，长期盯着「锁强度 == 应有状态」。
-        // 不能只靠状态变化触发——锁是系统级资源，漏一次就没有事件会来纠正它。
-        ensureKeepScreenLockSettles()
+        // 冷启动就先把“开着但当前没有任务”的真实状态发布给设置页。
+        publishKeepScreenStatus()
+        // 镜像自愈：启动就开。锁归前台服务，这里只负责纠正本地 isStreaming。
+        ensureStreamingMirrorSettles()
         // 进程级自动续跑：任务结束不再依赖「卡片那张组合恰好活着」。
         // 分发器就是这个状态对象：只有它知道会话历史、模型与会话级预算。
         BackgroundAutoResumeWatcher.install(backgroundResumeDispatcher)
@@ -4416,7 +4374,6 @@ internal class AgentAppState(
         // 数据状态以较粗粒度发布，文字显现由独立的帧时钟连续推进。
         const val STREAM_UI_UPDATE_INTERVAL_MS = 80L
         /** 保屏续期间隔：远小于 12 小时上限，长任务不会悄悄失去保屏。 */
-        const val KEEP_SCREEN_RENEW_INTERVAL_MS = 30L * 60L * 1000L
         /**
          * 保屏自愈间隔。
          *
@@ -4424,7 +4381,7 @@ internal class AgentAppState(
          * 不要跟续期间隔合并——续期只需要在心跳时做，自愈需要更勤；
          * 共用一个 30 分钟周期就等于“漏了要再亮半小时”。
          */
-        const val KEEP_SCREEN_SETTLE_INTERVAL_MS = 60L * 1000L
+        const val STREAMING_MIRROR_SETTLE_INTERVAL_MS = 60L * 1000L
         /** 用户消息落盘等待上限：超过就按保存失败报错，避免界面永远停在“停止”。 */
         const val PREPARE_TIMEOUT_MS = 8_000L
         /** 同一个 run 的重复「停止」去抖窗口：只防连点，不做永久抑制。 */

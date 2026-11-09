@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1900,58 +1902,83 @@ private fun AgentChatBottomBar(
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         ) {
-            goal?.let { item ->
-                AgentGoalCard(
-                    goal = item,
+            /*
+             * 卡片区与输入框分开测量，预算交给布局系统。
+             *
+             * 以前这些卡片和输入框是同一个 Column 的兄弟，都没有高度约束：
+             * 悬浮小窗（系统自由窗口）下可用高度本来就只有几百 dp，提问卡带上选项、
+             * 再加台账/待办卡，会把输入框挤到只剩一条边——点不了选项也打不了字。
+             *
+             * 做法：卡片区拿 weight，输入框不拿 weight。Column 先测量非 weight 子项，
+             * 输入框因此总能拿到它需要的完整高度；剩下的空间才归卡片区，
+             * 不够时它在内部滚动，而不是去压别人。
+             *
+             * 这里的 maxHeight 是有限的：Scaffold 用 constraints.copy(minWidth = 0, minHeight = 0)
+             * 测量 bottomBar，只把最小尺寸归零，没动 maxHeight。所以 weight 能正常分配，
+             * 也不需要自己判断“这是不是小窗”——全屏、小窗、分屏共用同一条路径。
+             *
+             * fill = false 是关键：卡片少时按内容高度收缩，不会把空白拉到输入框上方，
+             * 全屏下的观感与改前完全一致。
+             */
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                goal?.let { item ->
+                    AgentGoalCard(
+                        goal = item,
+                        scopeId = goalScopeId,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+                todoPlan?.let { plan ->
+                    AgentTodoPlanCard(plan = plan, modifier = Modifier.padding(bottom = 8.dp))
+                }
+                // 只画「现在还需要看」的卡：跑过的任务全结束之后还常驻一行，
+                // 读起来像「还有事没完」，实际什么都没在做。偏好可在设置里关掉。
+                val collapseIdleCards = remember { Prefs.isEnabled(Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE) }
+                taskLedger?.let { ledger ->
+                    val summary = ledger.cardSummary()
+                    if (ChatStatusCards.ledgerVisible(
+                            hasEntries = !ledger.isEmpty,
+                            alwaysShow = !collapseIdleCards,
+                            running = summary.running,
+                            failed = summary.failed,
+                            stalled = summary.stalled,
+                        )
+                    ) {
+                        AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
+                    }
+                }
+                // 后台任务回答「这台机器上还有什么在跑」，与台账卡同属「未收尾的东西」，紧跟在它后面。
+                // 卡片上的「继续」走 onSubmit，与用户手打一条消息同一条路径。
+                BackgroundTasksCard(
+                    canSend = !isStreaming,
+                    onResume = onSubmit,
+                    // 与台账 / 目标 / 待办同一个作用域键：续跑记忆按会话分开，别让 A 会话的点击
+                    // 把 B 会话的按钮藏起来。
                     scopeId = goalScopeId,
+                    // 空对话还没有会话 id：它名下不可能有任务，不能把别的会话的任务算成自己的。
+                    scopePending = goalScopeId.isNullOrBlank(),
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
-            }
-            todoPlan?.let { plan ->
-                AgentTodoPlanCard(plan = plan, modifier = Modifier.padding(bottom = 8.dp))
-            }
-            // 只画「现在还需要看」的卡：跑过的任务全结束之后还常驻一行，
-            // 读起来像「还有事没完」，实际什么都没在做。偏好可在设置里关掉。
-            val collapseIdleCards = remember { Prefs.isEnabled(Prefs.Keys.AGENT_CHAT_CARDS_AUTO_COLLAPSE) }
-            taskLedger?.let { ledger ->
-                val summary = ledger.cardSummary()
-                if (ChatStatusCards.ledgerVisible(
-                        hasEntries = !ledger.isEmpty,
-                        alwaysShow = !collapseIdleCards,
-                        running = summary.running,
-                        failed = summary.failed,
-                        stalled = summary.stalled,
-                    )
-                ) {
-                    AgentTaskLedgerCard(ledger = ledger, modifier = Modifier.padding(bottom = 8.dp))
+                pendingAsk?.let { ask ->
+                    AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))
                 }
-            }
-            // 后台任务回答「这台机器上还有什么在跑」，与台账卡同属「未收尾的东西」，紧跟在它后面。
-            // 卡片上的「继续」走 onSubmit，与用户手打一条消息同一条路径。
-            BackgroundTasksCard(
-                canSend = !isStreaming,
-                onResume = onSubmit,
-                // 与台账 / 目标 / 待办同一个作用域键：续跑记忆按会话分开，别让 A 会话的点击
-                // 把 B 会话的按钮藏起来。
-                scopeId = goalScopeId,
-                // 空对话还没有会话 id：它名下不可能有任务，不能把别的会话的任务算成自己的。
-                scopePending = goalScopeId.isNullOrBlank(),
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-            pendingAsk?.let { ask ->
-                AgentAskCard(ask = ask, onAnswer = onAnswerAsk, modifier = Modifier.padding(bottom = 8.dp))
-            }
-            if (chatTurnStripVisible(turnNavigationEnabled, turnTotal, turnNavigationScrollable)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    ChatTurnStrip(
-                        currentTurn = turnCurrent,
-                        total = turnTotal,
-                        onPrevious = onTurnPrevious,
-                        onNext = onTurnNext,
-                    )
+                if (chatTurnStripVisible(turnNavigationEnabled, turnTotal, turnNavigationScrollable)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        ChatTurnStrip(
+                            currentTurn = turnCurrent,
+                            total = turnTotal,
+                            onPrevious = onTurnPrevious,
+                            onNext = onTurnNext,
+                        )
+                    }
                 }
             }
             AgentChatInputBar(

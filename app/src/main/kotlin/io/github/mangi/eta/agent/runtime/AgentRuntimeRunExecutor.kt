@@ -522,7 +522,15 @@ internal class AgentRuntimeRunExecutor(
                 backgroundEvents = backgroundEventsPlan,
                 toolSpill = AgentToolSpill.forApp(appContext),
                 // 摘要分批进度只在这里接真日志：库内类默认静默，否则纯 JVM 单测会撞到未实现的 android.util.Log。
-                compactionLog = { AndroidAgentLogger.info(it) },
+                // 判定日志走 infoPersisted：它只在原因变化时发一条，量很小，且正是事后要追问的「为何没压」；
+                // 普通 info 会被后续的 DEBUG 事件顶出 logcat 环形缓冲。
+                compactionLog = { line ->
+                    if (line.startsWith("agent_context_decision")) {
+                        AndroidAgentLogger.infoPersisted(line)
+                    } else {
+                        AndroidAgentLogger.info(line)
+                    }
+                },
                 roundLog = { AndroidAgentLogger.info(it) },
                 // 压缩是嵌套的独立请求，不会走 UsageReceived；在这里直接记账，purpose 单独标出来。
                 // 键名必须与其它入口一致用 "compact"：曾用 "compaction" 写过，结果面板上同一用途被拆成两条

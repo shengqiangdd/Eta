@@ -16,11 +16,15 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.widget.Toast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.overlay.AgentOverlayStatus
 import io.github.mangi.eta.agent.overlay.localizedText
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.ui.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -34,6 +38,28 @@ internal class AgentExecutionService : Service() {
     private var foregroundActive = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakeLockRenewedAtElapsed = 0L
+    /**
+     * 屏幕保活锁。
+     *
+     * **必须由前台服务持有，不能放在 ViewModel 里**：Agent 操作别的应用时，Eta 的
+     * Activity 会被系统回收（内存压力 / ROM 后台管控），而前台服务活着。
+     * 旧实现的屏幕锁跑在 `viewModelScope` 里，Activity 一销毁协程就被取消，
+     * 锁不再续期，到期后屏幕开始按系统超时熄灭——但 CPU 锁在服务里还活着，
+     * 于是任务继续跑，用户看到的是「任务在跑，屏幕却会灭」。
+     *
+     * 生命周期与 [wakeLock] 完全一致：前台服务在跑就续期，任务清空即释放。
+     */
+    private val screenWakeLock by lazy { AgentScreenWakeLock(applicationContext) }
+    private var screenWakeLockRenewedAtElapsed = 0L
+    private val screenWakeLockRenew = object : Runnable {
+        override fun run() {
+            if (!foregroundActive) {
+                releaseScreenWakeLock()
+                return
+            }
+            renewScreenWakeLock()
+        }
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
     /**
      * 通知栏动作的落点。
@@ -110,6 +136,10 @@ internal class AgentExecutionService : Service() {
             }
             foregroundActive = true
             renewWakeLock()
+            renewScreenWakeLock()
+            // 服务刚起来时窗口 flag 还停在初始值 false；这里用权威状态补一次，
+            // 否则 Activity 已在后台重建、没人触发重组时，前台窗口不会保屏。
+            publishKeepScreenOn()
         } catch (failure: RuntimeException) {
             startRejected = true
             AndroidAgentLogger.warn("Execution service foreground failed: type=${failure.safeLogType()}")
@@ -231,6 +261,7 @@ internal class AgentExecutionService : Service() {
         }
         // 销毁时同样收回本服务拥有的任务。回收在独立有界工作线程上完成，不阻塞 Main。
         releaseWakeLock()
+        releaseScreenWakeLock()
         controlExecutor.shutdownNow()
         stopQueue.close(leases.drainOwner(owner))
         super.onDestroy()
@@ -247,10 +278,15 @@ internal class AgentExecutionService : Service() {
         if (leases.closeOwnerIfIdle(owner)) {
             foregroundActive = false
             releaseWakeLock()
+            releaseScreenWakeLock()
+            // 服务即将自停：窗口 flag 必须同时收掉，否则界面还停在「有任务」的旧值上。
+            publishKeepScreenOn()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         } else {
             renewWakeLock()
+            renewScreenWakeLock()
+            publishKeepScreenOn()
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
         }
     }
@@ -290,6 +326,61 @@ internal class AgentExecutionService : Service() {
         val lock = wakeLock ?: return
         if (lock.isHeld) runCatching { lock.release() }
     }
+
+    /**
+     * 续期屏幕锁。
+     *
+     * 三个条件缺一不可，全部来自**权威来源**：
+     * - `foregroundActive`：服务自己是否已进入前台；
+     * - `agentRunIds()`：服务登记的 Agent run 租约，任务结束就会被 [release] 摘掉；
+     * - `runStatus`：服务端回传的语义状态，用来排除暂停。
+     *
+     * 只看前两者里的第一个（旧行为）会让服务因终端命令等其它租约存活时继续亮屏；
+     * 完全不看任务（上一版）会让会话结束后一直亮到天亮。两个方向都踩过，别再退回去。
+     *
+     * 用户关掉「运行时保持亮屏」开关时必须立即释放：Agent 在后台跑几十分钟，
+     * 不能因为用户关了开关还继续亮着。开关值是全局偏好，直接读最新值，不缓存：
+     * 用户在任务中途关掉开关，下一轮续期就要生效。
+     */
+    private fun renewScreenWakeLock() {
+        val paused = runStatus is AgentOverlayStatus.Paused
+        val hold = AgentKeepScreenLockPolicy.shouldHold(
+            foregroundActive = foregroundActive,
+            hasRunningTask = leases.agentRunIds().isNotEmpty(),
+            paused = paused,
+            enabled = keepScreenOnEnabled(),
+        )
+        if (!hold) {
+            releaseScreenWakeLock()
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        // 与 CPU 锁同样的节奏：同一把锁不必每次状态刷新都跨 binder 重置超时。
+        if (screenWakeLockRenewedAtElapsed != 0L &&
+            now - screenWakeLockRenewedAtElapsed < SCREEN_WAKE_LOCK_RENEW_INTERVAL_MS
+        ) {
+            return
+        }
+        screenWakeLock.setHeld(true)
+        screenWakeLockRenewedAtElapsed = now
+        mainHandler.removeCallbacks(screenWakeLockRenew)
+        mainHandler.postDelayed(screenWakeLockRenew, SCREEN_WAKE_LOCK_RENEW_INTERVAL_MS)
+    }
+
+    /** 立即按当前开关重算：开关切换必须马上生效，不能等下一轮续期。 */
+    private fun refreshScreenWakeLock() {
+        screenWakeLockRenewedAtElapsed = 0L
+        renewScreenWakeLock()
+    }
+
+    private fun releaseScreenWakeLock() {
+        mainHandler.removeCallbacks(screenWakeLockRenew)
+        screenWakeLockRenewedAtElapsed = 0L
+        screenWakeLock.setHeld(false)
+    }
+
+    private fun keepScreenOnEnabled(): Boolean =
+        Prefs.isEnabled(Prefs.Keys.AGENT_KEEP_SCREEN_ON)
 
     private fun notification(): Notification {
         val status = runStatus
@@ -367,6 +458,14 @@ internal class AgentExecutionService : Service() {
         private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
         /** 锁过半才续期，减少状态刷新带来的 wakelock 重获取。 */
         private const val WAKE_LOCK_RENEW_INTERVAL_MS = 10L * 60L * 1000L
+        /**
+         * 屏幕锁续期周期。
+         *
+         * [AgentScreenWakeLock] 的 12 小时上限是防泄漏兜底；它不会自动续期，
+         * 状态没变化时也没人再调 acquire。长任务期间必须定期推一把，
+         * 否则过了上限屏幕就会开始熄灭。
+         */
+        private const val SCREEN_WAKE_LOCK_RENEW_INTERVAL_MS = 30L * 60L * 1000L
         private val leases = ExecutionLeaseRegistry()
         private val ownerSequence = AtomicLong()
         private val mainHandler = Handler(Looper.getMainLooper())
@@ -376,6 +475,56 @@ internal class AgentExecutionService : Service() {
         private var publishedStatusText: String? = null
 
         /**
+         * 用户切换「运行时保持亮屏」后立即重算屏幕锁。
+         *
+         * 没有这个入口，开关只能在下一轮续期（最长 30 分钟）才生效：
+         * 用户关掉开关却看到屏幕继续亮半小时，会以为开关坏了。
+         * 服务没在跑时什么也不做——锁本来就不该存在。
+         */
+        fun refreshKeepScreen() {
+            mainHandler.post {
+                // 开关切换同时影响窗口 flag 与服务持有的唤醒锁，两边一起重算。
+                publishKeepScreenOn()
+                instance?.takeIf { it.foregroundActive }?.refreshScreenWakeLock()
+            }
+        }
+
+        /**
+         * 「现在是否应该保屏」的权威答案，供前台窗口的 FLAG_KEEP_SCREEN_ON 使用。
+         *
+         * 窗口 flag 以前算的是 `agentState.anyRunningUnpausedConversation` 这个 UI 镜像，
+         * 和跨应用保屏是两套判据：镜像在 Activity 回收重建后会失真（运行态不入库），
+         * 于是窗口 flag 可能和服务持有的唤醒锁说两套话。这里让两者共用同一个
+         * [AgentKeepScreenLockPolicy]，只把「让不让屏幕亮」这件事留一个决策点。
+         *
+         * 与 [AgentScreenWakeLock] 不同，窗口 flag 只需在前台有效，不要求 `foregroundActive`：
+         * 用户正看着界面、任务正在推进时，即便服务那一刻还没提升为前台也该保屏。
+         * 因此第一个参数固定传 `true`，由调用方自己保证只在窗口可见时置位。
+         */
+        fun shouldKeepScreenOn(): Boolean = AgentKeepScreenLockPolicy.shouldHold(
+            foregroundActive = true,
+            hasRunningTask = leases.agentRunIds().isNotEmpty(),
+            paused = runStatus is AgentOverlayStatus.Paused,
+            enabled = Prefs.isEnabled(Prefs.Keys.AGENT_KEEP_SCREEN_ON),
+        )
+
+        /**
+         * [shouldKeepScreenOn] 的可观察版本，供 Compose 直接读取。
+         *
+         * 普通函数不算快照读，服务端状态变了下窗口 flag 不会重算；这里把结果发布成
+         * `State`，每次 [refreshNotification]（任务增删、状态变化、开关切换都会走到）
+         * 重新写一次，Compose 自然重组。只在值真的变化时写入，避免逐帧无谓失效。
+         */
+        var keepScreenOnState by mutableStateOf(false)
+            private set
+
+        /** 把 [keepScreenOnState] 与当前权威状态对齐；由 [refreshNotification] 调用。 */
+        private fun publishKeepScreenOn() {
+            val next = shouldKeepScreenOn()
+            if (keepScreenOnState != next) keepScreenOnState = next
+        }
+
+        /**
          * Agent run 的当前状态，供通知与状态栏胶囊展示；null 表示没有 Agent run 在跑。
          * 只在显示文字变化时刷新通知，避免流式事件把通知更新频率推到系统限流。
          */
@@ -383,6 +532,12 @@ internal class AgentExecutionService : Service() {
             mainHandler.post {
                 runStatus = status
                 this.activeRunCount = activeRunCount
+                /*
+                 * 窗口 flag 必须在文本判重**之前**发布：
+                 * 暂停\/继续时文案有可能刚好相同（多会话汇总文案不随状态变），
+                 * 一旦提前 return，调度就变了而 flag 不跟着变，暂停后屏幕继续亮。
+                 */
+                publishKeepScreenOn()
                 val count = if (activeRunCount > 0) activeRunCount else leases.count()
                 val text = executionText(context, status, count)
                 if (text == publishedStatusText) return@post

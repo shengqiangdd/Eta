@@ -65,6 +65,41 @@ class AgentContextCompactionTest {
     )
 
     @Test
+    fun compactionDecisionIsLoggedOnceAndOnlyWhenTheReasonChanges() {
+        // 目的：判定依据要能在事后读到，但不能每轮都写一条把日志刷成洪水。
+        // 这里构造一个“结论一直不压缩、始终保持 NONE”的会话，断言只上报了一次。
+        val messages = jsonHistory()
+        val decisions = mutableListOf<String>()
+        val session = AgentContextSession(
+            config, messages, 1, "operation",
+            provider { _, _ -> response("不应压缩") },
+            AgentRunController(), { emptySet() }, {}, {},
+            onDecision = decisions::add,
+        )
+        repeat(3) { session.compact(force = false) }
+        assertEquals("同一原因不应重复上报：$decisions", 1, decisions.size)
+        assertTrue(
+            "要能看出没压缩的原因：${decisions.single()}",
+            decisions.single().contains("compact=no") && decisions.single().contains("cause=none"),
+        )
+    }
+
+    @Test
+    fun forcedCompactionDoesNotEmitDecisionLog() {
+        // 手动压缩有自己的 started/completed/skipped 事件，再发一条判定日志纯属噪声。
+        val messages = jsonHistory()
+        val decisions = mutableListOf<String>()
+        val session = AgentContextSession(
+            config, messages, 1, "operation",
+            provider { _, _ -> response("摘要") },
+            AgentRunController(), { emptySet() }, {}, {},
+            onDecision = decisions::add,
+        )
+        runCatching { session.compact(force = true) }
+        assertTrue("force 路径不应发判定日志：$decisions", decisions.isEmpty())
+    }
+
+    @Test
     fun largeHistoryWithoutUsageDoesNotTriggerCompaction() {
         val original = "历史事实".repeat(40_000)
         var requests = 0

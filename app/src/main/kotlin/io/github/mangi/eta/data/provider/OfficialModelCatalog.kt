@@ -9,7 +9,8 @@ import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 
 internal object OfficialModelCatalog {
-    internal const val CURRENT_REVISION = 4
+    // 5：所有内置 provider 的目录窗口接入运行时（见 ProviderRepository.fillCatalogContextWindows）。
+    internal const val CURRENT_REVISION = 5
 
     // 旧安装只补入本次新增的模型，避免恢复用户主动删除的旧预设。
     private val additionsByRevision = mapOf(
