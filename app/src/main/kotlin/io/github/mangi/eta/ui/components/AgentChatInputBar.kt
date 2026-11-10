@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.sp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
+import io.github.mangi.eta.ui.model.AgentSessionUsageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.ComposerQuoteUi
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
@@ -128,6 +129,8 @@ internal fun AgentChatInputBar(
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
+    /** 跨轮用量累计；null 时胶囊 tooltip 不展示这一段。 */
+    sessionUsage: AgentSessionUsageUi? = null,
     showContextUsage: Boolean,
     isStreaming: Boolean,
     isPaused: Boolean,
@@ -485,7 +488,12 @@ internal fun AgentChatInputBar(
                         Spacer(modifier = Modifier.weight(1f))
 
                         if (showContextUsage) {
-                            AgentContextUsageButton(usage = contextUsage, onCompact = onCompactContext, canCompact = canCompactContext && !isStreaming)
+                            AgentContextUsageButton(
+                                usage = contextUsage,
+                                onCompact = onCompactContext,
+                                canCompact = canCompactContext && !isStreaming,
+                                sessionUsage = sessionUsage,
+                            )
 
                             Spacer(modifier = Modifier.width(2.dp))
                         }

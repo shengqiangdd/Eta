@@ -107,6 +107,7 @@ import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
 import io.github.mangi.eta.ui.model.AgentAskUi
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
+import io.github.mangi.eta.ui.model.AgentSessionUsageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.ComposerQuoteUi
@@ -261,6 +262,11 @@ internal fun AgentChatBody(
         ?: BrowserSessionSnapshot()
     val contextUsage = remember(messages, modelPickerState.selectedModel) {
         latestContextUsage(messages, modelPickerState.selectedModel)
+    }
+    // 跨轮用量累计：与 contextUsage（当前窗口占用快照）分开算。
+    // 一个是「现在占了多少」，一个是「这个会话累计用了多少」，不能混。
+    val sessionUsage = remember(messages, contextUsage.contextWindow) {
+        AgentSessionUsageUi.of(messages, contextUsage.contextWindow)
     }
 
     val visibleMessages = remember(messages, messageEdit?.targetMessageId, messageEdit?.preserveFollowingMessages) {
@@ -442,6 +448,7 @@ internal fun AgentChatBody(
             modelPickerState = modelPickerState,
             isCompacting = isCompacting,
             contextUsage = contextUsage,
+            sessionUsage = sessionUsage,
             isStreaming = isStreaming,
             isPaused = isPaused,
             reasoningEffort = reasoningEffort,
@@ -698,6 +705,7 @@ private fun AgentChatScaffold(
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
+    sessionUsage: AgentSessionUsageUi? = null,
     isStreaming: Boolean,
     isPaused: Boolean,
     reasoningEffort: ReasoningEffort,
@@ -922,6 +930,7 @@ private fun AgentChatScaffold(
                 modelPickerState = modelPickerState,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
+                sessionUsage = sessionUsage,
                 showContextUsage = hasMessages,
                 isStreaming = isStreaming,
                 isPaused = isPaused,
@@ -1812,6 +1821,7 @@ private fun AgentChatBottomBar(
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
+    sessionUsage: AgentSessionUsageUi? = null,
     showContextUsage: Boolean,
     isStreaming: Boolean,
     isPaused: Boolean,
@@ -1994,6 +2004,7 @@ private fun AgentChatBottomBar(
                 modelPickerState = modelPickerState,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
+                sessionUsage = sessionUsage,
                 showContextUsage = showContextUsage,
                 isStreaming = isStreaming,
                 isPaused = isPaused,

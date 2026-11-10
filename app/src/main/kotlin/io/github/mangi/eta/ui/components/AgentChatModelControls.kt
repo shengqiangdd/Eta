@@ -12,6 +12,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
+import io.github.mangi.eta.ui.model.AgentSessionUsageFormatter
+import io.github.mangi.eta.ui.model.AgentSessionUsageUi
 import io.github.mangi.eta.ui.model.formatContextUsage
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -32,6 +34,11 @@ internal fun AgentContextUsageButton(
     usage: AgentContextUsageUi,
     onCompact: () -> Unit = {},
     canCompact: Boolean = false,
+    /**
+     * 会话累计用量（输入/输出/缓存命中）；null 表示不展示这一段。
+     * 与 [usage] 分开：[usage] 描述的是当前窗口占用，这里是跨轮累计。
+     */
+    sessionUsage: AgentSessionUsageUi? = null,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -55,9 +62,20 @@ internal fun AgentContextUsageButton(
         usage.contextTokens == null -> stringResource(R.string.context_usage_after_response)
         else -> stringResource(R.string.context_usage_previous_response, summary)
     }
+    // 累计用量按行拼接；缺数据的项已在 summaryLines 里整行省略。
+    val sessionLines = sessionUsage?.let { u ->
+        AgentSessionUsageFormatter.summaryLines(
+            usage = u,
+            inputLabel = stringResource(R.string.usage_summary_input),
+            outputLabel = stringResource(R.string.usage_summary_output),
+            cacheLabel = stringResource(R.string.usage_summary_cache_hit),
+        )
+    }.orEmpty()
+    val fullDetail = if (sessionLines.isEmpty()) detail else detail + "\n" + sessionLines.joinToString("\n")
     val usageDescription = stringResource(
         R.string.context_usage_description,
-        summary.replace('\n', ' '),
+        (detail + if (sessionLines.isEmpty()) "" else " " + sessionLines.joinToString(" "))
+            .replace('\n', ' '),
     )
     val tooltipColors = TooltipDefaults.richTooltipColors()
     TooltipBox(
@@ -92,7 +110,7 @@ internal fun AgentContextUsageButton(
                 colors = tooltipColors,
             ) {
                 Text(
-                    text = detail,
+                    text = fullDetail,
                     color = tooltipColors.contentColor,
                     style = MiuixTheme.textStyles.body2,
                 )

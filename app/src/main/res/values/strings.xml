@@ -2254,4 +2254,7 @@
   <string name="speech_auto_read_off">Auto read-aloud off, tap to turn on</string>
   <string name="speech_auto_read_on">Auto read-aloud on, tap to turn off</string>
 
+  <string name="usage_summary_input">Input</string>
+  <string name="usage_summary_output">Output</string>
+  <string name="usage_summary_cache_hit">Cache hit</string>
 </resources>

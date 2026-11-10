@@ -2199,4 +2199,7 @@
   <string name="speech_recognition_disabled">已關閉</string>
   <string name="speech_recognition_disabled_note">儲存後會隱藏聊天和助理浮窗中的麥克風入口。全域喚醒會在進場動畫結束後開啟文字輸入和鍵盤，可使用輸入法內建的語音輸入。原服務設定會保留。</string>
 
+  <string name="usage_summary_input">輸入</string>
+  <string name="usage_summary_output">輸出</string>
+  <string name="usage_summary_cache_hit">快取命中</string>
 </resources>
