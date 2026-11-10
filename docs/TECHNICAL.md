@@ -4922,3 +4922,68 @@ val tool = tools.optJSONObject(index) ?: continue   // 非对象项被静默丢�
 - `AgentToolDisableEndToEndTest` 7 例 —— 在真实目录上验证禁用确实生效
 
 其中端到端那层是**唯一**能证明「用户关掉后模型就看不到」的测试。
+
+## fix155（虚拟屏内跨应用跳转）：按归属放行，而不是按调用时刻
+
+上游 3.4.1 的 `c866a747` 修的是：在 Eta 的虚拟屏里启动**别的应用**时被
+`ActivityTaskSupervisor.canPlaceEntityOnDisplay()` 拒掉，表现为跳转失败甚至 system_server 报错。
+
+### 上游那版的问题
+
+它的放行条件是「当前线程正处于 `createVirtualDisplay` 调用中」——用一个 ThreadLocal 标记。
+但 `canPlaceEntityOnDisplay()` 发生在 **startActivity 时**，与创建调用不在同一时段，
+那个标记早已复位。写出来的逻辑看着严密，实际**永不命中**。
+
+### 本次做法
+
+判定只依赖**归属**，与调用时刻无关：
+
+```kotlin
+VirtualDisplayCallerPolicy.allows(
+    displayId = displayId,
+    etaDisplayIds = etaDisplayIds,      // 创建成功后才登记
+    callerIsEta = isEtaCaller(chain.thisObject),
+)
+```
+
+三个条件全部满足才返回 true：
+
+1. `displayId` 是 Eta 创建成功过的虚拟屏（`createVirtualDisplay` 返回 > 0 时登记）；
+2. 调用方 UID 属于 Eta；
+3. `displayId > 0`——排除主屏（0）与创建失败的负数返回值。
+
+判定逻辑抽在 `VirtualDisplayCallerPolicy`（纯函数）里，hook 调用它，
+所以 `VirtualDisplayCallerPolicyTest` 覆盖的就是真正执行的代码，不是影子实现。
+
+6 个用例的重点：
+- Eta 的屏 + 非 Eta 调用方 → **不放行**（别的应用不能借 Eta 的虚拟屏提升能力）
+- 主屏 0、系统副显 1、别人建的 99 → 不放行
+- 创建失败返回 0/负数，即使被误登记也不放行
+- 拿不到 displayId → 不放行
+
+判不出来一律 `chain.proceed()`：宁可功能不成，也不放开沙箱。
+
+### 顺带发现的一个既有隐患（未修）
+
+同一文件第 93 行在 `createVirtualDisplay` 前判断：
+
+```kotlin
+if (!Prefs.isEnabled(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED)) return null
+```
+
+但 `AGENT_VIRTUAL_DISPLAY_ENABLED` **不在** `LOCAL_AGENT_KEYS`，而 hook 进程同步的
+只有 `LOCAL_AGENT_KEYS`（`reconcileAgentPreferences` 只处理这张表）。也就是说 hook 进程里
+读到的永远是默认值——`isEnabled` 的默认语义是「开」，条件恒为真。
+
+后果：**用户关掉虚拟屏总开关，system_server 侧并不会因此拒绝创建**。
+App 侧可能另有拦截，所以不一定表现为 bug；但这个判断本身是死逻辑。
+
+本次没有动它，原因：修法需要先把该键纳入 hook 进程的同步范围，
+会改动配置同步链路，影响面大于本次目标。已记录，留待单独处理。
+
+### 验证边界
+
+- 编译通过；策略 6 例单测通过。
+- **hook 本身未在真机验证**：需要 LSPosed 注入 system_server 后，在虚拟屏里真正做一次
+  跨应用跳转才能确认。之前查崩溃缓冲区也没有该崩溃的记录，说明这个问题在真机上尚未复现过，
+  本次改动依据的是上游 commit message 与代码分析。

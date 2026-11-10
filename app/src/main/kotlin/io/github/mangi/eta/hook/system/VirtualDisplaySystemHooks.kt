@@ -31,12 +31,22 @@ internal object VirtualDisplaySystemHooks {
     private const val DMS_CLASS = "com.android.server.display.DisplayManagerService"
     private const val DMS_BINDER_CLASS = "com.android.server.display.DisplayManagerService\$BinderService"
     private const val ATMS_CLASS = "com.android.server.wm.ActivityTaskManagerService"
+    private const val ATS_CLASS = "com.android.server.wm.ActivityTaskSupervisor"
 
     private const val IME_POLICY_INITIAL_DELAY_MS = 100L
     private const val IME_POLICY_RETRY_DELAY_MS = 150L
     private const val IME_POLICY_RETRY_COUNT = 20
 
     private val activeEtaDisplayCreation = ThreadLocal.withInitial { false }
+
+    /**
+     * Eta 创建成功过的虚拟屏 displayId。
+     *
+     * 为什么不能用「当前正在创建」那个 ThreadLocal 判放行：`canPlaceEntityOnDisplay`
+     * 发生在 startActivity 时，与 `createVirtualDisplay` 不在同一时段，标记早已复位。
+     * 必须按 displayId 记住归属；且只在创建成功后写入，避免把失败返回的负数当成屏。
+     */
+    private val etaDisplayIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
 
     fun install(
         module: XposedModule,
@@ -46,6 +56,7 @@ internal object VirtualDisplaySystemHooks {
         val hooks = HookRegistrar(module, rootLogger, "VirtualDisplay")
         return hooks.install {
             installDisplayManagerHooks(hooks, classLoader)
+            installCrossAppLaunchHooks(hooks, classLoader)
             installTaskMoveHooks(hooks, classLoader)
         }
     }
@@ -102,6 +113,8 @@ internal object VirtualDisplaySystemHooks {
             // 这块屏的 IME policy 设成 HIDE。这样旧/新两条虚拟屏路径都不需要
             // App 去改全局默认输入法。display 可能还没同步到 WMS，稍等重试。
             (result as? Int)?.takeIf { it > 0 }?.let { displayId ->
+                // 记下归属：后续该屏上的跨应用启动靠它判放行。
+                etaDisplayIds.add(displayId)
                 scheduleImePolicyHide(
                     displayId = displayId,
                     context = SystemServerContextResolver.resolve(chain.thisObject),
@@ -229,6 +242,67 @@ internal object VirtualDisplaySystemHooks {
         }
         false
     }
+
+    /**
+     * 允许把 activity 放到 Eta 自己的虚拟屏上。
+     *
+     * `canPlaceEntityOnDisplay()` 限制「只能在同一虚显上启动 activity」，
+     * 目的是防后台应用把界面偷偷丢到副显；但 Eta 的虚拟屏本来
+     * 就是拿来跑别的应用的，于是正常跨应用跳转会被当成滥用拒掉。
+     *
+     * 放行条件（全部满足才放行）：目标屏是 Eta 创建过的、
+     * 调用方是 Eta、虚拟屏总开关打开。任一条判不出来一律 proceed()。
+     */
+    @SuppressLint("PrivateApi")
+    private fun installCrossAppLaunchHooks(hooks: HookRegistrar, classLoader: ClassLoader) {
+        val atsClass = HookSupport.findClassOrNull(classLoader, ATS_CLASS)
+        val canPlaceMethod = atsClass?.let { clazz ->
+            HookSupport.findDeclaredMethods(clazz, makeAccessible = true) { method ->
+                method.name == "canPlaceEntityOnDisplay" &&
+                    method.parameterCount == 5 &&
+                    method.returnType == Boolean::class.javaPrimitiveType
+            }.firstOrNull()
+        }
+        if (canPlaceMethod == null) {
+            hooks.missing(
+                id = "system.virtual-display-cross-app",
+                description = "ActivityTaskSupervisor.canPlaceEntityOnDisplay",
+                detail = "未找到 5 参数的 canPlaceEntityOnDisplay（系统版本可能不同）",
+            )
+            return
+        }
+
+        hooks.intercept(
+            id = "system.virtual-display-cross-app",
+            executable = canPlaceMethod,
+            description = "ActivityTaskSupervisor.canPlaceEntityOnDisplay",
+        ) { chain ->
+            // 参数布局：(Task?, int displayId, ..., ActivityInfo)，取第一个 Int 当 displayId。
+            val displayId = chain.args.firstOrNull { it is Int } as? Int
+            // 判定逻辑抽在 VirtualDisplayCallerPolicy（纯函数，有单测）：
+            // 只看“这个屏是不是 Eta 建的”与“调用方是不是 Eta”，
+            // 不看调用时刻（那个时段早已过去，写出来就是永不命中的死代码）。
+            // 也不在这里读 AGENT_VIRTUAL_DISPLAY_ENABLED：它不在 LOCAL_AGENT_KEYS，
+            // hook 进程读到的是默认值，写成条件也永远为真。
+            if (VirtualDisplayCallerPolicy.allows(
+                    displayId = displayId,
+                    etaDisplayIds = etaDisplayIds,
+                    callerIsEta = isEtaCaller(chain.thisObject),
+                )
+            ) {
+                return@intercept true
+            }
+            chain.proceed()
+        }
+    }
+
+    /** 调用方是否为 Eta；判不出来一律 false（不放行）。 */
+    private fun isEtaCaller(target: Any?): Boolean = runCatching {
+        val context = SystemServerContextResolver.resolve(target) ?: return@runCatching false
+        val callingUid = Binder.getCallingUid()
+        context.packageManager.getPackagesForUid(callingUid)
+            ?.any { it == ModuleConfig.ETA_PACKAGE } == true
+    }.getOrDefault(false)
 
     private fun installTaskMoveHooks(hooks: HookRegistrar, classLoader: ClassLoader) {
         val atmsClass = HookSupport.findClassOrNull(classLoader, ATMS_CLASS) ?: return
