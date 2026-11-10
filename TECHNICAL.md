@@ -4596,3 +4596,83 @@ UI 侧 `browser_read`/`browser_interact`/`browser_screenshot` 三张卡对应同
 
 **遗留**：只做了"声明层裁剪"——模型看不到被禁用的工具，因此调不到。
 没有在执行层再加一道校验：禁用比允许更严，执行层不会因此变得可绕过。
+
+## fix152（对话分叉）：在本地分页模型上落地，而不是照搬上游
+
+上游 3.4.1 的 `88927ca6`（对话分支）此前被放弃，理由是它假定了一套**整份载入**的
+消息模型（`messageStartIndex` + `hasEarlierMessages`），而本仓库用的是窗口分页
+（`messagesWindowStart` + `messagesDeferred`）。分支功能本身有价值，值得按本地的
+模型重做一遍，而不是继续搁置。
+
+### 保留了什么：上游的边界规则
+
+`ConversationBranchBoundary` 与 `ConversationBranchRepository` 原样采用。那一层判的是
+「在哪条消息之后分叉是安全的」，与消息如何分页无关，且这些规则挡住了四类会分叉出坏
+对话的情况：
+
+- **工具调用未闭合**：`requireClosedTools` 要求每个 `tool_calls` 都有对应的 `tool` 结果，
+  且每个 `tool` 结果都能对上前面某次调用。在工具链中间切断，分支里会留下一个永远等不到
+  结果的调用，模型下一轮必然报错。
+- **末尾是过渡正文**：运行中（`running = true`）时最后一条 assistant 回复还在流出，
+  拿它当分叉点会得到半截回答。
+- **补充输入之前**：`-supplement-` 消息表示同一轮次的延续，它之前的 assistant 正文
+  已经被补充内容盖过，不再代表最终结果。
+- **上下文压缩越界**：`contextSummary` 的 `summaryThroughUserTurn` 若超过前缀内的
+  用户轮数，说明这处分叉点落在被压缩掉的历史里，前缀不完整。
+
+这四类都不是理论风险：踩中任意一条，用户拿到的是一个「看起来能继续、一说话就报错」
+的会话。
+
+### 改了什么：把「整份载入」换成「延迟加载」
+
+差异只在一处，但很关键。上游 `branch()` 在保存队列的锁内读回整份消息并塞进
+`AgentChatHomeUiState`；本仓库改成：
+
+```kotlin
+// AgentConversationPersistence.branch()
+saved = saved + (branchId to Content(
+    state = AgentChatHomeUiState(
+        messages = emptyList(), messagesDeferred = true,
+        historyDeferred = true, journalDeferred = true,
+        /* 只带模型与推理档位 */
+    ), title = title, updatedAt = now,
+))
+```
+
+三个 `deferred` 标记让 `selectConversation` 走本地的窗口分页按需加载。这样：
+
+- **不改分页语义**：分支与普通会话走同一条载入路径，`messagesWindowStart` 的含义不变。
+  前缀可能有几千条，一次整份读进内存是本地模型明确避免的事。
+- **不卡持久化**：分支创建只需一次事务写入，不占用保存队列的锁。
+
+有一处必须立刻做对：`saved` 基线要在 `branch()` 返回前就包含新会话。保存队列稍后会用
+Main 线程的快照覆盖基线；如果基线里没有这个分支，那份旧快照会被 `saveChanges` 判定为
+「这个会话被删了」，分支刚建出来就被删掉。
+
+### UI
+
+消息操作菜单（用户气泡的 tooltip、助手气泡的动作行）各加一项「从这里分叉」，
+走新增的 `AgentHomeAction.BranchMessage`。文案三语齐备。
+入口只在 `eligibleMessageIds` 允许的消息上出现，避免用户点了才被拒。
+
+失败会明确提示，不静默：库写入异常时 Toast「没能创建分支，原会话未受影响」；
+载入未完成（`persistencePaused`）时提示稍后再试，而不是建一个随后被整体替换冲掉的会话。
+
+### 验证
+
+`ConversationBranchBoundaryTest` 7 例（纯 JVM），覆盖上述四类边界 + id 重映射：
+
+- 闭合/未闭合、空回复、`tool_summary` 不闭合轮次
+- `context_compaction` 不算轮次边界，其它系统提示算
+- `running = true` 时末尾回复不可分叉
+- `-supplement-` 作废此前的未闭合回复
+- `remapId` 保留 `assistant-`/`user-`/`greeting-` 前缀并插入分支 id
+
+断言按「用户能看见什么」写，不是照实现抄的：`tool_summary` 那条最初我写错了预期
+（以为 `a1` 仍是候选），测试跑红后按真实语义修正——分叉 `a1` 会漏掉它后面的工具过程，
+用户拿到的是缺一步的对话。
+
+**未验证**：`resolve()`（依赖 `org.json` 与 Roleplay 状态）需要 Robolectric，本机
+aarch64 跑不了，因此分叉出的**消息内容**正确性只经过编译检查，未经真机验证。
+`branch()` 的事务写入同理。需要一次真机操作确认：在一条已闭合的助手回复上分叉，
+新会话应包含到该回复为止的完整前缀，且原会话保持不变。

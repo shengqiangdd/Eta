@@ -247,6 +247,8 @@ internal fun AgentChatBody(
     historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
     onLoadEarlierMessages: () -> Unit = {},
     onHistoryViewportChanged: (Boolean) -> Unit = {},
+    /** 非空时消息上出现「从这里分叉」入口；实现在 [AgentAppState.branchFromMessage]。 */
+    onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -477,6 +479,7 @@ internal fun AgentChatBody(
             quotedMessage = quotedMessage,
             onClearQuote = { quotedMessage = null },
             onQuoteMessage = quoteMessage,
+            onBranchMessage = onBranchMessage,
             onSteerQueuedMessage = onSteerQueuedMessage,
             onRecallQueuedMessage = onRecallQueuedMessage,
             onRemoveQueuedMessage = onRemoveQueuedMessage,
@@ -765,6 +768,7 @@ private fun AgentChatScaffold(
     quotedMessage: ComposerQuoteUi? = null,
     onClearQuote: () -> Unit = {},
     onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
+    onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val missingPermissionCount = missingPermissionIds.size
@@ -1015,6 +1019,7 @@ private fun AgentChatScaffold(
                 editTargetMessageId = messageEdit?.targetMessageId,
                 currentBrowserMessageId = currentBrowserMessageId,
                 onQuoteMessage = onQuoteMessage,
+                onBranchMessage = onBranchMessage,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -1059,6 +1064,7 @@ internal fun AgentConversationMessages(
     currentBrowserMessageId: String? = null,
     /** 非空时每条可引用的消息都带「引用」入口。 */
     onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
+    onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 上一版条目只作复用比对，不参与组合观察。
@@ -1491,6 +1497,7 @@ internal fun AgentConversationMessages(
                             onRegenerateMessage = onRegenerateMessage,
                             onSelectReplyCandidate = onSelectReplyCandidate,
                             onQuoteMessage = onQuoteMessage,
+                            onBranchMessage = onBranchMessage,
                             modifier = entryModifier,
                         )
                     }

@@ -1673,6 +1673,10 @@
   <string name="shared_content_files_limited">单次最多接收 %1$d 个文件，本次共分享 %2$d 个。</string>
   <string name="shared_content_load_failed">会话数据没有载入成功，分享的内容未能保留。</string>
   <string name="shared_content_empty">没有读到可用的分享内容，未新建会话。</string>
+  <string name="conversation_branch_default_title">分支会话</string>
+  <string name="conversation_branch_failed">没能创建分支，原会话未受影响。</string>
+  <string name="conversation_branch_not_ready">会话还在加载，稍后再试一次分叉。</string>
+  <string name="conversation_branch_action">从这里分叉</string>
   <string name="usage_range_title">统计范围</string>
   <string name="usage_range_today">今天</string>
   <string name="usage_range_note">记录每次模型调用返回的用量，仅保存在本机；不上传、不计费。</string>

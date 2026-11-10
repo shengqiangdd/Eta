@@ -612,6 +612,8 @@ fun AgentAppRoot(
                                         messageDeleteTarget = MessageMutationTarget(action.id, impact.laterTurnCount)
                                     }
                                 }
+                                is AgentHomeAction.BranchMessage ->
+                                    agentState.branchFromMessage(action.id)
                                 is AgentHomeAction.RegenerateMessage -> {
                                     val impact = agentState.messageRevisionImpact(action.id)
                                     if (agentState.homeState.roleplay != null || impact?.laterTurnCount == 0) {

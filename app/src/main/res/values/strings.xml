@@ -1700,6 +1700,10 @@
   <string name="shared_content_files_limited">Only the first %1$d files were attached (%2$d shared in total).</string>
   <string name="shared_content_load_failed">Conversation data could not be loaded, so the shared content was not kept.</string>
   <string name="shared_content_empty">Nothing could be read from the shared content, so no chat was created.</string>
+  <string name="conversation_branch_default_title">Branched chat</string>
+  <string name="conversation_branch_failed">Could not create the branch. The original chat is unchanged.</string>
+  <string name="conversation_branch_not_ready">Still loading chats. Try branching again in a moment.</string>
+  <string name="conversation_branch_action">Branch from here</string>
   <string name="usage_range_title">Range</string>
   <string name="usage_range_today">Today</string>
   <string name="usage_range_note">Records the usage returned by each model call. Stored on this device only; nothing is uploaded or billed here.</string>

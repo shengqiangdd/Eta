@@ -1392,6 +1392,57 @@ internal class AgentAppState(
      * 调用方（通知 / 外部深链）要区分「已经进去了」和「会话还没载入」：
      * 后者如果被当成成功消费掉，用户看到的就是「点了通知只打开 App」。
      */
+    /**
+     * 从 [messageId] 处分叉：新建一个会话，只复制到这条消息（含）为止的前缀。
+     *
+     * 为什么不在当前会话上原地截断：用户分叉的动机通常是「想换个说法继续」，原会话必须
+     * 留着做对照。截断会把另一端的选择永久丢掉，没有撤销余地。
+     *
+     * 为什么不在这里读回整份消息：前缀可能有几千条，在保存队列的锁里整份载入会卡住
+     * 持久化。`AgentConversationPersistence.branch` 只把内容登记成 deferred，切过去时由
+     * [selectConversation] 走本地的窗口分页按需加载，不改 `messagesWindowStart` 语义。
+     */
+    fun branchFromMessage(messageId: String, title: String? = null) {
+        if (homeState.messageEdit != null) cancelMessageEdit()
+        if (persistencePaused) {
+            // 载入未完成时建会话会被紧随其后的整体替换冲掉，与 acceptSharedContent 同一类风险。
+            Toast.makeText(appContext, R.string.conversation_branch_not_ready, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sourceId = selectedConversationId ?: return
+        val branchId = newConversationId()
+        val now = System.currentTimeMillis()
+        val branchTitle = title?.takeIf { it.isNotBlank() }
+            ?: appContext.getString(R.string.conversation_branch_default_title)
+        scope.launch {
+            try {
+                val outcome = conversationPersistence.branch(
+                    appContext, sourceId, messageId, branchId, branchTitle, now,
+                )
+                conversationsById = conversationsById + (
+                    branchId to emptyChatState(defaultThinkingEnabled).copy(
+                        modelId = outcome.modelId,
+                        thinkingEnabled = outcome.thinkingEnabled,
+                        reasoningEffort = outcome.reasoningEffort,
+                        messagesDeferred = true,
+                        historyDeferred = true,
+                        journalDeferred = true,
+                    )
+                    )
+                conversationUpdatedAt = conversationUpdatedAt + (branchId to now)
+                conversationTitles = conversationTitles + (branchId to branchTitle)
+                refreshConversationSummaries()
+                // 切过去时 selectConversation 会看到三个 deferred 标记并按需加载。
+                selectConversation(branchId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 失败必须让用户知道：否则点了分叉却什么都没出现，会被当成没点中。
+                Toast.makeText(appContext, R.string.conversation_branch_failed, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun selectConversation(conversationId: String): Boolean {
         if (homeState.messageEdit != null) cancelMessageEdit()
         val state = conversationsById[conversationId] ?: run {

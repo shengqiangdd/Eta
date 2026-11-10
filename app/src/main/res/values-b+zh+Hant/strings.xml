@@ -1640,6 +1640,10 @@
   <string name="shared_content_files_limited">單次最多接收 %1$d 個檔案，本次共分享 %2$d 個。</string>
   <string name="shared_content_load_failed">會話資料沒有載入成功，分享的內容未能保留。</string>
   <string name="shared_content_empty">沒有讀到可用的分享內容，未新增會話。</string>
+  <string name="conversation_branch_default_title">分支會話</string>
+  <string name="conversation_branch_failed">沒能建立分支，原會話未受影響。</string>
+  <string name="conversation_branch_not_ready">會話還在載入，稍後再試一次分叉。</string>
+  <string name="conversation_branch_action">從這裡分叉</string>
   <string name="action_export">匯出</string>
   <string name="conversation_export_assistant">助手</string>
   <string name="conversation_export_default_name">對話</string>

@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
+import io.github.mangi.eta.data.model.ConversationBranchMessage
 
 /**
  * 启动加载用的轻量投影：只要 journal 的存储引用（`@eta:chunks:v1:块数:长度`）。
@@ -103,6 +104,21 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query("SELECT * FROM conversation_messages ORDER BY conversation_id ASC, sort_index ASC")
     suspend fun messageRows(): List<ConversationMessageEntity>
+
+    /** 分支边界只需要消息结构（id/序号/类型/是否有正文），不加载正文与图片。 */
+    @Query("SELECT id, sort_index AS sortIndex, type, (trim(content) != '') AS hasContent, " +
+        "CASE WHEN type = 'system_notice' THEN content ELSE '' END AS noticeCode " +
+        "FROM conversation_messages WHERE conversation_id = :conversationId ORDER BY sort_index ASC")
+    suspend fun branchMessages(conversationId: String): List<ConversationBranchMessage>
+
+    @Query("SELECT * FROM conversation_messages WHERE conversation_id = :conversationId " +
+        "AND sort_index > :after AND sort_index <= :through ORDER BY sort_index ASC LIMIT :limit")
+    suspend fun branchMessageRows(
+        conversationId: String,
+        after: Int,
+        through: Int,
+        limit: Int,
+    ): List<ConversationMessageEntity>
 
     @Transaction
     suspend fun messages(): List<ConversationMessageEntity> = messageRows().map { restoreMessage(it) }

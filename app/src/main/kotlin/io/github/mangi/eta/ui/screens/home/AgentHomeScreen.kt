@@ -133,6 +133,7 @@ internal fun AgentHomeScreen(
             onEditMessage = { id -> onAction(AgentHomeAction.EditMessage(id)) },
             onCancelMessageEdit = { onAction(AgentHomeAction.CancelMessageEdit) },
             onDeleteMessage = { id -> onAction(AgentHomeAction.DeleteMessage(id)) },
+            onBranchMessage = { message -> onAction(AgentHomeAction.BranchMessage(message.id)) },
             onRegenerateMessage = { id -> onAction(AgentHomeAction.RegenerateMessage(id)) },
             onSelectReplyCandidate = { id, index -> onAction(AgentHomeAction.SelectReplyCandidate(id, index)) },
             onSuggestionClick = { prompt ->

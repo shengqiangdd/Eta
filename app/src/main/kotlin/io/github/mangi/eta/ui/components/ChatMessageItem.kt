@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
@@ -208,6 +209,8 @@ internal fun ChatMessageItem(
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
     /** 非空时消息上出现「引用」入口；作者名与去重由聊天页决定，这里只负责触发。 */
     onQuoteMessage: ((AgentChatMessageUi) -> Unit)? = null,
+    /** 非空时消息上出现「从这里分叉」入口；是否允许由聊天页判定。 */
+    onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
 ) {
     when (message) {
         is UserMessageUi -> UserMessageBubble(
@@ -220,6 +223,7 @@ internal fun ChatMessageItem(
             onQuote = onQuoteMessage
                 ?.takeIf { message.content.isNotBlank() }
                 ?.let { handler -> { handler(message) } },
+            onBranch = onBranchMessage?.let { handler -> { handler(message) } },
             modifier = modifier,
         )
         is AgentMessageUi -> AgentMessageBlock(
@@ -237,6 +241,7 @@ internal fun ChatMessageItem(
             onQuote = onQuoteMessage
                 ?.takeIf { message.content.isNotBlank() }
                 ?.let { handler -> { handler(message) } },
+            onBranch = onBranchMessage?.let { handler -> { handler(message) } },
             modifier = modifier,
         )
         is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
@@ -293,6 +298,7 @@ private fun UserMessageBubble(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onQuote: (() -> Unit)? = null,
+    onBranch: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -370,6 +376,16 @@ private fun UserMessageBubble(
                                 onClick = {
                                     tooltipState.dismiss()
                                     quote()
+                                },
+                            )
+                        }
+                        onBranch?.let { branch ->
+                            MessageTooltipAction(
+                                icon = Icons.Rounded.AccountTree,
+                                label = stringResource(R.string.conversation_branch_action),
+                                onClick = {
+                                    tooltipState.dismiss()
+                                    branch()
                                 },
                             )
                         }
@@ -585,6 +601,7 @@ private fun AgentMessageBlock(
     onEdit: () -> Unit = {},
     onSelectCandidate: (Int) -> Unit = {},
     onQuote: (() -> Unit)? = null,
+    onBranch: (() -> Unit)? = null,
 ) {
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
@@ -708,6 +725,14 @@ private fun AgentMessageBlock(
                         icon = Icons.Rounded.FormatQuote,
                         contentDescription = stringResource(R.string.chat_quote_action),
                         onClick = quote,
+                        enabled = messageActionsEnabled,
+                    )
+                }
+                onBranch?.let { branch ->
+                    AnswerActionButton(
+                        icon = Icons.Rounded.AccountTree,
+                        contentDescription = stringResource(R.string.conversation_branch_action),
+                        onClick = branch,
                         enabled = messageActionsEnabled,
                     )
                 }
