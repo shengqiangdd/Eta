@@ -4543,3 +4543,56 @@ mount '/storage/emulated/0/Download/1785249992652501794-1864' "$eta_rootfs/works
 **遗留说明**：旧任务 JSON 里的 `output_path` 字段仍显示记录中的旧值
 （该字段在 `BackgroundTerminalJobs.kt:279` 由 `hostDaemonPath` 生成，属旧 APK 写入）。
 **读取已修好**，只是那个展示字段不会自动回填 —— 如果要求展示也准确，得另做一次迁移。
+
+## fix151（虚拟屏截图越界 + 工具逐项禁用）：两个"平时不炸、一到边界就炸"的位置
+
+合并上游 3.4.1 的过程中，本仓库自己还有两类没有被堵住的边界。两类都不属于"功能缺失"，
+而是**用户一旦踩到就没有任何提示**的硬失败，所以优先修。
+
+### 一、虚拟屏截图按整幅高度建图，缓冲区短时越界
+
+两处 `ImageReader` 取帧都是同一个写法（`agent/device/VirtualDisplayController.kt`、
+`agent/virtualdisplay/VirtualDisplayController.kt`）：
+
+```kotlin
+val paddedWidth = width + rowPadding / plane.pixelStride
+Bitmap.createBitmap(paddedWidth, height, ARGB_8888).copyPixelsFromBuffer(buffer)
+```
+
+`buffer.remaining()` 由生产者决定，`ImageReader` 在 resize/重建、或首帧还没填满时会短于
+`paddedWidth * height * 4`。此时 `copyPixelsFromBuffer` 读越界：轻则整帧花屏，重则直接崩。
+主屏截图早已走 `HardwareBuffer` 没这个问题，虚拟屏这两条是漏网的。
+
+**改法**：按 `buffer.remaining()` 反算可用行数 `safeHeight`，只建这么高的位图，再裁到 `width`。
+`safeHeight <= 0` 时返回 null（调用方本来就把 null 当"这一帧没拿到"处理）。
+宁可少几行，也不崩。顺带删掉 `device/` 里那个从未被读的 `rowBytes`。
+
+**验证**：`compileDebugKotlin` 通过。这一处依赖真机 ImageReader 时序，单测覆盖不到，
+所以**没有**声称"已验证不崩"——需要一次真机虚拟屏 resize 才能确认。
+
+### 二、工具只有"整组开关"，没有"逐项开关"
+
+`AgentToolCatalog.build` 的布尔参数是按**能力分类**的（终端、浏览器、设备直连……），
+粒度为"一组". 真实需求经常更细：保留 `read_file` 但禁掉 `terminal`，保留网页搜索但禁掉
+`browser_click`。分类布尔表达不了，硬加参数只会让 `build` 的参数表继续膨胀。
+
+**改法**：新增独立过滤层 `AgentToolDisableFilter`，在工具数组送出前按名字裁剪：
+
+- 位置在 `toolFilter` **之后**。`toolFilter` 是子代理/插件按自己策略增删工具的钩子，
+  用户显式禁用的工具不该被它再塞回来。
+- 空集合直接返回原数组（不复制、不换对象），一个都没命中时同样返回原对象。
+- `parse` 容错到"乱写也不会误禁用"：空白与重复项归一化，空串/null 得空集合；
+  **不改写大小写**（工具名本身区分大小写，`Terminal` 与 `terminal` 是两个键）。
+- UI 在工具目录页每张卡片右侧给一个启用/禁用按钮（不用长按：长按在列表里容易被滚动吃掉，
+  且与卡片自身的单击语义抢手势），禁用后卡片置灰并标注"已对该助手禁用"。
+
+存储用 `agent_disabled_tools`（逗号分隔的真实工具名）。必须是**真实工具名**而不是 UI id：
+UI 侧 `browser_read`/`browser_interact`/`browser_screenshot` 三张卡对应同一个真实工具
+`browser_use`，写 UI id 会让禁用只关掉一张卡而工具照样可调。
+
+**验证**：`AgentToolDisableFilterTest` 6 例覆盖空集合/部分命中/全部命中/无命中返回原对象/
+大小写区分/解析容错；已登记进 `tools/gate.sh` 快速子集（纯 JVM，不依赖 Robolectric）。
+全量门禁 `EXIT=0`：单测 1738+ 通过、0 失败，死文案 0 条，文档镜像一致。
+
+**遗留**：只做了"声明层裁剪"——模型看不到被禁用的工具，因此调不到。
+没有在执行层再加一道校验：禁用比允许更严，执行层不会因此变得可绕过。

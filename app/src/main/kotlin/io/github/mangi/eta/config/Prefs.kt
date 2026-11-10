@@ -42,6 +42,13 @@ internal object Prefs {
         const val AGENT_DEVICE_DIRECT_TOOLS = "agent_device_direct_tools"
         const val AGENT_DEVICE_SENSITIVE_READ_TOOLS = "agent_device_sensitive_read_tools"
         const val AGENT_DEVICE_SENSITIVE_ACTION_TOOLS = "agent_device_sensitive_action_tools"
+        /**
+         * 用户逐项禁用的工具名，逗号分隔。
+         *
+         * 与上面几个「按能力分类」的开关互补：分类开关只能整组开关，这里允许只关掉组里的
+         * 个别工具（例如保留 `read_file` 而禁掉 `terminal`）。空串表示没有逐项禁用。
+         */
+        const val AGENT_DISABLED_TOOLS = "agent_disabled_tools"
         const val AGENT_THINKING_ENABLED = "agent_thinking_enabled"
         const val AGENT_AUTO_COMPACTION_ENABLED = "agent_auto_compaction_enabled"
         /** 会话运行期间保持屏幕唤醒；只在前台查看运行中的会话时生效。 */
@@ -208,6 +215,7 @@ internal object Prefs {
             AGENT_DEVICE_DIRECT_TOOLS,
             AGENT_DEVICE_SENSITIVE_READ_TOOLS,
             AGENT_DEVICE_SENSITIVE_ACTION_TOOLS,
+            AGENT_DISABLED_TOOLS,
             AGENT_THINKING_ENABLED,
             AGENT_AUTO_COMPACTION_ENABLED,
             AGENT_KEEP_SCREEN_ON,

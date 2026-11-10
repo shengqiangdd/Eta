@@ -15,14 +15,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.model.AgentToolDisableFilter
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
+import androidx.core.content.edit
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaCard
@@ -33,6 +38,7 @@ import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.model.AgentToolsAction
 import io.github.mangi.eta.ui.model.AgentToolsUiState
 import io.github.mangi.eta.ui.model.ToolItemUi
+import io.github.mangi.eta.ui.model.actualToolName
 import io.github.mangi.eta.ui.model.projectToolGroups
 import top.yukonga.miuix.kmp.basic.TabRow
 
@@ -48,10 +54,23 @@ fun AgentToolsScreen(
     modifier: Modifier = Modifier,
 ) {
     val capabilities = rememberDeviceCapabilities()
+    val context = LocalContext.current
     var showAll by rememberSaveable { mutableStateOf(false) }
     val currentListState = rememberLazyListState()
     val allListState = rememberLazyListState()
     val groups = projectToolGroups(state.groups, showAll, capabilities.root.isGranted, capabilities.tools.colorOs)
+    // 逐项禁用：读自本地 Agent 配置（逗号分隔的真实工具名），切换后立即写回并刷新本页。
+    // 用 remember 而非 rememberSaveable：真实来源是 prefs，进程重建时重读即可。
+    val prefs = remember { Prefs.localAgentPreferences(context) }
+    var disabledTools by remember {
+        mutableStateOf(AgentToolDisableFilter.parse(prefs.getString(Prefs.Keys.AGENT_DISABLED_TOOLS, null)))
+    }
+    val toggleDisabled: (String) -> Unit = remember(prefs, disabledTools) { { realName ->
+        val next = if (realName in disabledTools) disabledTools - realName else disabledTools + realName
+        // 空集合也照写：空串等价于「从未禁用过任何工具」。
+        prefs.edit { putString(Prefs.Keys.AGENT_DISABLED_TOOLS, next.sorted().joinToString(",")) }
+        disabledTools = next
+    } }
     // 跨运行的使用汇总：数据来自运行追踪（只读最近 20 次），没有记录时卡片不出现。
     val recentStats = rememberRecentRunStats()
     MiuixScaffoldPage(
@@ -102,6 +121,8 @@ fun AgentToolsScreen(
                     rootGranted = capabilities.root.isGranted,
                     capabilities = capabilities.tools,
                     onAction = onAction,
+                    disabledTools = disabledTools,
+                    onToggleDisabled = toggleDisabled,
                 )
             }
         }
@@ -114,6 +135,8 @@ private fun ToolGridRow(
     rootGranted: Boolean,
     capabilities: AgentToolCapabilities,
     onAction: (AgentToolsAction) -> Unit,
+    disabledTools: Set<String>,
+    onToggleDisabled: (String) -> Unit,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -131,6 +154,8 @@ private fun ToolGridRow(
                         capabilities = capabilities,
                         onAction = onAction,
                         modifier = Modifier.fillMaxWidth(),
+                        disabled = actualToolName(tool.id) in disabledTools,
+                        onToggleDisabled = { onToggleDisabled(actualToolName(tool.id)) },
                     )
                 }
             }
@@ -150,6 +175,8 @@ private fun ToolGridRow(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
+                        disabled = actualToolName(tool.id) in disabledTools,
+                        onToggleDisabled = { onToggleDisabled(actualToolName(tool.id)) },
                     )
                 }
                 if (tools.size == 1) {

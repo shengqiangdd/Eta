@@ -299,20 +299,35 @@ internal class VirtualDisplayController(
             return null
         }
         val plane = planes[0]
+        if (plane.pixelStride <= 0) {
+            image.close()
+            return null
+        }
         val rowPadding = plane.rowStride - plane.pixelStride * width
-        val rowBytes = plane.pixelStride * width
         val buffer = plane.buffer
+        val paddedWidth = width + rowPadding / plane.pixelStride
+        // 缓冲区可能短于 paddedWidth * height * 4（首帧未填满 / resize 后），
+        // 按可用行数截断，避免 copyPixelsFromBuffer 越界。
+        val safeHeight = if (buffer.remaining() >= paddedWidth * height * 4) {
+            height
+        } else {
+            (buffer.remaining() / (paddedWidth * 4)).coerceAtMost(height)
+        }
+        if (safeHeight <= 0) {
+            image.close()
+            return null
+        }
         val bitmap = android.graphics.Bitmap.createBitmap(
-            width + rowPadding / plane.pixelStride,
-            height,
+            paddedWidth,
+            safeHeight,
             android.graphics.Bitmap.Config.ARGB_8888,
         )
         bitmap.copyPixelsFromBuffer(buffer)
         image.close()
-        val cropped = if (rowPadding == 0) {
+        val cropped = if (rowPadding == 0 && safeHeight == height) {
             bitmap
         } else {
-            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, width, height).also {
+            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, width, safeHeight).also {
                 if (it != bitmap) bitmap.recycle()
             }
         }

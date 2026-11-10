@@ -5,4 +5,7 @@
     <string name="skills_more_named">More actions for %1$s</string>
     <string name="tools_manage_permissions">Manage permissions</string>
     <string name="tools_view_enhancements">View system enhancements</string>
+    <string name="tools_disable_action">Disable %1$s</string>
+    <string name="tools_enable_action">Enable %1$s</string>
+    <string name="tools_disabled_badge">Disabled for the assistant</string>
 </resources>

@@ -55,6 +55,7 @@ internal object AgentModelClient {
                         Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS),
                     deviceSensitiveActionTools =
                         Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS),
+                    disabledTools = AgentToolDisableFilter.parse(Prefs.getLocalAgentString(Prefs.Keys.AGENT_DISABLED_TOOLS)),
                     thinkingEnabled = effort.enablesReasoning,
                     reasoningEffort = effort,
                     autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
@@ -92,6 +93,7 @@ internal object AgentModelClient {
                 Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS),
             deviceSensitiveActionTools =
                 Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS),
+            disabledTools = AgentToolDisableFilter.parse(Prefs.getLocalAgentString(Prefs.Keys.AGENT_DISABLED_TOOLS)),
             thinkingEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_THINKING_ENABLED),
             reasoningEffort = ReasoningEffort.fromLegacy(
                 Prefs.isEnabled(Prefs.Keys.AGENT_THINKING_ENABLED)
@@ -228,7 +230,10 @@ internal object AgentModelClient {
             for (index in 0 until additionalTools.length()) {
                 tools.put(additionalTools.opt(index))
             }
-            return toolFilter?.invoke(tools) ?: tools
+            val filtered = toolFilter?.invoke(tools) ?: tools
+            // 逐项禁用放在 toolFilter **之后**：toolFilter 可能是子代理或插件按自己的
+            // 策略增删工具，用户显式禁用的工具不该被它再塞回来。空集合时直接返回原对象。
+            return AgentToolDisableFilter.apply(filtered, config.disabledTools)
         }
         val tools = toolsFor(initialCapabilities)
         tracedOnEvent(
@@ -458,6 +463,13 @@ internal object AgentModelClient {
         /** 默认委派给哪个代理；空表示用第一个可用的。 */
         val acpDefaultAgent: String = "",
         val authMode: String = ProviderAuthModes.API_KEY,
+        /**
+         * 用户逐项禁用的工具名；空集合表示不裁剪。
+         *
+         * 与 `terminalTools` 那组分类开关的区别：分类开关只能整组开关，这里能只关掉
+         * 组里的个别工具。由 [AgentToolDisableFilter] 在工具数组送出前统一裁剪。
+         */
+        val disabledTools: Set<String> = emptySet(),
     ) {
         val usesHostedWebSearch: Boolean
             get() = hostedWebSearchEnabled && when (providerType) {
