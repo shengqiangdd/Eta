@@ -9,6 +9,7 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
+import io.github.mangi.eta.agent.virtualdisplay.ImageBufferGeometry
 import io.github.mangi.eta.core.AgentLogger
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -303,20 +304,20 @@ internal class VirtualDisplayController(
             image.close()
             return null
         }
-        val rowPadding = plane.rowStride - plane.pixelStride * width
+        val rowStride = plane.rowStride
+        val paddedWidth = ImageBufferGeometry.paddedWidth(rowStride, plane.pixelStride, width)
+            ?: run {
+                image.close()
+                return null
+            }
         val buffer = plane.buffer
-        val paddedWidth = width + rowPadding / plane.pixelStride
         // 缓冲区可能短于 paddedWidth * height * 4（首帧未填满 / resize 后），
         // 按可用行数截断，避免 copyPixelsFromBuffer 越界。
-        val safeHeight = if (buffer.remaining() >= paddedWidth * height * 4) {
-            height
-        } else {
-            (buffer.remaining() / (paddedWidth * 4)).coerceAtMost(height)
-        }
-        if (safeHeight <= 0) {
-            image.close()
-            return null
-        }
+        val safeHeight = ImageBufferGeometry.safeHeight(buffer.remaining(), rowStride, height)
+            ?: run {
+                image.close()
+                return null
+            }
         val bitmap = android.graphics.Bitmap.createBitmap(
             paddedWidth,
             safeHeight,
@@ -324,7 +325,7 @@ internal class VirtualDisplayController(
         )
         bitmap.copyPixelsFromBuffer(buffer)
         image.close()
-        val cropped = if (rowPadding == 0 && safeHeight == height) {
+        val cropped = if (paddedWidth == width && safeHeight == height) {
             bitmap
         } else {
             android.graphics.Bitmap.createBitmap(bitmap, 0, 0, width, safeHeight).also {

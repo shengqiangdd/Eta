@@ -4676,3 +4676,62 @@ Main 线程的快照覆盖基线；如果基线里没有这个分支，那份旧
 aarch64 跑不了，因此分叉出的**消息内容**正确性只经过编译检查，未经真机验证。
 `branch()` 的事务写入同理。需要一次真机操作确认：在一条已闭合的助手回复上分叉，
 新会话应包含到该回复为止的完整前缀，且原会话保持不变。
+
+## fix153（设置页闪退 + 取帧几何收拢）：把「靠人记住」的约束变成可执行的检查
+
+### 一、点设置即闪退：字符串键混进了布尔键集合
+
+`agent_disabled_tools` 是逗号分隔的工具名列表，属于 `LOCAL_AGENT_STRING_KEYS`。
+但最初落库时把它塞进了 `LOCAL_AGENT_KEYS`（布尔集合），而 `reconcileAgentPreferences`
+对布尔集合里的每个键调用的是：
+
+```kotlin
+BOOLEAN_DEFAULTS.getValue(key)   // 注意是 getValue，不是 get
+```
+
+`getValue` 找不到就抛 `NoSuchElementException`。触发点是设置页的 `DisposableEffect`，
+所以症状不是「某功能不可用」，而是**打开设置立刻闪退**——上线即崩，且与逐项禁用是否
+被用过无关（只要打开设置就崩）。
+
+**改法**：键移到 `LOCAL_AGENT_STRING_KEYS`，从布尔集合移除。
+
+**为什么这类错误必然会复发**：两个集合与 `BOOLEAN_DEFAULTS` 之间的约束没有类型系统
+保障，全靠人记住。所以补了 `PrefsKeySetsTest` 三条守卫：
+
+- 布尔集合里每个键都必须在 `BOOLEAN_DEFAULTS` 里（否则设置页闪退）
+- 字符串集合与布尔集合不得有交集（否则 `getBoolean` 读到类型不匹配的值）
+- `agent_disabled_tools` 必须只在字符串集合里
+
+这三条是**结构性**的：以后再往任一集合加键，写错了测试就红，不必等到闪退。
+
+### 二、取帧几何：从两处各写一遍，收拢成一个可测函数
+
+`fix151` 在两条 `ImageReader` 取帧路径各加了一次越界保护，两处都是内联算术。
+这种写法的问题在这次重构里暴露出来——`virtualdisplay` 版里算 `safeHeight` 用的是
+`paddedWidth * 4`，而建图用的是 `paddedWidth`（已含 padding），两个宽度不同源。
+padding 不为零时，算出来的行数比实际能放下的少，虽然安全但会白丢几行；
+更糟的是如果反过来写错（算多了）就会重新引入越界。
+
+抽成 `ImageBufferGeometry`（纯函数，无 Android 依赖）：
+
+| 函数 | 职责 | 关键边界 |
+| `rowBytes` | 一行的字节数（含 padding） | `rowStride < pixelStride * width` 视为坏数据 |
+| `paddedWidth` | 建图用的整幅宽度 | 必须按 `rowStride` 换算，不能直接用有效宽度 |
+| `safeHeight` | 缓冲区实际能填满的行数 | 够整幅时返回 `height`，不够才整除并 `coerceAtMost(height)` |
+| `isFullFrame` | 是否整幅 | 用 `Long` 比较，避免 `rowStride * height` 溢出 |
+
+`ImageBufferGeometryTest` 9 例，重点是三条容易写反的：
+
+- **缓冲区比整幅多几个字节**：直接 `remaining / rowStride` 会得到 `height + 1`，
+  拿去建图就比真实数据多一行，越界复活。必须 `coerceAtMost(height)`。
+- **不足一行**：返回 null（调用方当作没拿到帧），不能返回 0 再传给 `createBitmap`。
+- **极大尺寸**：`rowStride * height` 用 Int 相乘会溢成负数，把不完整帧误判为完整帧。
+  所以比较用 `Long`。
+
+### 验证
+
+- `PrefsKeySetsTest` 3 例、`ImageBufferGeometryTest` 9 例，均已登记进 `tools/gate.sh`
+  快速子集（纯 JVM）。
+- 设置页闪退的修复**已由用户真机确认**（重新安装后打开设置正常）。
+- 取帧几何仍是「算术已测、真机时序未测」：`safeHeight` 的正确性被单测钉住，
+  但 ImageReader 在 resize 时究竟给出多长的缓冲区，只能在真机上观察。

@@ -603,21 +603,14 @@ internal object VirtualDisplayController {
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         if (pixelStride <= 0 || rowStride <= 0) return null
-        val rowPadding = rowStride - pixelStride * width
-        val paddedWidth = width + rowPadding / pixelStride
-        if (paddedWidth < width) return null
+        val paddedWidth = ImageBufferGeometry.paddedWidth(rowStride, pixelStride, width) ?: return null
 
         // 缓冲区长度由生产者决定：ImageReader 在 resize/重建、或首帧未填满时，
         // remaining 可能小于 paddedWidth * height * 4。此时按整幅高度建图再
         // copyPixelsFromBuffer 会读越界（表现为崩溃或整帧花屏），按实际可用
         // 行数截断，宁可少几行也不崩。
-        val requiredBytes = paddedWidth * height * 4
-        val safeHeight = if (buffer.remaining() >= requiredBytes) {
-            height
-        } else {
-            (buffer.remaining() / (paddedWidth * 4)).coerceAtMost(height)
-        }
-        if (safeHeight <= 0) return null
+        val safeHeight = ImageBufferGeometry.safeHeight(buffer.remaining(), rowStride, height)
+            ?: return null
 
         val rawBitmap = createBitmap(paddedWidth, safeHeight, Bitmap.Config.ARGB_8888)
         rawBitmap.copyPixelsFromBuffer(buffer)

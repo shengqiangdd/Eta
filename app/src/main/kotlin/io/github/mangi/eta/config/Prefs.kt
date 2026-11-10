@@ -215,7 +215,6 @@ internal object Prefs {
             AGENT_DEVICE_DIRECT_TOOLS,
             AGENT_DEVICE_SENSITIVE_READ_TOOLS,
             AGENT_DEVICE_SENSITIVE_ACTION_TOOLS,
-            AGENT_DISABLED_TOOLS,
             AGENT_THINKING_ENABLED,
             AGENT_AUTO_COMPACTION_ENABLED,
             AGENT_KEEP_SCREEN_ON,
@@ -259,6 +258,7 @@ internal object Prefs {
             AGENT_ACP_DEFAULT_AGENT,
             AGENT_ACP_DEFAULT_PROVIDER,
             AGENT_ACP_DEFAULT_MODEL,
+            AGENT_DISABLED_TOOLS,
         )
     }
 
