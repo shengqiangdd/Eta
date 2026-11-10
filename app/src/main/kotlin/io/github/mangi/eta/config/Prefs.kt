@@ -365,7 +365,15 @@ internal object Prefs {
         var updateRemote = false
 
         Keys.LOCAL_AGENT_KEYS.forEach { key ->
-            val default = Keys.BOOLEAN_DEFAULTS.getValue(key)
+            // 用下标取值 + 跳过，而不是 getValue：这个集合里缺默认值的键已经导致过两次
+            // 「打开设置即闪退」。注释警告挡不住第三次，所以让迁移本身容错 ——
+            // 缺默认值的键只是不参与布尔迁移（它本来也不该在这张表里），
+            // 记一条日志远好过让用户打不开设置。
+            val default = Keys.BOOLEAN_DEFAULTS[key]
+            if (default == null) {
+                android.util.Log.w("EtaPrefs", "reconcileAgentPreferences: 键 $key 缺少布尔默认值，已跳过")
+                return@forEach
+            }
             when {
                 local.contains(key) -> {
                     remoteEditor.putBoolean(key, local.getBoolean(key, default))

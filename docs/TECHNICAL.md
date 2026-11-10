@@ -4735,3 +4735,32 @@ padding 不为零时，算出来的行数比实际能放下的少，虽然安全
 - 设置页闪退的修复**已由用户真机确认**（重新安装后打开设置正常）。
 - 取帧几何仍是「算术已测、真机时序未测」：`safeHeight` 的正确性被单测钉住，
   但 ImageReader 在 resize 时究竟给出多长的缓冲区，只能在真机上观察。
+
+### 复发的同一条崩溃：从「写注释提醒」升级为「让代码容错」
+
+`agent_disabled_tools` 修好之后复查 `reconcileAgentPreferences`，发现同一类崩溃在
+`TECHNICAL.md` 里早有记录（2026-11-04 我自己引入过一次），而这次仍然发生了。结论很明确：
+**注释警告挡不住第三次**，因为约束存在于两个 `Set<String>` 与一张默认值 map 之间，
+类型系统看不见，评审时也容易漏。
+
+所以除了把键放回正确的集合（治标），改了迁移本身的取值方式（治本）：
+
+```kotlin
+// 之前：没有默认值就抛 NoSuchElementException → 设置页组合阶段闪退
+val default = Keys.BOOLEAN_DEFAULTS.getValue(key)
+
+// 现在：缺默认值的键不参与布尔迁移，只记一条日志
+val default = Keys.BOOLEAN_DEFAULTS[key]
+if (default == null) {
+    Log.w("EtaPrefs", "reconcileAgentPreferences: 键 $key 缺少布尔默认值，已跳过")
+    return@forEach
+}
+```
+
+两种做法的区别在于**故障半径**：前者是一个键写错就让用户打不开设置；后者是这个键
+的布尔迁移不生效，其它设置照常。而「不生效」会被 `PrefsKeySetsTest` 立刻抓住——
+该测试仍然要求布尔集合里每个键都有默认值，只是现在它是**在 CI 里失败**，
+而不是**在用户手机上闪退**。
+
+这条改动的原则值得单独记住：当某个约束反复被人违反时，不要增加提醒的强度，
+要降低违反它的代价。

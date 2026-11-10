@@ -6,15 +6,14 @@ import org.junit.Test
 /**
  * 两个键集合的约束守卫。
  *
- * 背景：`reconcileAgentPreferences` 对 [Prefs.Keys.LOCAL_AGENT_KEYS] 里的每个键调用
- * `BOOLEAN_DEFAULTS.getValue(key)` —— 是 `getValue` 而不是 `get`，没有默认值就抛
- * `NoSuchElementException`。这个异常发生在**设置页的组合阶段**（`DisposableEffect`），
- * 所以代价是打开设置即闪退，而不是某个功能不可用。
+ * 背景：`reconcileAgentPreferences` 会遍历 [Prefs.Keys.LOCAL_AGENT_KEYS] 做布尔迁移。
+ * 它原先用 `BOOLEAN_DEFAULTS.getValue(key)`——没有默认值就抛 `NoSuchElementException`，
+ * 而异常发生在**设置页的组合阶段**（`DisposableEffect`），代价是打开设置即闪退。
+ * `agent_disabled_tools`（字符串）误入布尔集合时正是这样炸的。
  *
- * 反过来的错误同样存在：字符串键（如 `agent_disabled_tools`）被塞进布尔集合，会因为
- * `getBoolean` 的类型不匹配而静默读成默认值，或者更糟——直接崩。
- *
- * 这两条约束靠人记住必然复发，用测试钉住。
+ * 现在迁移本身已经容错（下标取值 + 跳过 + 日志），设置页不会再因此起不来。
+ * 但这张表仍然应该干净：下面的测试守住这一点，避免「靠跳过兜住」变成常态，
+ * 把真正的类型错误一直藏下去。
  */
 class PrefsKeySetsTest {
 
@@ -22,7 +21,7 @@ class PrefsKeySetsTest {
     fun `布尔键集合里的每个键都必须有布尔默认值`() {
         val missing = Prefs.Keys.LOCAL_AGENT_KEYS.filterNot { it in Prefs.Keys.BOOLEAN_DEFAULTS }
         assertTrue(
-            "这些键会让 reconcileAgentPreferences 抛 NoSuchElementException（设置页闪退）：$missing",
+            "这些键没有布尔默认值，迁移时只能被跳过（说明它们本不该在这张表里）：$missing",
             missing.isEmpty(),
         )
     }
