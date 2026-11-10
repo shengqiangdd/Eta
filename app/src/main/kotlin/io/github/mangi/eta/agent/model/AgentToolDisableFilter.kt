@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.model
 
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 按用户逐项开关裁剪模型可见的工具。
@@ -16,7 +17,13 @@ import org.json.JSONArray
  */
 internal object AgentToolDisableFilter {
 
-    /** JSON schema 里工具名的字段。 */
+    /**
+     * OpenAI 风格的工具声明把名字放在 `function.name`，而不是顶层 `name`。
+     *
+     * 必须读嵌套字段：读顶层会在**不报错**的前提下拿到空串，过滤器和测试全绿，
+     * 功能却从未生效过（已经踩过一次）。
+     */
+    private const val FUNCTION_FIELD = "function"
     private const val NAME_FIELD = "name"
 
     /**
@@ -45,15 +52,36 @@ internal object AgentToolDisableFilter {
         val kept = JSONArray()
         var dropped = false
         for (index in 0 until tools.length()) {
-            val tool = tools.optJSONObject(index) ?: continue
-            val name = tool.optString(NAME_FIELD)
+            val raw = tools.opt(index)
+            if (raw !is JSONObject) {
+                // 非对象项不属于本次裁剪范围：原样保留，而不是静默丢掉。
+                // 早先用 `optJSONObject(index) ?: continue` 把这类项直接删了 ——
+                // 只要同时禁用了任意一个工具，它们就会被「顺手」清掉。
+                kept.put(raw)
+                continue
+            }
+            val name = raw.optJSONObject(FUNCTION_FIELD)?.optString(NAME_FIELD).orEmpty()
             if (name.isNotEmpty() && name in disabled) {
                 dropped = true
                 continue
             }
-            kept.put(tool)
+            kept.put(raw)
         }
         // 一个都没命中就别换对象：调用方可能持有同一个 JSONArray 做别的判断。
         return if (dropped) kept else tools
     }
+
+    /**
+     * 从工具目录里取出真实的工具名。
+     *
+     * 给测试与诊断用：名字藏在 `function.name`，直接对数组取 `name` 会全是空串，
+     * 让「名字对不对得上」这类断言失去意义。
+     */
+    fun namesOf(tools: JSONArray): List<String> =
+        (0 until tools.length()).mapNotNull { index ->
+            tools.optJSONObject(index)
+                ?.optJSONObject(FUNCTION_FIELD)
+                ?.optString(NAME_FIELD)
+                ?.takeIf { it.isNotEmpty() }
+        }
 }

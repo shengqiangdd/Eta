@@ -258,6 +258,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.model.GrokResponsesRequestTest
   --tests io.github.mangi.eta.agent.model.GrokToolSchemaTest
   --tests io.github.mangi.eta.agent.model.AgentToolDisableFilterTest
+  --tests io.github.mangi.eta.agent.model.AgentToolDisableEndToEndTest
   --tests io.github.mangi.eta.data.repository.ConversationBranchBoundaryTest
   --tests io.github.mangi.eta.agent.virtualdisplay.ImageBufferGeometryTest
   --tests io.github.mangi.eta.config.PrefsKeySetsTest

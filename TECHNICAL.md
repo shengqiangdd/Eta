@@ -4847,3 +4847,78 @@ if (default == null) {
 | UI 点按与 deferred 载入表现 | **仍未验证**（需真机） |
 
 剩的只有「点下去体验如何」，数据正确性这一侧已经闭环。
+
+## fix154（逐项禁用从未生效）：测试用了假结构，把真 bug 全放过
+
+这一条是本轮最该记下来的：**功能从头到尾没有生效过，而所有测试都是绿的。**
+
+### 症状与根因
+
+`AgentToolDisableFilter.apply` 这样取工具名：
+
+```kotlin
+val name = tool.optString("name")     // 顶层 name
+```
+
+但真实目录是 OpenAI 风格，名字在 `function.name`：
+
+```json
+{"type":"function","function":{"name":"terminal","description":"..."}}
+```
+
+`optString("name")` 对缺失字段返回空串（不抛异常），于是每个工具名都是 `""`，
+`"" in disabled` 永远为 false —— 一行都不会被裁掉。用户在设置页关掉 `terminal`，
+助手下一轮照样能调。
+
+更麻烦的是它**不会留下任何痕迹**：不崩、不报错、日志里也没有异常，
+只是功能静默失效。
+
+### 为什么测试没抓到
+
+`AgentToolDisableFilterTest` 的输入是手写的：
+
+```kotlin
+JSONObject().put("name", name)     // 顶层 — 与真实结构不符
+```
+
+测试与实现**共享了同一个错误假设**，所以两者一致地绿。这是测试最典型的失效模式：
+测的是「我以为的数据」，不是「真实的数据」。
+
+### 怎么发现的
+
+想验证「禁用一个工具后，模型真的看不到它」，于是写了个端到端测试，直接跑
+`AgentToolCatalog.build()` 产出真实目录。第一次跑就拿到 144 个**空名字**——
+因为诊断代码也用了 `optString("name")`。改成读 `function.name` 后，
+144 个真实工具名浮现，`terminal`、`read_file`、`terminal_job`、
+`terminal_daemon` 都在其中。
+
+### 修复
+
+1. `apply()` 改读 `function.name`，并新增 `namesOf()` 供测试与诊断取真实名字。
+2. 测试输入全部改成真实结构；另加 `AgentToolDisableEndToEndTest`，
+   直接在 `AgentToolCatalog.build()` 的真实产出上验证 —— 这条测试**不可能**因为
+   结构假设错误而误绿。
+
+### 顺带修掉的第二个 bug
+
+`apply()` 里原来写：
+
+```kotlin
+val tool = tools.optJSONObject(index) ?: continue   // 非对象项被静默丢弃
+```
+
+只要用户禁用了任意一个工具，数组里所有「不是 JSONObject」的项都会被顺手删掉。
+虽然正常目录里不该有这种项，但「禁用 A 导致 B 消失」是错误的耦合。
+改为原样保留，并加了针对性用例（4 条异常结构项 + 禁用 1 个真实工具 → 仍保留 4 条）。
+
+### 教训
+
+**能被测试骗过的实现，通常也能骗过评审。** 判断一层测试是否可信，看它的输入从哪来：
+手写常量只能证明「实现符合我的假设」；从真实生产者（这里是 `AgentToolCatalog.build`）
+取输入，才能证明「实现对得上真实世界」。
+
+因此这条功能现在的验证是两层：
+- `AgentToolDisableFilterTest` 8 例 —— 边界与容错（输入按真实结构构造）
+- `AgentToolDisableEndToEndTest` 7 例 —— 在真实目录上验证禁用确实生效
+
+其中端到端那层是**唯一**能证明「用户关掉后模型就看不到」的测试。
