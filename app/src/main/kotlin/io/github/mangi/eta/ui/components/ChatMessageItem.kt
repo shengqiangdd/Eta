@@ -410,7 +410,6 @@ private fun UserMessageBubble(
             ),
         horizontalArrangement = Arrangement.End,
     ) {
-<<<<<<< HEAD
         // 显式操作入口：正文包在 SelectionContainer 里，长按必然被系统文本选择抢走，
         // 只留 RichTooltip 的话，触摸设备上编辑/删除根本点不出来。
         // 放在气泡**左侧**：用户气泡最宽可到 320dp，右侧再塞按钮会超出 Row 被裁掉。
@@ -476,7 +475,6 @@ private fun UserMessageBubble(
                             },
                         )
                         MessageTooltipAction(
-=======
         if (uiStyle == AppearanceUiStyle.COUI && !assistantOverlay) {
             val couiDark = CouiTheme.isDark
             val couiBubbleBg = if (couiDark) Color(0xFF202634) else Color(0xFFEEF2FA)
@@ -495,7 +493,6 @@ private fun UserMessageBubble(
                         CouiMenuItem(
                             value = 2,
                             text = deleteText,
->>>>>>> origin/main
                             icon = Icons.Rounded.Delete,
                             iconTint = destructiveColor,
                             dividerBefore = true,
@@ -1268,7 +1265,6 @@ private fun CharacterReplyHeader(character: RoleplayChatUi, isGreeting: Boolean)
 private val ChatCardCorner = 12.dp
 private const val ChatCardOutlineAlpha = 0.5f
 
-<<<<<<< HEAD
 /** 压缩明细短于此长度时仍用一个胶囊显示；更长的换成可换行的卡片，避免省略号吃掉关键数字。 */
 private const val COMPACTION_DETAIL_INLINE_CHARS = 44
 
@@ -1278,11 +1274,9 @@ private const val COMPACTION_DETAIL_MAX_LINES = 3
 /** 回答操作按钮的触控尺寸；行整体左移半个尺寸减去图标半宽，使图标落在工作过程图标的中心线上。 */
 internal val AnswerActionSize = 36.dp
 private val AnswerActionCenterOffset = 11.dp
-=======
 /** 回答操作按钮的紧凑触控尺寸（28.dp 盒 + 16.dp 图标）；行整体左移 6.dp 对齐正文左边缘。 */
 internal val AnswerActionSize = 28.dp
 private val AnswerActionCenterOffset = 6.dp
->>>>>>> origin/main
 
 /** 回答下方的轻量操作：图标显式着色，因此禁用态需要自己换成禁用色，否则看起来仍可点。 */
 @Composable

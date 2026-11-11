@@ -1,8 +1,6 @@
 package io.github.mangi.eta.ui.components
 
-<<<<<<< HEAD
 import android.content.Context
-=======
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -11,7 +9,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
->>>>>>> origin/main
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,16 +55,6 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import io.github.mangi.eta.R
-import io.github.mangi.eta.agent.model.AgentFileReference
-import io.github.mangi.eta.agent.model.AgentFileReferenceKind
-import io.github.mangi.eta.ui.app.WorkspacePickerHistory
-import io.github.mangi.eta.ui.app.importHistoryDirectory
-import io.github.mangi.eta.ui.app.pickerStartPath
-=======
 import com.itos.coui.menu.CouiMenuItem
 import com.itos.coui.menu.Menu
 import com.itos.coui.menu.couiMenuAnchor
@@ -78,7 +65,6 @@ import io.github.mangi.eta.agent.model.AgentFileReferenceKind
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.coui.CouiInputDialog
->>>>>>> origin/main
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.Icon
@@ -168,44 +154,6 @@ internal fun AgentAttachmentPickerButton(
                 tint = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
             )
         }
-<<<<<<< HEAD
-        WindowListPopup(
-            show = showPopup && popupAnchorTopPx > 0,
-            popupPositionProvider = remember(popupAnchorTopPx) {
-                InputPopupPositionProvider(popupAnchorTopPx)
-            },
-            alignment = PopupPositionProvider.Align.TopStart,
-            onDismissRequest = { showPopup = false },
-            maxHeight = popupMaxHeight,
-        ) {
-            val dismiss = LocalDismissState.current
-            val options = listOf(
-                stringResource(R.string.attachment_image),
-                stringResource(R.string.attachment_file),
-                stringResource(R.string.attachment_folder),
-                stringResource(R.string.attachment_enter_path),
-            )
-            ListPopupColumn {
-                options.forEachIndexed { index, option ->
-                    DropdownImpl(
-                        text = option,
-                        optionSize = options.size,
-                        isSelected = false,
-                        index = index,
-                        onSelectedIndexChange = {
-                            dismiss?.invoke()
-                            when (index) {
-                                0 -> pickerMode = AttachmentPickerMode.IMAGE
-                                1 -> pickerMode = AttachmentPickerMode.FILE
-                                2 -> pickerMode = AttachmentPickerMode.FOLDER
-                                3 -> {
-                                    pathInput = ""
-                                    showPathDialog = true
-                                }
-                            }
-                        },
-                    )
-=======
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
                 val menuItems = remember(options) {
@@ -247,84 +195,17 @@ internal fun AgentAttachmentPickerButton(
                             )
                         }
                     }
->>>>>>> origin/main
                 }
             }
         }
     }
 
-<<<<<<< HEAD
-    val mode = pickerMode
-    if (mode != null) {
-        Dialog(
-            onDismissRequest = { pickerMode = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                WorkspacePathPicker(
-                    initialPath = WorkspacePickerHistory
-                        .get(context, WorkspacePickerHistory.Kind.ATTACHMENT)
-                        ?: pickerStartPath(context),
-                    pickFiles = mode != AttachmentPickerMode.FOLDER,
-                    title = stringResource(
-                        when (mode) {
-                            AttachmentPickerMode.IMAGE -> R.string.attachment_image
-                            AttachmentPickerMode.FILE -> R.string.attachment_file
-                            AttachmentPickerMode.FOLDER -> R.string.attachment_folder
-                        }
-                    ),
-                    multipleFiles = mode != AttachmentPickerMode.FOLDER,
-                    onBack = { pickerMode = null },
-                    onPick = { path ->
-                        pickerMode = null
-                        rememberAttachmentDirectory(
-                            context = context,
-                            pickedPath = path,
-                            pickedDirectory = mode == AttachmentPickerMode.FOLDER,
-                        )
-                        when (mode) {
-                            AttachmentPickerMode.IMAGE -> onAttachImage(path)
-                            AttachmentPickerMode.FILE -> onAttachFiles(listOf(path))
-                            AttachmentPickerMode.FOLDER -> onAttachFolder(path)
-                        }
-                    },
-                    onPickMany = { paths ->
-                        pickerMode = null
-                        paths.firstOrNull()?.let { path ->
-                            rememberAttachmentDirectory(
-                                context = context,
-                                pickedPath = path,
-                                pickedDirectory = false,
-                            )
-                        }
-                        when (mode) {
-                            AttachmentPickerMode.IMAGE -> paths.forEach(onAttachImage)
-                            AttachmentPickerMode.FILE -> onAttachFiles(paths)
-                            AttachmentPickerMode.FOLDER -> Unit
-                        }
-                    },
-                )
-            }
-        }
-    }
-
-    WindowDialog(
-        show = showPathDialog,
-        cornerRadius = DialogDefaults.CornerRadius,
-        title = stringResource(R.string.ui_input_file_path_36d474),
-        summary = stringResource(R.string.ui_supports_files_and_folders_under_internal_storage_or_520786),
-        onDismissRequest = { showPathDialog = false },
-    ) {
-        Column {
-            TextField(
-=======
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             CouiInputDialog(
                 visible = showPathDialog,
                 title = stringResource(R.string.ui_input_file_path_36d474),
                 message = stringResource(R.string.ui_supports_files_and_folders_under_internal_storage_or_520786),
->>>>>>> origin/main
                 value = pathInput,
                 onValueChange = { pathInput = it },
                 placeholder = stringResource(R.string.ui_absolute_path_9ac6fc),

@@ -52,58 +52,6 @@ internal fun LazyListScope.providerHeadersEditor(
     onExpandedChange: (Boolean) -> Unit,
 ) {
     item(key = "custom_headers") {
-<<<<<<< HEAD
-        ProviderSection(title = stringResource(R.string.provider_headers_section)) {
-            val chevronRotation by animateFloatAsState(if (expanded) 180f else 0f)
-            EtaPreference(
-                title = if (headers.isEmpty()) {
-                    stringResource(R.string.provider_headers_none)
-                } else {
-                    pluralStringResource(R.plurals.provider_headers_count, headers.size, headers.size)
-                },
-                summary = stringResource(R.string.provider_headers_summary),
-                endActions = {
-                    Icon(
-                        imageVector = Icons.Rounded.ExpandMore,
-                        contentDescription = if (expanded) {
-                            stringResource(R.string.provider_headers_collapse)
-                        } else {
-                            stringResource(R.string.provider_headers_expand)
-                        },
-                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                        modifier = Modifier.rotate(chevronRotation),
-                    )
-                },
-                onClick = { onExpandedChange(!expanded) },
-            )
-            if (expanded) {
-                headers.forEach { row ->
-                    EtaPreferenceDivider(hasLeading = false)
-                    ProviderHeaderRow(
-                        row = row,
-                        onNameChange = { value ->
-                            onHeadersChange(headers.map {
-                                if (it.id == row.id) it.copy(header = it.header.copy(name = value)) else it
-                            })
-                        },
-                        onValueChange = { value ->
-                            onHeadersChange(headers.map {
-                                if (it.id == row.id) it.copy(header = it.header.copy(value = value)) else it
-                            })
-                        },
-                        onRemove = { onHeadersChange(headers.filterNot { it.id == row.id }) },
-                    )
-                }
-                EtaPreferenceDivider(hasLeading = false)
-                EtaPreference(
-                    title = stringResource(R.string.provider_headers_add),
-                    titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.primary),
-                    startAction = {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = null,
-                            tint = MiuixTheme.colorScheme.primary,
-=======
         ProviderHeadersSection(
             headers = headers,
             onHeadersChange = onHeadersChange,
@@ -137,7 +85,6 @@ internal fun ProviderHeadersSection(
                             modifier = Modifier
                                 .size(22.dp)
                                 .rotate(chevronRotation),
->>>>>>> origin/main
                         )
                     },
                     onClick = { onExpandedChange(!expanded) },
@@ -227,43 +174,6 @@ private fun ProviderHeaderRow(
     onRemove: () -> Unit,
 ) {
     var visible by remember(row.id) { mutableStateOf(false) }
-<<<<<<< HEAD
-    Row(
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextField(
-                value = row.header.name,
-                onValueChange = onNameChange,
-                label = stringResource(R.string.provider_headers_name),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TextField(
-                value = row.header.value,
-                onValueChange = onValueChange,
-                label = stringResource(R.string.provider_headers_value),
-                singleLine = true,
-                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { visible = !visible }) {
-                        Icon(
-                            imageVector = if (visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                            contentDescription = if (visible) {
-                                stringResource(R.string.page_hide_bb0e7e)
-                            } else {
-                                stringResource(R.string.page_show_71b677)
-                            },
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-=======
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             val colors = CouiPageDefaults.themeColors()
@@ -321,7 +231,6 @@ private fun ProviderHeaderRow(
                     )
                 }
             }
->>>>>>> origin/main
         }
         AppearanceUiStyle.MIUIX -> {
             Row(

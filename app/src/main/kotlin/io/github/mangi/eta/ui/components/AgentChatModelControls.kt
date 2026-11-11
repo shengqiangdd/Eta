@@ -2,18 +2,15 @@ package io.github.mangi.eta.ui.components
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-<<<<<<< HEAD
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
-=======
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
->>>>>>> origin/main
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
@@ -81,7 +78,6 @@ internal fun AgentContextUsageButton(
         R.string.context_usage_description,
         detail.replace('\n', ' '),
     )
-<<<<<<< HEAD
     val tooltipColors = TooltipDefaults.richTooltipColors()
     TooltipBox(
         positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
@@ -143,11 +139,9 @@ internal fun AgentContextUsageButton(
         focusable = true,
         modifier = modifier,
     ) {
-=======
     var showPopover by remember { mutableStateOf(false) }
 
     Box(modifier = modifier) {
->>>>>>> origin/main
         IconButton(
             onClick = { showPopover = !showPopover },
             minWidth = 34.dp,

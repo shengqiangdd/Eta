@@ -28,12 +28,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-<<<<<<< HEAD
 import androidx.compose.foundation.horizontalScroll
-=======
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
->>>>>>> origin/main
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -115,17 +112,10 @@ import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
-<<<<<<< HEAD
-import io.github.mangi.eta.ui.model.AgentContextUsageUi
-import io.github.mangi.eta.ui.model.AgentSessionUsageUi
-import io.github.mangi.eta.ui.model.AgentModelPickerUiState
-import io.github.mangi.eta.ui.model.ComposerQuoteUi
-=======
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.markdown.EditorialLineHeightStyle
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
->>>>>>> origin/main
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
 import io.github.mangi.eta.ui.model.QueuedMessageUi
@@ -281,11 +271,8 @@ internal fun AgentChatInputBar(
         if (isEditingMessage || wasEditingMessage) {
             textFieldState.setTextAndPlaceCursorAtEnd(input)
         }
-<<<<<<< HEAD
         if (isEditingMessage) {
-=======
         if (isEditingMessage || (versionChanged && input.isNotEmpty() && focusInputOnSync)) {
->>>>>>> origin/main
             focusRequester.requestFocus()
             keyboard?.show()
         }
@@ -592,22 +579,15 @@ internal fun AgentChatInputBar(
 
                         Spacer(modifier = Modifier.weight(1f))
 
-<<<<<<< HEAD
                         if (showContextUsage) {
-=======
                         if (showContextUsage && contextUsage.contextTokens != null) {
->>>>>>> origin/main
                             AgentContextUsageButton(
                                 usage = contextUsage,
                                 onCompact = onCompactContext,
                                 canCompact = canCompactContext && !isStreaming,
-<<<<<<< HEAD
                                 sessionUsage = sessionUsage,
                             )
-
-=======
                             )
->>>>>>> origin/main
                             Spacer(modifier = Modifier.width(2.dp))
                         }
 
@@ -615,7 +595,6 @@ internal fun AgentChatInputBar(
 
                         Spacer(modifier = Modifier.width(2.dp))
 
-<<<<<<< HEAD
                         AgentModelPickerButton(
                             state = modelPickerState,
                             popupAnchorTopPx = inputContainerTopPx,
@@ -640,7 +619,6 @@ internal fun AgentChatInputBar(
                                         ChatRunningActionGlyph.Resume -> R.string.chat_resume_run
                                         ChatRunningActionGlyph.Stop -> R.string.chat_stop
                                     }
-=======
                         val showStreamingSend = isStreaming && !isCompacting && canSend
                         val submitCurrentDraft: (Boolean) -> Unit = { interrupt ->
                             if (canSend) {
@@ -715,7 +693,6 @@ internal fun AgentChatInputBar(
                                     } else {
                                         null
                                     },
->>>>>>> origin/main
                                 ),
                                 onClick = {
                                     when (runningActionGlyph) {
@@ -847,14 +824,11 @@ internal fun AgentChatInputBar(
                                             ChatPrimaryGlyph.Stop -> Icons.Rounded.Stop
                                             ChatPrimaryGlyph.Send -> Icons.Rounded.ArrowUpward
                                         },
-<<<<<<< HEAD
                                         contentDescription = null,
                                         modifier = Modifier.size(
                                             if (glyph == ChatPrimaryGlyph.Stop) StopIconSize else SendIconSize
                                         ),
-=======
                                         modifier = Modifier.size(if (stopIcon) 12.dp else 17.dp),
->>>>>>> origin/main
                                         tint = when {
                                             glyph == ChatPrimaryGlyph.Stop -> MiuixTheme.colorScheme.surface
                                             canSend -> MiuixTheme.colorScheme.onPrimary
@@ -1156,7 +1130,6 @@ private fun PendingImageStrip(
     }
 }
 
-<<<<<<< HEAD
 /** 运行中左侧按钮的图形：暂停、继续、停止。 */
 private enum class ChatRunningActionGlyph { Pause, Resume, Stop }
 
@@ -1192,6 +1165,4 @@ private fun ChatActionButton(
         content()
     }
 }
-=======
 private const val PendingImagesGroupKey = "pending_images_strip"
->>>>>>> origin/main

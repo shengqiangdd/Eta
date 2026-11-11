@@ -2,13 +2,10 @@ package io.github.mangi.eta.ui.screens.backup
 
 import android.content.Context
 import android.widget.Toast
-<<<<<<< HEAD
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-=======
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
->>>>>>> origin/main
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -30,38 +27,6 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.safeStackTrace
-<<<<<<< HEAD
-import io.github.mangi.eta.data.backup.AutoBackupOutcome
-import io.github.mangi.eta.data.backup.AutoBackupRepository
-import io.github.mangi.eta.data.backup.AutoBackupScheduler
-import io.github.mangi.eta.data.backup.StorageFailures
-import io.github.mangi.eta.data.model.AutoBackupSettings
-import io.github.mangi.eta.data.repository.EtaBackupException
-import io.github.mangi.eta.data.repository.EtaBackupSummary
-import io.github.mangi.eta.ui.app.ConversationTimeLabels
-import io.github.mangi.eta.ui.app.WorkspacePickerHistory
-import io.github.mangi.eta.ui.app.importHistoryDirectory
-import io.github.mangi.eta.ui.app.pickerStartPath
-import io.github.mangi.eta.ui.components.EtaArrowPreference
-import io.github.mangi.eta.ui.components.EtaCard
-import io.github.mangi.eta.ui.components.EtaDropdownPreference
-import io.github.mangi.eta.ui.components.EtaPreference
-import io.github.mangi.eta.ui.components.EtaPreferenceDefaults
-import io.github.mangi.eta.ui.components.EtaPreferenceDivider
-import io.github.mangi.eta.ui.components.EtaPreferenceGroup
-import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
-import io.github.mangi.eta.ui.components.EtaSwitchPreference
-import io.github.mangi.eta.ui.components.EtaTextButton
-import io.github.mangi.eta.ui.components.EtaWindowDialog
-import io.github.mangi.eta.ui.components.MiuixDialogActions
-import io.github.mangi.eta.ui.components.MiuixScaffoldPage
-import io.github.mangi.eta.ui.components.WorkspacePathPicker
-import java.io.File
-import java.io.FileOutputStream
-import java.io.FilterInputStream
-import java.io.FilterOutputStream
-import java.io.IOException
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.repository.EtaBackupSummary
 import io.github.mangi.eta.ui.app.LocalUiStyle
@@ -71,7 +36,6 @@ import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
 import io.github.mangi.eta.ui.components.coui.CouiPageBottomSpacer
 import io.github.mangi.eta.ui.components.coui.CouiPreference
 import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
->>>>>>> origin/main
 import java.io.InputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
@@ -79,13 +43,10 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-<<<<<<< HEAD
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
-=======
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
->>>>>>> origin/main
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -206,185 +167,6 @@ internal fun DataBackupScreen(
         }
     }
 
-<<<<<<< HEAD
-    when (pickerMode) {
-        BackupPickerMode.EXPORT_DIRECTORY -> {
-            WorkspacePathPicker(
-                initialPath = WorkspacePickerHistory.get(context, WorkspacePickerHistory.Kind.EXPORT)
-                    ?: pickerStartPath(context),
-                pickFiles = false,
-                title = stringResource(R.string.capability_workspace_pick_folder),
-                onBack = { pickerMode = null },
-                onPick = { directory ->
-                    pickerMode = null
-                    WorkspacePickerHistory.remember(context, WorkspacePickerHistory.Kind.EXPORT, directory)
-                    exportTo(directory)
-                },
-            )
-            return
-        }
-        BackupPickerMode.IMPORT_FILE -> {
-            WorkspacePathPicker(
-                initialPath = WorkspacePickerHistory.get(context, WorkspacePickerHistory.Kind.IMPORT)
-                    ?: pickerStartPath(context),
-                pickFiles = true,
-                title = stringResource(R.string.capability_workspace_pick_file),
-                onBack = { pickerMode = null },
-                onPick = { path ->
-                    pickerMode = null
-                    WorkspacePickerHistory.remember(
-                        context,
-                        WorkspacePickerHistory.Kind.IMPORT,
-                        importHistoryDirectory(path),
-                    )
-                    inspectImport(path)
-                },
-            )
-            return
-        }
-        null -> Unit
-    }
-
-    MiuixScaffoldPage(
-        title = stringResource(R.string.data_backup_title),
-        onBack = onBack,
-    ) {
-        item(key = "warning") {
-            EtaPreferenceGroup(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                EtaPreference(
-                    title = stringResource(R.string.data_backup_warning_title),
-                    summary = stringResource(R.string.data_backup_warning_summary),
-                )
-            }
-        }
-        item(key = "auto-title") {
-            EtaPreferenceGroupTitle(stringResource(R.string.data_backup_auto_title))
-        }
-        item(key = "auto-card") {
-            val current = autoBackup
-            EtaPreferenceGroup(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
-                EtaSwitchPreference(
-                    title = stringResource(R.string.data_backup_auto_enable),
-                    checked = current?.enabled == true,
-                    summary = stringResource(R.string.data_backup_auto_enable_summary),
-                    enabled = !busy && current != null,
-                    onCheckedChange = { enabled ->
-                        scope.launch { AutoBackupRepository.setEnabled(enabled) }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = true)
-                EtaDropdownPreference(
-                    title = stringResource(R.string.data_backup_auto_interval),
-                    items = AutoBackupScheduler.INTERVAL_CHOICES.map { hours ->
-                        DropdownItem(text = intervalLabel(context, hours))
-                    },
-                    selectedIndex = AutoBackupScheduler.INTERVAL_CHOICES
-                        .indexOf(current?.intervalHours ?: AutoBackupSettings.DEFAULT_INTERVAL_HOURS)
-                        .coerceAtLeast(0),
-                    enabled = !busy && current?.enabled == true,
-                    onSelectedIndexChange = { index ->
-                        val hours = AutoBackupScheduler.INTERVAL_CHOICES.getOrNull(index)
-                        if (hours != null) {
-                            scope.launch { AutoBackupRepository.setIntervalHours(hours) }
-                        }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = true)
-                EtaPreference(
-                    title = stringResource(R.string.data_backup_auto_last),
-                    summary = autoBackupSummary(context, current),
-                )
-                EtaPreferenceDivider(hasLeading = true)
-                EtaArrowPreference(
-                    title = stringResource(R.string.data_backup_auto_run_now),
-                    summary = if (busyOp == BackupOp.BACKUP) {
-                        stringResource(R.string.data_backup_working)
-                    } else {
-                        stringResource(R.string.data_backup_auto_run_now_summary)
-                    },
-                    enabled = !busy,
-                    startAction = {
-                        BackupIcon(
-                            icon = Icons.Rounded.Download,
-                            loading = busyOp == BackupOp.BACKUP,
-                        )
-                    },
-                    onClick = {
-                        scope.launch {
-                            busyOp = BackupOp.BACKUP
-                            try {
-                                val outcome = AutoBackupRepository.runNow(context)
-                                Toast.makeText(
-                                    context,
-                                    autoBackupOutcomeMessage(context, outcome),
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            } catch (cancel: CancellationException) {
-                                throw cancel
-                            } catch (throwable: Throwable) {
-                                showFailure(throwable)
-                            } finally {
-                                busyOp = BackupOp.IDLE
-                            }
-                        }
-                    },
-                )
-            }
-        }
-        item(key = "actions-title") {
-            EtaPreferenceGroupTitle(stringResource(R.string.data_backup_actions))
-        }
-        item(key = "actions-card") {
-            EtaPreferenceGroup(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
-                EtaArrowPreference(
-                    title = stringResource(R.string.data_backup_export),
-                    summary = if (busyOp == BackupOp.EXPORT) {
-                        if (exportWritten > 0L) {
-                            stringResource(
-                                R.string.data_backup_export_progress,
-                                (exportWritten / (1024 * 1024)).toInt(),
-                            )
-                        } else {
-                            stringResource(R.string.data_backup_working)
-                        }
-                    } else {
-                        stringResource(R.string.data_backup_export_summary)
-                    },
-                    enabled = !busy,
-                    startAction = {
-                        BackupIcon(
-                            icon = Icons.Rounded.Download,
-                            loading = busyOp == BackupOp.EXPORT,
-                        )
-                    },
-                    onClick = {
-                        pickerMode = BackupPickerMode.EXPORT_DIRECTORY
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = true)
-                EtaArrowPreference(
-                    title = stringResource(R.string.data_backup_import),
-                    summary = when (busyOp) {
-                        BackupOp.IMPORT_PARSING -> if (parsePercent >= 0) {
-                            stringResource(R.string.data_backup_import_parsing_progress, parsePercent)
-                        } else {
-                            stringResource(R.string.data_backup_import_parsing)
-                        }
-                        BackupOp.IMPORTING -> stringResource(R.string.data_backup_working)
-                        else -> stringResource(R.string.data_backup_import_summary)
-                    },
-                    enabled = !busy,
-                    startAction = {
-                        BackupIcon(
-                            icon = Icons.Rounded.Description,
-                            loading = busyOp == BackupOp.IMPORT_PARSING || busyOp == BackupOp.IMPORTING,
-                        )
-                    },
-                    onClick = {
-                        pickerMode = BackupPickerMode.IMPORT_FILE
-                    },
-                )
-=======
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             CouiScaffoldPage(
@@ -479,7 +261,6 @@ internal fun DataBackupScreen(
                         )
                     }
                 }
->>>>>>> origin/main
             }
         }
     }
@@ -500,7 +281,6 @@ internal fun DataBackupScreen(
     }
 
     if (showImportDialog) {
-<<<<<<< HEAD
         EtaWindowDialog(
             show = true,
             title = stringResource(R.string.data_backup_import_confirm_title),
@@ -591,10 +371,8 @@ private fun BackupIcon(icon: ImageVector, loading: Boolean) {
     ) {
         if (loading) {
             InfiniteProgressIndicator(size = 20.dp)
-=======
         val confirmText = if (busy) {
             stringResource(R.string.data_backup_working)
->>>>>>> origin/main
         } else {
             stringResource(R.string.action_import)
         }

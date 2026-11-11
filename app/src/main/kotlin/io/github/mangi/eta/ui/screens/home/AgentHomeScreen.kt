@@ -5,12 +5,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-<<<<<<< HEAD
 import io.github.mangi.eta.data.model.ChatViewMode
-=======
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
->>>>>>> origin/main
 import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.AgentConversationLoadState
 import io.github.mangi.eta.ui.components.LocalAgentBrowserSession
@@ -52,13 +49,10 @@ internal fun AgentHomeScreen(
     searchOpenRequests: Int = 0,
     onOpenRunDetail: (String) -> Unit = {},
     isDrawerOpen: Boolean = false,
-<<<<<<< HEAD
     historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
     isLoadingConversation: Boolean = false,
-=======
     isBranching: Boolean = false,
     topInset: Dp = 0.dp,
->>>>>>> origin/main
     modifier: Modifier = Modifier,
 ) {
     key(chatConversationCompositionKey(conversationKey)) {
@@ -72,7 +66,6 @@ internal fun AgentHomeScreen(
                 modifier = modifier,
             )
         } else {
-<<<<<<< HEAD
         val todoPlan = rememberTodoPlan(conversationKey)
         val taskLedger = rememberTaskLedger(conversationKey)
         val goal = rememberAgentGoal(conversationKey)
@@ -165,7 +158,6 @@ internal fun AgentHomeScreen(
             modifier = modifier,
         )
         }
-=======
             val browser = remember(conversationKey) {
                 BrowserSessionRegistry.get(conversationKey ?: BrowserSessionRegistry.MANUAL_SESSION_KEY)
             }
@@ -227,7 +219,6 @@ internal fun AgentHomeScreen(
                     modifier = modifier,
                 )
             }
->>>>>>> origin/main
         }
     }
 }

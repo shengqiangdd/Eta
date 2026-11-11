@@ -9,16 +9,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
-import io.github.mangi.eta.R
-=======
 import com.itos.coui.layout.CouiPageDefaults
 import com.itos.coui.layout.Divider
 import com.itos.coui.layout.Group
 import com.itos.coui.switch.CouiSwitchDefaults
 import com.itos.coui.switch.Switch as CouiSwitch
 import com.itos.coui.theme.CouiTheme
->>>>>>> origin/main
 import io.github.mangi.eta.agent.roleplay.CharacterBookEntryDraft
 import io.github.mangi.eta.agent.roleplay.CharacterWorldbook
 import io.github.mangi.eta.data.model.AppearanceUiStyle
@@ -47,22 +43,6 @@ internal fun LazyListScope.characterWorldbookEditor(
     val card = store.draft ?: return
     val book = card.worldbookDraft()
     val enabled = !store.busy
-<<<<<<< HEAD
-    item(key = "worldbook-title") { EtaPreferenceGroupTitle(stringResource(R.string.character_worldbook_section)) }
-    item(key = "worldbook-header") {
-        val entriesLabel = pluralStringResource(R.plurals.character_worldbook_entries, book.entries.size, book.entries.size)
-        val toggleLabel = if (expanded) {
-            stringResource(R.string.character_worldbook_collapsed)
-        } else {
-            stringResource(R.string.character_worldbook_expand_edit)
-        }
-        EtaPreferenceGroup(modifier = Modifier.padding(horizontal = CharacterCardPadding)) {
-            EtaArrowPreference(
-                title = stringResource(R.string.character_worldbook_embedded),
-                summary = "$entriesLabel · $toggleLabel",
-                onClick = onToggleExpanded,
-            )
-=======
     item(key = "worldbook-title") { CharacterSectionHeader("世界书") }
     item(key = "worldbook-header") {
         val summary = "${book.entries.size} 个条目 · ${if (expanded) "收起" else "展开编辑"}"
@@ -86,7 +66,6 @@ internal fun LazyListScope.characterWorldbookEditor(
                     onClick = onToggleExpanded,
                 )
             }
->>>>>>> origin/main
         }
     }
     if (!expanded) return
@@ -104,56 +83,12 @@ internal fun LazyListScope.characterWorldbookEditor(
         }, enabled, singleLine = true)
     }
     item(key = "worldbook-recursive") {
-<<<<<<< HEAD
-        EtaPreferenceGroup(modifier = Modifier.padding(horizontal = CharacterCardPadding, vertical = 8.dp)) {
-            EtaSwitchPreference(
-                title = stringResource(R.string.character_worldbook_recursive),
-                summary = stringResource(R.string.character_worldbook_recursive_summary),
-                checked = book.recursiveScanning == true,
-                enabled = enabled,
-                onCheckedChange = { value -> store.updateWorldbook { it.copy(recursiveScanning = value) } },
-            )
-        }
-    }
-    item(key = "worldbook-entries-title") { EtaPreferenceGroupTitle(stringResource(R.string.character_worldbook_entries_section)) }
-    val unsupported = CharacterWorldbook.unsupportedEntries(card).associate { it.index to it.reasons }
-    itemsIndexed(book.entries, key = { index, _ -> "worldbook-entry-$index" }) { index, entry ->
-        EtaPreferenceGroup(
-            modifier = Modifier
-                .padding(horizontal = CharacterCardPadding, vertical = 8.dp),
-        ) {
-            EtaArrowPreference(
-                title = entry.name.take(120).ifBlank { stringResource(R.string.character_worldbook_entry_name, index + 1) },
-                summary = when {
-                    !entry.enabled -> stringResource(R.string.character_worldbook_disabled)
-                    !unsupported[index].isNullOrEmpty() -> stringResource(R.string.character_worldbook_skipped, unsupported[index].orEmpty().joinToString(stringResource(R.string.list_separator)))
-                    entry.constant -> stringResource(R.string.character_worldbook_constant)
-                    else -> entry.keys.take(4).joinToString(stringResource(R.string.list_separator)).take(160).ifBlank { stringResource(R.string.character_worldbook_no_keys) }
-                },
-                onClick = { onExpandEntry(if (expandedEntry == index) null else index) },
-                endActions = {
-                    EtaSwitch(
-                        checked = entry.enabled,
-                        enabled = enabled,
-                        onCheckedChange = { value ->
-                            store.updateWorldbook { current ->
-                                current.copy(entries = current.entries.toMutableList().apply { this[index] = entry.copy(enabled = value) })
-                            }
-                        },
-                    )
-                },
-            )
-            if (expandedEntry == index) {
-                CharacterWorldbookEntryEditor(
-                    entry = entry,
-=======
         if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
             Group {
                 CouiSwitchPreference(
                     title = "递归匹配",
                     summary = "使用已匹配条目的内容继续寻找相关条目",
                     checked = book.recursiveScanning == true,
->>>>>>> origin/main
                     enabled = enabled,
                     onCheckedChange = { value -> store.updateWorldbook { it.copy(recursiveScanning = value) } },
                 )
@@ -257,19 +192,6 @@ internal fun LazyListScope.characterWorldbookEditor(
         }
     }
     item(key = "worldbook-add-entry") {
-<<<<<<< HEAD
-        EtaTextButton(
-            text = stringResource(R.string.character_worldbook_add_entry),
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = CharacterCardPadding, vertical = 8.dp),
-            onClick = {
-                onExpandEntry(book.entries.size)
-                store.updateWorldbook { it.copy(entries = it.entries + CharacterBookEntryDraft(insertionOrder = it.entries.size)) }
-            },
-        )
-=======
         val onAddEntry: () -> Unit = {
             onExpandEntry(book.entries.size)
             store.updateWorldbook { it.copy(entries = it.entries + CharacterBookEntryDraft(insertionOrder = it.entries.size)) }
@@ -293,7 +215,6 @@ internal fun LazyListScope.characterWorldbookEditor(
                 onClick = onAddEntry,
             )
         }
->>>>>>> origin/main
     }
 }
 
@@ -314,45 +235,6 @@ private fun CharacterWorldbookEntryEditor(
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
     }
-<<<<<<< HEAD
-    CharacterFieldGroupLabel(stringResource(R.string.character_worldbook_content_label))
-    CharacterTextField(stringResource(R.string.character_worldbook_entry_title), entry.name, { onChange(entry.copy(name = it)) }, enabled, singleLine = true)
-    CharacterTextField(stringResource(R.string.character_worldbook_content_label), entry.content, { onChange(entry.copy(content = it)) }, enabled, minLines = 4)
-    CharacterFieldGroupLabel(stringResource(R.string.character_worldbook_trigger_label))
-    CharacterTextField(stringResource(R.string.character_worldbook_primary_keys), entry.keys.joinToString("\n"), { onChange(entry.copy(keys = it.lines())) }, enabled)
-    CharacterTextField(stringResource(R.string.character_worldbook_secondary_keys), entry.secondaryKeys.joinToString("\n"), { onChange(entry.copy(secondaryKeys = it.lines())) }, enabled)
-    EtaSwitchPreference(
-        title = stringResource(R.string.character_worldbook_selective),
-        checked = entry.selective,
-        enabled = enabled,
-        onCheckedChange = { onChange(entry.copy(selective = it)) },
-    )
-    CharacterFieldGroupLabel(stringResource(R.string.character_worldbook_insert_label))
-    EtaSwitchPreference(
-        title = stringResource(R.string.character_worldbook_constant),
-        checked = entry.constant,
-        enabled = enabled,
-        onCheckedChange = { onChange(entry.copy(constant = it)) },
-    )
-    EtaSwitchPreference(
-        title = stringResource(R.string.character_worldbook_before_char),
-        summary = stringResource(R.string.character_worldbook_before_char_summary),
-        checked = entry.position == "before_char",
-        enabled = enabled,
-        onCheckedChange = { onChange(entry.copy(position = if (it) "before_char" else "after_char")) },
-    )
-    CharacterTextField(stringResource(R.string.character_worldbook_insert_order), entry.insertionOrder.toString(), { value ->
-        value.toIntOrNull()?.takeIf { it >= 0 }?.let { onChange(entry.copy(insertionOrder = it)) }
-    }, enabled, singleLine = true)
-    EtaTextButton(
-        text = stringResource(R.string.character_worldbook_remove_entry),
-        enabled = enabled,
-        onClick = onDelete,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    )
-=======
     CharacterFieldGroupLabel("内容")
     CharacterTextField("条目标题", entry.name, { onChange(entry.copy(name = it)) }, enabled, singleLine = true, inGroup = true)
     CharacterTextField("内容", entry.content, { onChange(entry.copy(content = it)) }, enabled, minLines = 4, inGroup = true)
@@ -428,7 +310,6 @@ private fun CharacterWorldbookEntryEditor(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         )
     }
->>>>>>> origin/main
 }
 
 private fun optionalNonNegativeInt(value: String, onValue: (Int?) -> Unit) {

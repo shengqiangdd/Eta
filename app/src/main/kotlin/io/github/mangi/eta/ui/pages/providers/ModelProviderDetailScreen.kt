@@ -426,75 +426,6 @@ private fun ProviderConfigTab(
                     onDisconnect = loginStore::disconnect,
                     onCancel = loginStore::cancel,
                 )
-<<<<<<< HEAD
-                EtaPreferenceDivider(hasLeading = false)
-                EtaPreference(
-                    title = stringResource(R.string.ui_test_connection_10b7d8),
-                    summary = stringResource(R.string.provider_catalog_test_hint) + "\n" +
-                        (testStatus ?: stringResource(R.string.provider_send_probe_idle)),
-                    enabled = !isWorking && !loginState.isBusy,
-                    onClick = {
-                        val validationError = validateProviderDraft(context, draft)
-                        if (validationError != null) {
-                            testStatus = context.getString(R.string.provider_error, validationError)
-                            return@EtaPreference
-                        }
-                        scope.launch {
-                            isWorking = true
-                            testStatus = context.getString(R.string.page_testing_f43705)
-                            try {
-                                testStatus = testConnection(
-                                    context,
-                                    draft.toProvider(provider)
-                                )
-                            } finally {
-                                isWorking = false
-                            }
-                        }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = false)
-                EtaPreference(
-                    title = stringResource(R.string.ui_send_probe),
-                    summary = stringResource(R.string.provider_send_probe_hint) + "\n" +
-                        (sendStatus ?: stringResource(R.string.provider_send_probe_idle)),
-                    enabled = !isWorking && !loginState.isBusy,
-                    onClick = {
-                        val validationError = validateProviderDraft(context, draft)
-                        if (validationError != null) {
-                            sendStatus = context.getString(R.string.provider_error, validationError)
-                            return@EtaPreference
-                        }
-                        scope.launch {
-                            isWorking = true
-                            sendStatus = context.getString(R.string.provider_send_probe_running)
-                            try {
-                                sendStatus = runCatching {
-                                    ProviderSendProbe.send(draft.toProvider(provider))
-                                }.fold(
-                                    onSuccess = { result ->
-                                        context.getString(
-                                            R.string.provider_send_probe_ok,
-                                            result.model,
-                                            result.latencyMs,
-                                            result.reply.take(40),
-                                        )
-                                    },
-                                    onFailure = { throwable ->
-                                        if (throwable is CancellationException) throw throwable
-                                        context.getString(
-                                            R.string.provider_error,
-                                            throwable.message ?: throwable.javaClass.simpleName,
-                                        )
-                                    },
-                                )
-                            } finally {
-                                isWorking = false
-                            }
-                        }
-                    },
-                )
-=======
                 if (uiStyle == AppearanceUiStyle.COUI) {
                     Divider()
                     CouiPreference(
@@ -511,7 +442,6 @@ private fun ProviderConfigTab(
                         onClick = onTestConnection,
                     )
                 }
->>>>>>> origin/main
             }
         }
 

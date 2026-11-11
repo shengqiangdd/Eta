@@ -23,31 +23,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
-import io.github.mangi.eta.R
-=======
 import com.itos.coui.icons.CouiIcons
 import com.itos.coui.layout.Footer
 import com.itos.coui.layout.Group
 import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
->>>>>>> origin/main
 import io.github.mangi.eta.agent.roleplay.CharacterProfile
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.CharacterLibraryStore
-<<<<<<< HEAD
-import io.github.mangi.eta.ui.app.WorkspacePickerHistory
-import io.github.mangi.eta.ui.app.importHistoryDirectory
-import io.github.mangi.eta.ui.app.pickerStartPath
-import io.github.mangi.eta.ui.components.EtaArrowPreference
-import io.github.mangi.eta.ui.components.EtaPreferenceColors
-import io.github.mangi.eta.ui.components.EtaPreferenceGroup
-import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
-import io.github.mangi.eta.ui.components.EtaPreferenceIcon
-import io.github.mangi.eta.ui.components.EtaTextButton
-=======
 import io.github.mangi.eta.ui.app.LocalUiStyle
->>>>>>> origin/main
 import io.github.mangi.eta.ui.components.ListEmptyState
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.components.coui.CouiButton
@@ -108,66 +92,6 @@ internal fun CharacterLibraryScreen(
         store.discardEditor()
         onNavigate(AppRoute.CharacterEditor())
     }
-<<<<<<< HEAD
-    MiuixScaffoldPage(
-        title = stringResource(R.string.route_characters),
-        onBack = onBack,
-        actions = {
-            IconButton(onClick = importCard, enabled = !store.busy) {
-                Icon(Icons.Rounded.FileUpload, contentDescription = stringResource(R.string.character_import_card))
-            }
-            IconButton(onClick = createCharacter, enabled = !store.busy) {
-                Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.character_create))
-            }
-        },
-        // 搜索框固定在列表上方：角色一多、往下一滑它就没了，想换关键词得先滑回顶部。
-        // 横向留白由 MiuixScaffoldPage 统一补（与列表卡片同一份 16dp），这里不再加。
-        header = {
-            SearchBar(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 12.dp),
-                // 去掉组件自带的横向内边距，让搜索框与下方卡片左右对齐。
-                insideMargin = DpSize(0.dp, 0.dp),
-                expanded = false,
-                onExpandedChange = {},
-                inputField = {
-                    InputField(
-                        query = store.query,
-                        onQueryChange = { store.query = it },
-                        onSearch = { store.query = it },
-                        expanded = false,
-                        onExpandedChange = {},
-                        label = stringResource(R.string.character_search_hint),
-                    )
-                },
-                content = {},
-            )
-        },
-    ) {
-        when {
-            store.busy && store.characters.isEmpty() -> {
-                item(key = "loading") {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        InfiniteProgressIndicator(size = 28.dp)
-                    }
-                }
-            }
-            store.characters.isEmpty() -> {
-                item(key = "empty-library") {
-                    ListEmptyState(
-                        title = stringResource(R.string.character_empty_title),
-                        summary = stringResource(R.string.character_empty_summary),
-                        icon = Icons.Rounded.TheaterComedy,
-                        action = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                EtaTextButton(
-                                    text = stringResource(R.string.character_restore_default),
-                                    onClick = { store.restoreDefaultCharacter() },
-=======
     val showAddTile = store.query.isBlank() && store.characters.isNotEmpty()
     val tiles: List<CharacterProfile?> = store.filteredCharacters + if (showAddTile) listOf(null) else emptyList()
     val rows = tiles.chunked(2)
@@ -254,94 +178,34 @@ internal fun CharacterLibraryScreen(
                         row.forEach { profile ->
                             if (profile == null) {
                                 CharacterAddTile(
->>>>>>> origin/main
                                     enabled = !store.busy,
                                     onCreate = createCharacter,
                                     onImport = importCard,
                                     modifier = Modifier.weight(1f),
                                 )
-<<<<<<< HEAD
-                                EtaTextButton(
-                                    text = stringResource(R.string.character_create),
-                                    onClick = createCharacter,
-                                    colors = ButtonDefaults.textButtonColorsPrimary(),
-=======
                             } else {
                                 CharacterPortraitCard(
                                     profile = profile,
                                     onClick = { if (!store.busy) onNavigate(AppRoute.CharacterDetail(profile.id)) },
                                     onToggleFavorite = { store.toggleFavorite(profile.id) },
                                     modifier = Modifier.weight(1f),
->>>>>>> origin/main
                                 )
                             }
                         }
                         if (row.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-<<<<<<< HEAD
-            }
-            store.filteredCharacters.isEmpty() -> {
-                item(key = "empty-search") {
-                    ListEmptyState(
-                        title = stringResource(R.string.character_no_match_title),
-                        summary = stringResource(R.string.character_no_match_summary),
-                        icon = Icons.Rounded.SearchOff,
-                    )
-                }
-            }
-        }
-        // 两列竖版卡片：每行一个 Lazy 项，长列表仍按行组合。未搜索时末尾追加一张新建卡，
-        // 既补齐单数时的空位，也让创建与导入在网格中就近可达。
-        val showAddTile = store.query.isBlank() && store.characters.isNotEmpty()
-        val tiles: List<CharacterProfile?> = store.filteredCharacters + if (showAddTile) listOf(null) else emptyList()
-        val rows = tiles.chunked(2)
-        items(rows, key = { row -> row.joinToString("|") { it?.id ?: "add" } }) { row ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = CharacterCardPadding)
-                    .padding(bottom = CharacterGridSpacing),
-                horizontalArrangement = Arrangement.spacedBy(CharacterGridSpacing),
-            ) {
-                row.forEach { profile ->
-                    if (profile == null) {
-                        CharacterAddTile(
-                            enabled = !store.busy,
-                            onCreate = createCharacter,
-                            onImport = importCard,
-                            modifier = Modifier.weight(1f),
-                        )
-                    } else {
-                        CharacterPortraitCard(
-                            profile = profile,
-                            onClick = { if (!store.busy) onNavigate(AppRoute.CharacterDetail(profile.id)) },
-                            onToggleFavorite = { store.toggleFavorite(profile.id) },
-                            modifier = Modifier.weight(1f),
-=======
                 item(key = "persona") {
                     Group(title = "我的") {
                         CouiPreference(
                             title = "我的人设",
                             summary = "角色对你的称呼与你在故事中的身份",
                             onClick = { onNavigate(AppRoute.CharacterPersona) },
->>>>>>> origin/main
                         )
                     }
                 }
             }
         }
-<<<<<<< HEAD
-        item(key = "persona-title") { EtaPreferenceGroupTitle(stringResource(R.string.character_section_mine)) }
-        item(key = "persona") {
-            EtaPreferenceGroup {
-                EtaArrowPreference(
-                    title = stringResource(R.string.route_character_persona),
-                    startAction = { EtaPreferenceIcon(Icons.Rounded.Face, tint = EtaPreferenceColors.Blue) },
-                    summary = stringResource(R.string.character_persona_summary),
-                    onClick = { onNavigate(AppRoute.CharacterPersona) },
-                )
-=======
 
         AppearanceUiStyle.MIUIX -> {
             MiuixScaffoldPage(
@@ -464,7 +328,6 @@ internal fun CharacterLibraryScreen(
                         )
                     }
                 }
->>>>>>> origin/main
             }
         }
     }

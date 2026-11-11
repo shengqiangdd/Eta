@@ -51,15 +51,7 @@ import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceLocationProvider
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.core.AndroidAgentLogger
-<<<<<<< HEAD
-import io.github.mangi.eta.config.Prefs
-import io.github.mangi.eta.data.model.ChatViewMode
-import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
-import io.github.mangi.eta.data.repository.ConversationExportSink
-import io.github.mangi.eta.data.repository.ConversationHistoryExporter
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
->>>>>>> origin/main
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.IncomingShareRequest
@@ -444,11 +436,8 @@ fun AgentAppRoot(
             onChatViewModeChange = setChatViewMode,
             onSearchMessages = { chatSearchRequest += 1 },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
-<<<<<<< HEAD
             onConversationPin = { conversation ->
-=======
             onConversationTogglePin = { conversation ->
->>>>>>> origin/main
                 agentState.toggleConversationPin(conversation.id)
             },
             onConversationRename = { conversation ->
@@ -597,7 +586,6 @@ fun AgentAppRoot(
                         modelPickerState = agentState.modelPickerState,
                         isBranching = agentState.isBranchingCurrentConversation,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
-<<<<<<< HEAD
                         missingPermissionIds = permissionHealth.permissionHealthState.issueIds,
                         permissionIssuesKnown = permissionHealth.permissionHealthState.loaded,
                         onOpenPermissions = { pushRoute(AppRoute.Permissions) },
@@ -607,9 +595,7 @@ fun AgentAppRoot(
                         onChatViewModeChange = setChatViewMode,
                         searchOpenRequests = chatSearchRequest,
                         onOpenRunDetail = { runId -> pushRoute(AppRoute.RunInspector(runId)) },
-=======
                         topInset = shellPadding.calculateTopPadding(),
->>>>>>> origin/main
                         onAction = { action ->
                             when (action) {
                                 is AgentHomeAction.ReasoningEffortChanged ->
@@ -1126,20 +1112,6 @@ fun AgentAppRoot(
     }
 
     characterStore.notice?.let { notice ->
-<<<<<<< HEAD
-        WindowDialog(
-            show = true,
-            title = stringResource(R.string.route_characters),
-            summary = notice,
-            cornerRadius = DialogDefaults.CornerRadius,
-            onDismissRequest = characterStore::dismissNotice,
-        ) {
-            top.yukonga.miuix.kmp.basic.TextButton(
-                text = stringResource(R.string.ui_knew_cb63c6),
-                onClick = characterStore::dismissNotice,
-                modifier = Modifier.fillMaxWidth(),
-            )
-=======
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
                 CouiNoticeDialog(
@@ -1163,7 +1135,6 @@ fun AgentAppRoot(
                     )
                 }
             }
->>>>>>> origin/main
         }
     }
 
@@ -1218,36 +1189,6 @@ fun AgentAppRoot(
     }
 
     conversationDeleteTarget?.let { conversation ->
-<<<<<<< HEAD
-        WindowDialog(
-            show = true,
-            cornerRadius = DialogDefaults.CornerRadius,
-            title = stringResource(R.string.conversation_delete_title),
-            summary = stringResource(
-                if (conversation.isActiveRun) {
-                    R.string.conversation_stop_and_delete_message
-                } else {
-                    R.string.conversation_delete_message
-                },
-            ),
-            onDismissRequest = { conversationDeleteTarget = null },
-        ) {
-            MiuixDialogActions(
-                confirmText = stringResource(
-                    if (conversation.isActiveRun) {
-                        R.string.conversation_stop_and_delete
-                    } else {
-                        R.string.action_delete
-                    },
-                ),
-                destructive = true,
-                onCancel = { conversationDeleteTarget = null },
-                onConfirm = {
-                    agentState.deleteConversation(conversation.id)
-                    conversationDeleteTarget = null
-                },
-            )
-=======
         val message = stringResource(
             if (conversation.isActiveRun) R.string.conversation_stop_and_delete_message else R.string.conversation_delete_message,
         )
@@ -1289,7 +1230,6 @@ fun AgentAppRoot(
                     )
                 }
             }
->>>>>>> origin/main
         }
     }
 

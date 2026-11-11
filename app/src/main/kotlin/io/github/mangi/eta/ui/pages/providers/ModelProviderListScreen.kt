@@ -42,16 +42,7 @@ import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.model.typeLabel
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
-<<<<<<< HEAD
-import io.github.mangi.eta.ui.components.EtaArrowPreference
-import io.github.mangi.eta.ui.components.EtaOverlayDialog
-import io.github.mangi.eta.ui.components.EtaPreferenceColors
-import io.github.mangi.eta.ui.components.EtaPreferenceDivider
-import io.github.mangi.eta.ui.components.EtaPreferenceIcon
-import io.github.mangi.eta.ui.components.EtaPreferenceRow
-=======
 import io.github.mangi.eta.ui.app.LocalUiStyle
->>>>>>> origin/main
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
@@ -98,62 +89,6 @@ internal fun ModelProviderListScreen(
         }
     }
 
-<<<<<<< HEAD
-    MiuixScaffoldPage(
-        title = stringResource(R.string.ui_model_provider_e8c7f5),
-        onBack = onBack,
-        // 搜索框固定在列表上方：它是列表第一项时，提供商一多、往下一滑就没了，
-        // 想改关键词还得先滑回顶部。与设置页同一套处理。
-        header = {
-            InputField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onSearch = {},
-                expanded = false,
-                onExpandedChange = {},
-                label = stringResource(R.string.ui_search_provider_74e049),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // 左右留白由 MiuixScaffoldPage 按列表同一份 sidePadding 补齐。
-                    .padding(top = 12.dp, bottom = 8.dp),
-            )
-        },
-    ) {
-
-        item(key = "create_section") {
-            ProviderSection(title = stringResource(R.string.ui_add_new_provider_74df54)) {
-                EtaArrowPreference(
-                    title = stringResource(R.string.route_community_catalog),
-                    summary = stringResource(R.string.route_community_catalog_summary),
-                    startAction = { EtaPreferenceIcon(Icons.Rounded.Storefront, tint = EtaPreferenceColors.Blue) },
-                    onClick = { onNavigate(AppRoute.CommunityCatalog) },
-                )
-                EtaPreferenceDivider()
-                EtaArrowPreference(
-                    title = stringResource(R.string.ui_added_openai_compatible_6bd471),
-                    summary = stringResource(R.string.ui_support_chatgpt_deepseek_kimi_glm_qwen_etc_b31d02),
-                    startAction = {
-                        ProviderBrandIcon(ProviderSourceTypes.OPENAI)
-                    },
-                    onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.OpenAiCompatible)) },
-                )
-                EtaPreferenceDivider()
-                EtaArrowPreference(
-                    title = stringResource(R.string.ui_new_anthropic_db6098),
-                    summary = stringResource(R.string.ui_support_anthropic_claude_official_or_compatible_api_de3f80),
-                    startAction = {
-                        ProviderBrandIcon(ProviderSourceTypes.ANTHROPIC)
-                    },
-                    onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.Anthropic)) },
-                )
-                EtaPreferenceDivider()
-                EtaArrowPreference(
-                    title = "新增 Gemini",
-                    summary = "使用 API Key 连接原生 Interactions API",
-                    startAction = { ProviderBrandIcon(ProviderSourceTypes.GEMINI) },
-                    onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.Gemini)) },
-                )
-=======
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             val colors = CouiPageDefaults.themeColors()
@@ -249,7 +184,6 @@ internal fun ModelProviderListScreen(
                 }
 
                 CouiPageBottomSpacer()
->>>>>>> origin/main
             }
         }
 
@@ -533,7 +467,6 @@ private fun ProviderListItem(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
                 )
-<<<<<<< HEAD
             }
         },
         endActions = {
@@ -558,13 +491,11 @@ private fun ProviderListItem(
                         isSelected -> MiuixTheme.colorScheme.primary
                         else -> MiuixTheme.colorScheme.onSurfaceVariantActions
                     },
-=======
                 Text(
                     text = subtitle,
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(top = 4.dp),
->>>>>>> origin/main
                 )
             }
         }

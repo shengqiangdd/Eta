@@ -1,11 +1,8 @@
 package io.github.mangi.eta.ui.markdown
 
-<<<<<<< HEAD
 import android.util.LruCache
-=======
 import androidx.compose.foundation.OverscrollEffect
 import androidx.compose.foundation.layout.PaddingValues
->>>>>>> origin/main
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect

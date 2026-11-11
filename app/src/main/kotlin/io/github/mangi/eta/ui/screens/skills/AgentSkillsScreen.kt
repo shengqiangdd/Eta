@@ -20,24 +20,8 @@ import com.itos.coui.layout.Group
 import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
 import io.github.mangi.eta.R
-<<<<<<< HEAD
-import io.github.mangi.eta.ui.app.WorkspacePickerHistory
-import io.github.mangi.eta.ui.app.importHistoryDirectory
-import io.github.mangi.eta.ui.app.pickerStartPath
-import io.github.mangi.eta.ui.components.EtaCard
-import io.github.mangi.eta.ui.components.EtaPreference
-import io.github.mangi.eta.ui.components.EtaPreferenceColors
-import io.github.mangi.eta.ui.components.EtaPreferenceDefaults
-import io.github.mangi.eta.ui.components.EtaPreferenceDivider
-import io.github.mangi.eta.ui.components.EtaPreferenceGroup
-import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
-import io.github.mangi.eta.ui.components.EtaPreferenceIcon
-import io.github.mangi.eta.ui.components.EtaTextButton
-import io.github.mangi.eta.ui.components.EtaWindowDialog
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
->>>>>>> origin/main
 import io.github.mangi.eta.ui.components.ListEmptyState
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -52,11 +36,8 @@ import io.github.mangi.eta.ui.model.AgentSkillsAction
 import io.github.mangi.eta.ui.model.AgentSkillsUiState
 import io.github.mangi.eta.ui.model.SkillItemUi
 import io.github.mangi.eta.ui.model.canDeleteUserSkill
-<<<<<<< HEAD
 import io.github.mangi.eta.ui.components.WorkspacePathPicker
-=======
 import top.yukonga.miuix.kmp.basic.BasicComponent
->>>>>>> origin/main
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator

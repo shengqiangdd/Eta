@@ -161,13 +161,10 @@ internal class AgentLocalTools(
     private val virtualDisplayEnabled: () -> Boolean = {
         Prefs.isEnabled(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED)
     },
-<<<<<<< HEAD
     /** 画布后端探测（LSPosed 可用的另一条创建路径）。 */
-=======
     private val isToolEnabled: (String) -> Boolean = {
         Prefs.isToolEnabled(it)
     },
->>>>>>> origin/main
     private val lsposedAvailable: () -> Boolean = { EtaApp.serviceInstance != null },
     /**
      * GUI 独占锁。非空时，所有「会动屏幕」的工具都要先拿到它：多会话并行时只能有一个 run
@@ -693,11 +690,9 @@ internal class AgentLocalTools(
             }
             val body = JSONObject(
                 errorResult(
-<<<<<<< HEAD
                     code = code,
                     message = throwable.message ?: throwable.javaClass.simpleName,
                 ),
-=======
                     code = when (throwable) {
                         is InvalidToolArgumentException, is org.json.JSONException -> "INVALID_ARGUMENT"
                         is DeviceControlUnavailableException -> "ACCESSIBILITY_UNAVAILABLE"
@@ -706,7 +701,6 @@ internal class AgentLocalTools(
                     },
                     message = throwable.message ?: throwable.javaClass.simpleName
                 )
->>>>>>> origin/main
             )
             // 不可重试的错误必须说出来：只给错误码时，模型会把「屏不对」当成「参数不对」再试一次。
             if (throwable is InvalidToolArgumentException && !throwable.retryable) {
@@ -2293,9 +2287,7 @@ internal class AgentLocalTools(
         } else {
             CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
         }
-<<<<<<< HEAD
         logger.info("Agent local tool action=launch_app outcome=started canvas=$finalCanvas display=$finalDisplayId")
-=======
 
         val verification = AppLaunchVerification.awaitWindow(
             packageName = app.packageName,
@@ -2315,7 +2307,6 @@ internal class AgentLocalTools(
             checkCancellation = ::checkCancellation,
         )
         logger.info("Agent local tool action=launch_app outcome=${verification.launchStatus} canvas=$finalCanvas display=$finalDisplayId")
->>>>>>> origin/main
         return JSONObject()
             .put("ok", true)
             .put("tool", "launch_app")

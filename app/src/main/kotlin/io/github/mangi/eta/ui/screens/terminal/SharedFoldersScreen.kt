@@ -34,11 +34,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-<<<<<<< HEAD
 import androidx.compose.ui.platform.LocalView
-=======
 import androidx.compose.ui.graphics.Color
->>>>>>> origin/main
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -126,7 +123,6 @@ internal fun SharedFoldersScreen(
 
     LaunchedEffect(Unit) { refreshSources(mounts) }
 
-<<<<<<< HEAD
     MiuixScaffoldPage(
         title = stringResource(R.string.shared_folders_title),
         onBack = onBack,
@@ -194,7 +190,6 @@ internal fun SharedFoldersScreen(
                             }
                         }
                     },
-=======
     val onAddMountClick: () -> Unit = {
         if (TerminalRuntime.rootAvailable || Environment.isExternalStorageManager()) {
             showPicker = true
@@ -205,7 +200,6 @@ internal fun SharedFoldersScreen(
                         Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                         Uri.parse("package:${context.packageName}"),
                     ),
->>>>>>> origin/main
                 )
             } catch (_: android.content.ActivityNotFoundException) {
                 notice = context.getString(R.string.capability_workspace_public_denied)

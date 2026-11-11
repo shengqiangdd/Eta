@@ -27,7 +27,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-<<<<<<< HEAD
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Cloud
@@ -41,7 +40,6 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SportsBar
-=======
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
@@ -52,7 +50,6 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SportsBar
 import androidx.compose.material.icons.outlined.Widgets
->>>>>>> origin/main
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -87,14 +84,9 @@ import com.itos.coui.menu.rememberCouiMenuAnchor
 import com.itos.coui.shape.CouiShape
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
-<<<<<<< HEAD
-import io.github.mangi.eta.data.backup.AutoBackupScheduler
-import io.github.mangi.eta.ui.app.ConversationTimeLabels
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.coui.CouiSearchBarBox
->>>>>>> origin/main
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import kotlinx.coroutines.Dispatchers
@@ -267,11 +259,8 @@ internal fun ConversationPanePanel(
                                 conversation = conversation,
                                 selected = conversation.id == state.selectedConversationId,
                                 onClick = { onConversationSelected(conversation.id) },
-<<<<<<< HEAD
                                 onPin = { onConversationPin(conversation) },
-=======
                                 onTogglePin = { onConversationTogglePin(conversation) },
->>>>>>> origin/main
                                 onRename = { onConversationRename(conversation) },
                                 onExport = { onConversationExport(conversation) },
                                 onExportHistory = { onConversationExportHistory(conversation) },
@@ -389,11 +378,8 @@ private fun ConversationTextRow(
     conversation: ConversationSummaryUi,
     selected: Boolean,
     onClick: () -> Unit,
-<<<<<<< HEAD
     onPin: () -> Unit,
-=======
     onTogglePin: () -> Unit,
->>>>>>> origin/main
     onRename: () -> Unit,
     onExport: () -> Unit,
     onExportHistory: () -> Unit,
@@ -402,18 +388,10 @@ private fun ConversationTextRow(
 ) {
     var showActionMenu by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
-<<<<<<< HEAD
-    // 菜单要按锚点位置选展开方向：固定在屏幕下半部分的项，向下展开会把
-    // 置顶/重命名/导出挤出屏幕，只剩「删除」可点（实测过的可用性问题）。
-    var anchorCenterY by remember { mutableFloatStateOf(0f) }
-    val windowHeight = LocalWindowInfo.current.containerSize.height
-    val expandUpward = anchorCenterY > windowHeight / 2f
-=======
     val anchor = rememberCouiMenuAnchor()
     val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
     val couiDark = CouiTheme.isDark
     val couiRowShape = remember { CouiShape(14.dp, 2f) }
->>>>>>> origin/main
 
     Box(
         modifier = Modifier
@@ -473,7 +451,6 @@ private fun ConversationTextRow(
                 Spacer(Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
-<<<<<<< HEAD
             val title = conversation.title.ifBlank { conversation.preview }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -543,9 +520,7 @@ private fun ConversationTextRow(
                 Text(name, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             conversation.runStatus?.let { status ->
-=======
                 val title = conversation.title.ifBlank { conversation.preview }
->>>>>>> origin/main
                 Text(
                     text = title,
                     color = if (selected) {
@@ -602,45 +577,6 @@ private fun ConversationTextRow(
             }
         }
 
-<<<<<<< HEAD
-        WindowListPopup(
-            show = showActionMenu,
-            popupPositionProvider = ListPopupDefaults.ContextMenuPositionProvider,
-            alignment = if (expandUpward) {
-                PopupPositionProvider.Align.TopEnd
-            } else {
-                PopupPositionProvider.Align.BottomEnd
-            },
-            onDismissRequest = { showActionMenu = false },
-        ) {
-            val pinText = stringResource(
-                if (conversation.isPinned) R.string.action_unpin else R.string.action_pin,
-            )
-            val pinItem = remember(pinText) {
-                DropdownItem(
-                    text = pinText,
-                    icon = { modifier ->
-                        Icon(
-                            imageVector = Icons.Rounded.Star,
-                            contentDescription = null,
-                            modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                        )
-                    },
-                )
-            }
-            val renameText = stringResource(R.string.action_rename)
-            val exportText = stringResource(R.string.action_export)
-            val deleteText = stringResource(R.string.action_delete)
-            val renameItem = remember(renameText) {
-                DropdownItem(
-                    text = renameText,
-                    icon = { modifier ->
-                        Icon(
-                            imageVector = Icons.Rounded.Edit,
-                            contentDescription = null,
-                            modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                        )
-=======
         val pinText = stringResource(
             if (conversation.isPinned) {
                 R.string.action_unpin_conversation
@@ -680,7 +616,6 @@ private fun ConversationTextRow(
                             2 -> onExport()
                             3 -> onDelete()
                         }
->>>>>>> origin/main
                     },
                     anchor = anchor,
                 )
@@ -703,7 +638,6 @@ private fun ConversationTextRow(
                                 )
                             },
                         )
-<<<<<<< HEAD
                     },
                 )
             }
@@ -817,7 +751,6 @@ private fun ConversationTextRow(
                         onDelete()
                     },
                 )
-=======
                     }
                     val renameItem = remember(renameText) {
                         DropdownItem(
@@ -905,14 +838,12 @@ private fun ConversationTextRow(
                         )
                     }
                 }
->>>>>>> origin/main
             }
         }
     }
 }
 
 @Composable
-<<<<<<< HEAD
 private fun EmptyConversations(
     isSearching: Boolean,
     historyIncomplete: Boolean = false,
@@ -926,7 +857,6 @@ private fun EmptyConversations(
         }
     }
     Column(
-=======
 private fun EmptyConversations(isSearching: Boolean) {
     Text(
         text = stringResource(
@@ -935,7 +865,6 @@ private fun EmptyConversations(isSearching: Boolean) {
         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         style = MiuixTheme.textStyles.body2,
         fontWeight = FontWeight.Normal,
->>>>>>> origin/main
         modifier = Modifier.padding(
             horizontal = ConversationPanelMetrics.RowHorizontalPadding,
             vertical = ConversationPanelMetrics.EmptyVerticalPadding,
@@ -995,35 +924,26 @@ private fun PaneDock(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         DockEntry(
-<<<<<<< HEAD
             icon = Icons.Rounded.Settings,
             label = stringResource(R.string.route_settings),
-=======
             icon = Icons.Outlined.Settings,
             label = "设置",
->>>>>>> origin/main
             onClick = onOpenSettings,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
-<<<<<<< HEAD
             icon = Icons.Rounded.Cloud,
             label = stringResource(R.string.route_model_providers),
-=======
             icon = Icons.Outlined.Cloud,
             label = "模型",
->>>>>>> origin/main
             onClick = onOpenModelProviders,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
-<<<<<<< HEAD
             icon = Icons.Rounded.Dashboard,
             label = stringResource(R.string.route_tools),
-=======
             icon = Icons.Outlined.Widgets,
             label = "工具",
->>>>>>> origin/main
             onClick = onOpenTools,
             modifier = Modifier.weight(1f),
         )
@@ -1034,24 +954,18 @@ private fun PaneDock(
             modifier = Modifier.weight(1f),
         )
         DockEntry(
-<<<<<<< HEAD
             icon = Icons.Rounded.Lock,
             label = stringResource(R.string.route_permissions),
-=======
             icon = Icons.Outlined.Shield,
             label = "权限",
->>>>>>> origin/main
             onClick = onOpenPermissions,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
-<<<<<<< HEAD
             icon = Icons.Rounded.SportsBar,
             label = stringResource(R.string.route_characters),
-=======
             icon = Icons.Outlined.SportsBar,
             label = "角色",
->>>>>>> origin/main
             onClick = onOpenCharacters,
             modifier = Modifier.weight(1f),
         )
