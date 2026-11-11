@@ -26,9 +26,18 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.SportsBar
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Delete
@@ -40,16 +49,8 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SportsBar
-import androidx.compose.material.icons.outlined.AutoStories
-import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.PushPin
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.SportsBar
-import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -59,17 +60,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -84,11 +85,14 @@ import com.itos.coui.menu.rememberCouiMenuAnchor
 import com.itos.coui.shape.CouiShape
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
+import io.github.mangi.eta.data.backup.AutoBackupScheduler
 import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.ui.app.ConversationTimeLabels
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.coui.CouiSearchBarBox
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.DropdownDefaults
@@ -109,32 +113,27 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.window.WindowListPopup
-import java.io.File
 
-/**
- * 会话侧边栏尺寸标尺。
- *
- * 外层水平边距（12.dp）+ 行内水平边距（16.dp）= 28.dp，与 Miuix 原生 [SmallTitle] 的默认内边距
- * 及 [InputField] 内部搜索图标起点完全对齐，保证搜索框、分组标题与对话标题处于同一条垂直基准线。
- */
 private object ConversationPanelMetrics {
-    val PaneHorizontalPadding = 12.dp
-    val TopInset = 8.dp
+    val PaneHorizontalPadding = 16.dp
+    val TopInset = 6.dp
     val AfterActionBar = 8.dp
-    val BottomInset = 4.dp
+    val BottomInset = 2.dp
     val ActionIconSize = 20.dp
-    val FirstSectionTopPadding = 8.dp
-    val SectionTopPadding = 16.dp
-    val SectionBottomPadding = 6.dp
-    val RowMinHeight = 44.dp
-    val RowGap = 2.dp
-    val RowCornerRadius = 14.dp
-    val RowHorizontalPadding = 16.dp
-    val RowVerticalPadding = 11.dp
+    val SectionTopPadding = 8.dp
+    val SectionBottomPadding = 10.dp
+    val SectionIconSize = 14.dp
+    val SectionIconGap = 8.dp
+    val SectionCountGap = 12.dp
+    val RowMinHeight = 48.dp
+    val RowGap = 4.dp
+    val RowCornerRadius = 12.dp
+    val RowHorizontalPadding = 12.dp
+    val RowVerticalPadding = 12.dp
     val ActiveDotSize = 6.dp
     val ActiveDotGap = 10.dp
     val EmptyVerticalPadding = 28.dp
-    val DockVerticalPadding = 4.dp
+    val DockTopGap = 2.dp
     val DockEntryCornerRadius = 12.dp
     val DockEntryIconSize = 20.dp
 }
@@ -147,9 +146,6 @@ private object ConversationPanelMetrics {
  */
 @Composable
 internal fun conversationPaneContainerColor(): Color {
-    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
-        return if (CouiTheme.isDark) Color(0xFF18191C) else Color(0xFFF3F4F6)
-    }
     val colors = MiuixTheme.colorScheme
     return if (colors.background.luminance() > 0.5f) colors.surface else colors.surfaceContainer
 }
@@ -161,7 +157,6 @@ internal fun ConversationPanePanel(
     listState: androidx.compose.foundation.lazy.LazyListState,
     onSearchChange: (String) -> Unit,
     onConversationSelected: (String) -> Unit,
-    onConversationTogglePin: (ConversationSummaryUi) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
     onConversationPin: (ConversationSummaryUi) -> Unit,
     onConversationExport: (ConversationSummaryUi) -> Unit,
@@ -229,7 +224,7 @@ internal fun ConversationPanePanel(
                     .padding(horizontal = ConversationPanelMetrics.PaneHorizontalPadding)
                     .scrollEndHaptic()
                     .overScrollVertical(),
-                contentPadding = PaddingValues(bottom = 12.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(ConversationPanelMetrics.RowGap),
                 overscrollEffect = null,
             ) {
@@ -244,12 +239,9 @@ internal fun ConversationPanePanel(
                         )
                     }
                 } else {
-                    groups.forEachIndexed { groupIndex, group ->
+                    groups.forEach { group ->
                         item(key = "section-${group.section}") {
-                            ConversationSectionHeader(
-                                group = group,
-                                isFirstSection = groupIndex == 0,
-                            )
+                            ConversationSectionHeader(group = group)
                         }
                         items(
                             items = group.items,
@@ -260,7 +252,6 @@ internal fun ConversationPanePanel(
                                 selected = conversation.id == state.selectedConversationId,
                                 onClick = { onConversationSelected(conversation.id) },
                                 onPin = { onConversationPin(conversation) },
-                                onTogglePin = { onConversationTogglePin(conversation) },
                                 onRename = { onConversationRename(conversation) },
                                 onExport = { onConversationExport(conversation) },
                                 onExportHistory = { onConversationExportHistory(conversation) },
@@ -279,11 +270,7 @@ internal fun ConversationPanePanel(
                         )
                         .padding(horizontal = ConversationPanelMetrics.PaneHorizontalPadding),
                 ) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = ConversationPanelMetrics.RowHorizontalPadding),
-                        thickness = 0.5.dp,
-                    )
-                    Spacer(Modifier.height(ConversationPanelMetrics.DockVerticalPadding))
+                    Spacer(Modifier.height(ConversationPanelMetrics.DockTopGap))
                     PaneDock(
                         onOpenSettings = onOpenSettings,
                         onOpenModelProviders = onOpenModelProviders,
@@ -302,8 +289,7 @@ internal fun ConversationPanePanel(
 @Composable
 private fun PaneFixedRegion(content: @Composable () -> Unit) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = Modifier.fillMaxWidth()
             .background(conversationPaneContainerColor()),
     ) {
         content()
@@ -315,61 +301,67 @@ private fun PaneActionBar(
     query: String,
     onSearchChange: (String) -> Unit,
 ) {
-    when (LocalUiStyle.current) {
-        AppearanceUiStyle.COUI -> {
-            CouiSearchBarBox(
-                query = query,
-                onQueryChange = onSearchChange,
-                placeholder = stringResource(R.string.conversation_search_hint),
-                backgroundColor = conversationPaneContainerColor(),
-            )
-        }
-        AppearanceUiStyle.MIUIX -> {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SearchBar(
-                    modifier = Modifier.weight(1f),
-                    insideMargin = DpSize.Zero,
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SearchBar(
+            modifier = Modifier.weight(1f),
+            insideMargin = DpSize.Zero,
+            expanded = false,
+            onExpandedChange = {},
+            inputField = {
+                InputField(
+                    query = query,
+                    onQueryChange = onSearchChange,
+                    onSearch = onSearchChange,
                     expanded = false,
                     onExpandedChange = {},
-                    inputField = {
-                        InputField(
-                            query = query,
-                            onQueryChange = onSearchChange,
-                            onSearch = onSearchChange,
-                            expanded = false,
-                            onExpandedChange = {},
-                            label = stringResource(R.string.conversation_search_hint),
-                            color = MiuixTheme.colorScheme.surfaceContainerHighest,
-                        )
-                    },
-                    content = {},
+                    label = stringResource(R.string.conversation_search_hint),
+                    // 深色下侧栏已抬高到 surfaceContainer，搜索框需再高一档才能显出轮廓；
+                    // 浅色的 surfaceContainerHigh 与 surfaceContainerHighest 相同，观感不变。
+                    color = MiuixTheme.colorScheme.surfaceContainerHighest,
                 )
-            }
-        }
+            },
+            content = {},
+        )
     }
 }
 
 @Composable
 private fun ConversationSectionHeader(
     group: ConversationDrawerGroup,
-    isFirstSection: Boolean,
 ) {
-    SmallTitle(
-        text = group.localizedLabel(),
-        insideMargin = PaddingValues(
-            start = ConversationPanelMetrics.RowHorizontalPadding,
-            top = if (isFirstSection) {
-                ConversationPanelMetrics.FirstSectionTopPadding
-            } else {
-                ConversationPanelMetrics.SectionTopPadding
-            },
-            end = ConversationPanelMetrics.RowHorizontalPadding,
-            bottom = ConversationPanelMetrics.SectionBottomPadding,
-        ),
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                top = ConversationPanelMetrics.SectionTopPadding,
+                bottom = ConversationPanelMetrics.SectionBottomPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Schedule,
+            contentDescription = null,
+            modifier = Modifier.size(ConversationPanelMetrics.SectionIconSize),
+            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+        )
+        Spacer(modifier = Modifier.width(ConversationPanelMetrics.SectionIconGap))
+        Text(
+            text = group.localizedLabel(),
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.footnote1,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(modifier = Modifier.width(ConversationPanelMetrics.SectionCountGap))
+        Text(
+            text = group.items.size.toString(),
+            color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            style = MiuixTheme.textStyles.footnote1,
+            fontWeight = FontWeight.Medium,
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -379,7 +371,6 @@ private fun ConversationTextRow(
     selected: Boolean,
     onClick: () -> Unit,
     onPin: () -> Unit,
-    onTogglePin: () -> Unit,
     onRename: () -> Unit,
     onExport: () -> Unit,
     onExportHistory: () -> Unit,
@@ -388,10 +379,11 @@ private fun ConversationTextRow(
 ) {
     var showActionMenu by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
-    val anchor = rememberCouiMenuAnchor()
-    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
-    val couiDark = CouiTheme.isDark
-    val couiRowShape = remember { CouiShape(14.dp, 2f) }
+    // 菜单要按锚点位置选展开方向：固定在屏幕下半部分的项，向下展开会把
+    // 置顶/重命名/导出挤出屏幕，只剩「删除」可点（实测过的可用性问题）。
+    var anchorCenterY by remember { mutableFloatStateOf(0f) }
+    val windowHeight = LocalWindowInfo.current.containerSize.height
+    val expandUpward = anchorCenterY > windowHeight / 2f
 
     Box(
         modifier = Modifier
@@ -404,35 +396,20 @@ private fun ConversationTextRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ConversationPanelMetrics.RowMinHeight)
-                .couiMenuAnchor(anchor)
-                .then(
-                    if (isCoui) {
-                        Modifier
-                            .clip(couiRowShape)
-                            .background(
-                                if (selected) {
-                                    if (couiDark) Color(0xFF26292E) else Color.White
-                                } else {
-                                    Color.Transparent
-                                },
-                                couiRowShape,
-                            )
+                .clip(RoundedCornerShape(ConversationPanelMetrics.RowCornerRadius))
+                .background(
+                    if (selected) {
+                        // 与侧栏背景保持一档亮度差；浅色下与 surfaceContainerHigh 相同。
+                        MiuixTheme.colorScheme.surfaceContainerHighest
                     } else {
-                        Modifier.squircleSurface(
-                            color = if (selected) {
-                                MiuixTheme.colorScheme.tertiaryContainer
-                            } else {
-                                Color.Transparent
-                            },
-                            cornerRadius = ConversationPanelMetrics.RowCornerRadius,
-                        )
+                        Color.Transparent
                     },
                 )
                 .combinedClickable(
                     onClick = onClick,
                     onLongClick = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                        anchor.open { showActionMenu = true }
+                        showActionMenu = true
                     },
                 )
                 .padding(
@@ -445,7 +422,7 @@ private fun ConversationTextRow(
                 CharacterAvatar(
                     name = name,
                     avatarPath = conversation.characterAvatarPath,
-                    size = 32.dp,
+                    size = 36.dp,
                     shape = CircleShape,
                 )
                 Spacer(Modifier.width(12.dp))
@@ -520,40 +497,14 @@ private fun ConversationTextRow(
                 Text(name, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             conversation.runStatus?.let { status ->
-                val title = conversation.title.ifBlank { conversation.preview }
                 Text(
-                    text = title,
-                    color = if (selected) {
-                        MiuixTheme.colorScheme.onTertiaryContainer
-                    } else {
-                        MiuixTheme.colorScheme.onSurface
-                    },
-                    style = MiuixTheme.textStyles.body1,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    text = status,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // 标题与角色名相同（如未改名的角色会话）时不再重复第二行。
-                conversation.characterName?.takeIf { it != title }?.let { name ->
-                    Text(
-                        text = name,
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-                conversation.runStatus?.let { status ->
-                    Text(
-                        text = status,
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
+            }
             }
             if (conversation.isActiveRun) {
                 if (conversation.isPaused) {
@@ -577,66 +528,54 @@ private fun ConversationTextRow(
             }
         }
 
-        val pinText = stringResource(
-            if (conversation.isPinned) {
-                R.string.action_unpin_conversation
+        WindowListPopup(
+            show = showActionMenu,
+            popupPositionProvider = ListPopupDefaults.ContextMenuPositionProvider,
+            alignment = if (expandUpward) {
+                PopupPositionProvider.Align.TopEnd
             } else {
-                R.string.action_pin_conversation
+                PopupPositionProvider.Align.BottomEnd
             },
-        )
-        val renameText = stringResource(R.string.action_rename)
-        val exportText = stringResource(R.string.action_export)
-        val deleteText = stringResource(R.string.action_delete)
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                val destructiveColor = CouiDialogDefaults.themeColors().destructive
-                val menuItems = remember(pinText, renameText, exportText, deleteText, destructiveColor) {
-                    listOf(
-                        CouiMenuItem(value = 0, text = pinText, icon = Icons.Outlined.PushPin),
-                        CouiMenuItem(value = 1, text = renameText, icon = Icons.Outlined.Edit),
-                        CouiMenuItem(value = 2, text = exportText, icon = Icons.Outlined.Download),
-                        CouiMenuItem(
-                            value = 3,
-                            text = deleteText,
-                            icon = Icons.Outlined.Delete,
-                            iconTint = destructiveColor,
-                            dividerBefore = true,
-                        ),
-                    )
-                }
-                Menu(
-                    expanded = showActionMenu,
-                    onDismissRequest = { showActionMenu = false },
-                    items = menuItems,
-                    onItemClick = { item ->
-                        showActionMenu = false
-                        when (item.value) {
-                            0 -> onTogglePin()
-                            1 -> onRename()
-                            2 -> onExport()
-                            3 -> onDelete()
-                        }
+            onDismissRequest = { showActionMenu = false },
+        ) {
+            val pinText = stringResource(
+                if (conversation.isPinned) R.string.action_unpin else R.string.action_pin,
+            )
+            val pinItem = remember(pinText) {
+                DropdownItem(
+                    text = pinText,
+                    icon = { modifier ->
+                        Icon(
+                            imageVector = Icons.Rounded.Star,
+                            contentDescription = null,
+                            modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
+                        )
                     },
-                    anchor = anchor,
                 )
             }
-            AppearanceUiStyle.MIUIX -> {
-                WindowListPopup(
-                    show = showActionMenu,
-                    popupPositionProvider = ListPopupDefaults.ContextMenuPositionProvider,
-                    alignment = PopupPositionProvider.Align.BottomEnd,
-                    onDismissRequest = { showActionMenu = false },
-                ) {
-                    val pinItem = remember(pinText) {
-                        DropdownItem(
-                            text = pinText,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = Icons.Outlined.PushPin,
-                                    contentDescription = null,
-                                    modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                                )
-                            },
+            val renameText = stringResource(R.string.action_rename)
+            val exportText = stringResource(R.string.action_export)
+            val deleteText = stringResource(R.string.action_delete)
+            val renameItem = remember(renameText) {
+                DropdownItem(
+                    text = renameText,
+                    icon = { modifier ->
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = null,
+                            modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
+                        )
+                    },
+                )
+            }
+            val exportItem = remember(exportText) {
+                DropdownItem(
+                    text = exportText,
+                    icon = { modifier ->
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = null,
+                            modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
                         )
                     },
                 )
@@ -751,93 +690,6 @@ private fun ConversationTextRow(
                         onDelete()
                     },
                 )
-                    }
-                    val renameItem = remember(renameText) {
-                        DropdownItem(
-                            text = renameText,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = Icons.Outlined.Edit,
-                                    contentDescription = null,
-                                    modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                                )
-                            },
-                        )
-                    }
-                    val exportItem = remember(exportText) {
-                        DropdownItem(
-                            text = exportText,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = Icons.Outlined.Download,
-                                    contentDescription = null,
-                                    modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                                )
-                            },
-                        )
-                    }
-                    val deleteItem = remember(deleteText) {
-                        DropdownItem(
-                            text = deleteText,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = Icons.Outlined.Delete,
-                                    contentDescription = null,
-                                    modifier = modifier.size(ConversationPanelMetrics.ActionIconSize),
-                                    tint = MiuixTheme.colorScheme.error,
-                                )
-                            },
-                        )
-                    }
-                    val deleteColors = DropdownDefaults.dropdownColors(
-                        contentColor = MiuixTheme.colorScheme.error,
-                        selectedContentColor = MiuixTheme.colorScheme.error,
-                        selectedIndicatorColor = MiuixTheme.colorScheme.error,
-                    )
-                    ListPopupColumn {
-                        DropdownImpl(
-                            item = pinItem,
-                            optionSize = 4,
-                            isSelected = false,
-                            index = 0,
-                            onSelectedIndexChange = {
-                                showActionMenu = false
-                                onTogglePin()
-                            },
-                        )
-                        DropdownImpl(
-                            item = renameItem,
-                            optionSize = 4,
-                            isSelected = false,
-                            index = 1,
-                            onSelectedIndexChange = {
-                                showActionMenu = false
-                                onRename()
-                            },
-                        )
-                        DropdownImpl(
-                            item = exportItem,
-                            optionSize = 4,
-                            isSelected = false,
-                            index = 2,
-                            onSelectedIndexChange = {
-                                showActionMenu = false
-                                onExport()
-                            },
-                        )
-                        DropdownImpl(
-                            item = deleteItem,
-                            optionSize = 4,
-                            isSelected = false,
-                            index = 3,
-                            dropdownColors = deleteColors,
-                            onSelectedIndexChange = {
-                                showActionMenu = false
-                                onDelete()
-                            },
-                        )
-                    }
-                }
             }
         }
     }
@@ -857,14 +709,6 @@ private fun EmptyConversations(
         }
     }
     Column(
-private fun EmptyConversations(isSearching: Boolean) {
-    Text(
-        text = stringResource(
-            if (isSearching) R.string.conversation_no_results else R.string.conversation_empty,
-        ),
-        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        style = MiuixTheme.textStyles.body2,
-        fontWeight = FontWeight.Normal,
         modifier = Modifier.padding(
             horizontal = ConversationPanelMetrics.RowHorizontalPadding,
             vertical = ConversationPanelMetrics.EmptyVerticalPadding,
@@ -926,29 +770,23 @@ private fun PaneDock(
         DockEntry(
             icon = Icons.Rounded.Settings,
             label = stringResource(R.string.route_settings),
-            icon = Icons.Outlined.Settings,
-            label = "设置",
             onClick = onOpenSettings,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
             icon = Icons.Rounded.Cloud,
             label = stringResource(R.string.route_model_providers),
-            icon = Icons.Outlined.Cloud,
-            label = "模型",
             onClick = onOpenModelProviders,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
             icon = Icons.Rounded.Dashboard,
             label = stringResource(R.string.route_tools),
-            icon = Icons.Outlined.Widgets,
-            label = "工具",
             onClick = onOpenTools,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
-            icon = Icons.Outlined.AutoStories,
+            icon = Icons.Rounded.ImportContacts,
             label = "Skills",
             onClick = onOpenSkills,
             modifier = Modifier.weight(1f),
@@ -956,16 +794,12 @@ private fun PaneDock(
         DockEntry(
             icon = Icons.Rounded.Lock,
             label = stringResource(R.string.route_permissions),
-            icon = Icons.Outlined.Shield,
-            label = "权限",
             onClick = onOpenPermissions,
             modifier = Modifier.weight(1f),
         )
         DockEntry(
             icon = Icons.Rounded.SportsBar,
             label = stringResource(R.string.route_characters),
-            icon = Icons.Outlined.SportsBar,
-            label = "角色",
             onClick = onOpenCharacters,
             modifier = Modifier.weight(1f),
         )
@@ -981,11 +815,8 @@ private fun DockEntry(
 ) {
     Box(
         modifier = modifier
-            .heightIn(min = 46.dp)
-            .squircleSurface(
-                color = Color.Transparent,
-                cornerRadius = ConversationPanelMetrics.DockEntryCornerRadius,
-            )
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(ConversationPanelMetrics.DockEntryCornerRadius))
             .clickable(onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -993,7 +824,7 @@ private fun DockEntry(
             imageVector = icon,
             contentDescription = label,
             modifier = Modifier.size(ConversationPanelMetrics.DockEntryIconSize),
-            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            tint = MiuixTheme.colorScheme.onSurface,
         )
     }
 }

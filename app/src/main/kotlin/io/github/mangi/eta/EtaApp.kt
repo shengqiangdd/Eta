@@ -1,42 +1,43 @@
 package io.github.mangi.eta
 
-import io.github.mangi.eta.agent.voice.SpeechOssUpload
 import android.app.Activity
 import android.app.Application
 import android.content.ComponentCallbacks2
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import io.github.libxposed.service.XposedService
+import io.github.libxposed.service.XposedServiceHelper
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
-import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.VirtualDisplayImeRestore
+import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
 import io.github.mangi.eta.agent.terminal.DetachedTaskProbe
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
+import io.github.mangi.eta.agent.voice.SpeechOssUpload
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.BootLog
 import io.github.mangi.eta.core.DiagnosticsRetention
 import io.github.mangi.eta.core.StartupTrace
-import io.github.mangi.eta.ui.components.CharacterImageCache
-import io.github.mangi.eta.ui.markdown.StaticDocumentCache
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
-import io.github.mangi.eta.data.repository.McpServerRepository
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
+import io.github.mangi.eta.data.repository.McpServerRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.ui.app.AppVisibility
 import io.github.mangi.eta.ui.app.PredictiveBackController
-import io.github.libxposed.service.XposedService
-import io.github.libxposed.service.XposedServiceHelper
+import io.github.mangi.eta.ui.components.CharacterImageCache
+import io.github.mangi.eta.ui.markdown.StaticDocumentCache
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * 模块 UI 进程的 Application。

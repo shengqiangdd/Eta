@@ -54,45 +54,38 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.itos.coui.layout.CouiPageDefaults
-import com.itos.coui.layout.Divider
-import com.itos.coui.layout.Group
-import com.itos.coui.scroll.rememberCouiOverscrollEffect
 import io.github.mangi.eta.R
-import io.github.mangi.eta.data.model.AppearanceUiStyle
-import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.EtaCard
+import io.github.mangi.eta.ui.components.EtaPreference
+import io.github.mangi.eta.ui.components.EtaPreferenceDefaults
+import io.github.mangi.eta.ui.components.EtaPreferenceDivider
+import io.github.mangi.eta.ui.components.EtaPreferenceGroup
+import io.github.mangi.eta.ui.components.EtaSwitchPreference
+import io.github.mangi.eta.ui.components.EtaTextButton
+import io.github.mangi.eta.ui.components.EtaWindowDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffold
-import io.github.mangi.eta.ui.components.coui.CouiButton
-import io.github.mangi.eta.ui.components.coui.CouiButtonRole
-import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
-import io.github.mangi.eta.ui.components.coui.CouiNoticeDialog
-import io.github.mangi.eta.ui.components.coui.CouiPreference
-import io.github.mangi.eta.ui.components.coui.CouiScaffold
-import io.github.mangi.eta.ui.components.coui.CouiSwitchPreference
-import io.github.mangi.eta.ui.components.coui.CouiTopAppBarIconButton
 import io.github.mangi.eta.ui.layout.horizontalCutoutPadding
-import io.github.mangi.eta.ui.markdown.LazyStaticMarkdown
 import io.github.mangi.eta.ui.markdown.MarkdownTone
+import io.github.mangi.eta.ui.markdown.StaticMarkdown
 import io.github.mangi.eta.ui.model.AgentMemoryAction
 import io.github.mangi.eta.ui.model.AgentMemorySectionUi
 import io.github.mangi.eta.ui.model.AgentMemoryUiState
 import java.text.NumberFormat
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
 
 private enum class MemoryViewMode { Preview, Edit }
 
+/**
+ * 记忆页：顶部是开关与预算，下方 MEMORY.md 以“文档”形式占满剩余高度。
+ * 默认渲染 Markdown 便于阅读，切到编辑后是无边框的整页编辑区；只有存在未保存修改时才浮出保存栏。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AgentMemoryScreen(
@@ -100,127 +93,53 @@ internal fun AgentMemoryScreen(
     onAction: (AgentMemoryAction) -> Unit,
 ) {
     var showClearDialog by remember { mutableStateOf(false) }
-    var mode by rememberSaveable {
-        mutableStateOf(
-            if (!state.isLoading && state.savedContent.isBlank()) MemoryViewMode.Edit else MemoryViewMode.Preview,
-        )
-    }
-    var initialModeResolved by rememberSaveable { mutableStateOf(!state.isLoading) }
+    var mode by rememberSaveable { mutableStateOf<MemoryViewMode?>(null) }
+    // 首次读到内容前不决定模式：空记忆直接进入编辑，已有内容先给出可读的预览。
     LaunchedEffect(state.isLoading) {
-        if (!state.isLoading && !initialModeResolved) {
-            initialModeResolved = true
+        if (!state.isLoading && mode == null) {
             mode = if (state.savedContent.isBlank()) MemoryViewMode.Edit else MemoryViewMode.Preview
         }
     }
-    val currentMode = mode
+    val currentMode = mode ?: MemoryViewMode.Preview
     val imeVisible = WindowInsets.isImeVisible
-    val canClear = !state.isLoading && !state.isSaving && state.draft.isNotEmpty()
 
-    when (LocalUiStyle.current) {
-        AppearanceUiStyle.COUI -> {
-            CouiScaffold(
-                title = stringResource(R.string.ui_memory_b55ff5),
-                onBack = { onAction(AgentMemoryAction.NavigateBack) },
-                compactTitle = true,
-                actions = {
-                    CouiTopAppBarIconButton(
-                        icon = Icons.Rounded.DeleteOutline,
-                        contentDescription = stringResource(R.string.ui_clear_all_memory_a43bd3),
-                        enabled = canClear,
-                        onClick = { showClearDialog = true },
-                    )
-                },
-            ) { contentPadding, _, nestedScrollConnection, sidePadding ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalCutoutPadding()
-                        .padding(top = contentPadding.calculateTopPadding())
-                        .padding(horizontal = sidePadding)
-                        .then(if (nestedScrollConnection != null) Modifier.nestedScroll(nestedScrollConnection) else Modifier)
-                        .imePadding()
-                        .navigationBarsPadding(),
-                ) {
-                    AnimatedVisibility(
-                        visible = !imeVisible,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically(),
-                    ) {
-                        MemorySettingsGroup(state = state, onAction = onAction)
-                    }
-                    MemoryDocumentCard(
-                        state = state,
-                        mode = currentMode,
-                        onModeChange = { mode = it },
-                        onDraftChange = { onAction(AgentMemoryAction.DraftChanged(it)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(top = CouiPageDefaults.groupSpacing)
-                            .padding(horizontal = CouiPageDefaults.horizontalMargin),
-                    )
-                    MemorySaveBar(
-                        state = state,
-                        onDiscard = { onAction(AgentMemoryAction.DraftChanged(state.savedContent)) },
-                        onSave = { onAction(AgentMemoryAction.Save) },
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
+    MiuixScaffold(
+        title = stringResource(R.string.ui_memory_b55ff5),
+        onBack = { onAction(AgentMemoryAction.NavigateBack) },
+        actions = {
+            IconButton(
+                onClick = { showClearDialog = true },
+                enabled = !state.isLoading && !state.isSaving && state.draft.isNotEmpty(),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteOutline,
+                    contentDescription = stringResource(R.string.ui_clear_all_memory_a43bd3),
+                    tint = if (!state.isLoading && state.draft.isNotEmpty()) {
+                        MiuixTheme.colorScheme.onSurface
+                    } else {
+                        MiuixTheme.colorScheme.disabledOnSurface
+                    },
+                )
             }
-        }
-        AppearanceUiStyle.MIUIX -> {
-            MiuixScaffold(
-                title = stringResource(R.string.ui_memory_b55ff5),
-                onBack = { onAction(AgentMemoryAction.NavigateBack) },
-                actions = {
-                    IconButton(
-                        onClick = { showClearDialog = true },
-                        enabled = canClear,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.DeleteOutline,
-                            contentDescription = stringResource(R.string.ui_clear_all_memory_a43bd3),
-                            tint = if (!state.isLoading && state.draft.isNotEmpty()) {
-                                MiuixTheme.colorScheme.onSurface
-                            } else {
-                                MiuixTheme.colorScheme.disabledOnSurface
-                            },
-                        )
-                    }
-                },
-            ) { paddingValues, scrollBehavior, sidePadding ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalCutoutPadding()
-                        .padding(top = paddingValues.calculateTopPadding())
-                        .padding(horizontal = sidePadding)
-                        .nestedScroll(scrollBehavior.nestedScrollConnection)
-                        .imePadding()
-                        .navigationBarsPadding(),
-                ) {
-                    AnimatedVisibility(
-                        visible = !imeVisible,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically(),
-                    ) {
-                        MemorySettingsGroup(state = state, onAction = onAction)
-                    }
-                    MemoryDocumentCard(
-                        state = state,
-                        mode = currentMode,
-                        onModeChange = { mode = it },
-                        onDraftChange = { onAction(AgentMemoryAction.DraftChanged(it)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 12.dp),
-                    )
-                    MemorySaveBar(
-                        state = state,
-                        onDiscard = { onAction(AgentMemoryAction.DraftChanged(state.savedContent)) },
-                        onSave = { onAction(AgentMemoryAction.Save) },
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
+        },
+    ) { paddingValues, scrollBehavior, sidePadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalCutoutPadding()
+                .padding(top = paddingValues.calculateTopPadding())
+                .padding(horizontal = sidePadding)
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                .imePadding()
+                .navigationBarsPadding(),
+        ) {
+            // 键盘弹出时收起设置区，把有限高度全部让给正在编辑的文档。
+            AnimatedVisibility(
+                visible = !imeVisible,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                MemorySettingsGroup(state = state, onAction = onAction)
             }
             if (state.sections.isNotEmpty()) {
                 MemoryOutlineRow(
@@ -252,39 +171,22 @@ internal fun AgentMemoryScreen(
     }
 
     if (showClearDialog) {
-        val onConfirmClear: () -> Unit = {
-            showClearDialog = false
-            onAction(AgentMemoryAction.Clear)
-        }
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiConfirmDialog(
-                    visible = true,
-                    title = stringResource(R.string.ui_clear_all_memory_a43bd3),
-                    message = stringResource(R.string.ui_the_entire_contents_of_memory_md_will_be_deleted_and_83a8ac),
-                    confirmText = stringResource(R.string.memory_clear),
-                    confirmEnabled = !state.isSaving,
-                    destructive = true,
-                    onConfirm = onConfirmClear,
-                    onDismissRequest = { showClearDialog = false },
-                )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    title = stringResource(R.string.ui_clear_all_memory_a43bd3),
-                    summary = stringResource(R.string.ui_the_entire_contents_of_memory_md_will_be_deleted_and_83a8ac),
-                    onDismissRequest = { showClearDialog = false },
-                ) {
-                    MiuixDialogActions(
-                        confirmText = stringResource(R.string.memory_clear),
-                        destructive = true,
-                        confirmEnabled = !state.isSaving,
-                        onCancel = { showClearDialog = false },
-                        onConfirm = onConfirmClear,
-                    )
-                }
-            }
+        EtaWindowDialog(
+            show = true,
+            title = stringResource(R.string.ui_clear_all_memory_a43bd3),
+            summary = stringResource(R.string.ui_the_entire_contents_of_memory_md_will_be_deleted_and_83a8ac),
+            onDismissRequest = { showClearDialog = false },
+        ) {
+            MiuixDialogActions(
+                confirmText = stringResource(R.string.memory_clear),
+                destructive = true,
+                confirmEnabled = !state.isSaving,
+                onCancel = { showClearDialog = false },
+                onConfirm = {
+                    showClearDialog = false
+                    onAction(AgentMemoryAction.Clear)
+                },
+            )
         }
     }
 
@@ -332,30 +234,17 @@ internal fun AgentMemoryScreen(
     }
 
     state.notice?.let { notice ->
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiNoticeDialog(
-                    visible = true,
-                    title = stringResource(R.string.ui_memory_b55ff5),
-                    message = notice,
-                    confirmText = stringResource(R.string.ui_knew_cb63c6),
-                    onDismissRequest = { onAction(AgentMemoryAction.DismissNotice) },
-                )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    title = stringResource(R.string.ui_memory_b55ff5),
-                    summary = notice,
-                    onDismissRequest = { onAction(AgentMemoryAction.DismissNotice) },
-                ) {
-                    TextButton(
-                        text = stringResource(R.string.ui_knew_cb63c6),
-                        onClick = { onAction(AgentMemoryAction.DismissNotice) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+        EtaWindowDialog(
+            show = true,
+            title = stringResource(R.string.ui_memory_b55ff5),
+            summary = notice,
+            onDismissRequest = { onAction(AgentMemoryAction.DismissNotice) },
+        ) {
+            EtaTextButton(
+                text = stringResource(R.string.ui_knew_cb63c6),
+                onClick = { onAction(AgentMemoryAction.DismissNotice) },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -365,46 +254,27 @@ private fun MemorySettingsGroup(
     state: AgentMemoryUiState,
     onAction: (AgentMemoryAction) -> Unit,
 ) {
-    when (LocalUiStyle.current) {
-        AppearanceUiStyle.COUI -> {
-            Group {
-                CouiSwitchPreference(
-                    title = stringResource(R.string.ui_enable_memory_4b69b7),
-                    summary = stringResource(R.string.ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23),
-                    checked = state.enabled,
-                    enabled = !state.isLoading,
-                    onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
-                )
-                Divider()
-                CouiPreference(
-                    title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
-                    summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
-                    showChevron = false,
-                )
-            }
-        }
-        AppearanceUiStyle.MIUIX -> {
-            Card(
-                modifier = Modifier
-                    .padding(horizontal = 12.dp)
-                    .padding(top = 8.dp, bottom = 12.dp),
-            ) {
-                SwitchPreference(
-                    title = stringResource(R.string.ui_enable_memory_4b69b7),
-                    summary = stringResource(R.string.ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23),
-                    checked = state.enabled,
-                    enabled = !state.isLoading,
-                    onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
-                )
-                BasicComponent(
-                    title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
-                    summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
-                )
-            }
-        }
+    EtaPreferenceGroup(
+        modifier = Modifier
+            .padding(horizontal = EtaPreferenceDefaults.SidePadding)
+            .padding(top = 8.dp, bottom = EtaPreferenceDefaults.GroupSpacing),
+    ) {
+        EtaSwitchPreference(
+            title = stringResource(R.string.ui_enable_memory_4b69b7),
+            summary = stringResource(R.string.ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23),
+            checked = state.enabled,
+            enabled = !state.isLoading,
+            onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
+        )
+        EtaPreferenceDivider(hasLeading = false)
+        EtaPreference(
+            title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
+            summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
+        )
     }
 }
 
+/** 文档卡片：标题栏承载文件名、体积与预览/编辑切换，正文区占满卡片剩余高度并独立滚动。 */
 @Composable
 private fun MemoryDocumentCard(
     state: AgentMemoryUiState,
@@ -414,18 +284,12 @@ private fun MemoryDocumentCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = MiuixTheme.colorScheme
-    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
     val overLimit = state.draftBytes > state.maxBytes
-    val cardContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
+    EtaCard(modifier = modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    start = 16.dp,
-                    end = if (isCoui) CouiPageDefaults.rowPadding else 10.dp,
-                    top = 12.dp,
-                    bottom = 12.dp,
-                ),
+                .padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -450,16 +314,12 @@ private fun MemoryDocumentCard(
             }
             MemoryModeSwitch(mode = mode, enabled = !state.isLoading, onModeChange = onModeChange)
         }
-        if (isCoui) {
-            Divider()
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(colors.dividerLine),
-            )
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(colors.dividerLine),
+        )
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             when {
                 state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -478,25 +338,6 @@ private fun MemoryDocumentCard(
                         )
                     }
                 }
-            }
-        }
-    }
-
-    when (LocalUiStyle.current) {
-        AppearanceUiStyle.COUI -> {
-            val pageColors = CouiPageDefaults.themeColors()
-            Column(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .clip(CouiPageDefaults.shape)
-                    .background(pageColors.card),
-            ) {
-                cardContent()
-            }
-        }
-        AppearanceUiStyle.MIUIX -> {
-            Card(modifier = modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
-                cardContent()
             }
         }
     }
@@ -528,20 +369,17 @@ private fun MemoryPreview(content: String, onStartEditing: () -> Unit) {
         }
         return
     }
-    val overscroll = if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
-        rememberCouiOverscrollEffect()
-    } else {
-        null
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        StaticMarkdown(content = content, tone = MarkdownTone.Answer, modifier = Modifier.fillMaxWidth())
     }
-    LazyStaticMarkdown(
-        content = content,
-        tone = MarkdownTone.Answer,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        overscrollEffect = overscroll,
-    )
 }
 
+/** 无边框整页编辑：与卡片同色，不再嵌一层灰色输入框；点到空白处也能把光标落进正文。 */
 @Composable
 private fun MemoryEditor(
     value: String,
@@ -580,6 +418,7 @@ private fun MemoryEditor(
 @Composable
 private fun MemoryTextStyle() = MiuixTheme.textStyles.body2.copy(lineHeight = 22.sp)
 
+/** 轻量分段切换：两个选项常驻可见，选中项用浮起的胶囊表示，比整行 TabRow 更贴合卡片标题栏。 */
 @Composable
 private fun MemoryModeSwitch(
     mode: MemoryViewMode,
@@ -618,6 +457,7 @@ private fun MemoryModeSwitch(
     }
 }
 
+/** 有未保存修改或超限时才出现：左侧说明状态，右侧放弃与保存，避免常驻一个灰掉的保存按钮。 */
 @Composable
 private fun MemorySaveBar(
     state: AgentMemoryUiState,
@@ -625,7 +465,6 @@ private fun MemorySaveBar(
     onSave: () -> Unit,
 ) {
     val overLimit = state.draftBytes > state.maxBytes
-    val uiStyle = LocalUiStyle.current
     AnimatedVisibility(
         visible = !state.isLoading && (state.hasUnsavedChanges || state.isSaving),
         enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
@@ -634,10 +473,10 @@ private fun MemorySaveBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = if (uiStyle == AppearanceUiStyle.COUI) CouiPageDefaults.horizontalMargin else 12.dp)
+                .padding(horizontal = EtaPreferenceDefaults.SidePadding)
                 .padding(top = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -656,39 +495,23 @@ private fun MemorySaveBar(
                     maxLines = 2,
                 )
             }
-            val discardText = stringResource(R.string.memory_discard)
-            val saveText = stringResource(if (state.isSaving) R.string.memory_saving else R.string.memory_save)
-            if (uiStyle == AppearanceUiStyle.COUI) {
-                CouiButton(
-                    text = discardText,
-                    enabled = !state.isSaving,
-                    onClick = onDiscard,
-                    minHeight = 36.dp,
-                )
-                CouiButton(
-                    text = saveText,
-                    enabled = state.canSave,
-                    onClick = onSave,
-                    role = CouiButtonRole.Primary,
-                    minHeight = 36.dp,
-                )
-            } else {
-                TextButton(
-                    text = discardText,
-                    enabled = !state.isSaving,
-                    onClick = onDiscard,
-                    minHeight = 36.dp,
-                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                )
-                TextButton(
-                    text = saveText,
-                    enabled = state.canSave,
-                    onClick = onSave,
-                    minHeight = 36.dp,
-                    insideMargin = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
-            }
+            EtaTextButton(
+                text = stringResource(R.string.memory_discard),
+                enabled = !state.isSaving,
+                onClick = onDiscard,
+                minHeight = 40.dp,
+                cornerRadius = 20.dp,
+                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            )
+            EtaTextButton(
+                text = stringResource(if (state.isSaving) R.string.memory_saving else R.string.memory_save),
+                enabled = state.canSave,
+                onClick = onSave,
+                minHeight = 40.dp,
+                cornerRadius = 20.dp,
+                insideMargin = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+            )
         }
     }
 }

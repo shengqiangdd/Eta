@@ -172,7 +172,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
             updatedAt: Long,
             isPinned: Boolean = false,
         ) : this(
-            title, updatedAt, isPinned, state.reasoningEffort, state.appliedRuntimeRunIds,
+            title, updatedAt, state.reasoningEffort, state.appliedRuntimeRunIds,
             state.roleplay, if (state.roleplay == null) RoleplayMessageState() else state.roleplayMessages,
             state.modelId, state.messages, state.history,
             state.historyDeferred,

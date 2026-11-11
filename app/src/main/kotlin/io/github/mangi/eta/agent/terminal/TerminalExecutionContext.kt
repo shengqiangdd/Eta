@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.terminal
 
+import java.io.File
 import org.json.JSONObject
 
 /** 同一次运行的 Linux 环境；工作区/默认 cwd 可由 `working_directory` 在同一 run 内切换。 */

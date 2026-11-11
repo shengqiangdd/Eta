@@ -53,8 +53,8 @@ internal class AgentMemoryStore(
                 onSuccess = { loaded ->
                     withContext(Dispatchers.Main) {
                         val keepDraft = hasLoadedOnce && memoryState.hasUnsavedChanges
-                        val nextDraft = if (keepDraft) memoryState.draft else snapshot.content
-                        val nextBytes = if (keepDraft) memoryState.draftBytes else snapshot.byteSize
+                        val nextDraft = if (keepDraft) memoryState.draft else loaded.snapshot
+                        val nextBytes = if (keepDraft) memoryState.draftBytes else loaded.byteSize
                         hasLoadedOnce = true
                         memoryState = AgentMemoryUiState(
                             enabled = loaded.enabled,

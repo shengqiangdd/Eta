@@ -51,18 +51,15 @@ import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceLocationProvider
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.core.AndroidAgentLogger
-import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.config.Prefs
+import io.github.mangi.eta.data.model.ChatViewMode
+import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
+import io.github.mangi.eta.data.repository.ConversationExportSink
+import io.github.mangi.eta.data.repository.ConversationHistoryExporter
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
-import io.github.mangi.eta.ui.IncomingShareRequest
 import io.github.mangi.eta.ui.SettingsScreen
 import io.github.mangi.eta.ui.components.MiuixDialogActions
-import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
-import io.github.mangi.eta.ui.components.coui.CouiInputDialog
-import io.github.mangi.eta.ui.components.coui.CouiNoticeDialog
-import io.github.mangi.eta.ui.markdown.MarkdownTone
-import io.github.mangi.eta.ui.markdown.rememberMarkdownStyle
-import io.github.mangi.eta.ui.markdown.staticMarkdownDocumentCache
 import io.github.mangi.eta.ui.model.AgentHomeAction
 import io.github.mangi.eta.ui.model.AgentMemoryAction
 import io.github.mangi.eta.ui.model.AgentPluginsAction
@@ -137,8 +134,6 @@ fun AgentAppRoot(
     onRequestedConversationOpened: () -> Unit = {},
     requestedArchivedConversation: ArchivedConversationRequest? = null,
     onArchivedConversationOpened: () -> Unit = {},
-    sharedContent: IncomingShareRequest? = null,
-    onSharedContentAccepted: () -> Unit = {},
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
     onTerminalOpened: () -> Unit = {},
@@ -343,18 +338,6 @@ fun AgentAppRoot(
         onAssistantConversationOpened(opened)
     }
 
-    LaunchedEffect(sharedContent) {
-        val request = sharedContent ?: return@LaunchedEffect
-        focusManager.clearFocus()
-        conversationPaneOpen = false
-        if (backStack.lastOrNull() != AppRoute.Home) {
-            navigator.popToHome()
-            navigationResetKey++
-        }
-        agentState.acceptSharedContent(request)
-        onSharedContentAccepted()
-    }
-
     fun pushRoute(
         route: AppRoute,
         restoreConversationPaneOnBack: Boolean = conversationPaneOpen,
@@ -394,10 +377,8 @@ fun AgentAppRoot(
     @Composable
     fun RoutedShell(
         route: AppRoute,
-        applyShellPadding: Boolean = true,
-        content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit,
+        content: @Composable () -> Unit,
     ) {
-        val isHome = route is AppRoute.Home
         AgentAppShell(
             currentRoute = route,
             isCurrentRoute = backStack.lastOrNull() == route,
@@ -437,7 +418,6 @@ fun AgentAppRoot(
             onSearchMessages = { chatSearchRequest += 1 },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationPin = { conversation ->
-            onConversationTogglePin = { conversation ->
                 agentState.toggleConversationPin(conversation.id)
             },
             onConversationRename = { conversation ->
@@ -544,11 +524,7 @@ fun AgentAppRoot(
             onOpenPermissions = { pushRoute(AppRoute.Permissions) },
             onOpenSettings = { pushRoute(AppRoute.Settings) },
             onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
-            homeTitle = if (isHome) agentState.currentConversationTitle else null,
-            homeCharacter = if (isHome) agentState.homeState.roleplayChatUi() else null,
-            homeModelPickerState = if (isHome) agentState.modelPickerState else null,
-            isHomeStreaming = isHome && agentState.homeState.isStreaming,
-            onHomeModelSelected = agentState::selectModel,
+            homeCharacter = if (route is AppRoute.Home) agentState.homeState.roleplayChatUi() else null,
             onOpenCharacter = {
                 agentState.homeState.roleplay?.let { pushRoute(AppRoute.CharacterDetail(it.characterId)) }
             },
@@ -556,9 +532,9 @@ fun AgentAppRoot(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (applyShellPadding) Modifier.padding(padding) else Modifier)
+                    .padding(padding)
             ) {
-                content(padding)
+                content()
             }
         }
     }
@@ -580,11 +556,10 @@ fun AgentAppRoot(
             ),
         ) {
             entry<AppRoute.Home>(swipeDismiss = swipeDismiss) {
-                RoutedShell(route = AppRoute.Home, applyShellPadding = false) { shellPadding ->
+                RoutedShell(route = AppRoute.Home) {
                     AgentHomeScreen(
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
-                        isBranching = agentState.isBranchingCurrentConversation,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
                         missingPermissionIds = permissionHealth.permissionHealthState.issueIds,
                         permissionIssuesKnown = permissionHealth.permissionHealthState.loaded,
@@ -595,7 +570,6 @@ fun AgentAppRoot(
                         onChatViewModeChange = setChatViewMode,
                         searchOpenRequests = chatSearchRequest,
                         onOpenRunDetail = { runId -> pushRoute(AppRoute.RunInspector(runId)) },
-                        topInset = shellPadding.calculateTopPadding(),
                         onAction = { action ->
                             when (action) {
                                 is AgentHomeAction.ReasoningEffortChanged ->
@@ -640,6 +614,13 @@ fun AgentAppRoot(
                                 }
                                 is AgentHomeAction.BranchMessage ->
                                     agentState.branchFromMessage(action.id)
+                                is AgentHomeAction.BranchConversation -> {
+                                    // 从别的会话的行内菜单点「分叉」：先切过去再分叉，
+                                    // 否则 branchFromMessage 会拿当前会话的消息去找这个 id，
+                                    // 找不到就静默失败。
+                                    agentState.selectConversation(action.conversationId)
+                                    agentState.branchFromMessage(action.messageId)
+                                }
                                 is AgentHomeAction.RegenerateMessage -> {
                                     val impact = agentState.messageRevisionImpact(action.id)
                                     if (agentState.homeState.roleplay != null || impact?.laterTurnCount == 0) {
@@ -648,8 +629,6 @@ fun AgentAppRoot(
                                         messageRegenerateTarget = MessageMutationTarget(action.id, impact.laterTurnCount)
                                     }
                                 }
-                                is AgentHomeAction.BranchConversation ->
-                                    agentState.branchConversation(action.conversationId, action.messageId)
                                 is AgentHomeAction.SelectReplyCandidate -> agentState.selectReplyCandidate(action.id, action.index)
                                 AgentHomeAction.OpenBrowser -> pushRoute(AppRoute.Browser())
                             }
@@ -950,20 +929,6 @@ fun AgentAppRoot(
                 )
             }
             entry<AppRoute.Settings>(swipeDismiss = swipeDismiss) {
-                val answerInlineStyle = rememberMarkdownStyle(MarkdownTone.Answer).inline
-                val savedMemoryContent = memory.memoryState.savedContent
-                LaunchedEffect(Unit) {
-                    memory.refreshMemory()
-                }
-                LaunchedEffect(savedMemoryContent, answerInlineStyle) {
-                    if (savedMemoryContent.isNotBlank() &&
-                        staticMarkdownDocumentCache.get(savedMemoryContent, answerInlineStyle) == null
-                    ) {
-                        withContext(Dispatchers.Default) {
-                            staticMarkdownDocumentCache.parse(savedMemoryContent, answerInlineStyle)
-                        }
-                    }
-                }
                 SettingsScreen(
                     context = context,
                     onNavigate = { route -> pushRoute(route) },
@@ -1112,214 +1077,136 @@ fun AgentAppRoot(
     }
 
     characterStore.notice?.let { notice ->
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiNoticeDialog(
-                    visible = true,
-                    title = "角色",
-                    message = notice,
-                    confirmText = "知道了",
-                    onDismissRequest = characterStore::dismissNotice,
-                )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    title = "角色",
-                    summary = notice,
-                    cornerRadius = DialogDefaults.CornerRadius,
-                    onDismissRequest = characterStore::dismissNotice,
-                ) {
-                    top.yukonga.miuix.kmp.basic.TextButton(
-                        text = "知道了", onClick = characterStore::dismissNotice, modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+        WindowDialog(
+            show = true,
+            title = stringResource(R.string.route_characters),
+            summary = notice,
+            cornerRadius = DialogDefaults.CornerRadius,
+            onDismissRequest = characterStore::dismissNotice,
+        ) {
+            top.yukonga.miuix.kmp.basic.TextButton(
+                text = stringResource(R.string.ui_knew_cb63c6),
+                onClick = characterStore::dismissNotice,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 
     conversationRenameTarget?.let { conversation ->
         var renameInput by remember(conversation.id) { mutableStateOf(conversation.title) }
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiInputDialog(
-                    visible = true,
-                    title = stringResource(R.string.conversation_rename_title),
+        WindowDialog(
+            show = true,
+            cornerRadius = DialogDefaults.CornerRadius,
+            title = stringResource(R.string.conversation_rename_title),
+            onDismissRequest = { conversationRenameTarget = null },
+        ) {
+            Column {
+                TextField(
                     value = renameInput,
                     onValueChange = { renameInput = it },
-                    placeholder = stringResource(R.string.conversation_rename_hint),
+                    label = stringResource(R.string.conversation_rename_hint),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                MiuixDialogActions(
                     confirmText = stringResource(R.string.action_save),
                     confirmEnabled = renameInput.isNotBlank(),
+                    onCancel = { conversationRenameTarget = null },
                     onConfirm = {
                         agentState.renameConversation(conversation.id, renameInput)
                         conversationRenameTarget = null
                     },
-                    onDismissRequest = { conversationRenameTarget = null },
+                    modifier = Modifier.padding(top = 16.dp),
                 )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    cornerRadius = DialogDefaults.CornerRadius,
-                    title = stringResource(R.string.conversation_rename_title),
-                    onDismissRequest = { conversationRenameTarget = null },
-                ) {
-                    Column {
-                        TextField(
-                            value = renameInput,
-                            onValueChange = { renameInput = it },
-                            label = stringResource(R.string.conversation_rename_hint),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        MiuixDialogActions(
-                            confirmText = stringResource(R.string.action_save),
-                            confirmEnabled = renameInput.isNotBlank(),
-                            onCancel = { conversationRenameTarget = null },
-                            onConfirm = {
-                                agentState.renameConversation(conversation.id, renameInput)
-                                conversationRenameTarget = null
-                            },
-                            modifier = Modifier.padding(top = 16.dp),
-                        )
-                    }
-                }
             }
         }
     }
 
     conversationDeleteTarget?.let { conversation ->
-        val message = stringResource(
-            if (conversation.isActiveRun) R.string.conversation_stop_and_delete_message else R.string.conversation_delete_message,
-        )
-        val confirmText = stringResource(
-            if (conversation.isActiveRun) R.string.conversation_stop_and_delete else R.string.action_delete,
-        )
-        val onConfirmDelete: () -> Unit = {
-            if ((backStack.lastOrNull() as? AppRoute.Browser)?.sessionKey == conversation.id) {
-                navigator.popToHome()
-            }
-            agentState.deleteConversation(conversation.id)
-            conversationDeleteTarget = null
-        }
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiConfirmDialog(
-                    visible = true,
-                    title = stringResource(R.string.conversation_delete_title),
-                    message = message,
-                    confirmText = confirmText,
-                    destructive = true,
-                    onConfirm = onConfirmDelete,
-                    onDismissRequest = { conversationDeleteTarget = null },
-                )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    cornerRadius = DialogDefaults.CornerRadius,
-                    title = stringResource(R.string.conversation_delete_title),
-                    summary = message,
-                    onDismissRequest = { conversationDeleteTarget = null },
-                ) {
-                    MiuixDialogActions(
-                        confirmText = confirmText,
-                        destructive = true,
-                        onCancel = { conversationDeleteTarget = null },
-                        onConfirm = onConfirmDelete,
-                    )
-                }
-            }
+        WindowDialog(
+            show = true,
+            cornerRadius = DialogDefaults.CornerRadius,
+            title = stringResource(R.string.conversation_delete_title),
+            summary = stringResource(
+                if (conversation.isActiveRun) {
+                    R.string.conversation_stop_and_delete_message
+                } else {
+                    R.string.conversation_delete_message
+                },
+            ),
+            onDismissRequest = { conversationDeleteTarget = null },
+        ) {
+            MiuixDialogActions(
+                confirmText = stringResource(
+                    if (conversation.isActiveRun) {
+                        R.string.conversation_stop_and_delete
+                    } else {
+                        R.string.action_delete
+                    },
+                ),
+                destructive = true,
+                onCancel = { conversationDeleteTarget = null },
+                onConfirm = {
+                    agentState.deleteConversation(conversation.id)
+                    conversationDeleteTarget = null
+                },
+            )
         }
     }
 
     messageDeleteTarget?.let { target ->
-        val summary = if (target.laterTurnCount == 0) {
-            stringResource(R.string.conversation_delete_message_body)
-        } else {
-            pluralStringResource(
-                R.plurals.conversation_delete_later_turns,
-                target.laterTurnCount,
-                target.laterTurnCount,
-            )
-        }
-        val onConfirmDeleteMessage: () -> Unit = {
-            agentState.deleteMessageTurn(target.messageId)
-            messageDeleteTarget = null
-        }
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiConfirmDialog(
-                    visible = true,
-                    title = stringResource(R.string.conversation_delete_message_title),
-                    message = summary,
-                    confirmText = stringResource(R.string.action_delete),
-                    destructive = true,
-                    onConfirm = onConfirmDeleteMessage,
-                    onDismissRequest = { messageDeleteTarget = null },
+        WindowDialog(
+            show = true,
+            cornerRadius = DialogDefaults.CornerRadius,
+            title = stringResource(R.string.conversation_delete_message_title),
+            summary = if (target.laterTurnCount == 0) {
+                stringResource(R.string.conversation_delete_message_body)
+            } else {
+                pluralStringResource(
+                    R.plurals.conversation_delete_later_turns,
+                    target.laterTurnCount,
+                    target.laterTurnCount,
                 )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    cornerRadius = DialogDefaults.CornerRadius,
-                    title = stringResource(R.string.conversation_delete_message_title),
-                    summary = summary,
-                    onDismissRequest = { messageDeleteTarget = null },
-                ) {
-                    MiuixDialogActions(
-                        confirmText = stringResource(R.string.action_delete),
-                        destructive = true,
-                        onCancel = { messageDeleteTarget = null },
-                        onConfirm = onConfirmDeleteMessage,
-                    )
-                }
-            }
+            },
+            onDismissRequest = { messageDeleteTarget = null },
+        ) {
+            MiuixDialogActions(
+                confirmText = stringResource(R.string.action_delete),
+                destructive = true,
+                onCancel = { messageDeleteTarget = null },
+                onConfirm = {
+                    agentState.deleteMessageTurn(target.messageId)
+                    messageDeleteTarget = null
+                },
+            )
         }
     }
 
     messageRegenerateTarget?.let { target ->
-        val summary = if (target.laterTurnCount == 0) {
-            stringResource(R.string.conversation_regenerate_current_turn)
-        } else {
-            pluralStringResource(
-                R.plurals.conversation_regenerate_later_turns,
-                target.laterTurnCount,
-                target.laterTurnCount,
-            )
-        }
-        val onConfirmRegenerate: () -> Unit = {
-            agentState.regenerateMessage(target.messageId)
-            messageRegenerateTarget = null
-        }
-        when (LocalUiStyle.current) {
-            AppearanceUiStyle.COUI -> {
-                CouiConfirmDialog(
-                    visible = true,
-                    title = stringResource(R.string.conversation_regenerate_title),
-                    message = summary,
-                    confirmText = stringResource(R.string.action_regenerate),
-                    destructive = true,
-                    onConfirm = onConfirmRegenerate,
-                    onDismissRequest = { messageRegenerateTarget = null },
+        WindowDialog(
+            show = true,
+            cornerRadius = DialogDefaults.CornerRadius,
+            title = stringResource(R.string.conversation_regenerate_title),
+            summary = if (target.laterTurnCount == 0) {
+                stringResource(R.string.conversation_regenerate_current_turn)
+            } else {
+                pluralStringResource(
+                    R.plurals.conversation_regenerate_later_turns,
+                    target.laterTurnCount,
+                    target.laterTurnCount,
                 )
-            }
-            AppearanceUiStyle.MIUIX -> {
-                WindowDialog(
-                    show = true,
-                    cornerRadius = DialogDefaults.CornerRadius,
-                    title = stringResource(R.string.conversation_regenerate_title),
-                    summary = summary,
-                    onDismissRequest = { messageRegenerateTarget = null },
-                ) {
-                    MiuixDialogActions(
-                        confirmText = stringResource(R.string.action_regenerate),
-                        destructive = true,
-                        onCancel = { messageRegenerateTarget = null },
-                        onConfirm = onConfirmRegenerate,
-                    )
-                }
-            }
+            },
+            onDismissRequest = { messageRegenerateTarget = null },
+        ) {
+            MiuixDialogActions(
+                confirmText = stringResource(R.string.action_regenerate),
+                destructive = true,
+                onCancel = { messageRegenerateTarget = null },
+                onConfirm = {
+                    agentState.regenerateMessage(target.messageId)
+                    messageRegenerateTarget = null
+                },
+            )
         }
     }
 }

@@ -11,10 +11,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -34,7 +32,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -69,7 +66,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -79,7 +75,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -92,35 +90,21 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.config.Prefs
-import androidx.compose.ui.unit.sp
-import com.itos.coui.effect.couiButtonFeedback
-import com.itos.coui.layout.CouiPageDefaults
-import com.itos.coui.shape.CouiShape
-import com.itos.coui.text.CouiTextKind
-import com.itos.coui.text.Text as CouiText
-import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.agent.runtime.AppExitCause
 import io.github.mangi.eta.data.model.ChatViewMode
-import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
-import io.github.mangi.eta.data.repository.ConversationBranchBoundary
-import io.github.mangi.eta.ui.model.branchMessageOutline
 import io.github.mangi.eta.ui.app.AgentConversationRevisionReducer
 import io.github.mangi.eta.ui.app.LocalBlurEnabled
 import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
 import io.github.mangi.eta.ui.model.AgentAskUi
-import io.github.mangi.eta.ui.app.LocalUiStyle
-import io.github.mangi.eta.ui.markdown.StreamingMarkdownStateCache
-import io.github.mangi.eta.ui.model.ConversationHistoryLoadState
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
@@ -224,7 +208,6 @@ internal fun AgentChatBody(
     onAnswerAsk: (String) -> Unit = {},
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
-    isBranching: Boolean,
     input: String,
     /** 外部写入 [input] 的序号：变化时输入框强制同步一次（普通打字不走这条）。 */
     inputSyncVersion: Int = 0,
@@ -235,8 +218,6 @@ internal fun AgentChatBody(
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi> = emptyList(),
-    inputSyncVersion: Int = 0,
-    focusInputOnSync: Boolean = true,
     messageEdit: MessageEditUiState?,
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
@@ -272,7 +253,6 @@ internal fun AgentChatBody(
     onCancelMessageEdit: () -> Unit,
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
-    onBranchMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
     onSuggestionClick: (String) -> Unit,
     onOpenBrowser: () -> Unit,
@@ -287,8 +267,6 @@ internal fun AgentChatBody(
     onHistoryViewportChanged: (Boolean) -> Unit = {},
     /** 非空时消息上出现「从这里分叉」入口；实现在 [AgentAppState.branchFromMessage]。 */
     onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
-    isDrawerOpen: Boolean = false,
-    topInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -531,7 +509,6 @@ internal fun AgentChatBody(
             inputSyncVersion = inputSyncVersion,
             modelPickerState = modelPickerState,
             isCompacting = isCompacting,
-            isBranching = isBranching,
             contextUsage = contextUsage,
             sessionUsage = sessionUsage,
             isStreaming = isStreaming,
@@ -541,8 +518,6 @@ internal fun AgentChatBody(
             pendingImages = pendingImages,
             pendingFileReferences = pendingFileReferences,
             queuedMessages = queuedMessages,
-            inputSyncVersion = inputSyncVersion,
-            focusInputOnSync = focusInputOnSync,
             messageEdit = messageEdit,
             showEmptySuggestions = !isKeyboardVisible,
             keepBottomAnchored = keepBottomAnchored,
@@ -611,18 +586,11 @@ internal fun AgentChatBody(
             onCancelMessageEdit = onCancelMessageEdit,
             onDeleteMessage = onDeleteMessage,
             onRegenerateMessage = onRegenerateMessage,
-            onBranchMessage = onBranchMessage,
             onSelectReplyCandidate = onSelectReplyCandidate,
             onSuggestionClick = onSuggestionClick,
             onOpenBrowser = onOpenBrowser,
             onOpenRunDetail = onOpenRunDetail,
             currentBrowserMessageId = currentBrowserMessageId,
-            hasEarlierMessages = hasEarlierMessages,
-            messageStartIndex = messageStartIndex,
-            historyLoadState = historyLoadState,
-            onLoadEarlierMessages = onLoadEarlierMessages,
-            onHistoryViewportChanged = onHistoryViewportChanged,
-            topInset = topInset,
             modifier = modifier,
         )
     }
@@ -798,7 +766,6 @@ private fun AgentChatScaffold(
     inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
-    isBranching: Boolean,
     contextUsage: AgentContextUsageUi,
     sessionUsage: AgentSessionUsageUi? = null,
     isStreaming: Boolean,
@@ -808,9 +775,6 @@ private fun AgentChatScaffold(
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi> = emptyList(),
-    queuedMessages: List<QueuedMessageUi>,
-    inputSyncVersion: Int,
-    focusInputOnSync: Boolean,
     messageEdit: MessageEditUiState?,
     showEmptySuggestions: Boolean,
     keepBottomAnchored: Boolean,
@@ -865,19 +829,11 @@ private fun AgentChatScaffold(
     onCancelMessageEdit: () -> Unit,
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
-    onBranchMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
     onSuggestionClick: (String) -> Unit,
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     currentBrowserMessageId: String?,
-    hasEarlierMessages: Boolean,
-    messageStartIndex: Int,
-    historyLoadState: ConversationHistoryLoadState,
-    onLoadEarlierMessages: () -> Unit,
-    onHistoryViewportChanged: (Boolean) -> Unit,
-    topInset: Dp,
-    modifier: Modifier = Modifier,
     /** 输入框里待发送的引用；null 表示没有引用。 */
     quotedMessage: ComposerQuoteUi? = null,
     onClearQuote: () -> Unit = {},
@@ -999,7 +955,6 @@ private fun AgentChatScaffold(
         turnCurrent?.coerceIn(0, (turnCount - 1).coerceAtLeast(0))
     }
 
-
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
@@ -1035,8 +990,6 @@ private fun AgentChatScaffold(
                 input = input,
                 inputSyncVersion = inputSyncVersion,
                 modelPickerState = modelPickerState,
-            AgentChatBottomBar(
-                input = input,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 sessionUsage = sessionUsage,
@@ -1048,8 +1001,6 @@ private fun AgentChatScaffold(
                 pendingImages = pendingImages,
                 pendingFileReferences = pendingFileReferences,
                 queuedMessages = queuedMessages,
-                inputSyncVersion = inputSyncVersion,
-                focusInputOnSync = focusInputOnSync,
                 messageEdit = messageEdit,
                 onSubmit = onSubmit,
                 onSteerAndSubmit = onSteerAndSubmit,
@@ -1061,6 +1012,7 @@ private fun AgentChatScaffold(
                 onReasoningEffortChange = onReasoningEffortChange,
                 onCompactContext = onCompactContext,
                 canCompactContext = canCompactContext,
+                onModelSelected = onModelSelected,
                 onStop = onStop,
                 onTogglePause = onTogglePause,
                 onAttachImage = onAttachImage,
@@ -1092,7 +1044,7 @@ private fun AgentChatScaffold(
                 onSuggestionClick = onSuggestionClick,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = topInset, bottom = bottomPadding),
+                    .padding(bottom = bottomPadding),
             )
         } else if (visibleMessages.isEmpty()) {
             // 有消息，但被当前视图全收起来了：不能落到 EmptyChatState（那会显示「推荐提问」，
@@ -1119,7 +1071,6 @@ private fun AgentChatScaffold(
                 highlightMessageId = highlightMessageId,
                 onTurnPositionChanged = { turnCurrent = it },
                 isStreaming = isStreaming,
-                topInset = topInset,
                 bottomInset = bottomPadding,
                 keepBottomAnchored = keepBottomAnchored,
                 onBottomAnchorChanged = onBottomAnchorChanged,
@@ -1134,9 +1085,8 @@ private fun AgentChatScaffold(
                 onEditMessage = onEditMessage,
                 onDeleteMessage = onDeleteMessage,
                 onRegenerateMessage = onRegenerateMessage,
-                onBranchMessage = onBranchMessage,
                 onSelectReplyCandidate = onSelectReplyCandidate,
-                messageActionsEnabled = !isStreaming && !isCompacting && !isBranching && messageEdit == null,
+                messageActionsEnabled = !isStreaming && messageEdit == null,
                 editTargetMessageId = messageEdit?.targetMessageId,
                 currentBrowserMessageId = currentBrowserMessageId,
                 onQuoteMessage = onQuoteMessage,
@@ -1145,12 +1095,6 @@ private fun AgentChatScaffold(
                     .weight(1f)
                     .fillMaxWidth()
                     .then(if (frostEnabled) Modifier.layerBackdrop(messageBackdrop) else Modifier),
-                hasEarlierMessages = hasEarlierMessages,
-                messageStartIndex = messageStartIndex,
-                historyLoadState = historyLoadState,
-                onLoadEarlierMessages = onLoadEarlierMessages,
-                onHistoryViewportChanged = onHistoryViewportChanged,
-                modifier = Modifier.fillMaxSize(),
             )
             }
         }
@@ -1179,14 +1123,12 @@ internal fun AgentConversationMessages(
     onLoadEarlierMessages: () -> Unit = {},
     onHistoryViewportChanged: (Boolean) -> Unit = {},
     assistantOverlay: Boolean = false,
-    topInset: Dp = 0.dp,
     onSuggestionClick: (String) -> Unit = {},
     onOpenBrowser: () -> Unit = {},
     onOpenRunDetail: (String) -> Unit = {},
     onEditMessage: (String) -> Unit = {},
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
-    onBranchMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
     messageActionsEnabled: Boolean = false,
     editTargetMessageId: String? = null,
@@ -1256,9 +1198,6 @@ internal fun AgentConversationMessages(
     // 流式进行中当前这一轮尚未收尾，此时的“最后一条正文”只是中间步骤，不标记。
     val finalResultMessageIds = remember(visibleMessages, isStreaming) {
         resolveFinalResultMessageIds(visibleMessages, isStreaming = isStreaming)
-    }
-    val branchMessageIds = remember(visibleMessages, isStreaming) {
-        ConversationBranchBoundary.eligibleMessageIds(visibleMessages.branchMessageOutline(), running = isStreaming)
     }
     // 流式消息的渲染会话按 id 提升到列表层持有：item 滚出视口被 LazyColumn 销毁后，
     // 滑回时复用同一解析会话与打字机进度，避免整段内容重新解析并重放显现动画。
@@ -1538,8 +1477,8 @@ internal fun AgentConversationMessages(
                     viewportBounds = top to (top + coordinates.size.height)
                 },
             contentPadding = PaddingValues(
-                top = topInset + if (assistantOverlay) 8.dp else 10.dp,
-                bottom = bottomInset + 14.dp,
+                top = 16.dp,
+                bottom = bottomInset + 16.dp,
             ),
             overscrollEffect = null,
         ) {
@@ -1623,8 +1562,6 @@ internal fun AgentConversationMessages(
                                     (message is AgentMessageUi && message.characterEditable)
                                 ),
                             messageActionsEnabled = messageActionsEnabled,
-                            showBranchAction = !assistantOverlay && message.id in branchMessageIds,
-                            onBranchMessage = onBranchMessage,
                             isEditing = message.id == editTargetMessageId,
                             onEditMessage = onEditMessage,
                             onDeleteMessage = onDeleteMessage,
@@ -1688,59 +1625,37 @@ internal fun AgentConversationMessages(
             visible = !keepBottomAnchored && !isAtBottom,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = bottomInset + 8.dp),
+                .padding(bottom = bottomInset + 12.dp),
             enter = fadeIn(tween(160)) + scaleIn(tween(180), initialScale = 0.82f),
             exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.86f),
         ) {
-            val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
-            val couiDark = CouiTheme.isDark
             IconButton(
-                modifier = if (isCoui) {
-                    Modifier
-                        .dropShadow(
-                            shape = CircleShape,
-                            shadow = Shadow(
-                                radius = 10.dp,
-                                color = Color.Black,
-                                alpha = if (couiDark) 0.24f else 0.08f,
-                            ),
-                        )
-                        .border(
-                            width = 0.5.dp,
-                            color = if (couiDark) Color(0x22FFFFFF) else Color(0x10000000),
-                            shape = CircleShape,
-                        )
-                } else {
-                    Modifier
-                        .dropShadow(
-                            shape = CircleShape,
-                            shadow = Shadow(radius = 8.dp, color = Color.Black, alpha = 0.08f),
-                        )
-                        .squircleBorder(
-                            width = 0.5.dp,
-                            color = MiuixTheme.colorScheme.outline.copy(alpha = 0.55f),
-                            cornerRadius = IconButtonDefaults.CornerRadius,
-                        )
-                },
+                // 与输入框同一套浮起层次：消息背景接近按钮底色时仍能一眼认出。
+                modifier = Modifier
+                    .dropShadow(
+                        shape = CircleShape,
+                        shadow = Shadow(radius = 8.dp, color = Color.Black, alpha = 0.08f),
+                    )
+                    .squircleBorder(
+                        width = 0.5.dp,
+                        color = MiuixTheme.colorScheme.outline.copy(alpha = 0.55f),
+                        cornerRadius = IconButtonDefaults.CornerRadius,
+                    ),
                 onClick = {
                     onBottomAnchorChanged(true)
                     coroutineScope.launch {
                         scrollState.animateScrollToItem(bottomItemIndex)
                     }
                 },
-                backgroundColor = if (isCoui) {
-                    if (couiDark) Color(0xFF24262B) else Color.White
-                } else {
-                    MiuixTheme.colorScheme.surfaceContainerHigh
-                },
-                minWidth = 36.dp,
-                minHeight = 36.dp,
+                backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
+                minWidth = 40.dp,
+                minHeight = 40.dp,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.ArrowDownward,
                     contentDescription = stringResource(R.string.ui_back_to_bottom_32282e),
-                    modifier = Modifier.size(16.dp),
-                    tint = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                    modifier = Modifier.size(18.dp),
+                    tint = MiuixTheme.colorScheme.onSurface,
                 )
             }
         }
@@ -1966,7 +1881,6 @@ private fun AgentChatBottomBar(
     input: String,
     inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
-    input: String,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
     sessionUsage: AgentSessionUsageUi? = null,
@@ -1978,9 +1892,6 @@ private fun AgentChatBottomBar(
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi> = emptyList(),
-    queuedMessages: List<QueuedMessageUi>,
-    inputSyncVersion: Int,
-    focusInputOnSync: Boolean,
     messageEdit: MessageEditUiState?,
     onSubmit: (String) -> Unit,
     onSteerAndSubmit: (String) -> Unit = onSubmit,
@@ -1990,6 +1901,7 @@ private fun AgentChatBottomBar(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
     canCompactContext: Boolean,
+    onModelSelected: (String) -> Unit,
     onStop: () -> Unit,
     onTogglePause: () -> Unit,
     onAttachImage: (String) -> Unit,
@@ -2011,30 +1923,63 @@ private fun AgentChatBottomBar(
     quotedMessage: ComposerQuoteUi? = null,
     onClearQuote: () -> Unit = {},
 ) {
-    val surface = MiuixTheme.colorScheme.surface
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .imePadding(),
     ) {
-        // 底部以连续垂直渐隐承接悬浮输入胶囊，避免一整块不透明实心矩形把消息流生硬截断。
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to Color.Transparent,
-                        0.26f to surface.copy(alpha = 0.86f),
-                        0.55f to surface.copy(alpha = 0.98f),
-                        1.0f to surface,
-                    ),
+        if (messageBackdrop != null) {
+            val blurColors = BlurDefaults.blurColors(
+                blendColors = listOf(
+                    BlendColorEntry(MiuixTheme.colorScheme.surface.copy(alpha = 0.72f))
                 ),
-        )
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(ChatBottomFrostHeight)
+                    // DstIn 让真实磨砂在顶部透明、靠近输入框时逐渐变实，消除硬裁切线。
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black),
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    }
+                    .textureBlur(
+                        backdrop = messageBackdrop,
+                        shape = RectangleShape,
+                        blurRadius = 20f,
+                        colors = blurColors,
+                    ),
+            )
+        } else {
+            // 空白主页沿用原来的轻微渐隐，不改变主页视觉。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                MiuixTheme.colorScheme.surface,
+                            ),
+                        )
+                    ),
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(MiuixTheme.colorScheme.surface)
                 .navigationBarsPadding()
-                .padding(top = 14.dp, start = 14.dp, end = 14.dp, bottom = 10.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
         ) {
             /*
              * 卡片区与输入框分开测量，预算交给布局系统。
@@ -2130,8 +2075,6 @@ private fun AgentChatBottomBar(
                 pendingImages = pendingImages,
                 pendingFileReferences = pendingFileReferences,
                 queuedMessages = queuedMessages,
-                inputSyncVersion = inputSyncVersion,
-                focusInputOnSync = focusInputOnSync,
                 isEditingMessage = messageEdit != null,
                 editHasLaterTurns = messageEdit?.hasLaterTurns == true,
                 preserveFollowingMessages = messageEdit?.preserveFollowingMessages == true,
@@ -2143,6 +2086,7 @@ private fun AgentChatBottomBar(
                 onReasoningEffortChange = onReasoningEffortChange,
                 onCompactContext = onCompactContext,
                 canCompactContext = canCompactContext,
+                onModelSelected = onModelSelected,
                 onStop = onStop,
                 onTogglePause = onTogglePause,
                 onAttachImage = onAttachImage,
@@ -2259,16 +2203,12 @@ private fun EmptyChatState(
             } else {
                 Text(
                     text = stringResource(R.string.ui_how_can_i_help_you_e75391),
-                    style = MiuixTheme.textStyles.title2.copy(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = (-0.2).sp,
-                    ),
+                    style = MiuixTheme.textStyles.headline1,
                     color = MiuixTheme.colorScheme.onSurface,
                 )
             }
 
-            Spacer(modifier = Modifier.height(26.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
             AnimatedVisibility(
                 visible = showSuggestions && !isCharacterConversation,
@@ -2290,10 +2230,10 @@ private fun EmptyChatState(
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     suggestions.chunked(2).forEach { rowItems ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             rowItems.forEach { item ->
                                 SuggestionCard(
                                     item = item,
@@ -2315,54 +2255,28 @@ private fun SuggestionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
-    val isDark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
-    val ink = MiuixTheme.colorScheme.onSurface.copy(alpha = 1f)
-    val fill = ink.copy(alpha = if (isDark) 0.055f else 0.028f)
-    val border = ink.copy(alpha = if (isDark) 0.10f else 0.065f)
-    val interactionSource = remember { MutableInteractionSource() }
-    val shapeModifier = if (isCoui) {
-        val shape = CouiShape(15.dp, 2.2f)
-        Modifier
-            .couiButtonFeedback(isDark, interactionSource, enabled = true)
-            .clip(shape)
-            .background(fill, shape)
-            .border(0.5.dp, border, shape)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-    } else {
-        Modifier
-            .squircleSurface(color = fill, cornerRadius = 15.dp)
-            .squircleBorder(width = 0.5.dp, color = border, cornerRadius = 15.dp)
-            .clickable(onClick = onClick)
-    }
-    Row(
+    Column(
         modifier = modifier
-            .then(shapeModifier)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(MiuixTheme.colorScheme.primary.copy(alpha = if (isDark) 0.16f else 0.10f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = null,
-                modifier = Modifier.size(15.dp),
-                tint = MiuixTheme.colorScheme.primary,
+            .squircleSurface(color = MiuixTheme.colorScheme.surface, cornerRadius = 16.dp)
+            .squircleBorder(
+                width = 0.5.dp,
+                color = MiuixTheme.colorScheme.outline.copy(alpha = 0.5f),
+                cornerRadius = 16.dp,
             )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+    ) {
+        Icon(
+            imageVector = item.icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MiuixTheme.colorScheme.primary,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = item.title,
-            style = MiuixTheme.textStyles.body2.copy(
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Medium,
-            ),
-            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

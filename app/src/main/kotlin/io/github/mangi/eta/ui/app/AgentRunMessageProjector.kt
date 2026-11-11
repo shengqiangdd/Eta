@@ -654,7 +654,7 @@ internal class AgentRunMessageProjector(
      *
      * 任一时间点缺失就返回 null：拿不到就是拿不到，不能用 0 充当「很快」。
      */
-    private fun timingFor(messageId: String, now: Long): Pair<Int?, Int?> {
+    private fun timingFor(messageId: String, now: Long): Pair<Long?, Long?> {
         // 优先用**轮次前缀**（ProviderRequestStarted 写入的请求发出时刻）。
         //
         // 不能先查消息 id：`elapsedSeconds` 会在轮次结束时用 `getOrPut(thinkingId, ...)`
@@ -670,7 +670,7 @@ internal class AgentRunMessageProjector(
         // 起点晚于首字 = 本轮数据已失效（重试重置过起点、或事件乱序），
         // 此时**不给值**。压成 0 会让界面显示「瞬间响应」，把「不知道」伪装成「极快」。
         if (first < started) return null to null
-        return (first - started).toInt() to (now - first).coerceAtLeast(0).toInt()
+        return (first - started) to (now - first).coerceAtLeast(0)
     }
 
     private fun ThinkingMessageUi.finished(authoritativeContent: String? = null): ThinkingMessageUi {

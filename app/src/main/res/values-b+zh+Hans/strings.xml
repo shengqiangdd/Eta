@@ -2226,4 +2226,5 @@
   <string name="conversation_branch">在新对话中分支</string>
   <string name="conversation_branch_title">%1$s · 分支</string>
   <string name="conversation_branch_unavailable">无法从此处分支：仅支持上下文完整且工具调用已结束的轮次。</string>
+  <string name="page_clear_84fcd7">清空</string>
 </resources>

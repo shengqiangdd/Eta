@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Pause
@@ -49,6 +51,9 @@ import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import io.github.mangi.eta.agent.tool.RootRequirement
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.EtaFeatureCard
+import io.github.mangi.eta.ui.components.EtaPreferenceColors
+import io.github.mangi.eta.ui.components.EtaPreferenceIcon
 import io.github.mangi.eta.ui.components.ItemDescriptionDialog
 import io.github.mangi.eta.ui.components.coui.CouiIcon
 import io.github.mangi.eta.ui.components.iconForTool
@@ -59,15 +64,14 @@ import io.github.mangi.eta.ui.model.toolCardAction
 import io.github.mangi.eta.ui.model.toolCardRequirement
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
-internal fun ToolSwitchRow(
+internal fun ToolCard(
     tool: ToolItemUi,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
     rootGranted: Boolean,
     capabilities: AgentToolCapabilities,
     onAction: (AgentToolsAction) -> Unit,
@@ -85,274 +89,90 @@ internal fun ToolSwitchRow(
     }
     val requirementText = toolRequirementText(tool.id, rootGranted, capabilities)
     val action = toolCardAction(tool.id, capabilities)
-    val actionLabel = when (action) {
+    val actionText = when (action) {
         AgentToolsAction.OpenWebToolsSettings -> stringResource(R.string.web_tools_configure_action)
         AgentToolsAction.OpenBrowser -> stringResource(R.string.action_open_browser)
         AgentToolsAction.OpenPermissions -> stringResource(R.string.tools_manage_permissions)
-        AgentToolsAction.OpenEnhancements -> null
-        else -> null
+        AgentToolsAction.OpenEnhancements -> stringResource(R.string.tools_view_enhancements)
+        else -> stringResource(R.string.ui_view_description)
     }
-    val iconVector = iconForTool(tool.id)
-
-    when (LocalUiStyle.current) {
-        AppearanceUiStyle.COUI -> {
-            val dark = CouiTheme.isDark
-            val colors = CouiPageDefaults.themeColors(dark)
-            val view = LocalView.current
-            val interactionSource = remember { MutableInteractionSource() }
-            var optimisticChecked by remember(checked) { mutableStateOf(checked) }
-            val commitToggle: (Boolean) -> Unit = { target ->
-                optimisticChecked = target
-                onCheckedChange(target)
-            }
-            Row(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .heightIn(min = CouiPageDefaults.rowMinHeight)
-                    .couiButtonFeedback(dark, interactionSource, enabled = true, list = true)
-                    .toggleable(
-                        value = optimisticChecked,
-                        interactionSource = interactionSource,
-                        indication = null,
-                        enabled = true,
-                        role = Role.Switch,
-                        onValueChange = { target ->
-                            view.performCouiHapticFeedback(CouiHapticFeedback.Switch, true)
-                            commitToggle(target)
-                        },
-                    )
-                    .padding(
-                        horizontal = CouiPageDefaults.rowPadding,
-                        vertical = 12.dp,
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(end = CouiPageDefaults.iconSpacing)
-                        .size(CouiPageDefaults.iconSize),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CouiIcon(
-                        imageVector = iconVector,
-                        contentDescription = null,
-                        modifier = Modifier.size(21.dp),
-                        tint = if (optimisticChecked) colors.accent else colors.summary.copy(alpha = 0.65f),
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CouiText(
-                            text = tool.title,
-                            kind = CouiTextKind.PreferenceTitle,
-                            color = colors.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        if (requirementText != null) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(colors.title.copy(alpha = 0.06f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                            ) {
-                                CouiText(
-                                    text = requirementText,
-                                    kind = CouiTextKind.Description,
-                                    color = colors.summary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-
-                    CouiText(
-                        text = description,
-                        kind = CouiTextKind.PreferenceSummary,
-                        color = colors.summary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    if (action != null && actionLabel != null) {
-                        Row(
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .clickable(role = Role.Button) { onAction(action) }
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            CouiText(
-                                text = actionLabel,
-                                kind = CouiTextKind.Description,
-                                color = colors.accent,
-                                maxLines = 1,
-                            )
-                            CouiIcon(
-                                imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                                contentDescription = null,
-                                modifier = Modifier.size(10.dp),
-                                tint = colors.accent,
-                            )
-                        }
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .padding(start = 8.dp)
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(role = Role.Button) { showDescription = true },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CouiIcon(
-                        imageVector = Icons.Rounded.Info,
-                        contentDescription = stringResource(R.string.ui_description_named, tool.title),
-                        modifier = Modifier.size(16.dp),
-                        tint = colors.summary.copy(alpha = 0.6f),
-                    )
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                CouiSwitch(
-                    checked = optimisticChecked,
-                    onCheckedChange = null,
-                    dark = dark,
-                    colors = CouiSwitchDefaults.colors(colors.accent, dark),
-                    enabled = true,
-                    interactionSource = interactionSource,
-                    onDragCheckedChange = commitToggle,
-                )
-            }
-        }
-
-        AppearanceUiStyle.MIUIX -> {
-            BasicComponent(
-                modifier = modifier,
-                onClick = { onCheckedChange(!checked) },
-                role = Role.Switch,
-                startAction = {
-                    Box(
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .size(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
+    EtaFeatureCard(
+        title = tool.title,
+        summary = description,
+        modifier = modifier,
+        onClick = { if (action != null) onAction(action) else showDescription = true },
+        icon = {
+            EtaPreferenceIcon(
+                icon = iconForTool(tool.id),
+                tint = if (disabled) MiuixTheme.colorScheme.onSurfaceVariantActions else EtaPreferenceColors.Green,
+            )
+        },
+        action = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onToggleDisabled != null) {
+                    // 卡片自身的单击已用于「查看/跳转」，启用开关必须独立成按钮，
+                    // 否则会和单击抢手势：长按在列表里还容易被滚动吃掉。
+                    IconButton(onClick = onToggleDisabled) {
                         Icon(
-                            imageVector = iconVector,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (checked) {
-                                MiuixTheme.colorScheme.primary
-                            } else {
-                                MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.65f)
-                            },
+                            imageVector = if (disabled) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                            contentDescription = stringResource(
+                                if (disabled) R.string.tools_enable_action else R.string.tools_disable_action,
+                                tool.title,
+                            ),
+                            modifier = Modifier.size(18.dp),
+                            tint = if (disabled) MiuixTheme.colorScheme.primary
+                            else MiuixTheme.colorScheme.onSurfaceVariantActions,
                         )
                     }
-                },
-                endActions = {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(role = Role.Button) { showDescription = true }
-                            .align(Alignment.CenterVertically),
-                        contentAlignment = Alignment.Center,
-                    ) {
+                }
+                if (action != null || onToggleDisabled != null) {
+                    IconButton(onClick = { showDescription = true }) {
                         Icon(
                             imageVector = Icons.Rounded.Info,
                             contentDescription = stringResource(R.string.ui_description_named, tool.title),
-                            modifier = Modifier.size(16.dp),
-                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = 0.7f),
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Switch(
-                        checked = checked,
-                        onCheckedChange = onCheckedChange,
-                        modifier = Modifier.align(Alignment.CenterVertically),
-                    )
-                },
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = tool.title,
-                        fontSize = MiuixTheme.textStyles.headline1.fontSize,
-                        fontWeight = FontWeight.Medium,
-                        color = MiuixTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (requirementText != null) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        ) {
-                            Text(
-                                text = requirementText,
-                                style = MiuixTheme.textStyles.footnote1.copy(fontSize = 11.sp),
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-                Text(
-                    text = description,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-                if (action != null && actionLabel != null) {
-                    Row(
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable(role = Role.Button) { onAction(action) }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(
-                            text = actionLabel,
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.primary,
-                            maxLines = 1,
-                        )
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                            contentDescription = null,
-                            modifier = Modifier.size(10.dp),
-                            tint = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
                         )
                     }
                 }
             }
+        },
+    ) {
+        requirementText?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = it,
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            )
+        }
+        if (disabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.tools_disabled_badge),
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = actionText,
+                style = MiuixTheme.textStyles.footnote1,
+                color = if (action != null && !disabled) MiuixTheme.colorScheme.primary
+                    else MiuixTheme.colorScheme.onSurfaceVariantActions,
+                modifier = Modifier.weight(1f),
+            )
+            if (action != null) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MiuixTheme.colorScheme.primary,
+                )
+            }
         }
     }
-
     if (showDescription) {
         ItemDescriptionDialog(
             title = tool.title,

@@ -63,7 +63,7 @@ internal data class ConversationIndexRow(
     @ColumnInfo(name = "message_preview") val messagePreview: String?,
     @ColumnInfo(name = "tool_name") val toolName: String?,
     @ColumnInfo(name = "has_roleplay") val hasRoleplay: Boolean,
-    @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
+    @ColumnInfo(name = "pinned") val isPinned: Boolean = false,
 )
 
 internal data class ConversationIdentity(
@@ -71,7 +71,7 @@ internal data class ConversationIdentity(
     val title: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
-    @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
+    @ColumnInfo(name = "pinned") val isPinned: Boolean = false,
 )
 
 internal data class ConversationMessageContent(val id: String, val content: String)
@@ -154,7 +154,7 @@ internal data class ConversationMessageEntity(
      * 与 [elapsedSeconds] 区分：后者是整轮总耗时（含工具、排队、重试）。
      * 「首字」是用户体感的响应快慢，不能从总耗时推出来。旧数据为 null。
      */
-    @ColumnInfo(name = "first_token_ms") val firstTokenMs: Int? = null,
+    @ColumnInfo(name = "first_token_ms") val firstTokenMs: Long? = null,
     /**
      * 解码耗时（毫秒）：从首字到本轮正文结束。
      *

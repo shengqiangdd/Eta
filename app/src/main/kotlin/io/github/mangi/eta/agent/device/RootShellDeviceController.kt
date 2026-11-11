@@ -254,12 +254,6 @@ internal class RootShellDeviceController(
             null
         }
         val nodes = elementObservation?.nodes.orEmpty()
-        val uiTreeStatus = ScreenObservationMetadata.uiTreeStatus(
-            requested = includeUiTree,
-            accessibilityStatus = accessibilityObservation?.status,
-            dumpOutcome = uiAutomatorDump?.outcome,
-            nodeCount = nodes.size,
-        )
         // 节点投影：紧凑线格式 + 体积预算（取舍见 UiNodeWire 的 KDoc）。
         // 超预算时少输出尾部节点，而不是让整段结果被溢写落盘 —— 一旦落盘，
         // 上下文里只剩预览，模型必须再 read_file 一次才拿得到节点，步数直接翻倍。
@@ -275,16 +269,6 @@ internal class RootShellDeviceController(
             if (virtual != null) captureVirtualScreenshot(virtual) else captureScreenshot()
         } else {
             ScreenCapture.notRequested()
-        }
-        // 虚拟屏没有系统级的「前台应用」概念：任务栈能查到当前任务，但不会主动通知变化。
-        // 这里在每次观察时顺带上报，让虚拟屏条目的标题与图标能跟着切换。
-        if (virtual != null) {
-            val topPkg = accessibilityObservation?.window?.packageName
-            if (!topPkg.isNullOrBlank()) {
-                io.github.mangi.eta.agent.runtime.AgentAppContext.resolve()?.let { ctx ->
-                    VirtualDisplayController.onTopPackageObserved(ctx, topPkg, rootAvailable)
-                }
-            }
         }
         val image = capture.image
         val coordinateSpace = if (image?.width != null && image.height != null) {
@@ -332,20 +316,32 @@ internal class RootShellDeviceController(
             .put(
                 "accessibility",
                 JSONObject()
+                    .put("available", accessibility != null)
+                    // 虚拟屏上绝不能报主屏的包：那是"这块屏的前台"以外的事实，
+                    // 会让模型以为虚拟屏里跑的是用户主屏那个应用（实测误导过）。
                     .put(
-                        "available",
-                        accessibility != null &&
-                            accessibilityObservation?.status != AgentAccessibilityService.NodeSnapshotStatus.SERVICE_UNAVAILABLE,
+                        "package",
+                        if (virtual != null) virtualForeground else accessibility?.currentPackageName().orEmpty(),
                     )
-                    .put("package", accessibilityObservation?.window?.packageName.orEmpty())
                     .put(
                         "note",
-                        if (elementObservation?.source == ElementSource.ACCESSIBILITY && nodes.isNotEmpty()) {
-                            "节点来自无障碍服务，支持 tap_element、type_text、scroll_element 等稳定节点动作"
-                        } else if (elementObservation?.source == ElementSource.UIAUTOMATOR && nodes.isNotEmpty()) {
-                            "节点来自 uiautomator，节点动作通过 Root Shell 执行"
-                        } else {
-                            ScreenObservationMetadata.uiTreeNote(uiTreeStatus, image != null)
+                        when {
+                            virtual != null && elementObservation?.source == ElementSource.ACCESSIBILITY ->
+                                "节点来自虚拟屏的无障碍窗口，支持 tap_element、scroll_element 等节点动作；" +
+                                    "上面的 package 来自任务栈，坐标仍可用截图核对"
+
+                            virtual != null && elementObservation != null ->
+                                "节点来自 uiautomator；虚拟屏坐标动作请以截图为准"
+
+                            virtual != null ->
+                                "虚拟屏当前没有可读的无障碍节点（窗口未暴露或应用暂无内容）；" +
+                                    "可改用截图 + 坐标动作"
+
+                            accessibility != null ->
+                                "节点来自无障碍服务，支持 tap_element、type_text、scroll_element 等稳定节点动作"
+
+                            else ->
+                                "无障碍服务未启用，节点来自 uiautomator；坐标工具会回退到 Root Shell"
                         }
                     )
             )
@@ -397,8 +393,6 @@ internal class RootShellDeviceController(
                     .put("launch_app", virtual == null || rootAvailable()),
             )
             .put("node_limit", elementObservation?.maxNodes ?: 0)
-            .put("ui_tree_status", uiTreeStatus)
-            .put("ui_tree_note", ScreenObservationMetadata.uiTreeNote(uiTreeStatus, image != null))
             .put("ui_tree_truncated", elementObservation?.truncated ?: false)
             .put("ui_nodes", nodeProjection.nodes)
             .put("ui_nodes_shown", nodeProjection.shown)
@@ -739,7 +733,7 @@ internal class RootShellDeviceController(
                 code = "ACCESSIBILITY_UNAVAILABLE",
                 message = "无障碍服务未连接",
             )
-        val result = service.setTextOnDisplay(displayId, text, replace)
+        val result = service.setTextOnDisplay(text, displayId ?: android.view.Display.DEFAULT_DISPLAY)
         return if (result.ok) {
             DisplayTextInjection(
                 ok = true,
@@ -1411,14 +1405,10 @@ internal class RootShellDeviceController(
                     return attachLanding(
                         nodeActionJson("press_key", result).let {
                             JSONObject(it).put("button", normalized).toString()
-                        }
-                    }
-                    // 虚拟屏隐藏了软键盘（DISPLAY_IME_POLICY_HIDE），若节点不响应 ACTION_IME_ENTER，有 Root 时继续回退发送 KEYCODE_ENTER。
-                    if (!rootAvailable()) {
-                        return nodeActionJson("press_key", result).let {
-                            JSONObject(it).put("button", normalized).toString()
-                        }
-                    }
+                        },
+                        route,
+                        null,
+                    )
                 }
             }
         }
@@ -1905,20 +1895,6 @@ internal class RootShellDeviceController(
             )
         }
         if (!rootAvailable()) return UiDumpResult(emptyList(), "Root 授权不可用，无法用 uiautomator")
-    private data class UiNodeDump(
-        val nodes: List<UiNode>,
-        val outcome: ShellActionOutcomePolicy.Outcome,
-    )
-
-    private fun dumpUiNodes(maxNodes: Int): List<UiNode> = readUiNodeDump(maxNodes).nodes
-
-    private fun readUiNodeDump(maxNodes: Int): UiNodeDump {
-        // 旧 uiautomator 观察的节点验证也会到达这里，服务重连后必须停止该通道。
-        if (AgentAccessibilityService.current() != null) {
-            logger.debug { "Agent device action=dump_ui outcome=skipped code=ACCESSIBILITY_CONNECTED" }
-            return UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
-        }
-        if (!rootAvailable()) return UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
         val result = runSuText(
                 "uiautomator dump --compressed /data/local/tmp/eta_window.xml >/dev/null && " +
                 "cat /data/local/tmp/eta_window.xml && rm -f /data/local/tmp/eta_window.xml",
@@ -1929,45 +1905,142 @@ internal class RootShellDeviceController(
                 "Agent device action=dump_ui outcome=failed source=root " +
                     "exitCode=${result.exitCode} outputChars=${result.output.length}"
             )
-            val outcome = ShellActionOutcomePolicy.classify(result.exitCode)
-                .takeUnless { it == ShellActionOutcomePolicy.Outcome.SUCCEEDED }
-                ?: ShellActionOutcomePolicy.Outcome.FAILED
-            logger.warn("Agent device action=dump_ui outcome=failed source=root code=UIAUTOMATOR_DUMP_FAILED")
             return UiDumpResult(
                 emptyList(),
                 "uiautomator dump 失败（exit=${result.exitCode}，输出 ${result.output.length} 字符）",
-                outcome = outcome,
             )
         }
         // fix180：多收一个节点专门用于「到底还有没有」的判定。
         // 原来判定是 rootNodes.size >= nodeLimit，界面节点数恰好等于上限时也会标 truncated=true，
         // 于是模型被告知「还有更多节点，先 scroll」，而树其实已经全给了 —— 白跑一趟动作。
-        return try {
-            val parsed = parseUiNodes(result.output, maxNodes + 1)
-            UiDumpResult(
-                nodes = parsed.take(maxNodes),
-                failure = null,
-                truncated = UiNodeWire.nodesExceededLimit(parsed.size, maxNodes),
-                outcome = ShellActionOutcomePolicy.Outcome.SUCCEEDED,
-            )
-        } catch (error: org.xmlpull.v1.XmlPullParserException) {
-            // dump 的 XML 被截断或夹杂了非 XML 噪声时解析会抛。不能让它冒到工具层变成
-            // 不可解释的失败：给出可读原因，让模型知道是「这次 dump 坏了」而不是「页面没节点」。
-            logger.warn("Agent device action=dump_ui outcome=failed source=root code=INVALID_XML")
-            UiDumpResult(emptyList(), "uiautomator dump 返回的 XML 无法解析", outcome = ShellActionOutcomePolicy.Outcome.FAILED)
-        } catch (error: java.io.IOException) {
-            logger.warn("Agent device action=dump_ui outcome=failed source=root code=XML_READ_FAILED")
-            UiDumpResult(emptyList(), "uiautomator dump 结果读取失败", outcome = ShellActionOutcomePolicy.Outcome.FAILED)
-        }
+        val parsed = parseUiNodes(result.output, maxNodes + 1)
+        return UiDumpResult(
+            nodes = parsed.take(maxNodes),
+            failure = null,
+            truncated = UiNodeWire.nodesExceededLimit(parsed.size, maxNodes),
+        )
+    }
 
     private data class UiDumpResult(
         val nodes: List<UiNode>,
         val failure: String?,
         /** 是否还有节点没输出（fix180：只看「确实多出来」，不看「正好等于上限」）。 */
         val truncated: Boolean = false,
-        /** dump 的结局：区分「拿到了空的树」与「dump 本身失败」，两者的建议动作不同。 */
-        val outcome: ShellActionOutcomePolicy.Outcome = ShellActionOutcomePolicy.Outcome.SUCCEEDED,
     )
+
+    /**
+     * 某个包此刻有没有活着的进程。
+     *
+     * `am stack list` 只反映任务栈：应用崩溃或被系统回收后，任务记录仍然留着，
+     * 于是「前台包名」会指向一个已经没有进程的应用。返回 null 表示查不出来 ——
+     * 不能把「查不到」当成「没有进程」，那是另一种假话。
+     *
+     * 用 pidof 而不是 ps | grep：pidof 的退出码直接表达「有没有」，且不会被
+     * 命令自身的报错混进结果；包名先做字符校验，避免拼进 shell 的命令被注入。
+     */
+    fun packageHasProcess(packageName: String): Boolean? {
+        if (packageName.isBlank()) return false
+        if (!packageName.matches(Regex("[A-Za-z0-9_.:]+"))) return null
+        if (!rootAvailable()) return null
+        val first = queryProcess(packageName)
+        // 只有「查到了、且没有进程」才值得重试：
+        // `am start` 返回时进程经常还没 fork 完，pidof 会短暂返回退出码 1。
+        // 直接据此报「崩溃或被系统回收」会误导调用方（2026-11-06 虚拟屏首屏实测：
+        // 自动观察报进程不在，紧接着 virtual_display_launch 却说应用已在该屏上，
+        // 再观察一次 alive 又是 true）。真死掉的应用只会多花这 350ms。
+        if (first != false) return first
+        Thread.sleep(PROCESS_RETRY_DELAY_MS)
+        return queryProcess(packageName)
+    }
+
+    private fun queryProcess(packageName: String): Boolean? {
+        val result = runSuText("pidof $packageName", timeoutSeconds = 4)
+        return when (result.exitCode) {
+            0 -> result.output.isNotBlank()
+            1 -> false
+            else -> null
+        }
+    }
+
+    /**
+     * 「为什么没有节点」必须有结论。
+     *
+     * 只回 `ui_nodes: []` 时，调用方只能猜：无障碍没开？uiautomator 失败？应用崩了？
+     * 猜错的代价是重复同样的操作，或者把已经死掉的界面当成还在加载。
+     */
+    private fun uiDiagnostics(
+        virtualDisplayId: Int?,
+        foregroundPackage: String,
+        foregroundAlive: Boolean?,
+        nodeCount: Int,
+        source: ElementSource?,
+        uiDumpFailure: String?,
+        treeTruncated: Boolean,
+        nodeLimit: Int,
+    ): JSONObject {
+        val accessibility = AgentAccessibilityService.current()
+        val diagnostics = JSONObject()
+            .put("node_source", source?.wireName ?: JSONObject.NULL)
+            .put("node_count", nodeCount)
+            .put("accessibility_available", accessibility != null)
+            .put("root_available", rootAvailable())
+        if (virtualDisplayId != null) diagnostics.put("display_id", virtualDisplayId)
+        if (foregroundPackage.isNotEmpty()) {
+            diagnostics.put("foreground_package", foregroundPackage)
+            diagnostics.put("foreground_process_alive", foregroundAlive ?: JSONObject.NULL)
+        }
+        if (uiDumpFailure != null) diagnostics.put("uiautomator_failure", uiDumpFailure)
+        // 节点在上限处被截断时，必须说清「是你自己少要了」：
+        // 2026-11-06 我为了省 token 把 max_nodes 设成 3~6，返回里只有一枚
+        // ui_tree_truncated=true，于是误判成「抽屉底部那排图标没有无障碍节点」，
+        // 改用截图量坐标、连点空两次。真实原因是节点被截在了上限处。
+        if (treeTruncated && nodeCount > 0) {
+            diagnostics.put(
+                "hint",
+                "节点在上限处被截断（max_nodes=$nodeLimit，实际返回 $nodeCount）：" +
+                    "要更多节点就调大 max_nodes 重新观察，不要改用截图估算坐标——" +
+                    "被截掉的部分往往正是要点的控件。",
+            )
+        }
+        if (nodeCount == 0) {
+            val deadProcess = foregroundPackage.isNotEmpty() && foregroundAlive == false
+            diagnostics.put(
+                "empty_reason",
+                when {
+                    deadProcess -> "前台包 $foregroundPackage 的任务还在，但进程已经不在（崩溃或被系统回收）"
+                    uiDumpFailure != null -> "UI 树读取失败：$uiDumpFailure"
+                    accessibility == null && virtualDisplayId != null ->
+                        "虚拟屏的 UI 树只能来自无障碍服务，而当前无障碍服务不可用"
+                    accessibility == null -> "无障碍服务不可用，uiautomator 也没有读到节点"
+                    else -> "窗口可能还在加载，或当前界面没有可读节点（全屏视频、游戏画面、纯图片）"
+                },
+            )
+            diagnostics.put(
+                "hint",
+                if (deadProcess) {
+                    "先重新拉起应用（launch_app / virtual_display_launch），或释放这块虚拟屏；" +
+                        "不要继续在这个界面上点坐标"
+                } else {
+                    "改用 include_screenshot=true 看画面，或先 wait 再重新观察；坐标动作以截图为准"
+                },
+            )
+        }
+        // 自绘控件（底部图标行、Canvas 图表、地图上的标记）本来就不会出现在节点树里。
+        // 节点数很少时主动提醒：否则调用方会以为「这屏就这么点东西」，
+        // 直接按坐标盲点，而盲点中了的是列表项或遮罩（2026-11-06 实测：设置入口图标
+        // 在节点树里根本不存在，连点两次都落在了别处）。
+        // 但「被 max_nodes 截断」和「真的稀疏」是两回事：上限设成 3 时同样只读到 3 个节点，
+        // 此时该说「调大 max_nodes」（上面已写进 hint），不该把人引去截图量坐标。
+        // 2026-11-06 实测：max_nodes=3 时两条提示同时出现，自相矛盾。
+        if (virtualDisplayId != null && nodeCount in 1..4 && !treeTruncated) {
+            diagnostics.put(
+                "sparse_tree_hint",
+                "这块虚拟屏只读到 $nodeCount 个节点：自绘控件（底部图标行、图表、Canvas）不会出现在节点树里。" +
+                    "要点它们之前先 include_screenshot=true；取不准位置时用 region 放大目标区域再换算坐标。",
+            )
+        }
+        return diagnostics
+    }
 
     private fun parseUiNodes(xml: String, maxNodes: Int): List<UiNode> {
         val nodes = mutableListOf<UiNode>()
@@ -2574,10 +2647,10 @@ internal class RootShellDeviceController(
     private fun String.toRectOrNull(): Rect? {
         val match = Regex("""\[(\-?\d+),(\-?\d+)]\[(\-?\d+),(\-?\d+)]""").find(this) ?: return null
         return Rect(
-            match.groupValues[1].toIntOrNull() ?: return null,
-            match.groupValues[2].toIntOrNull() ?: return null,
-            match.groupValues[3].toIntOrNull() ?: return null,
-            match.groupValues[4].toIntOrNull() ?: return null,
+            match.groupValues[1].toInt(),
+            match.groupValues[2].toInt(),
+            match.groupValues[3].toInt(),
+            match.groupValues[4].toInt()
         )
     }
 

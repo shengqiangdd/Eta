@@ -1,10 +1,8 @@
 package io.github.mangi.eta.agent.tool
 
 import io.github.mangi.eta.agent.device.RootShellDeviceController.ElementObservation
-import io.github.mangi.eta.agent.device.RootShellDeviceController.Observation
 import io.github.mangi.eta.agent.device.RootShellDeviceController.UiNode
 import io.github.mangi.eta.agent.device.UiNodeWire
-import io.github.mangi.eta.agent.device.ScreenObservationMetadata
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,52 +34,6 @@ internal object AgentAfterActionSummary {
      * 给 0 个会逼模型立刻 observe_screen 一次，反而更贵。
      */
     private const val DEFAULT_NODES_AFTER_ACTION = 8
-
-    /**
-     * 观察失败或没有节点时的降级摘要。
-     *
-     * 上游把「动作后的反馈」表达为一次 [RootShellDeviceController.Observation]，
-     * 其中 `elementObservation` 可能为 null（页面正在加载、切换窗口、查询失败）。
-     * 这种情况下不能沿用上面那份实现：它要求节点非空，且会把 `screen_changed`
-     * 说成 true —— 而这一帧根本没有节点可比，说「界面已变化」是编造。
-     *
-     * 所以这里如实给出 `screen_changed = null` 与 `ui_tree_status`，
-     * 让模型知道「不知道变没变，先重新观察」，而不是盲试。
-     */
-    fun build(before: ElementObservation?, observation: RootShellDeviceController.Observation): JSONObject {
-        val metadata = runCatching { JSONObject(observation.content) }.getOrDefault(JSONObject())
-        val after = observation.elementObservation
-        if (after != null) {
-            val base = build(before = before, after = after)
-            // 上游的元信息（focus / code / observation_source）有则补上，没有就保持原样。
-            metadata.optJSONObject("focus")?.let { base.put("focus", it) }
-            metadata.optString("code").takeIf(String::isNotBlank)?.let { base.put("code", it) }
-            metadata.optString("observation_source").takeIf(String::isNotBlank)
-                ?.let { base.put("observation_source", it) }
-            return base
-        }
-        val status = metadata.optString("ui_tree_status").ifBlank { "query_failed" }
-        return JSONObject()
-            .put("observation_id", JSONObject.NULL)
-            .put("package", metadata.optJSONObject("focus")?.optString("package").orEmpty())
-            // 不知道变没变：null 而不是 false —— false 会被读成「界面没动」。
-            .put("screen_changed", JSONObject.NULL)
-            .put("ui_tree_status", status)
-            .put("ui_tree_truncated", false)
-            .put("ui_nodes", JSONArray())
-            .put("ui_nodes_shown", 0)
-            .put(
-                "note",
-                metadata.optString("ui_tree_note").ifBlank {
-                    "动作已执行，但这一帧没有取到节点（页面还在加载或正在切窗口）：" +
-                        "先用该 observation_id 调用 observe_screen 再操作，不要沿用动作前的节点"
-                },
-            )
-            .apply {
-                metadata.optJSONObject("focus")?.let { put("focus", it) }
-                metadata.optString("code").takeIf(String::isNotBlank)?.let { put("code", it) }
-            }
-    }
 
     fun build(
         before: ElementObservation?,

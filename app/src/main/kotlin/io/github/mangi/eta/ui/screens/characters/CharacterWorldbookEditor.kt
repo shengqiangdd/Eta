@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.screens.characters
 
+import io.github.mangi.eta.R
+
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope

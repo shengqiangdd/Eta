@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.app
 
+import io.github.mangi.eta.R
+
 import android.view.View
 import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity

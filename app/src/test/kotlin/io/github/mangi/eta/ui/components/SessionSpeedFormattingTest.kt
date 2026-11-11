@@ -60,16 +60,16 @@ class SessionSpeedFormattingTest {
 
     @Test
     fun `耗时不到一秒用毫秒`() {
-        assertEquals("0ms", formatDurationMs(0))
-        assertEquals("850ms", formatDurationMs(850))
+        assertEquals("0ms", formatDurationMs(0L))
+        assertEquals("850ms", formatDurationMs(850L))
     }
 
     @Test
     fun `十秒以内保留一位小数，更长取整`() {
-        assertEquals("1.3s", formatDurationMs(1_250))
-        assertEquals("9.9s", formatDurationMs(9_900))
+        assertEquals("1.3s", formatDurationMs(1_250L))
+        assertEquals("9.9s", formatDurationMs(9_900L))
         // 分钟级再带小数没有意义，取整更好读。
-        assertEquals("12s", formatDurationMs(12_400))
-        assertEquals("90s", formatDurationMs(90_000))
+        assertEquals("12s", formatDurationMs(12_400L))
+        assertEquals("90s", formatDurationMs(90_000L))
     }
 }

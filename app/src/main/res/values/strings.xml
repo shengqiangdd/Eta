@@ -2281,4 +2281,5 @@
   <string name="conversation_branch">Branch into a new conversation</string>
   <string name="conversation_branch_title">%1$s · Branch</string>
   <string name="conversation_branch_unavailable">Cannot branch here: only turns with complete context and finished tool calls are supported.</string>
+  <string name="page_clear_84fcd7">Clear</string>
 </resources>

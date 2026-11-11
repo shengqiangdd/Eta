@@ -268,7 +268,9 @@ class AgentAccessibilityService : AccessibilityService() {
         )
         // fix171：先 refresh 再判「内容变化」——空输入框的兜底判定要看刷新后的几何指纹。
         // 取消检查放在读回之前：用户取消时不该继续等读回窗口。
+        // 取消检查放在读回之前：用户取消时不该继续等读回窗口。
         queryExecutor.ensureActive()
+        val snapshot = NodeSnapshot(
             id = "o${SNAPSHOT_IDS.incrementAndGet()}",
             serviceToken = connectionToken,
             packageName = root.packageName?.toString().orEmpty(),
@@ -278,13 +280,12 @@ class AgentAccessibilityService : AccessibilityService() {
             capturedAtElapsedMs = startedAt,
             truncated = traversal.truncated,
             indexedNodes = indexedNodes.toList(),
-        ).also { snapshot ->
-            AndroidAgentLogger.debug {
-                "Agent accessibility action=observe_tree observation=${snapshot.id} " +
-                    "display=$displayId nodes=${snapshot.nodes.size} visited=${traversal.visitedNodes} " +
-                    "truncated=${traversal.truncated} " +
-                    "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}"
-            }
+        )
+        AndroidAgentLogger.debug {
+            "Agent accessibility action=observe_tree observation=${snapshot.id} " +
+                "display=$displayId nodes=${snapshot.nodes.size} visited=${traversal.visitedNodes} " +
+                "truncated=${traversal.truncated} " +
+                "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}"
         }
         return NodeSnapshotObservation(
             status = if (snapshot.nodes.isEmpty()) NodeSnapshotStatus.EMPTY else NodeSnapshotStatus.AVAILABLE,
@@ -1043,33 +1044,59 @@ class AgentAccessibilityService : AccessibilityService() {
      * - `NO_EDITABLE_FIELD`：有窗口但没有可见可编辑节点（需要先点开输入框）；
      * - `AMBIGUOUS_EDITABLE_FIELD`：有多个输入框，无法判断该写哪个。
      */
-    fun setTextOnDisplay(
-        displayId: Int,
-        text: String,
-        displayId: Int = android.view.Display.DEFAULT_DISPLAY,
-    ): NodeActionResult {
-        val preparation = prepareTextInsertion(text, displayId)
-        if (preparation is TextInsertionPreparation.Rejected) return preparation.result
-        preparation as TextInsertionPreparation.Ready
-        val node = preparation.node
-        val directResult = setNodeText(node, preparation.text, preparation.cursor, preparation.connectionToken)
-        if (directResult.ok) return directResult.copy(method = "ACTION_SET_TEXT_PASTE")
-        if (directResult.code != "ACTION_FAILED") return directResult
-        val dispatched = when (val result = callOnMainSync(preparation.connectionToken) {
-            pasteWithTemporaryClipboard(node, text)
-        }) {
-            is MainThreadCallResult.Completed -> result.value ?: NodeActionResult.outcomeUnknown()
-            MainThreadCallResult.NOT_STARTED ->
-                NodeActionResult.failure("SERVICE_TIMEOUT", "无障碍动作未派发，请重新观察屏幕")
-            MainThreadCallResult.OUTCOME_UNKNOWN -> NodeActionResult.outcomeUnknown().copy(clipboardWritten = true)
+    fun pasteText(text: String): NodeActionResult {
+        val prepared = callOnMainSync {
+            val node = findFocusedEditableNode()
+                ?: return@callOnMainSync TextWriteTarget.Rejected(
+                    NodeActionResult.failure(
+                        "NO_FOCUSED_EDITABLE",
+                        "没有获得输入焦点的可编辑节点",
+                    ),
+                )
+            node.incrementalTextValidationError()?.let { error ->
+                return@callOnMainSync TextWriteTarget.Rejected(error)
+            }
+            val existingText = node.realText()
+            val selectionStart = node.textSelectionStart
+            val selectionEnd = node.textSelectionEnd
+            val plan = TextEditPlanner.insertAtSelection(
+                currentText = existingText,
+                insertedText = text,
+                selectionStart = selectionStart,
+                selectionEnd = selectionEnd,
+            )
+            if (plan == null) {
+                logTextSelectionUnavailable(node, existingText.length, selectionStart, selectionEnd)
+                return@callOnMainSync TextWriteTarget.Rejected(
+                    NodeActionResult.failure(
+                        "TEXT_SELECTION_UNAVAILABLE",
+                        "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
+                    ),
+                )
+            }
+            TextWriteTarget.Ready(node, plan.text, plan.cursor)
         }
-        if (!dispatched.ok) return dispatched
-        val verified = runAccessibilityQuery { node.refresh() && node.realText() == preparation.text } == true
-        return if (verified) dispatched.copy(verified = true)
-        else NodeActionResult.outcomeUnknown().copy(clipboardWritten = dispatched.clipboardWritten)
-    }
-
-    private fun pasteWithTemporaryClipboard(node: AccessibilityNodeInfo, text: String): NodeActionResult {
+        val target = when (prepared) {
+            is MainThreadCallResult.Completed -> prepared.value
+                ?: return NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
+            MainThreadCallResult.NOT_STARTED -> return NodeActionResult.failure(
+                TextWriteFailures.CODE,
+                TextWriteFailures.notStartedMessage(),
+            )
+            MainThreadCallResult.OUTCOME_UNKNOWN -> return NodeActionResult.failure(
+                TextWriteFailures.CODE,
+                TextWriteFailures.outcomeUnknownMessage(),
+            )
+        }
+        val ready = when (target) {
+            is TextWriteTarget.Ready -> target
+            is TextWriteTarget.Rejected -> return target.result
+        }
+        val directResult = setNodeText(ready.node, ready.text, ready.cursor, serviceToken)
+        if (directResult.ok) {
+            return directResult.copy(method = "ACTION_SET_TEXT_PASTE")
+        }
+        if (directResult.code != "ACTION_FAILED") return directResult
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val originalClip = runCatching { clipboard.primaryClip }.getOrNull()
         val temporaryLabel = "$CLIP_LABEL:${CLIP_IDS.incrementAndGet()}"
@@ -1101,10 +1128,114 @@ class AgentAccessibilityService : AccessibilityService() {
             }
         } catch (_: Throwable) {
             NodeActionResult.outcomeUnknown()
-        } finally {
-            // 调用方超时不代表 ACTION_PASTE 已返回；还原必须留在已启动动作内，避免目标读到旧剪贴板。
-            restored = restoreClipboardIfStillOwned(clipboard, temporaryLabel, originalClip)
         }
+        val restored = restoreClipboardIfStillOwned(
+            clipboard = clipboard,
+            temporaryLabel = temporaryLabel,
+            originalClip = originalClip,
+        )
+        return if (!restored) {
+            NodeActionResult.outcomeUnknown().copy(clipboardWritten = true)
+        } else {
+            pasteResult.copy(clipboardWritten = true)
+        }
+    }
+
+    fun setTextOnDisplay(
+        text: String,
+        displayId: Int = android.view.Display.DEFAULT_DISPLAY,
+    ): NodeActionResult {
+        val preparation = prepareTextInsertion(text, displayId)
+        if (preparation is TextInsertionPreparation.Rejected) return preparation.result
+        preparation as TextInsertionPreparation.Ready
+        val node = preparation.node
+        val directResult = setNodeText(node, preparation.text, preparation.cursor, preparation.connectionToken)
+        if (directResult.ok) return directResult.copy(method = "ACTION_SET_TEXT_PASTE")
+        if (directResult.code != "ACTION_FAILED") return directResult
+        val dispatched = when (
+            val result = callOnMainSync(preparation.connectionToken) {
+                pasteWithTemporaryClipboard(node, text)
+            }
+        ) {
+            is MainThreadCallResult.Completed -> result.value ?: NodeActionResult.outcomeUnknown()
+            MainThreadCallResult.NOT_STARTED ->
+                NodeActionResult.failure("SERVICE_TIMEOUT", "无障碍动作未派发，请重新观察屏幕")
+            MainThreadCallResult.OUTCOME_UNKNOWN -> NodeActionResult.outcomeUnknown().copy(clipboardWritten = true)
+        }
+        if (!dispatched.ok) return dispatched
+        val verified = runAccessibilityQuery { node.refresh() && node.realText() == preparation.text } == true
+        return if (verified) dispatched.copy(verified = true)
+        else NodeActionResult.outcomeUnknown().copy(clipboardWritten = dispatched.clipboardWritten)
+    }
+
+    private sealed interface TextInsertionPreparation {
+        data class Ready(
+            val node: AccessibilityNodeInfo,
+            val text: String,
+            val cursor: Int,
+            val connectionToken: Long,
+        ) : TextInsertionPreparation
+        data class Rejected(val result: NodeActionResult) : TextInsertionPreparation
+    }
+
+    private fun prepareTextInsertion(text: String, displayId: Int): TextInsertionPreparation {
+        val connectionToken = serviceToken
+        return runAccessibilityQuery {
+            val node = findFocusedEditableNode(displayId)
+                ?: return@runAccessibilityQuery TextInsertionPreparation.Rejected(
+                    NodeActionResult.failure("NO_FOCUSED_EDITABLE", "没有获得输入焦点的可编辑节点"),
+                )
+            node.incrementalTextValidationError()?.let { error ->
+                return@runAccessibilityQuery TextInsertionPreparation.Rejected(error)
+            }
+            val plan = TextEditPlanner.insertAtSelection(
+                currentText = node.realText(),
+                insertedText = text,
+                selectionStart = node.textSelectionStart,
+                selectionEnd = node.textSelectionEnd,
+            ) ?: return@runAccessibilityQuery TextInsertionPreparation.Rejected(
+                NodeActionResult.failure("TEXT_SELECTION_UNAVAILABLE", "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值"),
+            )
+            TextInsertionPreparation.Ready(node, plan.text, plan.cursor, connectionToken)
+        } ?: TextInsertionPreparation.Rejected(
+            NodeActionResult.failure("SERVICE_TIMEOUT", "无障碍查询未完成，本次未修改文本"),
+        )
+    }
+
+    private fun pasteWithTemporaryClipboard(node: AccessibilityNodeInfo, text: String): NodeActionResult {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val originalClip = runCatching { clipboard.primaryClip }.getOrNull()
+        val temporaryLabel = "$CLIP_LABEL:${CLIP_IDS.incrementAndGet()}"
+        val temporaryClip = ClipData.newPlainText(temporaryLabel, text).apply {
+            description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        val copied = runCatching {
+            clipboard.setPrimaryClip(temporaryClip)
+        }.isSuccess
+        if (!copied) {
+            return NodeActionResult.failure(
+                "CLIPBOARD_WRITE_FAILED",
+                "写入剪贴板失败",
+            )
+        }
+        val pasteResult = try {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+                // fix177：判定只看内容是否真的变成目标文本（再给一段有限读回窗口），
+                // 不再把「refresh() 的返回值」当证据。
+                if (textReadbackMatches(node, text)) {
+                    NodeActionResult.success(method = "ACTION_PASTE", verified = true)
+                } else {
+                    NodeActionResult.outcomeUnknown()
+                }
+            } else {
+                NodeActionResult.failure("ACTION_FAILED", "输入节点拒绝粘贴动作")
+            }
+        } catch (_: Throwable) {
+            NodeActionResult.outcomeUnknown()
+        }
+        // 调用方超时不代表 ACTION_PASTE 已返回；还原放在这里，避免目标读到旧剪贴板。
         val restored = restoreClipboardIfStillOwned(
             clipboard = clipboard,
             temporaryLabel = temporaryLabel,
@@ -1670,10 +1801,10 @@ class AgentAccessibilityService : AccessibilityService() {
      * 只有「从窗口树里找焦点节点」这一步留给主线程（index 通路早就是这个结构）。
      */
     private fun writeTextPrepared(block: () -> TextWriteTarget): NodeActionResult =
-        when (val prepared = callOnMainSync(block)) {
+        when (val prepared = callOnMainSync(block = block)) {
             is MainThreadCallResult.Completed -> when (val target = prepared.value) {
                 null -> NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
-                is TextWriteTarget.Ready -> setNodeText(target.node, target.text, target.cursor)
+                is TextWriteTarget.Ready -> setNodeText(target.node, target.text, target.cursor, serviceToken)
                 is TextWriteTarget.Rejected -> target.result
             }
             // 两种失败分开说：下面第一种连「找节点」都没开始，第二种是主线程里抛了错。

@@ -43,10 +43,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.graphics.luminance
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.agent.overlay.toolDisplayName
@@ -81,7 +80,7 @@ internal fun ToolActivityInline(
         ToolActivityRow(message, onOpenBrowser, showBrowserShortcut, modifier)
         return
     }
-    Box(modifier = modifier.padding(horizontal = 20.dp, vertical = 2.dp)) {
+    Box(modifier = modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
         WorkTimelineNode(
             icon = iconForTool(message.toolName),
             tone = message.status.nodeTone(),
@@ -226,15 +225,14 @@ internal fun ToolActivityRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 if (showTitle) {
-                    val dark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
                     ShimmerText(
                         text = title,
                         active = running,
-                        style = MiuixTheme.textStyles.body2.copy(fontSize = 13.5.sp),
+                        style = MiuixTheme.textStyles.body2,
                         color = if (running) {
                             MiuixTheme.colorScheme.onSurface
                         } else {
-                            MiuixTheme.colorScheme.onSurface.copy(alpha = if (dark) 0.56f else 0.52f)
+                            MiuixTheme.colorScheme.onSurfaceVariantSummary
                         },
                     )
                 }
@@ -242,14 +240,14 @@ internal fun ToolActivityRow(
                     Text(
                         text = subtitle,
                         style = if (message.isTerminalTool() && browserLine == null) {
-                            MiuixTheme.textStyles.footnote2.copy(fontFamily = EtaMonospace)
+                            MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace)
                         } else {
                             MiuixTheme.textStyles.footnote2
                         },
                         color = if (failed) {
                             StatusError
                         } else {
-                            MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.72f)
+                            MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f)
                         },
                         maxLines = if (progressLine != null) PROGRESS_SUBTITLE_LINES else 1,
                         overflow = TextOverflow.Ellipsis,
@@ -261,7 +259,7 @@ internal fun ToolActivityRow(
                 Text(
                     text = stringResource(R.string.tool_elapsed_seconds, elapsedSeconds),
                     style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.72f),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f),
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
@@ -271,7 +269,7 @@ internal fun ToolActivityRow(
                     contentDescription = stringResource(
                         if (expanded) R.string.tool_details_collapse else R.string.tool_details_expand,
                     ),
-                    modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                    modifier = Modifier.padding(start = 6.dp, end = 8.dp),
                 )
             }
         }
@@ -322,15 +320,14 @@ internal fun ToolGroupRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                val dark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
                 ShimmerText(
                     text = title,
                     active = running,
-                    style = MiuixTheme.textStyles.body2.copy(fontSize = 13.5.sp),
+                    style = MiuixTheme.textStyles.body2,
                     color = if (running) {
                         MiuixTheme.colorScheme.onSurface
                     } else {
-                        MiuixTheme.colorScheme.onSurface.copy(alpha = if (dark) 0.56f else 0.52f)
+                        MiuixTheme.colorScheme.onSurfaceVariantSummary
                     },
                 )
                 if (subtitle != null) {
@@ -340,7 +337,7 @@ internal fun ToolGroupRow(
                         color = if (!running && group.failedCount > 0) {
                             StatusError
                         } else {
-                            MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.72f)
+                            MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f)
                         },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -353,7 +350,7 @@ internal fun ToolGroupRow(
                 contentDescription = stringResource(
                     if (expanded) R.string.tool_details_collapse else R.string.tool_details_expand,
                 ),
-                modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                modifier = Modifier.padding(start = 6.dp, end = 8.dp),
             )
         }
         AnimatedVisibility(visible = expanded) {
@@ -427,7 +424,7 @@ private fun ToolActivityDetail(
                 Text(
                     text = result,
                     style = if (message.isTerminalTool()) {
-                        MiuixTheme.textStyles.footnote2.copy(fontFamily = EtaMonospace)
+                        MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace)
                     } else {
                         MiuixTheme.textStyles.footnote2
                     },
@@ -702,7 +699,7 @@ private fun ToolCommandBlock(
         SelectionContainer {
             Text(
                 text = command,
-                style = MiuixTheme.textStyles.footnote2.copy(fontFamily = EtaMonospace),
+                style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
                 color = MiuixTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .fillMaxWidth()

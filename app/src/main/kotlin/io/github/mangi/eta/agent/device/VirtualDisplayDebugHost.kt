@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.device
 
+import io.github.mangi.eta.R
+
 import android.annotation.SuppressLint
 import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient

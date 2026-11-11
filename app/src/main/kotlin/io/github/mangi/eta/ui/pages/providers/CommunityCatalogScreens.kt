@@ -1,6 +1,5 @@
 package io.github.mangi.eta.ui.pages.providers
 
-import android.content.res.Resources
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,9 +24,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.res.pluralStringResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -77,7 +73,6 @@ internal fun CommunityCatalogScreen(
     onNavigate: (AppRoute) -> Unit,
     onBack: () -> Unit,
 ) {
-    val resources = LocalResources.current
     var query by rememberSaveable { mutableStateOf("") }
     val catalog = store.catalog
     val providers = remember(catalog, query) {
@@ -278,13 +273,9 @@ internal fun CommunityCatalogProviderScreen(
     onImported: (String) -> Unit,
     onBack: () -> Unit,
 ) {
-    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var query by rememberSaveable(catalogId) { mutableStateOf("") }
-    // 声明类型用只读 List：Compose 的 MutableCollectionMutableState 要求 State 里不放可变集合；
-    // 实际存的是 ArrayList，因为 rememberSaveable 只能把 Bundle 认识的类型写进 saved state。
-    // 每次修改都赋新实例（下面的 + / filterNot），不会绕过快照通知。
-    var selectedIds by rememberSaveable(catalogId) { mutableStateOf<List<String>>(ArrayList()) }
+    var selectedIds by rememberSaveable(catalogId) { mutableStateOf(arrayListOf<String>()) }
     var importError by remember { mutableStateOf<String?>(null) }
     var importInFlight by remember { mutableStateOf(false) }
     var selection by remember(catalogId) { mutableStateOf<CommunityCatalogProvider?>(null) }
@@ -302,47 +293,6 @@ internal fun CommunityCatalogProviderScreen(
     LaunchedEffect(provider) {
         if (selection == null && provider != null) selection = provider
     }
-
-    MiuixScaffoldPage(
-        title = provider?.name ?: stringResource(R.string.route_community_catalog_provider),
-        onBack = onBack,
-        actions = {
-            EtaTextButton(
-                text = stringResource(R.string.catalog_import_count, selectedIds.size),
-                enabled = provider != null && selectedIds.isNotEmpty() && !importInFlight && !store.importing,
-                onClick = {
-                    val chosen = provider ?: return@EtaTextButton
-                    if (importInFlight) return@EtaTextButton
-                    importInFlight = true
-                    importError = null
-                    scope.launch {
-                        try {
-                            val addedId = store.importProvider(chosen, selectedIds.toSet())
-                            onImported(addedId)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: IllegalArgumentException) {
-                            importError = resources.getString(R.string.catalog_error_selection_stale)
-                        } catch (_: Throwable) {
-                            importError = resources.getString(R.string.catalog_error_save_failed)
-                        } finally {
-                            importInFlight = false
-                        }
-                    }
-                },
-                insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-            )
-        },
-    ) {
-        if (provider == null) {
-            item(key = "missing") {
-                if (store.loading) {
-                    CatalogLoadingState()
-                } else {
-                    ListEmptyState(
-                        title = stringResource(R.string.catalog_missing_title),
-                        summary = stringResource(R.string.catalog_missing_summary),
-                    )
     val canImport = provider != null && selectedIds.isNotEmpty() && !importInFlight && !store.importing
     val onImport: () -> Unit = {
         val chosen = provider
@@ -647,22 +597,16 @@ private fun CatalogLoadingState() {
     }
 }
 
-private fun CommunityCatalog.sourceLabel(resources: Resources): String = when (source) {
-    CommunityCatalogSource.SNAPSHOT -> resources.getString(R.string.catalog_source_snapshot)
-    CommunityCatalogSource.CACHE -> resources.getString(R.string.catalog_source_cache)
-    CommunityCatalogSource.ONLINE -> resources.getString(R.string.catalog_source_online)
+private fun CommunityCatalog.sourceLabel(): String = when (source) {
+    CommunityCatalogSource.SNAPSHOT -> "内置目录快照"
+    CommunityCatalogSource.CACHE -> "本地缓存目录"
+    CommunityCatalogSource.ONLINE -> "在线目录"
 }
 
-private fun catalogSummary(catalog: CommunityCatalog, resources: Resources): String {
+private fun catalogSummary(catalog: CommunityCatalog): String {
     val updated = catalog.fetchedAt?.let { timestamp ->
         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
     }
-    return listOfNotNull(
-        resources.getQuantityString(
-            R.plurals.catalog_summary_providers,
-            catalog.providers.size,
-            catalog.providers.size,
-        ),
-        updated?.let { resources.getString(R.string.catalog_summary_updated, it) },
-    ).joinToString(" · ")
+    return listOfNotNull("${catalog.providers.size} 家可导入提供商", updated?.let { "更新于 $it" })
+        .joinToString(" · ")
 }

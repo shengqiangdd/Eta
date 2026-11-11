@@ -191,9 +191,9 @@ data class ThinkingMessageUi(
      * 与 [elapsedSeconds] 分开：后者是整轮总耗时，含工具、排队、重试。
      * 首字是用户体感的响应快慢，不能从总耗时推出来。旧消息为 null。
      */
-    val firstTokenMs: Int? = null,
+    val firstTokenMs: Long? = null,
     /** 解码耗时（毫秒）：首字 → 本轮结束。用它除输出 token 才是真实生成速度。 */
-    val decodeMs: Int? = null,
+    val decodeMs: Long? = null,
     val collapsed: Boolean = false,
 ) : AgentChatMessageUi
 

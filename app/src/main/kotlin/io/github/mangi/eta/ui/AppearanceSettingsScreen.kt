@@ -417,3 +417,12 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun chatViewModeLabel(mode: ChatViewMode): String = stringResource(
+    when (mode) {
+        ChatViewMode.ALL -> R.string.chat_view_mode_all
+        ChatViewMode.DIALOG -> R.string.chat_view_mode_dialog
+        ChatViewMode.TRACE -> R.string.chat_view_mode_trace
+    },
+)

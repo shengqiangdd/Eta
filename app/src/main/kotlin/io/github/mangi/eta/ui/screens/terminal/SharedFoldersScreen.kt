@@ -1,7 +1,10 @@
 package io.github.mangi.eta.ui.screens.terminal
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Environment
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -34,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -85,7 +87,6 @@ internal fun SharedFoldersScreen(
     context: Context,
     onBack: () -> Unit,
 ) {
-    val view = LocalView.current
     val coroutineScope = rememberCoroutineScope()
     val shellSupervisor = remember { ShellProcessSupervisor() }
     DisposableEffect(Unit) {
@@ -123,73 +124,6 @@ internal fun SharedFoldersScreen(
 
     LaunchedEffect(Unit) { refreshSources(mounts) }
 
-    MiuixScaffoldPage(
-        title = stringResource(R.string.shared_folders_title),
-        onBack = onBack,
-    ) {
-        item(key = "mounts-card") {
-            EtaPreferenceGroup {
-                if (mounts.isEmpty()) {
-                    EtaPreference(
-                        title = stringResource(R.string.shared_folders_empty),
-                        summary = stringResource(R.string.shared_folders_entry_summary),
-                    )
-                }
-                mounts.forEachIndexed { index, mount ->
-                    val missing = sourceExists[mount.sourcePath] == false
-                    if (index > 0) EtaPreferenceDivider(hasLeading = false)
-                    EtaPreference(
-                        title = mount.name,
-                        summary = buildString {
-                            append(mount.sourcePath)
-                            append("\n")
-                            append(
-                                context.getString(
-                                    R.string.shared_folders_mount_point,
-                                    "${SharedFolderMounts.LINUX_MOUNTS_ROOT}/${mount.name}",
-                                )
-                            )
-                            if (missing) {
-                                append(" · ")
-                                append(context.getString(R.string.shared_folders_source_missing))
-                            }
-                        },
-                        summaryColor = BasicComponentDefaults.summaryColor(
-                            color = if (missing) MiuixTheme.colorScheme.error else MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        ),
-                        endActions = {
-                            IconButton(onClick = { removeTarget = mount }) {
-                                Icon(
-                                    imageVector = Icons.Rounded.DeleteOutline,
-                                    contentDescription = stringResource(R.string.action_delete),
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                                )
-                            }
-                        },
-                    )
-                }
-                EtaPreferenceDivider(hasLeading = false)
-                EtaPreference(
-                    title = stringResource(R.string.shared_folders_add),
-                    titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.primary),
-                    startAction = {
-                        EtaPreferenceIcon(Icons.Rounded.Add, tint = MiuixTheme.colorScheme.primary)
-                    },
-                    onClick = {
-                        if (TerminalRuntime.rootAvailable || Environment.isExternalStorageManager()) {
-                            showPicker = true
-                        } else if (!isOnDefaultDisplay(view)) {
-                            // 非主屏启动系统设置会把整个任务搬到默认屏（实测），改为提示。
-                            notice = context.getString(R.string.capability_workspace_public_other_display)
-                        } else {
-                            try {
-                                publicAccessLauncher.launch(allFilesAccessIntent(context))
-                            } catch (_: android.content.ActivityNotFoundException) {
-                                notice = context.getString(R.string.capability_workspace_public_denied)
-                            }
-                        }
-                    },
     val onAddMountClick: () -> Unit = {
         if (TerminalRuntime.rootAvailable || Environment.isExternalStorageManager()) {
             showPicker = true

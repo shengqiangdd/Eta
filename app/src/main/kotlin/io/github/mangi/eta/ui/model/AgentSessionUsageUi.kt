@@ -34,8 +34,8 @@ internal data class AgentSessionUsageUi(
      * 只取最近一轮而不求平均：速度受当前网络与服务商状态影响最大，
      * 历史平均反而会掩盖「现在很慢」这个最有用的信号。null = 未采集到。
      */
-    val lastFirstTokenMs: Int? = null,
-    val lastDecodeMs: Int? = null,
+    val lastFirstTokenMs: Long? = null,
+    val lastDecodeMs: Long? = null,
     /** 最近一轮的输出 token（含推理），用于算生成速度。 */
     val lastOutputTokens: Int? = null,
     /**
@@ -118,8 +118,8 @@ internal data class AgentSessionUsageUi(
             // 上下文占用取「最近一条有值的」，它表示当前窗口里的实际占用，
             // 不能求和 —— 求和会把历史每轮的占用加在一起，远超窗口大小。
             var latestContext: Int? = null
-            var lastFirstTokenMs: Int? = null
-            var lastDecodeMs: Int? = null
+            var lastFirstTokenMs: Long? = null
+            var lastDecodeMs: Long? = null
             var lastRoundOutput: Int? = null
             // 最近一次运行的 id：消息 id 形如 `run-<uuid>-thinking-<round>-<index>`，
             // 前缀就是追踪文件名。用它去找追踪，避免把 runId 再存一份到每一行。
@@ -159,11 +159,11 @@ internal data class AgentSessionUsageUi(
                 runTiming.firstTokenMs?.let { lastFirstTokenMs = it }
                 // 只在三项齐全时才覆盖，否则保留消息上的值（旧数据回退）。
                 if (runTiming.speedTokensPerSecond != null &&
-                    runTiming.decodeTokens != null &&
+                    runTiming.decodeMs != null &&
                     runTiming.speedNumeratorTokens != null
                 ) {
-                    lastDecodeMs = runTiming.decodeTokens
-                    lastRoundOutput = runTiming.speedNumeratorTokens
+                    lastDecodeMs = runTiming.decodeMs
+                    lastRoundOutput = runTiming.speedNumeratorTokens?.toInt()
                 }
                 if (lastFirstTokenMs != null || lastDecodeMs != null) speedSource = SpeedSource.Trace
             }
@@ -262,9 +262,9 @@ internal fun probeOf(result: AgentRunTraceStore.LookupResult?, trace: AgentRunTr
     }
     val timing = trace?.let {
         RunTiming(
-            firstTokenMs = it.lastFirstTokenMs?.toInt(),
-            decodeTokens = it.speed.decodeMs?.toInt(),
-            speedNumeratorTokens = it.speed.tokens?.toInt(),
+            firstTokenMs = it.lastFirstTokenMs,
+            decodeMs = it.speed?.decodeMs,
+            speedNumeratorTokens = it.speed?.tokens?.toLong(),
             speedTokensPerSecond = it.outputTokensPerSecond,
         )
     }
@@ -284,12 +284,17 @@ internal data class TraceProbe(
 
 /** 一次运行里与「多快」有关的部分，由调用方从追踪里取。 */
 data class RunTiming(
-    /** 首字延迟（毫秒）：请求发出 → 第一个内容碑。缺失为 null。 */
-    val firstTokenMs: Int? = null,
-    /** 纯解码耗时（毫秒）：首字 → 本轮结束。缺失为 null。 */
-    val decodeTokens: Int? = null,
+    /** 首字延迟（毫秒）：请求发出 → 第一个内容块。缺失为 null。 */
+    val firstTokenMs: Long? = null,
+    /**
+     * 纯解码耗时（毫秒）：首字 → 本轮结束。缺失为 null。
+     *
+     * 名字曾经错写成 decodeTokens，于是调用方把「token 数」当毫秒用，
+     * 算出来的速度差两个数量级且不报错。这里按语义改名。
+     */
+    val decodeMs: Long? = null,
     /** 解码期间的输出 token 数（含推理）。 */
-    val speedNumeratorTokens: Int? = null,
+    val speedNumeratorTokens: Long? = null,
     /** 该次运行的解码速度；仅用于判断「有没有值」，界面自己用上面两个数重算。 */
     val speedTokensPerSecond: Double? = null,
 )

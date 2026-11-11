@@ -1,26 +1,27 @@
 package io.github.mangi.eta.agent.runtime
 
-import io.github.mangi.eta.agent.model.AgentContextSnapshot
-import io.github.mangi.eta.agent.model.AssistantScreenContextProjection
-
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
+import io.github.mangi.eta.agent.model.AgentContextSnapshot
 import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.model.AssistantScreenContextProjection
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.CustomBody
 import io.github.mangi.eta.data.model.CustomHeader
 import io.github.mangi.eta.data.model.ModelReasoningCapabilities
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ReasoningEffort
 import java.io.Closeable
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.Serializable
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**

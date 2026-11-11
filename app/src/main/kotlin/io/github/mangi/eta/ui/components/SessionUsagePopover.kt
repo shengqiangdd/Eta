@@ -338,7 +338,7 @@ internal fun decodeSpeedValue(usage: AgentSessionUsageUi): String? {
 }
 
 /** 耗时：不到 1s 用毫秒，否则用秒并保留一位小数。 */
-internal fun formatDurationMs(ms: Int): String {
+internal fun formatDurationMs(ms: Long): String {
     if (ms < 1_000) return "${ms}ms"
     val seconds = ms / 1000.0
     return if (seconds < 10) {
