@@ -5896,3 +5896,22 @@ output 已经含推理，再加一遍 → 速度虚高。实测：平均 1.04x�
 
 另有一次假警报：`cp` 出来三份文件的 mtime 全相同，以为「mtime 精度不够导致排序失效」。
 回到设备上 `stat` 才看到真实值（16:36:48 / 16:14:06 / 15:56:20）—— 是我拷贝时丢了时间戳。
+
+## 分支清理（749 个提交，HEAD 93ea4482）
+
+删掉 4 个已完全合并的本地分支。删除前逐个验证 `git merge-base --is-ancestor`，
+确认「独有提交 0」；它们都是纯本地分支（无 upstream）、也没有 tag 指向。
+
+| 分支 | SHA（留档） | 落后 HEAD |
+| trial-merge | 835e9daf24d75c607b2d5fedab90f421ed60a6af | 306 |
+| backup/pre-merge-3.3.5 | 5cdc1fa06c15748a579c3948a0610e45b68580e8 | 310 |
+| backup/pre-merge-3.4.0 | 26a4b42e53e613acb4183bc39935f6e0c0f92ae4 | 62 |
+| backup/pre-merge-3.4.1 | 257e19a0e560e03b100c6e168a9ad549edbbc6b0 | 297 |
+
+用 `git branch -d`（不是 `-D`）：它只删已合并的分支，万一有我没看到的引用，
+git 会拒绝并告诉我，而不是静默丢掉。四个都删成功，说明确实无独有内容。
+
+要找回某个分支：`git branch <名字> <SHA>`。这些提交仍在对象库里，
+只要没跑 `gc --prune=now` 就能恢复。
+
+删除后：只剩 `main` 与 `origin/main`，工作区干净，提交数 749 不变。
