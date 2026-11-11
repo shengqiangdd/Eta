@@ -276,8 +276,21 @@ internal object AgentRunTraceStore {
                     .put("r", event.round)
                     .put("http", event.httpCode),
             )
-            // 每个内容块（思考 / 正文 / 工具调用）开始都会来一次；只记本次请求的第一次。
-            is AgentEvent.AssistantBlockStart -> noteFirstToken(runId, event.round)
+            // 只有「用户能看到字」的块才算首字：思考块和正文块。
+            //
+            // 工具调用块不算 —— 模型直接调工具、一个字都不输出时，若把工具参数生成的
+            // 起点当首字，TTFT 会偏小，而且这段耗时会被算进解码速度（`speedOf` 分子
+            // 仍取该请求的 output token），速度跟着虚高。
+            //
+            // 真机实测：451 条 `first` 记录后面紧跟 usage 再紧跟 tool，即这些轮次
+            // 根本没有可见输出，纯属污染分母。这类轮次**不该有** first 记录。
+            is AgentEvent.AssistantBlockStart -> when (event.kind) {
+                AgentEvent.AssistantBlockKind.THINKING,
+                AgentEvent.AssistantBlockKind.TEXT,
+                -> noteFirstToken(runId, event.round)
+
+                AgentEvent.AssistantBlockKind.TOOL_CALL -> Unit
+            }
             is AgentEvent.AssistantBlockEnd -> {
                 val kind = when (event.kind) {
                     AgentEvent.AssistantBlockKind.THINKING -> KIND_THINKING

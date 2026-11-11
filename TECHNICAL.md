@@ -5591,3 +5591,51 @@ for (file in files.take(limit.coerceIn(1, MAX_RUNS)))   // ← MAX_RUNS = 80
 - 无会话归属的旧追踪不参与 pin（不会被永久保留）
 - `limit` 不被压回保留配额（`maxRuns=1` 时仍能找到最近那份）
 - 字节配额也会触发回收
+
+## fix166：工具调用块被当成了「首字」
+
+### 怎么发现的
+
+统计真机 43 + 46 份追踪里 `first` 记录后面紧跟什么：
+
+| 紧随其后 | 条数 |
+| thinking | 1665 |
+| text | 342 |
+| usage → tool | **451** |
+
+后一组是问题：`first` 之后没有任何内容块，直接是 usage 然后 tool。
+说明那些轮次**一个字都没输出**，纯粹在生成工具参数。
+
+### 为什么错
+
+`AssistantBlockStart` 不区分块类型就记首字，而工具调用也是一个块。
+后果有两个，方向相反：
+
+- **TTFT 偏小**：记的是「工具参数开始生成」，不是用户看到第一个字的时刻；
+- **速度虚高**：`speedOf` 的分子仍取该请求的 output token（工具参数也算），
+  分母却是「工具块 start → usage」，这段耗时被当成解码时间。
+
+两个指标同时被污染，而且都朝「更快」的方向偏 —— 用户会觉得「这个数字怎么这么好看」，
+反而更不容易怀疑。
+
+### 修法
+
+只让 THINKING 和 TEXT 触发 `noteFirstToken`：
+
+```kotlin
+is AgentEvent.AssistantBlockStart -> when (event.kind) {
+    THINKING, TEXT -> noteFirstToken(runId, event.round)
+    TOOL_CALL -> Unit
+}
+```
+
+工具块之后再出现正文块时，正文块正常补上首字（有测试钉住）。
+
+### 测试
+
+`TraceFirstTokenKindTest`（5 条），走真实 `record(AgentEvent)`：
+
+- 思考块 / 正文块开始即首字
+- 工具调用块**不**产生首字
+- 工具块跳过后，正文块仍能补上首字（且时刻在正文块，不是工具块）
+- 同一轮多个块只记第一次
