@@ -266,25 +266,13 @@ class AgentAccessibilityService : AccessibilityService() {
             maxVisitedNodes = (nodeLimit * UI_TREE_VISIT_MULTIPLIER)
                 .coerceIn(MIN_UI_TREE_VISITED_NODES, MAX_UI_TREE_VISITED_NODES),
         )
-<<<<<<< HEAD
-        collectNodes(
-            node = root,
-            out = indexedNodes,
-            maxNodes = nodeLimit,
-            depth = 0,
-            traversal = traversal,
-            path = "0",
-        )
-        NodeSnapshot(
-=======
-        collectNodes(root, indexedNodes, nodeLimit, depth = 0, traversal = traversal)
-        val snapshot = NodeSnapshot(
->>>>>>> origin/main
+        // fix171：先 refresh 再判「内容变化」——空输入框的兜底判定要看刷新后的几何指纹。
+        // 取消检查放在读回之前：用户取消时不该继续等读回窗口。
+        queryExecutor.ensureActive()
             id = "o${SNAPSHOT_IDS.incrementAndGet()}",
             serviceToken = connectionToken,
             packageName = root.packageName?.toString().orEmpty(),
             windowId = root.windowId,
-<<<<<<< HEAD
             displayId = displayId ?: Display.DEFAULT_DISPLAY,
             contentGeneration = windowContentGeneration(root.windowId),
             capturedAtElapsedMs = startedAt,
@@ -297,18 +285,6 @@ class AgentAccessibilityService : AccessibilityService() {
                     "truncated=${traversal.truncated} " +
                     "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}"
             }
-=======
-            contentGeneration = contentGeneration,
-            capturedAtElapsedMs = startedAt,
-            truncated = traversal.truncated,
-            indexedNodes = indexedNodes.toList(),
-            displayId = displayId,
-        )
-        AndroidAgentLogger.debug {
-            "Agent accessibility action=observe_tree observation=${snapshot.id} " +
-                "display=$displayId nodes=${snapshot.nodes.size} visited=${traversal.visitedNodes} " +
-                "truncated=${traversal.truncated} elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}"
->>>>>>> origin/main
         }
         return NodeSnapshotObservation(
             status = if (snapshot.nodes.isEmpty()) NodeSnapshotStatus.EMPTY else NodeSnapshotStatus.AVAILABLE,
@@ -410,17 +386,13 @@ class AgentAccessibilityService : AccessibilityService() {
         if (point.x > 0 && point.y > 0) point.x to point.y else null
     }.getOrNull()
 
-<<<<<<< HEAD
-    private fun activeRootOnDisplay(displayId: Int): AccessibilityNodeInfo? {
-        // 主屏不能用 rootInActiveWindow：它跨屏，有虚拟屏时可能指向别的屏（fix165）。
-        if (displayId == android.view.Display.DEFAULT_DISPLAY) return mainDisplayRoot()
-        val displayWindows = runCatching {
-            windowsOnAllDisplays.get(displayId)
-        }.getOrNull().orEmpty()
-        if (displayWindows.isEmpty()) return null
-        val sorted = displayWindows
-            .filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }
-=======
+    /**
+     * 某块屏上该选哪个窗口。
+     *
+     * 不能只用 isFocused/isActive：后台虚拟屏不抢全局焦点，那两个标记全是 false，
+     * 于是会选中一个不相干的窗口。窗口层级比残留的焦点标记可靠，
+     * 焦点标记只在层级相同时作为次级依据。
+     */
     private fun selectedWindowOnDisplay(displayId: Int): AccessibilityWindowInfo? =
         windowsOnAllDisplays.get(displayId).orEmpty()
             .asSequence()
@@ -429,8 +401,6 @@ class AgentAccessibilityService : AccessibilityService() {
                     window.type != AccessibilityWindowInfo.TYPE_INPUT_METHOD &&
                     (window.type == AccessibilityWindowInfo.TYPE_APPLICATION || window.isFocused || window.isActive)
             }
-            // 后台显示屏不会抢全局焦点；窗口层级比残留的 focused/active 标记更可靠。
->>>>>>> origin/main
             .sortedWith(
                 compareByDescending<AccessibilityWindowInfo> { it.layer }
                     .thenByDescending { it.isFocused || it.isActive },
@@ -438,6 +408,8 @@ class AgentAccessibilityService : AccessibilityService() {
             .firstOrNull()
 
     private fun activeRootOnDisplay(displayId: Int): AccessibilityNodeInfo? {
+        // 主屏不能用 rootInActiveWindow：它跨屏，有虚拟屏时可能指向别的屏（fix165）。
+        if (displayId == android.view.Display.DEFAULT_DISPLAY) return mainDisplayRoot()
         val window = selectedWindowOnDisplay(displayId) ?: return null
         queryExecutor.ensureActive()
         return window.root
@@ -1005,7 +977,6 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-<<<<<<< HEAD
     fun inputTextFocused(text: String): NodeActionResult = writeTextPrepared {
         val node = findFocusedEditableNode()
             ?: return@writeTextPrepared TextWriteTarget.Rejected(
@@ -1029,48 +1000,6 @@ class AgentAccessibilityService : AccessibilityService() {
             ),
         )
         TextWriteTarget.Ready(node, plan.text, plan.cursor)
-=======
-    private sealed interface TextInsertionPreparation {
-        data class Ready(
-            val node: AccessibilityNodeInfo,
-            val text: String,
-            val cursor: Int,
-            val connectionToken: Long,
-        ) : TextInsertionPreparation
-        data class Rejected(val result: NodeActionResult) : TextInsertionPreparation
-    }
-
-    private fun prepareTextInsertion(text: String, displayId: Int): TextInsertionPreparation {
-        val connectionToken = serviceToken
-        return runAccessibilityQuery {
-            val node = findFocusedEditableNode(displayId)
-                ?: return@runAccessibilityQuery TextInsertionPreparation.Rejected(
-                    NodeActionResult.failure("NO_FOCUSED_EDITABLE", "没有获得输入焦点的可编辑节点"),
-                )
-            node.incrementalTextValidationError()?.let { error ->
-                return@runAccessibilityQuery TextInsertionPreparation.Rejected(error)
-            }
-            val plan = TextEditPlanner.insertAtSelection(
-                currentText = node.realText(),
-                insertedText = text,
-                selectionStart = node.textSelectionStart,
-                selectionEnd = node.textSelectionEnd,
-            ) ?: return@runAccessibilityQuery TextInsertionPreparation.Rejected(
-                NodeActionResult.failure("TEXT_SELECTION_UNAVAILABLE", "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值"),
-            )
-            TextInsertionPreparation.Ready(node, plan.text, plan.cursor, connectionToken)
-        } ?: TextInsertionPreparation.Rejected(
-            NodeActionResult.failure("SERVICE_TIMEOUT", "无障碍查询未完成，本次未修改文本"),
-        )
-    }
-
-    fun inputTextFocused(
-        text: String,
-        displayId: Int = android.view.Display.DEFAULT_DISPLAY,
-    ): NodeActionResult = when (val preparation = prepareTextInsertion(text, displayId)) {
-        is TextInsertionPreparation.Rejected -> preparation.result
-        is TextInsertionPreparation.Ready -> setNodeText(preparation.node, preparation.text, preparation.cursor, preparation.connectionToken)
->>>>>>> origin/main
     }
 
     fun setTextNode(
@@ -1090,7 +1019,6 @@ class AgentAccessibilityService : AccessibilityService() {
                 }
             }
         }
-<<<<<<< HEAD
         return writeTextPrepared {
             val node = findFocusedEditableNode()
                 ?: return@writeTextPrepared TextWriteTarget.Rejected(
@@ -1101,12 +1029,6 @@ class AgentAccessibilityService : AccessibilityService() {
                 )
             TextWriteTarget.Ready(node, text, text.length)
         }
-=======
-        val connectionToken = serviceToken
-        val node = runAccessibilityQuery { findFocusedEditableNode(snapshot?.displayId ?: displayId) }
-            ?: return NodeActionResult.failure("NO_FOCUSED_EDITABLE", "没有获得输入焦点的可编辑节点")
-        return setNodeText(node, text, text.length, connectionToken)
->>>>>>> origin/main
     }
 
     /**
@@ -1124,126 +1046,6 @@ class AgentAccessibilityService : AccessibilityService() {
     fun setTextOnDisplay(
         displayId: Int,
         text: String,
-<<<<<<< HEAD
-        replace: Boolean,
-    ): NodeActionResult = runNodeActionOnMainSync {
-        val root = if (displayId != Display.DEFAULT_DISPLAY) {
-            virtualDisplayRoot(displayId)
-        } else {
-            rootInActiveWindow
-        } ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-            "NO_ACTIVE_WINDOW",
-            "display=$displayId 上没有可读窗口，请先启动应用并等待界面出现",
-        )
-        val focused = runCatching {
-            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        }.getOrNull()?.takeIf { node -> node.isUsableInputTarget() }
-        val target = focused ?: run {
-            val editable = ArrayList<AccessibilityNodeInfo>(2)
-            var visited = 0
-            fun visit(node: AccessibilityNodeInfo, depth: Int) {
-                if (depth > MAX_UI_TREE_DEPTH || visited >= MAX_SCROLL_SEARCH_NODES) return
-                visited++
-                if (node.isUsableInputTarget()) {
-                    editable += node
-                    if (editable.size > 1) return
-                }
-                for (i in 0 until node.childCount) {
-                    val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
-                    visit(child, depth + 1)
-                }
-            }
-            visit(root, 0)
-            when {
-                editable.isEmpty() -> return@runNodeActionOnMainSync NodeActionResult.failure(
-                    "NO_EDITABLE_FIELD",
-                    "display=$displayId 的当前界面没有可编辑输入框；请先点开输入框再输入",
-                )
-                editable.size > 1 -> return@runNodeActionOnMainSync NodeActionResult.failure(
-                    "AMBIGUOUS_EDITABLE_FIELD",
-                    "display=$displayId 上有多个输入框，无法判断该写哪个；请先点一下目标输入框",
-                )
-                else -> editable.single()
-            }
-        }
-        if (!replace) {
-            val plan = TextEditPlanner.insertAtSelection(
-                currentText = target.realText(),
-                insertedText = text,
-                selectionStart = target.textSelectionStart,
-                selectionEnd = target.textSelectionEnd,
-            ) ?: return@runNodeActionOnMainSync NodeActionResult.failure(
-                "TEXT_SELECTION_UNAVAILABLE",
-                "当前输入框未提供可靠光标或选区；请改用 replace 模式",
-            )
-            return@runNodeActionOnMainSync setNodeText(target, plan.text, plan.cursor)
-        }
-        setNodeText(target, text, text.length)
-    }
-
-    /**
-     * 优先直接按选区写入，只有目标拒绝 SET_TEXT 时才回退系统粘贴。
-     *
-     * fix177：和 [writeTextPrepared] 同构 —— 找焦点节点留在主线程（纯读），
-     * 写入 / 粘贴 / 读回放到调用线程。旧写法整段在无障碍主线程上：粘贴后立刻
-     * `refresh()` 读节点，Compose 还没提交就判 `ACTION_OUTCOME_UNKNOWN`；
-     * 而这里恰好是 `type_text` append 超过 200 字（[AgentLocalTools] 的
-     * TYPE_TEXT_INCREMENTAL_CHARS）时唯一走得到的通路，属于 fix176 同一类缺陷。
-     */
-    fun pasteText(text: String): NodeActionResult {
-        val prepared = callOnMainSync {
-            val node = findFocusedEditableNode()
-                ?: return@callOnMainSync TextWriteTarget.Rejected(
-                    NodeActionResult.failure(
-                        "NO_FOCUSED_EDITABLE",
-                        "没有获得输入焦点的可编辑节点",
-                    ),
-                )
-            node.incrementalTextValidationError()?.let { error ->
-                return@callOnMainSync TextWriteTarget.Rejected(error)
-            }
-            val existingText = node.realText()
-            val selectionStart = node.textSelectionStart
-            val selectionEnd = node.textSelectionEnd
-            val plan = TextEditPlanner.insertAtSelection(
-                currentText = existingText,
-                insertedText = text,
-                selectionStart = selectionStart,
-                selectionEnd = selectionEnd,
-            )
-            if (plan == null) {
-                logTextSelectionUnavailable(node, existingText.length, selectionStart, selectionEnd)
-                return@callOnMainSync TextWriteTarget.Rejected(
-                    NodeActionResult.failure(
-                        "TEXT_SELECTION_UNAVAILABLE",
-                        "当前输入框未提供可靠光标或选区；请用 replace_text 提供完整值",
-                    ),
-                )
-            }
-            TextWriteTarget.Ready(node, plan.text, plan.cursor)
-        }
-        val target = when (prepared) {
-            is MainThreadCallResult.Completed -> prepared.value
-                ?: return NodeActionResult.failure("ACTION_FAILED", "无障碍动作执行异常")
-            MainThreadCallResult.NOT_STARTED -> return NodeActionResult.failure(
-                TextWriteFailures.CODE,
-                TextWriteFailures.notStartedMessage(),
-            )
-            MainThreadCallResult.OUTCOME_UNKNOWN -> return NodeActionResult.failure(
-                TextWriteFailures.CODE,
-                TextWriteFailures.outcomeUnknownMessage(),
-            )
-        }
-        val ready = when (target) {
-            is TextWriteTarget.Ready -> target
-            is TextWriteTarget.Rejected -> return target.result
-        }
-        val directResult = setNodeText(ready.node, ready.text, ready.cursor)
-        if (directResult.ok) {
-            return directResult.copy(method = "ACTION_SET_TEXT_PASTE")
-        }
-        if (directResult.code != "ACTION_FAILED") return directResult
-=======
         displayId: Int = android.view.Display.DEFAULT_DISPLAY,
     ): NodeActionResult {
         val preparation = prepareTextInsertion(text, displayId)
@@ -1268,7 +1070,6 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private fun pasteWithTemporaryClipboard(node: AccessibilityNodeInfo, text: String): NodeActionResult {
->>>>>>> origin/main
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val originalClip = runCatching { clipboard.primaryClip }.getOrNull()
         val temporaryLabel = "$CLIP_LABEL:${CLIP_IDS.incrementAndGet()}"
@@ -1277,7 +1078,6 @@ class AgentAccessibilityService : AccessibilityService() {
                 putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
             }
         }
-<<<<<<< HEAD
         val copied = runCatching {
             clipboard.setPrimaryClip(temporaryClip)
         }.isSuccess
@@ -1296,14 +1096,6 @@ class AgentAccessibilityService : AccessibilityService() {
                 } else {
                     NodeActionResult.outcomeUnknown()
                 }
-=======
-        val copied = runCatching { clipboard.setPrimaryClip(temporaryClip) }.isSuccess
-        if (!copied) return NodeActionResult.failure("CLIPBOARD_WRITE_FAILED", "写入剪贴板失败")
-        var restored = false
-        val result = try {
-            if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                NodeActionResult.success(method = "ACTION_PASTE")
->>>>>>> origin/main
             } else {
                 NodeActionResult.failure("ACTION_FAILED", "输入节点拒绝粘贴动作")
             }
@@ -1313,7 +1105,6 @@ class AgentAccessibilityService : AccessibilityService() {
             // 调用方超时不代表 ACTION_PASTE 已返回；还原必须留在已启动动作内，避免目标读到旧剪贴板。
             restored = restoreClipboardIfStillOwned(clipboard, temporaryLabel, originalClip)
         }
-<<<<<<< HEAD
         val restored = restoreClipboardIfStillOwned(
             clipboard = clipboard,
             temporaryLabel = temporaryLabel,
@@ -1324,9 +1115,6 @@ class AgentAccessibilityService : AccessibilityService() {
         } else {
             pasteResult.copy(clipboardWritten = true)
         }
-=======
-        return (if (restored) result else NodeActionResult.outcomeUnknown()).copy(clipboardWritten = true)
->>>>>>> origin/main
     }
 
     private fun restoreClipboardIfStillOwned(
@@ -1929,23 +1717,23 @@ class AgentAccessibilityService : AccessibilityService() {
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, safeCursor)
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, safeCursor)
         }
-<<<<<<< HEAD
-        val refreshed = runCatching { node.refresh() }.getOrDefault(false)
-        // fix176：旧写法是 `if (!refreshed || realText() != text) -> outcomeUnknown`，把
-        // 「refresh 失败」和「内容不对」混成一个结果；而 refresh()=false 时节点对象自己可能
-        // 已经带着新文本（AccessibilityNodeInfo 会被原地更新），于是写入成功也被报成
-        // ACTION_OUTCOME_UNKNOWN（ok=false）。判定因此只看**内容相等**：内容相符就是证据，
+        // refresh 失败不等于写入失败：AccessibilityNodeInfo 会被原地更新，
+        // 节点对象可能已带着新文本。判定只看**内容相等**（内容相符就是证据），
         // 内容还没落地时再给一段有限的读回窗口（见 [textReadbackMatches]）。
+        // 用 runAccessibilityQuery 包裹是为了经过连接校验：服务重连后旧节点 refresh 无意义。
+        val refreshed = runAccessibilityQuery { node.refresh() } == true
         if (!password && !textReadbackMatches(node, text)) {
             return NodeActionResult.outcomeUnknown()
         }
-        val selectionRestored = refreshed && node.performAction(
+        // 动作派发也必须带 connectionToken：否则重连后会把动作发到旧连接。
+        val selectionRestored = refreshed && performNodeAction(
+                node,
                 AccessibilityNodeInfo.ACTION_SET_SELECTION,
                 selectionArgs,
-            )
-        // 2026-10-27（fix185）：密码框原来一律 `verified = false` —— 等于**从不校验**，
-        // 工具层永远回 unknown。掩码长度通常就是字符数，能用长度确认就应该确认；
-        // 确认不了（长度没变、读不到）仍然回未确认，不猜。
+                connectionToken,
+            ) == ActionDispatch.ACCEPTED
+        // 密码框原来一律 `verified = false` —— 等于**从不校验**，工具层永远回 unknown。
+        // 掩码长度通常就是字符数，能用长度确认就应该确认；确认不了仍然回未确认，不猜。
         val verified = if (password) {
             TextInputVerification.passwordWriteConfirmed(
                 beforeLength = beforePasswordLength,
@@ -1955,18 +1743,6 @@ class AgentAccessibilityService : AccessibilityService() {
         } else {
             true
         }
-=======
-        val refreshed = runAccessibilityQuery { node.refresh() } == true
-        if (!node.isPassword && (!refreshed || node.realText() != text)) {
-            return NodeActionResult.outcomeUnknown()
-        }
-        val selectionRestored = refreshed && performNodeAction(
-            node,
-            AccessibilityNodeInfo.ACTION_SET_SELECTION,
-            selectionArgs,
-            connectionToken,
-        ) == ActionDispatch.ACCEPTED
->>>>>>> origin/main
         return NodeActionResult.success(
             method = if (selectionRestored) {
                 "ACTION_SET_TEXT_AND_SELECTION"
@@ -2367,11 +2143,7 @@ class AgentAccessibilityService : AccessibilityService() {
             )
         }
         val node = indexed.node
-<<<<<<< HEAD
         // fix171：先 refresh 再判「内容变化」——空输入框的兜底判定要看刷新后的几何指纹。
-=======
-        queryExecutor.ensureActive()
->>>>>>> origin/main
         if (!runCatching { node.refresh() }.getOrDefault(false)) {
             return NodeValidation.Invalid(
                 NodeActionResult.failure("STALE_NODE", "目标节点已经失效，请重新观察屏幕"),
@@ -2728,18 +2500,19 @@ class AgentAccessibilityService : AccessibilityService() {
         val posted = mainHandler.post {
             if (gate.tryStart()) {
                 try {
-<<<<<<< HEAD
-                    value = block()
+                    // 服务重连后旧连接已失效：此时执行 block 会作用到错误的连接上
+                    // （读到的节点来自旧窗口），比不执行更危险。
+                    if (instance === this && connectionToken == serviceToken) {
+                        value = block()
+                    } else {
+                        invalidated = true
+                    }
                 } catch (error: Throwable) {
+                    // 抛错时调用方只会拿到「结果未知」，不留原因的话现场就彻底丢了。
                     android.util.Log.w(
                         "EtaA11y",
                         "posted throwable=" + error.javaClass.name + ": " + error.message,
                     )
-=======
-                    if (instance === this && connectionToken == serviceToken) value = block()
-                    else invalidated = true
-                } catch (_: Throwable) {
->>>>>>> origin/main
                     failed = true
                 } finally {
                     gate.finish()
