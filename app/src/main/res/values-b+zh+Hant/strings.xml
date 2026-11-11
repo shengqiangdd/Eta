@@ -2205,6 +2205,7 @@
   <string name="usage_open_action">查看用量</string>
   <string name="usage_section_speed">速度</string>
   <string name="usage_row_first_token">首字延遲</string>
+  <string name="usage_speed_unavailable_recycled">這個對話跑過，但計時記錄已被清理（只保留最近的若干次執行）。再跑一輪就會恢復。</string>
   <string name="usage_unit_tok_per_s">tok/s</string>
   <string name="usage_section_output">輸出</string>
   <string name="usage_row_cache_hit">快取命中</string>

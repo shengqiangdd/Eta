@@ -35,6 +35,14 @@ internal data class AgentSessionUsageUi(
     val lastDecodeMs: Int? = null,
     /** 最近一轮的输出 token（含推理），用于算生成速度。 */
     val lastOutputTokens: Int? = null,
+    /**
+     * 速度/首字这一段的来源状态。
+     *
+     * 存在的理由：速度段不显示时，用户分不清是「这个会话没跑过」还是
+     * 「记录被回收了」。两种情况的含义完全不同，却都表现为「什么都没有」。
+     * 把状态显式带上来，界面才能给出准确的说明而不是让那一块凭空消失。
+     */
+    val speedSource: SpeedSource = SpeedSource.None,
 ) {
     /** 缓存命中率；分母为 0 或数据不足时为 null（界面显示「—」，不要显示 0%）。 */
     val cacheHitRate: Float?
@@ -72,6 +80,8 @@ internal data class AgentSessionUsageUi(
              * 要靠渲染投影去猜起点，实测在多轮 + 工具调用的形态下全是 0。
              */
             runTiming: RunTiming? = null,
+            /** 追踪查找的状态（来自 AgentRunTraceStore.lookup）。 */
+            lookupStatus: TraceLookupStatus = TraceLookupStatus.NoConversation,
         ): AgentSessionUsageUi {
             var cached = 0
             var prompt = 0
@@ -113,6 +123,7 @@ internal data class AgentSessionUsageUi(
 
             // 追踪数据优先。它由事件流直接打点，不依赖渲染投影是否正确配对；
             // 消息上的 firstTokenMs/decodeMs 只作为没有追踪时的回退（旧数据）。
+            var speedSource = SpeedSource.None
             if (runTiming != null) {
                 runTiming.firstTokenMs?.let { lastFirstTokenMs = it }
                 // 只在三项齐全时才覆盖，否则保留消息上的值（旧数据回退）。
@@ -123,6 +134,22 @@ internal data class AgentSessionUsageUi(
                     lastDecodeMs = runTiming.decodeTokens
                     lastRoundOutput = runTiming.speedNumeratorTokens
                 }
+                if (lastFirstTokenMs != null || lastDecodeMs != null) speedSource = SpeedSource.Trace
+            }
+            // 追踪里没有，但消息表上有旧采集：说明是早先跑过的会话。
+            if (speedSource == SpeedSource.None && (lastFirstTokenMs != null || lastDecodeMs != null)) {
+                speedSource = SpeedSource.LegacyMessage
+            }
+            // 既没有数据、存储里又有别的会话的记录 → 大概率是本会话的追踪被回收了。
+            //
+            // 但**必须要求这个会话真的跑过**（有消息）。空会话落到 Recycled 会让界面
+            // 给一个从未运行过的对话显示「记录已被清理」——那是凭空捏造的信息。
+            // 这里靠「有消息」判断，而不是靠 requestCount：后者对旧数据可能为 0。
+            if (speedSource == SpeedSource.None &&
+                lookupStatus == TraceLookupStatus.Missing &&
+                messages.isNotEmpty()
+            ) {
+                speedSource = SpeedSource.Recycled
             }
 
             return AgentSessionUsageUi(
@@ -136,6 +163,7 @@ internal data class AgentSessionUsageUi(
                 lastFirstTokenMs = lastFirstTokenMs,
                 lastDecodeMs = lastDecodeMs,
                 lastOutputTokens = lastRoundOutput,
+                speedSource = speedSource,
             )
         }
     }
@@ -151,6 +179,52 @@ internal fun runIdOf(messageId: String): String? {
     val cut = messageId.indexOf("-thinking-")
     return if (cut > 0) messageId.substring(0, cut) else null
 }
+
+/**
+ * 追踪查找的结果，供 UI 层使用（不直接依赖 trace 模块的枚举）。
+ *
+ * 与 `AgentRunTraceStore.LookupStatus` 一一对应；单独定义是为了让 model 层
+ * 不必依赖存储实现，也便于将来换数据源。
+ */
+internal enum class TraceLookupStatus {
+    /** 找到该会话最近一次运行。 */
+    Found,
+
+    /** 存储可用但没有该会话的记录。 */
+    Missing,
+
+    /** 存储不可用。 */
+    NoStore,
+
+    /** 没有会话 id。 */
+    NoConversation,
+}
+
+/** 速度段的来源状态。 */
+internal enum class SpeedSource {
+    /** 没有可显示的数据，且原因不值得解释（会话为空、还没跑过）。 */
+    None,
+
+    /** 数据来自运行追踪，且是这次会话最近一次运行。 */
+    Trace,
+
+    /** 有数据但来自消息表上的旧采集（追踪里没有）。 */
+    LegacyMessage,
+
+    /** 存储里有追踪记录，但没有属于这个会话的 —— 大概率是跑过但被回收了。 */
+    Recycled,
+}
+
+/**
+ * 一次追踪查询的完整结果：查到了什么 + 为什么没查到。
+ *
+ * 两个字段必须一起传递。只传 `timing` 时，null 同时表示「没跑过」「被回收了」
+ * 「还没加载完」三种情况，界面只能沉默；带上 status 才能给出准确说明。
+ */
+internal data class TraceProbe(
+    val status: TraceLookupStatus = TraceLookupStatus.NoConversation,
+    val timing: RunTiming? = null,
+)
 
 /** 一次运行里与「多快」有关的部分，由调用方从追踪里取。 */
 data class RunTiming(

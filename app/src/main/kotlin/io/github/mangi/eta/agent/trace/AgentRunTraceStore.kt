@@ -442,14 +442,25 @@ internal object AgentRunTraceStore {
      *
      * 这里按 meta.conv 精确匹配。旧追踪没有该字段（null），不会被误认成任何一个会话。
      */
-    fun latestRunIdFor(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): String? {
-        if (conversationId.isBlank()) return null
-        val target = dirOrNull() ?: return null
+    fun latestRunIdFor(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): String? =
+        lookup(conversationId, limit).runId
+
+    /**
+     * 同上，但带上「为什么没有」。
+     *
+     * 界面需要在「这个会话没跑过」和「追踪被回收了」之间说清楚 —— 两者的处理方式
+     * 完全不同：前者无须解释，后者说明数据存在过但已被清理。只返回 null 时
+     * 调用方分不出来，只能沉默地什么都不显示，用户看到的是「有时有、有时没有」。
+     */
+    fun lookup(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): LookupResult {
+        if (conversationId.isBlank()) return LookupResult(LookupStatus.NoConversation)
+        val target = dirOrNull() ?: return LookupResult(LookupStatus.NoStore)
         val files = runCatching {
             target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
                 ?.sortedByDescending { it.lastModified() }
                 ?: emptyList()
         }.getOrDefault(emptyList())
+        if (files.isEmpty()) return LookupResult(LookupStatus.NoStore)
         // 不要用 MAX_RUNS 当前缀扫描的上限。
         //
         // MAX_RUNS 是**写入侧**的保留配额（旧文件会被删掉），拿它当读取上限意味着
@@ -462,10 +473,35 @@ internal object AgentRunTraceStore {
             // 只读第一行（meta）判断归属，不解析整份文件：
             // 单份追踪可达 1.8MB，为了找一个 id 而全量解析 80 份是不可接受的。
             val meta = firstJson(file) ?: continue
-            if (meta.optString("conv") == conversationId) return file.nameWithoutExtension
+            if (meta.optString("conv") == conversationId) {
+                return LookupResult(LookupStatus.Found, file.nameWithoutExtension)
+            }
         }
-        return null
+        // 目录里有追踪，但没有一份属于这个会话：要么它没跑过，要么跑过但被回收了。
+        // 这里分不出这两种，所以归为 Missing —— 文案只能说「没有可用的运行记录」，
+        // 不能断言「被清理了」（那是没有根据的确定语气）。
+        return LookupResult(LookupStatus.Missing)
     }
+
+    /** [lookup] 的结果状态。 */
+    enum class LookupStatus {
+        /** 找到该会话最近一次运行。 */
+        Found,
+
+        /** 存储可用，但没有该会话的记录（没跑过，或已被回收）。 */
+        Missing,
+
+        /** 存储本身不可用（目录未初始化 / 无文件）。 */
+        NoStore,
+
+        /** 调用方没给出会话 id。 */
+        NoConversation,
+    }
+
+    data class LookupResult(
+        val status: LookupStatus,
+        val runId: String? = null,
+    )
 
     fun list(limit: Int = 50): List<Summary> {
         val target = dirOrNull() ?: return emptyList()

@@ -109,6 +109,8 @@ import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
 import io.github.mangi.eta.ui.model.RunTiming
+import io.github.mangi.eta.ui.model.TraceLookupStatus
+import io.github.mangi.eta.ui.model.TraceProbe
 import io.github.mangi.eta.ui.model.runIdOf
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
@@ -281,16 +283,26 @@ internal fun AgentChatBody(
     // 按**会话**找追踪，而不是拿消息 id 前缀去反推 runId：
     // 后者是隐式约定（`run-x-thinking-1-0` → `run-x`），改一次消息 id 格式就静默失效，
     // 表现是速度段凭空消失且不报错。追踪的 meta 里现在有 `conv` 字段，按它精确匹配。
-    val runTiming by produceState(initialValue = null as RunTiming?, goalScopeId) {
+    // 同时带回「为什么没有」：只给 null 时，界面分不清「没跑过」和「记录被回收」，
+    // 前者不需要解释，后者需要 —— 都沉默的话用户看到的是「有时有、有时没有」。
+    val traceProbe by produceState(
+        initialValue = TraceProbe(),
+        goalScopeId,
+    ) {
         value = if (goalScopeId.isNullOrBlank()) {
-            null
+            TraceProbe(status = TraceLookupStatus.NoConversation)
         } else {
             withContext(Dispatchers.IO) {
-                val runId = runCatching { AgentRunTraceStore.latestRunIdFor(goalScopeId) }.getOrNull()
-                if (runId == null) {
-                    null
-                } else {
-                    runCatching { AgentRunTraceStore.read(runId) }.getOrNull()?.let { trace ->
+                val result = runCatching { AgentRunTraceStore.lookup(goalScopeId) }.getOrNull()
+                val status = when (result?.status) {
+                    AgentRunTraceStore.LookupStatus.Found -> TraceLookupStatus.Found
+                    AgentRunTraceStore.LookupStatus.Missing -> TraceLookupStatus.Missing
+                    AgentRunTraceStore.LookupStatus.NoStore -> TraceLookupStatus.NoStore
+                    else -> TraceLookupStatus.NoConversation
+                }
+                val runId = result?.runId
+                val timing = runId?.let { id ->
+                    runCatching { AgentRunTraceStore.read(id) }.getOrNull()?.let { trace ->
                         RunTiming(
                             firstTokenMs = trace.lastFirstTokenMs?.toInt(),
                             decodeTokens = trace.speed.decodeMs?.toInt(),
@@ -299,11 +311,18 @@ internal fun AgentChatBody(
                         )
                     }
                 }
+                TraceProbe(status = status, timing = timing)
             }
         }
     }
-    val sessionUsage = remember(messages, contextUsage.contextWindow, runTiming) {
-        AgentSessionUsageUi.of(messages, contextUsage.contextWindow, runTiming = runTiming)
+    val runTiming = traceProbe.timing
+    val sessionUsage = remember(messages, contextUsage.contextWindow, runTiming, traceProbe.status) {
+        AgentSessionUsageUi.of(
+            messages,
+            contextUsage.contextWindow,
+            runTiming = runTiming,
+            lookupStatus = traceProbe.status,
+        )
     }
 
     val visibleMessages = remember(messages, messageEdit?.targetMessageId, messageEdit?.preserveFollowingMessages) {

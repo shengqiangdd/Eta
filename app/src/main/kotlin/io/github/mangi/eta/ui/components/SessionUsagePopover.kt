@@ -48,6 +48,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
+import io.github.mangi.eta.ui.model.SpeedSource
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.squircle.squircleBorder
@@ -135,7 +136,8 @@ internal fun SessionUsagePopover(
             // 速度段：只在采集到首字时才出现。
             // 用 lastDecodeMs 除 lastOutputTokens（含推理）；用总耗时会把工具和排队算进去。
             val decodeSpeed = decodeSpeedValue(usage)
-            if (decodeSpeed != null || usage.lastFirstTokenMs != null) {
+            val speedRecycled = usage.speedSource == SpeedSource.Recycled
+            if (decodeSpeed != null || usage.lastFirstTokenMs != null || speedRecycled) {
                 val unit = stringResource(R.string.usage_unit_tok_per_s)
                 StatsSectionDivider()
                 StatsSectionHeader(
@@ -149,6 +151,13 @@ internal fun SessionUsagePopover(
                         label = stringResource(R.string.usage_row_first_token),
                         value = formatDurationMs(ms),
                     )
+                }
+                if (speedRecycled) {
+                    // 只有「确实跑过、但记录被清理」才解释。
+                    // 「没跑过」不需要说明（空会话显示一段提示是噪音），
+                    // 「存储不可用」属于异常，也不该在这里教育用户。
+                    Spacer(Modifier.height(8.dp))
+                    StatsNoteRow(stringResource(R.string.usage_speed_unavailable_recycled))
                 }
             }
 
@@ -254,6 +263,17 @@ private fun StatsSectionDivider() {
             .padding(top = 8.dp, bottom = 10.dp)
             .height(0.5.dp)
             .background(MiuixTheme.colorScheme.dividerLine),
+    )
+}
+
+/** 一行浅色说明文字：解释「为什么没有数据」，不是数据本身。 */
+@Composable
+private fun StatsNoteRow(text: String) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.footnote1.copy(fontSize = 11.sp, lineHeight = 16.sp),
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.9f),
+        modifier = Modifier.fillMaxWidth(),
     )
 }
 

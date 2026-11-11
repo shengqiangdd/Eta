@@ -2260,6 +2260,7 @@
   <string name="usage_open_action">View usage</string>
   <string name="usage_section_speed">Speed</string>
   <string name="usage_row_first_token">First token</string>
+  <string name="usage_speed_unavailable_recycled">This session has run, but its timing record was cleared (only the most recent runs are kept). The speed line will return on the next run.</string>
   <string name="usage_unit_tok_per_s">tok/s</string>
   <string name="usage_section_output">Output</string>
   <string name="usage_row_cache_hit">Cache hit</string>
