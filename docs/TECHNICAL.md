@@ -5915,3 +5915,50 @@ git 会拒绝并告诉我，而不是静默丢掉。四个都删成功，说明�
 只要没跑 `gc --prune=now` 就能恢复。
 
 删除后：只剩 `main` 与 `origin/main`，工作区干净，提交数 749 不变。
+
+## Fork 与远程覆盖（2026-08-11）
+
+### 做了什么
+
+1. 把 `Mangi-11/Eta` fork 到 `shengqiangdd/Eta`（GitHub API，`default_branch_only: false`）。
+2. 用本地 750 个提交**覆盖** fork 的 `main`：
+   `git push --force-with-lease=main:924eaa9d… fork HEAD:refs/heads/main`
+   结果 `924eaa9d → 68c16626 (forced update)`。
+3. `main` 的上游设为 `fork/main`，避免以后 `git push` 误推到原仓库。
+
+### 远程现状
+
+| remote | 地址 | 说明 |
+| fork | github.com/shengqiangdd/Eta | 日常推送目标，main 跟踪它 |
+| origin | github.com/Mangi-11/Eta | 保留为上游参考，**不再推送** |
+
+验证：本地 `HEAD` 与 `fork/main` 同为 `68c16626`；`TECHNICAL.md` 与
+`AgentRunTraceStore.kt` 在远程可读（HTTP 200）；第 750 页仍有提交，
+说明完整历史都已推上去。
+
+### 丢掉的历史与退路
+
+原 `origin/main`（`300b0d18`，465 个提交）里那 17 个提交不再在 fork 的 `main` 上，
+其中包含 v3.4.1 的「回答底部操作栏」「会话用量浮层」等特性。
+
+**内容没有丢**：这些特性在本地 main 上有等价实现，只是提交历史不同。
+历史本身也留了退路 —— 强推前建了本地分支：
+
+```
+backup/origin-main-before-overwrite = 300b0d18
+```
+
+需要时 `git branch <名字> 300b0d18` 即可取回。这些对象仍在本地库中，
+只要不跑 `git gc --prune=now` 就能恢复。
+
+### 用 --force-with-lease 而不是 --force
+
+`--force` 会无条件覆盖，如果这期间有人往 fork 推过东西，会被静默丢弃。
+`--force-with-lease=main:924eaa9d…` 要求远程仍停在这个 SHA 才允许覆盖，
+否则直接失败 —— 把「我以为的远程状态」摊开给 git 校验。
+
+### 凭证处理
+
+token 通过环境变量 `Github_Token` 读取，只用于构造带凭证的 remote URL。
+推送完成后立刻 `git remote set-url` 抹掉 URL 里的 token，并 `grep` 确认
+`.git/config` 无残留。凭证不该留在配置文件里被后续命令或备份带出去。
