@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 数据库版本号：实体改动必须同步 +1 并补一条 MIGRATION，单测会卡住不一致的情况。 */
-internal const val ETA_DATABASE_VERSION = 26
+internal const val ETA_DATABASE_VERSION = 27
 
 @Database(
     entities = [
@@ -138,6 +138,26 @@ internal abstract class EtaDatabase : RoomDatabase() {
 
         internal val MIGRATION_25_26 = Migration(25, 26) { database ->
             database.execSQL(SQL_V25_ADD_PROMPT_TOKENS)
+        }
+
+        /**
+         * 首字延迟与解码耗时。
+         *
+         * 为什么不能用现有的 elapsed_seconds 反推：那一列是**整轮**的总耗时，
+         * 把排队、重试退避、工具执行、传输全算进去。用它除输出 token
+         * 得到的「速度」会因工具耗时而严重偏低，没有意义。
+         * 分开存两个时间点才能算出「模型真正生成的快慢」。
+         *
+         * 旧行两列都是 NULL：读取端必须把 NULL 当「没数据」，不能当 0。
+         */
+        internal const val SQL_V26_ADD_TIMING_COLUMNS =
+            "ALTER TABLE conversation_messages ADD COLUMN first_token_ms INTEGER"
+        internal const val SQL_V26_ADD_DECODE_MS =
+            "ALTER TABLE conversation_messages ADD COLUMN decode_ms INTEGER"
+
+        internal val MIGRATION_26_27 = Migration(26, 27) { database ->
+            database.execSQL(SQL_V26_ADD_TIMING_COLUMNS)
+            database.execSQL(SQL_V26_ADD_DECODE_MS)
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -348,6 +368,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
             MIGRATION_23_24,
             MIGRATION_24_25,
             MIGRATION_25_26,
+            MIGRATION_26_27,
         )
     }
 }

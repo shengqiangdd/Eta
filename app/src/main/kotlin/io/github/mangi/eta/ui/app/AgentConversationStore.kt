@@ -739,6 +739,10 @@ internal object AgentConversationStore {
                 type = TYPE_THINKING,
                 content = content,
                 elapsedSeconds = elapsedSeconds,
+                // 首字与解码耗时必须跟着落库：只存在内存里的话，
+                // 切一次会话就丢了，卡片上的速度会“凭空消失”。
+                firstTokenMs = firstTokenMs,
+                decodeMs = decodeMs,
             )
 
             is ToolActivityMessageUi -> ConversationMessageEntity(
@@ -809,6 +813,8 @@ internal object AgentConversationStore {
                 content = content,
                 isStreaming = false,
                 elapsedSeconds = elapsedSeconds,
+                firstTokenMs = firstTokenMs,
+                decodeMs = decodeMs,
                 collapsed = true,
             )
 

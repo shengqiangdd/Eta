@@ -25,6 +25,14 @@ internal class AgentRunMessageProjector(
     private val thinkingStartedAt = mutableMapOf<String, Long>()
 
     /**
+     * 每轮收到第一个内容碑的时刻（key = thinkingId）。
+     *
+     * 只在首次自增时写入：后续每个 delta 都覆盖就不是首字了。
+     * 用 elapsedRealtime 而非壁钟：壁钟会因时区/校时跳变，导致耗时为负。
+     */
+    private val firstTokenAt = mutableMapOf<String, Long>()
+
+    /**
      * App 与系统助手浮层共用的事件到消息投影。无可见变化的事件原样返回同一列表，
      * 调用方据此跳过保存与时间戳更新；补充输入的插入位置与持久化由调用方决定，这里不处理。
      */
@@ -206,6 +214,16 @@ internal class AgentRunMessageProjector(
         messages: List<AgentChatMessageUi>,
     ): List<AgentChatMessageUi> {
         if (delta.isEmpty()) return messages
+
+        // 记下首字时刻（若未记过）。
+        //
+        // 时钟读取包在 runCatching 里：这个方法是**渲染热路径**，每个 delta 都会进来，
+        // 而时钟源在纯 JVM 单测里不可用（SystemClock 未 mock）。为了采一个可选指标
+        // 把整条流式渲染弄崩，是完全不划算的取舍 —— 采不到就是 null，界面上不显示那一行。
+        val tokenKey = thinkingMessageId(runId, round, index)
+        if (tokenKey !in firstTokenAt) {
+            runCatching { nowElapsedRealtime() }.getOrNull()?.let { firstTokenAt[tokenKey] = it }
+        }
 
         val transitioned = transitionVisibleBlock(
             runId = runId,
@@ -601,17 +619,40 @@ internal class AgentRunMessageProjector(
 
     fun clearRun(runId: String) {
         thinkingStartedAt.keys.removeAll { it.startsWith("$runId-thinking-") }
+        // 不清理 firstTokenAt 会随每轮累积，长会话里是真正的泄漏。
+        firstTokenAt.keys.removeAll { it.startsWith("$runId-thinking-") }
     }
 
-    private fun ThinkingMessageUi.finished(authoritativeContent: String? = null): ThinkingMessageUi =
-        copy(
+    /**
+     * 首字延迟与解码耗时（毫秒）。
+     *
+     * 首字 = 请求发出 → 第一个内容碑；解码 = 首字 → 本轮结束。
+     * 两者相加不等于总耗时（总耗时含工具、排队），因此必须分开存。
+     *
+     * 任一时间点缺失就返回 null：拿不到就是拿不到，不能用 0 充当「很快」。
+     */
+    private fun timingFor(messageId: String, now: Long): Pair<Int?, Int?> {
+        val started = thinkingStartedAt[messageId] ?: return null to null
+        val first = firstTokenAt[messageId] ?: return null to null
+        val firstTokenMs = ((first - started).coerceAtLeast(0)).toInt()
+        val decodeMs = ((now - first).coerceAtLeast(0)).toInt()
+        return firstTokenMs to decodeMs
+    }
+
+    private fun ThinkingMessageUi.finished(authoritativeContent: String? = null): ThinkingMessageUi {
+        val now = nowElapsedRealtime()
+        val (firstTokenMs, decodeMs) = timingFor(id, now)
+        return copy(
             content = authoritativeContent ?: content,
             isStreaming = false,
+            firstTokenMs = firstTokenMs ?: this.firstTokenMs,
+            decodeMs = decodeMs ?: this.decodeMs,
             elapsedSeconds = thinkingStartedAt[id]?.let { startedAt ->
-                ((nowElapsedRealtime() - startedAt) / 1000).toInt().coerceAtLeast(0)
+                ((now - startedAt) / 1000).toInt().coerceAtLeast(0)
             } ?: elapsedSeconds,
             collapsed = true,
         )
+    }
 
     private fun elapsedSeconds(thinkingId: String): Int {
         val startedAt = thinkingStartedAt.getOrPut(thinkingId, nowElapsedRealtime)

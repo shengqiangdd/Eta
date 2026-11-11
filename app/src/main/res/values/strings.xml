@@ -2258,6 +2258,10 @@
 
   <string name="usage_section_input">Input</string>
   <string name="usage_open_action">View usage</string>
+  <string name="usage_section_speed">Speed</string>
+  <string name="usage_row_first_token">First token</string>
+  <string name="usage_row_decode_speed">Generation</string>
+  <string name="usage_unit_tok_per_s">tok/s</string>
   <string name="usage_section_output">Output</string>
   <string name="usage_row_cache_hit">Cache hit</string>
   <string name="usage_row_uncached">Not cached</string>

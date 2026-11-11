@@ -139,6 +139,19 @@ internal data class ConversationMessageEntity(
      */
     @ColumnInfo(name = "prompt_tokens") val promptTokens: Int? = null,
     @ColumnInfo(name = "elapsed_seconds") val elapsedSeconds: Int? = null,
+    /**
+     * 首字延迟（毫秒）：从发出请求到收到第一个内容碑。
+     *
+     * 与 [elapsedSeconds] 区分：后者是整轮总耗时（含工具、排队、重试）。
+     * 「首字」是用户体感的响应快慢，不能从总耗时推出来。旧数据为 null。
+     */
+    @ColumnInfo(name = "first_token_ms") val firstTokenMs: Int? = null,
+    /**
+     * 解码耗时（毫秒）：从首字到本轮正文结束。
+     *
+     * 用它除输出 token 才是真正的生成速度；用总耗时会把工具等待算进去。旧数据为 null。
+     */
+    @ColumnInfo(name = "decode_ms") val decodeMs: Int? = null,
     @ColumnInfo(name = "tool_name") val toolName: String? = null,
     @ColumnInfo(name = "tool_status") val toolStatus: String? = null,
     @ColumnInfo(name = "arguments_summary") val argumentsSummary: String? = null,

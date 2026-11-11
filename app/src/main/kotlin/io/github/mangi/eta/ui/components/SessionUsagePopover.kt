@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -129,6 +130,32 @@ internal fun SessionUsagePopover(
                     label = stringResource(R.string.usage_row_reasoning),
                     value = formatExactTokenCount(usage.reasoningTokens) + " tok",
                 )
+            }
+
+            // 速度段：只在采集到首字时才出现。
+            // 用 lastDecodeMs 除 lastOutputTokens（含推理）；用总耗时会把工具和排队算进去。
+            val decodeSpeed = decodeSpeedValue(usage)
+            if (decodeSpeed != null || usage.lastFirstTokenMs != null) {
+                val unit = stringResource(R.string.usage_unit_tok_per_s)
+                StatsSectionDivider()
+                StatsSectionHeader(
+                    icon = Icons.Rounded.Speed,
+                    title = stringResource(R.string.usage_section_speed),
+                    value = decodeSpeed?.let { "$it $unit" },
+                )
+                usage.lastFirstTokenMs?.let { ms ->
+                    Spacer(Modifier.height(6.dp))
+                    StatsDetailRow(
+                        label = stringResource(R.string.usage_row_first_token),
+                        value = formatDurationMs(ms),
+                    )
+                }
+                if (decodeSpeed != null) {
+                    StatsDetailRow(
+                        label = stringResource(R.string.usage_row_decode_speed),
+                        value = "$decodeSpeed $unit",
+                    )
+                }
             }
 
             if (usage.requestCount > 0 || usage.contextTokens != null) {
@@ -271,6 +298,32 @@ private fun StatsDetailRow(label: String, value: String) {
 /** 精确分组（1234 → 1,234）。卡片里用精确值，胶囊上用缩写。 */
 internal fun formatExactTokenCount(value: Int): String =
     java.text.NumberFormat.getIntegerInstance(java.util.Locale.getDefault()).format(value)
+
+/**
+ * 生成速度文案（tok/s）。
+ *
+ * 只用**解码耗时**除输出 token。若用整轮总耗时，一次长工具调用就会把
+ * 速度拉到几十 tok/s 以下，看起来像模型很慢，实际只是工具耗时。
+ * 任一数据缺失返回 null（卡片不显示这一行）。
+ */
+internal fun decodeSpeedValue(usage: AgentSessionUsageUi): String? {
+    val decodeMs = usage.lastDecodeMs?.takeIf { it > 0 } ?: return null
+    val tokens = usage.lastOutputTokens?.takeIf { it > 0 } ?: return null
+    val tps = tokens * 1000.0 / decodeMs
+    // 与胶囊一致：极低速度显示 <0.1，不显示 0.0（看起来像没输出）。
+    return if (tps < 0.05) "<0.1" else String.format(java.util.Locale.US, "%.1f", tps)
+}
+
+/** 耗时：不到 1s 用毫秒，否则用秒并保留一位小数。 */
+internal fun formatDurationMs(ms: Int): String {
+    if (ms < 1_000) return "${ms}ms"
+    val seconds = ms / 1000.0
+    return if (seconds < 10) {
+        String.format(java.util.Locale.US, "%.1fs", seconds)
+    } else {
+        "${Math.round(seconds)}s"
+    }
+}
 
 /** 命中率；与胶囊一致：数据不足时显示 `—`，不显示 0%。 */
 internal fun formatCacheHitPercent(rate: Float?): String =

@@ -25,6 +25,16 @@ internal data class AgentSessionUsageUi(
     val outputTokens: Int = 0,
     val reasoningTokens: Int = 0,
     val requestCount: Int = 0,
+    /**
+     * 最近一轮的首字延迟与解码耗时（毫秒）。
+     *
+     * 只取最近一轮而不求平均：速度受当前网络与服务商状态影响最大，
+     * 历史平均反而会掩盖「现在很慢」这个最有用的信号。null = 未采集到。
+     */
+    val lastFirstTokenMs: Int? = null,
+    val lastDecodeMs: Int? = null,
+    /** 最近一轮的输出 token（含推理），用于算生成速度。 */
+    val lastOutputTokens: Int? = null,
 ) {
     /** 缓存命中率；分母为 0 或数据不足时为 null（界面显示「—」，不要显示 0%）。 */
     val cacheHitRate: Float?
@@ -63,8 +73,17 @@ internal data class AgentSessionUsageUi(
             // 上下文占用取「最近一条有值的」，它表示当前窗口里的实际占用，
             // 不能求和 —— 求和会把历史每轮的占用加在一起，远超窗口大小。
             var latestContext: Int? = null
+            var lastFirstTokenMs: Int? = null
+            var lastDecodeMs: Int? = null
+            var lastRoundOutput: Int? = null
 
             for (message in messages) {
+                // 首字/解码只在 ThinkingMessageUi 上，与 usage 无关，
+                // 所以在 usage 判定**之前**先读，否则会漏掉没用量的轮次。
+                if (message is ThinkingMessageUi) {
+                    message.firstTokenMs?.let { lastFirstTokenMs = it }
+                    message.decodeMs?.let { lastDecodeMs = it }
+                }
                 if (message !is AgentMessageUi) continue
                 val usage = message.usage ?: continue
                 if (usage.isEmpty) continue
@@ -73,6 +92,9 @@ internal data class AgentSessionUsageUi(
                 // 没给总输入时回退到 inputTokens：旧消息只有这个字段。
                 usage.promptTokens?.let { prompt += it } ?: usage.inputTokens?.let { prompt += it }
                 usage.outputTokens?.let { output += it }
+                // 生成速度的分子：本轮输出（含推理，推理也是真实生成的）。
+                lastRoundOutput = listOfNotNull(usage.outputTokens, usage.reasoningTokens)
+                    .takeIf { it.isNotEmpty() }?.sum()
                 usage.reasoningTokens?.let { reasoning += it }
                 usage.contextTokens?.let { latestContext = it }
             }
@@ -85,6 +107,9 @@ internal data class AgentSessionUsageUi(
                 outputTokens = output,
                 reasoningTokens = reasoning,
                 requestCount = requests,
+                lastFirstTokenMs = lastFirstTokenMs,
+                lastDecodeMs = lastDecodeMs,
+                lastOutputTokens = lastRoundOutput,
             )
         }
     }
