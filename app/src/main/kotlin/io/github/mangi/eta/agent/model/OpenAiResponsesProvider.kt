@@ -41,16 +41,12 @@ internal object OpenAiResponsesProvider : AgentProviderClient {
             request = httpRequest,
             controller = runController,
         ) { response ->
-<<<<<<< HEAD
             onEvent(
                 ProviderEvent.ResponseHeaders(
                     httpCode = response.code,
                     retryAfterSeconds = AgentRetryPolicy.parseRetryAfter(response.header("Retry-After")),
                 ),
             )
-=======
-            onEvent(ProviderEvent.ResponseHeaders(response.code))
->>>>>>> origin/main
             if (!response.isSuccessful) {
                 throw AgentModelFailure.http(response.code, response.peekBody(16_384).string())
             }
