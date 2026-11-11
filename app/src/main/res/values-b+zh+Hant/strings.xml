@@ -2205,7 +2205,6 @@
   <string name="usage_open_action">查看用量</string>
   <string name="usage_section_speed">速度</string>
   <string name="usage_row_first_token">首字延遲</string>
-  <string name="usage_row_decode_speed">生成速度</string>
   <string name="usage_unit_tok_per_s">tok/s</string>
   <string name="usage_section_output">輸出</string>
   <string name="usage_row_cache_hit">快取命中</string>

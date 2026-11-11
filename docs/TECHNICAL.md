@@ -5299,3 +5299,58 @@ if (!guard.tryBegin()) { toast(); return }
 `llmMs`（纯模型用时，扣掉工具）没有做。它需要在工具调用前后打点并归因，
 比这两个时间点复杂得多，且卡片现在没有位置展示「模型 vs 工具」的拆分。
 在真正需要之前不提前采集——采集了不展示就是纯开销。
+
+### fix161（真机验证）：三个只有跑起来才会暴露的 bug
+
+这一轮在真机上装了 canary、跑真实对话、翻数据库逐条核对，抓出三个单测**全绿**也发现不了的问题。
+
+#### 1. 首字延迟恒为 0（起点被覆盖）
+
+`thinkingStartedAt` 原本只在 `elapsedSeconds()` 里用 `getOrPut(thinkingId, ...)` 懒写入，
+也就是**轮次结束**那一刻才建立起点 —— 与终点同一个瞬间，差值恒为 0。
+
+修法不是「把起点提前到首字」（那会让首字延迟也恒为 0），而是：
+- 起点由 `ProviderRequestStarted` 事件建立，写**轮次键** `run-thinking-<round>-`；
+- 首字仍按消息键记；
+- 两者相减才是真的首字延迟。
+
+真机实测：`first_token_ms=3897`、`decode_ms=726`，与体感一致。
+
+#### 2. 两个 `map` 混用，把「没有数据」变成「0」
+
+`elapsedSeconds` 与首字/解码共用了一个 map。后果是：**没有** `ProviderRequestStarted`
+的轮次（历史数据、异常中断）也会被写入一个「起点」，于是首字延迟算出来是 0 而不是 null，
+界面显示「瞬间响应」—— 比不显示错得多。
+
+拆成三个 map，语义各自独立：
+| map | 谁写 | 谁读 |
+| `elapsedStartedAt` | `ProviderRequestStarted` | 首字/解码指标 |
+| `elapsedSecondsStart` | `elapsedSeconds` 懒写入 | 思考耗时（原有行为） |
+| `firstTokenAt` | 首个 delta | 首字/解码指标 |
+
+#### 3. 前缀匹配取最长 → 又取到了被污染的那个键
+
+轮次键 `run-thinking-1-` 与消息键 `run-thinking-1-0` 都能匹配上同一消息。
+`maxByOrNull { it.key.length }` 会选到**消息键**（那个被 `elapsedSeconds` 写成「此刻」的脏值）。
+改成 `minByOrNull`：最短匹配 = 粒度最粗的轮次键 = 真正的请求发出时刻。
+
+测试里专门钉住了这一条：轮次 1 与轮次 10 各自计时，互不串用。
+
+#### 4. 速度段重复显示（UI 层）
+
+卡片上「速度」标题右侧已经显示 `75.8 tok/s`，下面又有一行「生成速度 75.8 tok/s」，
+同样的数字出现两次。删掉重复的行，连带删掉只服务于它的 `usage_row_decode_speed` 三个语言条目。
+
+#### 5. 推理块不记首字
+
+`appendTextDelta` 记了首字，但 `appendReasoningDelta` 没记。模型先吐 reasoning 是常见情况，
+只记正文会让这类轮次的速度段永远不出现。已在两个入口都补上。
+
+### 真机验证记录
+
+| 检查项 | 结果 |
+| 迁移 26→27 | 版本 26→27，两列已加，170039 条旧消息**一条没丢** |
+| 旧数据 | 新列全为 NULL（不是 0），符合预期 |
+| 采集 | `first_token_ms=3897`、`decode_ms=726`，真实写入 |
+| 界面 | 速度 75.8 tok/s、首字延迟 3.9s 正确显示 |
+| 崩溃 | dropbox 无 Eta 相关记录（23:xx 那批是 `com.floatlite.browser`） |

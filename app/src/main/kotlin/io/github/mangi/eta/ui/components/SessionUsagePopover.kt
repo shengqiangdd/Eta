@@ -150,12 +150,6 @@ internal fun SessionUsagePopover(
                         value = formatDurationMs(ms),
                     )
                 }
-                if (decodeSpeed != null) {
-                    StatsDetailRow(
-                        label = stringResource(R.string.usage_row_decode_speed),
-                        value = "$decodeSpeed $unit",
-                    )
-                }
             }
 
             if (usage.requestCount > 0 || usage.contextTokens != null) {

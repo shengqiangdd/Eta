@@ -22,7 +22,11 @@ internal class AgentRunMessageProjector(
      */
     private val nowWallClock: () -> Long = { System.currentTimeMillis() },
 ) {
-    private val thinkingStartedAt = mutableMapOf<String, Long>()
+    /** 首字/解码指标的计时起点，只由 ProviderRequestStarted 写入（轮次键）。 */
+    private val elapsedStartedAt = mutableMapOf<String, Long>()
+
+    /** `elapsedSeconds` 用的思考耗时起点，语义与上面完全不同，必须分开。 */
+    private val elapsedSecondsStart = mutableMapOf<String, Long>()
 
     /**
      * 每轮收到第一个内容碑的时刻（key = thinkingId）。
@@ -81,9 +85,9 @@ internal class AgentRunMessageProjector(
         is AgentEvent.SearchSuggestions -> attachSearchSuggestions(runId, event, messages)
         is AgentEvent.SubagentProgress -> updateSubagentProgress(runId, event, messages)
         is AgentEvent.RunFinished -> finalizeText(runId, finalizeThinking(runId, messages))
+        is AgentEvent.ProviderRequestStarted -> recordProviderRequestStart(runId, event, messages)
         is AgentEvent.UserSupplementReceived,
         is AgentEvent.RunStarted,
-        is AgentEvent.ProviderRequestStarted,
         is AgentEvent.ProviderResponseStarted,
         is AgentEvent.ToolImagesAttached,
         is AgentEvent.RoundStarted,
@@ -220,6 +224,8 @@ internal class AgentRunMessageProjector(
         // 时钟读取包在 runCatching 里：这个方法是**渲染热路径**，每个 delta 都会进来，
         // 而时钟源在纯 JVM 单测里不可用（SystemClock 未 mock）。为了采一个可选指标
         // 把整条流式渲染弄崩，是完全不划算的取舍 —— 采不到就是 null，界面上不显示那一行。
+        // 只记首字时刻；起点由 ProviderRequestStarted 建立（见 recordProviderRequestStart）。
+        // 不能在这里补建起点：那会让首字延迟恒为 0。
         val tokenKey = thinkingMessageId(runId, round, index)
         if (tokenKey !in firstTokenAt) {
             runCatching { nowElapsedRealtime() }.getOrNull()?.let { firstTokenAt[tokenKey] = it }
@@ -268,6 +274,11 @@ internal class AgentRunMessageProjector(
         // 纯空白增量不凭空建节点：模型偶尔只发一个空格或换行，落库后就是一条空「思考」。
         // 已有节点时仍照常追加 —— 段落之间的空行是正文格式的一部分，不能在这里吃掉。
         val thinkingId = thinkingMessageId(runId, round, index)
+        // 推理块同样要记首字：模型先吐 reasoning 时，用户看到的「第一个字」是推理的第一句。
+        // 只记正文会漏掉这一类（很常见）的轮次，速度段就永远不出现。
+        if (thinkingId !in firstTokenAt) {
+            runCatching { nowElapsedRealtime() }.getOrNull()?.let { firstTokenAt[thinkingId] = it }
+        }
         val hasThinkingMessage = messages.any { it is ThinkingMessageUi && it.id == thinkingId }
         if (!hasThinkingMessage && delta.isBlank()) return messages
 
@@ -618,7 +629,8 @@ internal class AgentRunMessageProjector(
         }
 
     fun clearRun(runId: String) {
-        thinkingStartedAt.keys.removeAll { it.startsWith("$runId-thinking-") }
+        elapsedStartedAt.keys.removeAll { it.startsWith("$runId-thinking-") }
+        elapsedSecondsStart.keys.removeAll { it.startsWith("$runId-thinking-") }
         // 不清理 firstTokenAt 会随每轮累积，长会话里是真正的泄漏。
         firstTokenAt.keys.removeAll { it.startsWith("$runId-thinking-") }
     }
@@ -632,7 +644,20 @@ internal class AgentRunMessageProjector(
      * 任一时间点缺失就返回 null：拿不到就是拿不到，不能用 0 充当「很快」。
      */
     private fun timingFor(messageId: String, now: Long): Pair<Int?, Int?> {
-        val started = thinkingStartedAt[messageId] ?: return null to null
+        // 优先用**轮次前缀**（ProviderRequestStarted 写入的请求发出时刻）。
+        //
+        // 不能先查消息 id：`elapsedSeconds` 会在轮次结束时用 `getOrPut(thinkingId, ...)`
+        // 顺手写入一个「此刻」的起点，那个值与首字几乎同时，算出的首字延迟恒为 0。
+        // 这是实测踩到的 bug —— 真机上首字数据一直为空/为 0。
+        val started = elapsedStartedAt.entries
+            .filter { messageId.startsWith(it.key) }
+            // 取**最短**匹配：轮次键（"run-thinking-1-"）是真正的「请求发出」时刻，
+            // 而消息键（"...-1-0"）是 elapsedSeconds 在首个 delta 时用 getOrPut 顺手写的
+            // 「此刻」，与首字几乎同一瞬间。取最长匹配会让首字延迟恒为 0。
+            .minByOrNull { it.key.length }
+            ?.value
+            ?: elapsedStartedAt[messageId]
+            ?: return null to null
         val first = firstTokenAt[messageId] ?: return null to null
         val firstTokenMs = ((first - started).coerceAtLeast(0)).toInt()
         val decodeMs = ((now - first).coerceAtLeast(0)).toInt()
@@ -647,15 +672,47 @@ internal class AgentRunMessageProjector(
             isStreaming = false,
             firstTokenMs = firstTokenMs ?: this.firstTokenMs,
             decodeMs = decodeMs ?: this.decodeMs,
-            elapsedSeconds = thinkingStartedAt[id]?.let { startedAt ->
+            elapsedSeconds = elapsedSecondsStart[id]?.let { startedAt ->
                 ((now - startedAt) / 1000).toInt().coerceAtLeast(0)
             } ?: elapsedSeconds,
             collapsed = true,
         )
     }
 
+    /**
+     * 请求发出：为本轮建立计时起点。
+     *
+     * 起点必须在这里，不能等到首个 delta 或轮次结束：
+     * - 等到轮次结束（`elapsedSeconds` 里的 getOrPut）→ 起点等于终点，首字延迟恒为 0；
+     * - 等到首个 delta → 起点即首字，首字延迟恒为 0。
+     *
+     * 只有「请求发出」到「首字到达」的差才是真正的首字延迟。
+     *
+     * 用 put（而不是 putIfAbsent）：同一轮可能重试，重试应当重置起点 ——
+     * 用户等的是最近一次尝试的响应速度。但**已记录的首字要一并清掉**，
+     * 否则重试后会用到上一次尝试的首字时刻，算出负数或极大值。
+     */
+    private fun recordProviderRequestStart(
+        runId: String,
+        event: AgentEvent.ProviderRequestStarted,
+        messages: List<AgentChatMessageUi>,
+    ): List<AgentChatMessageUi> {
+        runCatching { nowElapsedRealtime() }.getOrNull()?.let { now ->
+            // 本轮所有 thinking 消息的起点一起刷新：delta 到达前还不知道会落到哪一条。
+            val prefix = "$runId-thinking-${event.round}-"
+            elapsedStartedAt.keys.filter { it.startsWith(prefix) }.forEach { firstTokenAt.remove(it) }
+            elapsedStartedAt[prefix] = now
+        }
+        return messages
+    }
+
     private fun elapsedSeconds(thinkingId: String): Int {
-        val startedAt = thinkingStartedAt.getOrPut(thinkingId, nowElapsedRealtime)
+        // 必须有独立的 map，不能和首字/解码用的起点共用。
+        //
+        // 共用的后果（实测踩到）：没有 ProviderRequestStarted 的轮次，这里会顺手写入一个
+        // 「首字时刻」当起点，于是首字延迟算出来是 0 而不是 null —— 界面显示「瞬间响应」，
+        // 比不显示错得多。两个时刻语义不同，不能塞进同一个 map。
+        val startedAt = elapsedSecondsStart.getOrPut(thinkingId, nowElapsedRealtime)
         return ((nowElapsedRealtime() - startedAt) / 1000).toInt().coerceAtLeast(0)
     }
 
