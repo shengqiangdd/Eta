@@ -2210,7 +2210,7 @@
   <string name="usage_section_output">輸出</string>
   <string name="usage_row_cache_hit">快取命中</string>
   <string name="usage_row_uncached">未命中快取</string>
-  <string name="usage_row_reasoning">推理</string>
+  <string name="usage_row_reasoning">其中推理</string>
   <string name="usage_row_turns">輪次</string>
   <string name="usage_row_context">上下文</string>
 </resources>

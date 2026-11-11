@@ -2265,7 +2265,7 @@
   <string name="usage_section_output">Output</string>
   <string name="usage_row_cache_hit">Cache hit</string>
   <string name="usage_row_uncached">Not cached</string>
-  <string name="usage_row_reasoning">Reasoning</string>
+  <string name="usage_row_reasoning">of which reasoning</string>
   <string name="usage_row_turns">Turns</string>
   <string name="usage_row_context">Context</string>
 </resources>

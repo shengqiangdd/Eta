@@ -5821,3 +5821,47 @@ newestFirst.firstOrNull { runFinished(it) }?.let { … }
 - 都已完成时取最新
 - 首次运行仍在进行时退回最新（总得给界面一个值）
 - 只在**本会话**里挑，不受其它会话进行中记录影响
+
+## fix170：速度被推理 token 抬高（推理是子集，不是并列项）
+
+### 数据
+
+真机 200 条 assistant 消息，全部满足 `reasoningTokens ≤ outputTokens`。
+再核对三家供应商的解析：
+
+| 供应商 | 字段 | 语义 |
+| OpenAI Chat | `usage.completion_tokens_details.reasoning_tokens` | output 的明细 |
+| OpenAI Responses | `usage.output_tokens_details.reasoning_tokens` | output 的明细 |
+| Anthropic | `usage.thinking_output_tokens` | output 的明细 |
+
+三家都是**明细**（子集），不是并列项。
+
+### 两个错
+
+**一、速度分子重复计数**
+
+```kotlin
+lastRoundOutput = listOfNotNull(usage.outputTokens, usage.reasoningTokens).sum()
+```
+
+output 已经含推理，再加一遍 → 速度虚高。实测：平均 1.04x，推理密集的轮次最坏 **1.88x**。
+平均看起来无害，正是因为大多数轮次推理很少 —— 但这恰恰是最不该被平均掉的部分：
+用户真正在意的就是「复杂问题上模型有多快」。
+
+追踪侧的 `speedOf` 用的是 `outputTokens`，两边口径还不一致。现已统一。
+
+**二、卡片显示误导**
+
+「输出 439 tok」下面单列一行「推理 13 tok」，读起来是 452。
+改成「其中推理」，明确它是 output 内部的比例。
+
+### 测试
+
+`SpeedNumeratorTest`（6 条）：分子等于 output 不加推理、推理占大头时不翻倍
+（output=100 / reasoning=88 那种真机样本）、无推理时照常、output 缺失时
+不退回推理数（宁可不给速度）、output=0 时不给分子、推理总量仍单独统计。
+
+### 一个没做的取舍
+
+`output` 缺失但 `reasoning` 有时，不回退用推理数当分子。它是 output 的子集，
+单独拿出来会**偏小**，那比不给速度更糟。

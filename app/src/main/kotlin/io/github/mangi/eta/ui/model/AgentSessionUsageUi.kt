@@ -116,9 +116,13 @@ internal data class AgentSessionUsageUi(
                 // 没给总输入时回退到 inputTokens：旧消息只有这个字段。
                 usage.promptTokens?.let { prompt += it } ?: usage.inputTokens?.let { prompt += it }
                 usage.outputTokens?.let { output += it }
-                // 生成速度的分子：本轮输出（含推理，推理也是真实生成的）。
-                lastRoundOutput = listOfNotNull(usage.outputTokens, usage.reasoningTokens)
-                    .takeIf { it.isNotEmpty() }?.sum()
+                // 生成速度的分子：本轮输出 token。
+                //
+                // **不要把 reasoningTokens 再加上去**：供应商的 output_tokens 已经包含
+                // 推理 token（真机 200 条样本全部满足 reasoning ≤ output）。
+                // 相加会让推理密集的轮次速度虚高，实测最坏 1.88x、平均 1.04x。
+                // 追踪侧的 speedOf 用的就是 outputTokens，两边口径必须一致。
+                lastRoundOutput = usage.outputTokens?.takeIf { it > 0 }
                 usage.reasoningTokens?.let { reasoning += it }
                 usage.contextTokens?.let { latestContext = it }
             }
