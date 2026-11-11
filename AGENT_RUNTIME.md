@@ -13,13 +13,22 @@
 按项目既有约定（发布口径看 `docs/`），这里不再维护第二份；完整历史内容仍可从 git 历史取回
 （`git log -- AGENT_RUNTIME.md`）。以后只改 `docs/AGENT_RUNTIME.md`。
 
-## 同类情况（尚未处理，如实记录）
+## 同类情况
 
-根目录还留着几份比 `docs/` 旧的快照，读之前请以 `docs/` 为准：
+根目录的其它文档现在都是**指针**，正文只在 `docs/` 下：
 
-| 根目录 | 正式文档 |
-| --- | --- |
-| `TECHNICAL.md` | [`docs/TECHNICAL.md`](docs/TECHNICAL.md) |
-| `TERMINAL_NATIVE.md` | [`docs/TERMINAL_NATIVE.md`](docs/TERMINAL_NATIVE.md) |
-| `VOICE.md` | [`docs/VOICE.md`](docs/VOICE.md) |
-| `ROOTLESS_SUPPORT.md` | [`docs/ROOTLESS_SUPPORT.md`](docs/ROOTLESS_SUPPORT.md) |
+| 根目录 | 正式文档 | 说明 |
+| --- | --- | --- |
+| `TECHNICAL.md` | [`docs/TECHNICAL.md`](docs/TECHNICAL.md) | 两份内容一致，由 `tools/doc_mirror.py` 同步 |
+| `TERMINAL_NATIVE.md` | [`docs/TERMINAL_NATIVE.md`](docs/TERMINAL_NATIVE.md) | 根目录版只剩指针 |
+| `VOICE.md` | [`docs/VOICE.md`](docs/VOICE.md) | 根目录版只剩指针 |
+| `ROOTLESS_SUPPORT.md` | [`docs/ROOTLESS_SUPPORT.md`](docs/ROOTLESS_SUPPORT.md) | 根目录版只剩指针 |
+| `UI_COMPONENTS.md` | [`docs/UI_COMPONENTS.md`](docs/UI_COMPONENTS.md) | 根目录版只剩指针 |
+| `THIRD_PARTY_NOTICES.md` | [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) | 根目录版只剩指针 |
+
+改成指针的原因都一样：这些副本都标注「与 `docs/` 保持同步」，实际早已分叉，
+而分叉处往往是结论性的内容（默认语音引擎、ABI 列表、第三方许可条目）。
+两份同名文件并存时，读的人只能按目录猜哪份是准的。
+
+`TECHNICAL.md` 是唯一仍然两份都保留正文的：它的镜像由工具维护，改一处会自动同步。
+其余几份没有这个机制，所以改为指针、只留一份正文。
