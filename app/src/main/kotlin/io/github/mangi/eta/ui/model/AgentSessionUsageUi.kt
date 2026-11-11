@@ -64,6 +64,14 @@ internal data class AgentSessionUsageUi(
         fun of(
             messages: List<AgentChatMessageUi>,
             contextWindow: Int? = null,
+            /**
+             * 从运行追踪读到的速度/首字（调用方异步读好再传进来，这里不做 IO）。
+             *
+             * 为什么不在消息里存这两项：追踪在每个事件到达时打点，真机实测
+             * 21 次请求 / 21 次 `first`，覆盖完整、时间点也更准；消息表那条路
+             * 要靠渲染投影去猜起点，实测在多轮 + 工具调用的形态下全是 0。
+             */
+            runTiming: RunTiming? = null,
         ): AgentSessionUsageUi {
             var cached = 0
             var prompt = 0
@@ -76,6 +84,9 @@ internal data class AgentSessionUsageUi(
             var lastFirstTokenMs: Int? = null
             var lastDecodeMs: Int? = null
             var lastRoundOutput: Int? = null
+            // 最近一次运行的 id：消息 id 形如 `run-<uuid>-thinking-<round>-<index>`，
+            // 前缀就是追踪文件名。用它去找追踪，避免把 runId 再存一份到每一行。
+            var lastRunId: String? = null
 
             for (message in messages) {
                 // 首字/解码只在 ThinkingMessageUi 上，与 usage 无关，
@@ -83,6 +94,7 @@ internal data class AgentSessionUsageUi(
                 if (message is ThinkingMessageUi) {
                     message.firstTokenMs?.let { lastFirstTokenMs = it }
                     message.decodeMs?.let { lastDecodeMs = it }
+                    runIdOf(message.id)?.let { lastRunId = it }
                 }
                 if (message !is AgentMessageUi) continue
                 val usage = message.usage ?: continue
@@ -97,6 +109,20 @@ internal data class AgentSessionUsageUi(
                     .takeIf { it.isNotEmpty() }?.sum()
                 usage.reasoningTokens?.let { reasoning += it }
                 usage.contextTokens?.let { latestContext = it }
+            }
+
+            // 追踪数据优先。它由事件流直接打点，不依赖渲染投影是否正确配对；
+            // 消息上的 firstTokenMs/decodeMs 只作为没有追踪时的回退（旧数据）。
+            if (runTiming != null) {
+                runTiming.firstTokenMs?.let { lastFirstTokenMs = it }
+                // 只在三项齐全时才覆盖，否则保留消息上的值（旧数据回退）。
+                if (runTiming.speedTokensPerSecond != null &&
+                    runTiming.decodeTokens != null &&
+                    runTiming.speedNumeratorTokens != null
+                ) {
+                    lastDecodeMs = runTiming.decodeTokens
+                    lastRoundOutput = runTiming.speedNumeratorTokens
+                }
             }
 
             return AgentSessionUsageUi(
@@ -114,3 +140,26 @@ internal data class AgentSessionUsageUi(
         }
     }
 }
+
+/**
+ * 从消息 id 还原 runId：`run-<uuid>-thinking-<round>-<index>` → `run-<uuid>`。
+ *
+ * 只认 `-thinking-` 这一段：其它消息类型的 id 结构不同，宁可返回 null
+ * 也不要切出错的前缀 —— 错的 runId 会读到别的运行的追踪，比没有更糟。
+ */
+internal fun runIdOf(messageId: String): String? {
+    val cut = messageId.indexOf("-thinking-")
+    return if (cut > 0) messageId.substring(0, cut) else null
+}
+
+/** 一次运行里与「多快」有关的部分，由调用方从追踪里取。 */
+data class RunTiming(
+    /** 首字延迟（毫秒）：请求发出 → 第一个内容碑。缺失为 null。 */
+    val firstTokenMs: Int? = null,
+    /** 纯解码耗时（毫秒）：首字 → 本轮结束。缺失为 null。 */
+    val decodeTokens: Int? = null,
+    /** 解码期间的输出 token 数（含推理）。 */
+    val speedNumeratorTokens: Int? = null,
+    /** 该次运行的解码速度；仅用于判断「有没有值」，界面自己用上面两个数重算。 */
+    val speedTokensPerSecond: Double? = null,
+)

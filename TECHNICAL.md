@@ -5354,3 +5354,109 @@ if (!guard.tryBegin()) { toast(); return }
 | 采集 | `first_token_ms=3897`、`decode_ms=726`，真实写入 |
 | 界面 | 速度 75.8 tok/s、首字延迟 3.9s 正确显示 |
 | 崩溃 | dropbox 无 Eta 相关记录（23:xx 那批是 `com.floatlite.browser`） |
+
+## fix162（真机复验）：我上一轮说「已验证」是错的
+
+用户把主包装上后，我复验了一遍，结论是**上一轮的采集在主包上完全没工作**。
+主包库里 4 条带首字指标的消息，`first_token_ms` **全是 0**；没有任何一条真实值。
+canary 上那次是对的（3897ms / 726ms），我拿单次成功当成了「已修好」。
+
+### 根因：`coerceAtLeast(0)` 把「不知道」伪装成「极快」
+
+```kotlin
+val firstTokenMs = ((first - started).coerceAtLeast(0)).toInt()   // ← 错
+```
+
+当 `started > first`（起点晚于首字，说明本轮数据已失效），差值是负数，
+`coerceAtLeast(0)` 把它压成 0。界面上 `0ms` 的含义是「瞬间响应」——
+这不是「没有数据」，而是一个**看起来很确定的错误答案**。
+
+正确做法是识别出这个非法状态并**不给值**（null，界面不显示那一行）。
+
+### 第二个错误：靠前缀扫描找起点，在多轮之间串用
+
+```kotlin
+.minByOrNull { it.key.length }   // ← 也是在猜
+```
+
+`run-thinking-1-` 是 `run-thinking-10-...` 的前缀。一次 run 里有多个轮次
+（每轮一次请求，中间夹工具调用），前缀扫描会挑到别的轮次的键。
+最短/最长两种选法都只是「在两种错误之间选」，根子上不该靠猜。
+
+改为由消息 id 精确推出轮次键：切掉最后一个 `-<index>` 段，不做任何扫描。
+
+### 为什么测试没抓到
+
+原有 5 个用例全部是「单轮、单请求」：
+
+```kotlin
+messages = projector.applyEvent("run", ProviderRequestStarted(1), messages)
+messages = projector.appendReasoningDelta("run", 1, 0, "首", messages)
+messages = projector.finalizeThinking("run", messages)
+```
+
+真机上一次 run 有 21 个轮次、21 次请求。这个形态一条都没覆盖。
+新增 `AgentRunTimingMultiRoundTest` 两条：
+- 多轮各自建立起点、互不覆盖（断言具体数值）
+- 重试后不能算成 0（这条**先复现了真机的 0**，再修）
+
+### 教训
+
+「单测全绿 + 一次真机成功」不等于修好。我上一轮在 canary 上跑了一次没有重试的
+单轮对话，就把结论写成了「真机验证通过」。**要验的是形态，不是一次运气。**
+
+### 一个没做但该做的方向
+
+项目里 `AgentRunTraceStore` 已经在每个事件到达时打点，真机实测
+**21 次 request / 21 次 first，100% 覆盖**，且 `speedOf()` 的处理比我写的更周全
+（用量在工具后返回、失败重试不摊薄、旧数据回退）。速度指标本该直接用它。
+
+本轮没切过去，因为追踪的 `meta` 里**没有 conversationId**（只有 runId / model /
+provider / purpose），无法从会话反查它的追踪文件。要么给 meta 补字段，
+要么在 App 层维护 runId→conversation 映射 —— 都是独立改动，不在本次范围。
+这条记在这里，避免以后又去消息表上造第二套。
+
+## fix163（架构调整）：速度指标改从运行追踪读，消息表那条路只留作回退
+
+### 为什么换掉
+
+上一轮我在消息表旁边自建了一套采集（`firstTokenAt` / `elapsedStartedAt`），
+结果在真机上**完全不可靠**：主包库里 5 条数据，`first_token_ms` 有 4 条是 0。
+而同一条会话的运行追踪里，**21 次 request 配 21 次 first，一条不缺**。
+
+根本差别在数据源头：
+
+| | 消息表这条路 | 运行追踪 |
+| 打点时机 | 渲染投影里，靠 map + 前缀猜 | 每个事件到达时直接写一行 |
+| 起点 | 要自己维护（还会被重试覆盖） | `request` 事件自带 |
+| 配对 | 按 id 前缀推断 | 按轮次号精确配对 |
+| 真机覆盖 | 4/5 是 0 | 21/21 |
+
+渲染投影那层本来就该只管画，不该兼职测时间。**采集应该发生在事件流里**，
+`AgentRunTraceStore` 已经在那里了。
+
+### 改动
+
+1. `Trace.lastFirstTokenMs`：从「最近一次有配对的 request」取 `first - request`。
+   取最近一轮而不是平均 —— 用户要看的是此刻多快，历史平均会把「现在变慢」糊掉。
+2. `AgentSessionUsageUi.of()` 新增 `runTiming` 参数，追踪数据**优先**，
+   消息上的 `firstTokenMs`/`decodeMs` 作为旧数据回退。
+3. `AgentChatBody` 用 `produceState` + `Dispatchers.IO` 异步读追踪。
+   不能放 composition：单份追踪最大 1.8MB，每帧读会卡死滚动。
+
+### 一个必须承认的失误
+
+上一轮我写下「真机验证通过（canary）」，依据是一次**没有重试、没有工具调用的单轮对话**。
+那次确实是对的，但它不代表形态。
+
+真实使用里一次 run 有 21 个轮次、夹着工具调用，那个形态我一条都没测过。
+「单测全绿 + 一次真机成功」不是验证，是抽样运气。
+
+这次补的两组测试（`AgentRunTimingMultiRoundTest`、`TraceFirstTokenTest`）
+都在第一轮先复现了真机的 0，再修 —— 先有能红的东西，才有资格谈修好。
+
+### 为什么不删掉消息表那两列
+
+数据还在写（`AgentConversationStore` 持久化 `ThinkingMessageUi` 时带上），
+旧消息也有值，删了会让历史会话的速度直接消失。
+它现在是回退路径，不是死代码。等确认追踪覆盖足够久之后再考虑清理。

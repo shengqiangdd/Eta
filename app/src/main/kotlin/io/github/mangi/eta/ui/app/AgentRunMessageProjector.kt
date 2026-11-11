@@ -649,19 +649,17 @@ internal class AgentRunMessageProjector(
         // 不能先查消息 id：`elapsedSeconds` 会在轮次结束时用 `getOrPut(thinkingId, ...)`
         // 顺手写入一个「此刻」的起点，那个值与首字几乎同时，算出的首字延迟恒为 0。
         // 这是实测踩到的 bug —— 真机上首字数据一直为空/为 0。
-        val started = elapsedStartedAt.entries
-            .filter { messageId.startsWith(it.key) }
-            // 取**最短**匹配：轮次键（"run-thinking-1-"）是真正的「请求发出」时刻，
-            // 而消息键（"...-1-0"）是 elapsedSeconds 在首个 delta 时用 getOrPut 顺手写的
-            // 「此刻」，与首字几乎同一瞬间。取最长匹配会让首字延迟恒为 0。
-            .minByOrNull { it.key.length }
-            ?.value
-            ?: elapsedStartedAt[messageId]
-            ?: return null to null
+        // 起点就是「本条消息所属轮次的请求发出时刻」。
+        //
+        // 只认精确的轮次键，不做前缀扫描：`startsWith("run-thinking-1-")` 会匹配到
+        // 第 1 轮，但同一条消息也可能被更短的键命中（`run-thinking-1-` vs `run-thinking-10-`），
+        // 早先按「最短/最长」挑一个的做法是在两种错误之间选，根子上就不该靠猜。
+        val started = elapsedStartedAt[startedKeyFor(messageId)] ?: return null to null
         val first = firstTokenAt[messageId] ?: return null to null
-        val firstTokenMs = ((first - started).coerceAtLeast(0)).toInt()
-        val decodeMs = ((now - first).coerceAtLeast(0)).toInt()
-        return firstTokenMs to decodeMs
+        // 起点晚于首字 = 本轮数据已失效（重试重置过起点、或事件乱序），
+        // 此时**不给值**。压成 0 会让界面显示「瞬间响应」，把「不知道」伪装成「极快」。
+        if (first < started) return null to null
+        return (first - started).toInt() to (now - first).coerceAtLeast(0).toInt()
     }
 
     private fun ThinkingMessageUi.finished(authoritativeContent: String? = null): ThinkingMessageUi {
@@ -776,6 +774,17 @@ internal class AgentRunMessageProjector(
 
     private fun thinkingMessageId(runId: String, round: Int, index: Int): String =
         "$runId-thinking-$round-$index"
+
+    /**
+     * 由消息 id 推出「本轮的起点键」：`run-thinking-<round>-<index>` → `run-thinking-<round>-`。
+     *
+     * 直接按最后一个 `-` 切掉 index。不能用前缀扫描匹配 —— 轮次 1 的键 `run-thinking-1-`
+     * 是 `run-thinking-10-...` 的前缀，扫描会在多轮之间串用起点（真机上表现为首字延迟恒 0）。
+     */
+    private fun startedKeyFor(messageId: String): String {
+        val cut = messageId.lastIndexOf('-')
+        return if (cut <= 0) messageId else messageId.substring(0, cut + 1)
+    }
 
     private fun thinkingFallbackMessageId(runId: String, round: Int): String =
         "$runId-thinking-$round-fallback"

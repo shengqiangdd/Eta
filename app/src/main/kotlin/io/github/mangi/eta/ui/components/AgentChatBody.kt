@@ -108,6 +108,8 @@ import io.github.mangi.eta.ui.model.AgentAskUi
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
+import io.github.mangi.eta.ui.model.RunTiming
+import io.github.mangi.eta.ui.model.runIdOf
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.ComposerQuoteUi
@@ -170,6 +172,10 @@ import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import io.github.mangi.eta.agent.trace.AgentRunTraceStore
 
 /**
  * 聊天主体：消息流 + 底部输入框。
@@ -265,8 +271,36 @@ internal fun AgentChatBody(
     }
     // 跨轮用量累计：与 contextUsage（当前窗口占用快照）分开算。
     // 一个是「现在占了多少」，一个是「这个会话累计用了多少」，不能混。
-    val sessionUsage = remember(messages, contextUsage.contextWindow) {
-        AgentSessionUsageUi.of(messages, contextUsage.contextWindow)
+    // 速度与首字延迟取运行追踪，而不是消息表：
+    // 追踪在每个事件到达时打点，真机实测每次请求都有 `request`/`first` 配对；
+    // 消息表那条路要靠渲染投影猜起点，多轮 + 工具调用时实测全为 0。
+    //
+    // 这是同步文件 IO，必须离开 composition 主线程：单份追踪可达 1.8MB，
+    // 每帧读一次会直接卡住滚动。
+    val lastRunId = remember(messages) {
+        messages.asSequence()
+            .filterIsInstance<ThinkingMessageUi>()
+            .mapNotNull { runIdOf(it.id) }
+            .lastOrNull()
+    }
+    val runTiming by produceState(initialValue = null as RunTiming?, lastRunId) {
+        value = if (lastRunId == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching { AgentRunTraceStore.read(lastRunId!!) }.getOrNull()?.let { trace ->
+                    RunTiming(
+                        firstTokenMs = trace.lastFirstTokenMs?.toInt(),
+                        decodeTokens = trace.speed.decodeMs?.toInt(),
+                        speedNumeratorTokens = trace.speed.tokens?.toInt(),
+                        speedTokensPerSecond = trace.outputTokensPerSecond,
+                    )
+                }
+            }
+        }
+    }
+    val sessionUsage = remember(messages, contextUsage.contextWindow, runTiming) {
+        AgentSessionUsageUi.of(messages, contextUsage.contextWindow, runTiming = runTiming)
     }
 
     val visibleMessages = remember(messages, messageEdit?.targetMessageId, messageEdit?.preserveFollowingMessages) {

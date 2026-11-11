@@ -114,6 +114,33 @@ internal object AgentRunTraceStore {
         /** 纯解码速度的分子分母（口径见 [speedOf]）。 */
         val speed: SpeedRead get() = speedOf(entries, entries.indices)
 
+        /**
+         * 最近一次请求的首字延迟（TTFT）：`request → first`，不含任何排队或重试退避。
+         *
+         * 取**最后一次有配对**的轮次，与 [speed] 的口径一致 —— 用户关心的是此刻多快，
+         * 历史平均会把「现在变慢」这个最该看见的信号糊掉。
+         *
+         * 没有配对时返回 null（界面不显示那一行），不返回 0：0 的含义是「瞬间响应」，
+         * 那是看起来很确定的错误答案。
+         */
+        val lastFirstTokenMs: Long?
+            get() {
+                for (index in entries.indices.reversed()) {
+                    if (entries[index].kind != KIND_REQUEST) continue
+                    val round = entries[index].round
+                    // 只在这一请求之后的记录里找首字：同一轮号出现在多次尝试时，
+                    // 取离本次请求最近的那条，避免把上一次尝试的首字算进来。
+                    val first = (index + 1 until entries.size)
+                        .asSequence()
+                        .map { entries[it] }
+                        .takeWhile { it.kind != KIND_REQUEST }
+                        .firstOrNull { it.kind == KIND_FIRST && it.round == round }
+                        ?: continue
+                    return (first.at - entries[index].at).takeIf { it >= 0 }
+                }
+                return null
+            }
+
         /** 每一步相对开始的毫秒数，供时间线展示；缺失时回退 0。 */
         fun offsetOf(entry: Entry): Long = (entry.at - startedAt).coerceAtLeast(0)
     }
