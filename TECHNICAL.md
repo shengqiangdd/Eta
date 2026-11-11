@@ -5962,3 +5962,23 @@ backup/origin-main-before-overwrite = 300b0d18
 token 通过环境变量 `Github_Token` 读取，只用于构造带凭证的 remote URL。
 推送完成后立刻 `git remote set-url` 抹掉 URL 里的 token，并 `grep` 确认
 `.git/config` 无残留。凭证不该留在配置文件里被后续命令或备份带出去。
+
+### 凭证：不落盘
+
+token 只在环境变量 `Github_Token` 里。为了让 `git push fork` 能直接用，
+配置了一个**从环境变量读**的 helper：
+
+```bash
+git config --local credential.helper \
+  '!f() { echo username=shengqiangdd; echo password=$Github_Token; }; f'
+```
+
+它每次调用时现读环境变量，`.git/config` 里只有这段脚本、没有 token 本身
+（已 `grep` 确认 0 处明文）。
+
+比把 token 写进 remote URL 好在：URL 里的 token 会被 `git remote -v`
+打印出来、被 shell 历史记录、被 `ps` 看到；而这段脚本打印的是变量名。
+
+代价是依赖环境变量存在：换一个没有 `Github_Token` 的 shell 会推送失败
+（报 `could not read Username`），这是**明确的失败**而不是用错身份，
+可以接受。
