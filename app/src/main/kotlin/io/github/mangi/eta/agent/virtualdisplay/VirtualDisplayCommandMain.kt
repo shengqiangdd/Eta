@@ -73,6 +73,13 @@ internal object VirtualDisplayCommandMain {
     private const val IME_POLICY_RETRY_COUNT = 8
     private const val IME_POLICY_RETRY_DELAY_MS = 50L
 
+    // 静态强引用持有 VirtualDisplay 与 Surface，防止 ART 局部栈帧优化在等待期间提前触发 GC finalize 销毁虚拟屏。
+    @Volatile
+    private var retainedVirtualDisplay: android.hardware.display.VirtualDisplay? = null
+
+    @Volatile
+    private var retainedSurface: Surface? = null
+
     @JvmStatic
     @Suppress("DEPRECATION")
     fun main(args: Array<String>) {
@@ -137,6 +144,10 @@ internal object VirtualDisplayCommandMain {
     }
 
     private fun holdVirtualDisplay(request: JSONObject, reader: BufferedReader) {
+        if (!CanvasRoutingPolicy.supportsBackgroundDisplay(android.os.Build.VERSION.SDK_INT)) {
+            println(RESULT_PREFIX + JSONObject().put("ok", false).put("code", "DISPLAY_ISOLATION_UNSUPPORTED"))
+            exitProcess(1)
+        }
         val userId = request.optInt("user_id", 0)
         val token = request.optString("surface_token")
         val width = request.optInt("width", 1080).coerceIn(320, 4096)
@@ -150,11 +161,7 @@ internal object VirtualDisplayCommandMain {
         }
 
         // 优先切换至 SYSTEM_UID (1000) 以通过 DisplayManagerService 对 ADD_TRUSTED_DISPLAY 与 CAPTURE_VIDEO_OUTPUT 的校验
-        runCatching {
-            if (Process.myUid() == Process.ROOT_UID) {
-                android.system.Os.setuid(Process.SYSTEM_UID)
-            }
-        }
+        switchToSystemUidIfPossible()
 
         val virtualDisplay = createTrustedVirtualDisplay(surface, width, height, densityDpi)
         if (virtualDisplay == null) {
@@ -171,6 +178,7 @@ internal object VirtualDisplayCommandMain {
             exitProcess(1)
         }
 
+<<<<<<< HEAD
         // 当前进程已切到 SYSTEM_UID(1000)，可以直接设置 per-display IME policy。
         // 这样即使设备只有 Root、没有 system_server Hook，也能避免键盘回退到主屏。
         // display 可能还没同步到 WindowManagerService，短暂重试几次；失败则如实回报。
@@ -183,27 +191,90 @@ internal object VirtualDisplayCommandMain {
             Thread.sleep(IME_POLICY_RETRY_DELAY_MS)
         }
         println("$IME_POLICY_PREFIX${if (imePolicyHidden) "hide" else "unavailable"}")
+=======
+        retainedVirtualDisplay = virtualDisplay
+        retainedSurface = surface
+        if (!CanvasRoutingPolicy.hasRequiredDisplayFlags(virtualDisplay.display.flags) ||
+            !applyDisplayImePolicyHide(displayId)
+        ) {
+            releaseRetainedDisplay()
+            println(RESULT_PREFIX + JSONObject().put("ok", false).put("code", "DISPLAY_ISOLATION_UNAVAILABLE"))
+            exitProcess(1)
+        }
+
+>>>>>>> origin/main
         println("$READY_PREFIX$displayId")
         System.out.flush()
 
-        try {
-            while (true) {
-                val line = reader.readLine() ?: break
-                if (line.trim() == "release") break
+        val mainHandler = android.os.Handler(Looper.getMainLooper())
+        Thread({
+            try {
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line.trim() == "release") break
+                }
+            } catch (_: Throwable) {
+                // 宿主关闭管道或取消任务
+            } finally {
+                mainHandler.post {
+                    releaseRetainedDisplay()
+                    exitProcess(0)
+                }
             }
-        } catch (_: Throwable) {
-            // 宿主关闭管道或取消任务
+        }, "eta-vd-stdin-watcher").apply {
+            isDaemon = true
+            start()
+        }
+
+        try {
+            Looper.loop()
         } finally {
-            runCatching { virtualDisplay.release() }
-            runCatching { surface.release() }
+            releaseRetainedDisplay()
         }
         exitProcess(0)
     }
 
+<<<<<<< HEAD
     // 以 root / system 身份通过 IActivityManager 拿系统 ContentProvider：
     // 这是 Surface 从 App 进程交给特权子进程的唯一合法通道；任一环节失败都返回 null，
     // 调用方会把 SURFACE_UNAVAILABLE 报给上层，不会假装成功。
     @android.annotation.SuppressLint("PrivateApi")
+=======
+    private fun releaseRetainedDisplay() {
+        val vd = retainedVirtualDisplay
+        val surf = retainedSurface
+        retainedVirtualDisplay = null
+        retainedSurface = null
+        runCatching { vd?.release() }
+        runCatching { surf?.release() }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun switchToSystemUidIfPossible() {
+        runCatching {
+            if (Process.myUid() == Process.ROOT_UID) {
+                android.system.Os.setuid(Process.SYSTEM_UID)
+            }
+        }
+    }
+
+    private fun applyDisplayImePolicyHide(displayId: Int): Boolean = runCatching {
+        if (!CanvasRoutingPolicy.isVirtualDisplay(displayId)) return@runCatching false
+        switchToSystemUidIfPossible()
+        val wmgClass = Class.forName("android.view.WindowManagerGlobal")
+        val wms = wmgClass.getMethod("getWindowManagerService").invoke(null) ?: return@runCatching false
+        val setPolicy = wms.javaClass.methods.firstOrNull {
+            it.name == "setDisplayImePolicy" && it.parameterCount == 2
+        } ?: return@runCatching false
+        setPolicy.invoke(wms, displayId, CanvasRoutingPolicy.DISPLAY_IME_POLICY_HIDE)
+        val getPolicy = wms.javaClass.methods.firstOrNull {
+            it.name == "getDisplayImePolicy" && it.parameterCount == 1
+        }
+        val actual = getPolicy?.invoke(wms, displayId) as? Int
+        actual == CanvasRoutingPolicy.DISPLAY_IME_POLICY_HIDE
+    }.getOrDefault(false)
+
+>>>>>>> origin/main
     private fun acquireSurfaceFromApp(userId: Int, surfaceToken: String): Surface? {
         val activityManager = Class.forName("android.app.ActivityManager")
             .getMethod("getService")

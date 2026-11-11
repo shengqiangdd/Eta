@@ -30,7 +30,7 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
 // versionCode 基数：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
-val etaVersionCode = 2026103101
+val etaVersionCode = 2026111101
 
 /*
  * Robolectric 的 native runtime 只提供 Linux x86_64 与 macOS arm64 的预编译库；在
@@ -70,7 +70,7 @@ android {
         targetSdk = 37
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增（见上方 etaVersionCode）。
         versionCode = etaVersionCode
-        versionName = "3.4.0"
+        versionName = "3.4.2"
 
         ndk {
             // 同时过滤本地与依赖 AAR 的原生库，确保 APK 仅包含 ARM64。
@@ -243,6 +243,7 @@ dependencies {
     // Hook 侧用 XposedInterface.getRemotePreferences 读取当前进程持有的配置缓存。
     implementation(libs.libxposed.service)
     implementation(libs.dexkit)
+    implementation(libs.coui)
     implementation(libs.miuix.ui)
     implementation(libs.miuix.blur)
     implementation(libs.miuix.nav)

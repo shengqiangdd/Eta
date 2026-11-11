@@ -8,11 +8,17 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+<<<<<<< HEAD
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+=======
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+>>>>>>> origin/main
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Search
@@ -76,20 +82,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+<<<<<<< HEAD
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+=======
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+>>>>>>> origin/main
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.itos.coui.dialog.CouiDialogDefaults
+import com.itos.coui.layout.CouiPageDefaults
+import com.itos.coui.layout.Group
+import com.itos.coui.text.CouiTextKind
+import com.itos.coui.text.Text as CouiText
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.accessibility.AccessibilityProtectionClient
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.config.PowerAssistantTarget
 import io.github.mangi.eta.config.Prefs
+import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.data.update.AppLatestRelease
@@ -99,6 +117,7 @@ import io.github.mangi.eta.systemizer.RootManager
 import io.github.mangi.eta.systemizer.SystemizerInstallResult
 import io.github.mangi.eta.ui.app.AgentKeepScreenStatus
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
+import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.AgentBusySendModePreference
 import io.github.mangi.eta.ui.components.AgentTranscriptViewPreference
@@ -122,15 +141,79 @@ import io.github.mangi.eta.ui.components.EtaWindowDialog
 import io.github.mangi.eta.ui.components.LanguagePreference
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
+import io.github.mangi.eta.ui.components.StatusSuccess
+import io.github.mangi.eta.ui.components.StatusWarning
+import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
+import io.github.mangi.eta.ui.components.coui.CouiDropdownPreference
+import io.github.mangi.eta.ui.components.coui.CouiIconDivider
+import io.github.mangi.eta.ui.components.coui.CouiPageBottomSpacer
+import io.github.mangi.eta.ui.components.coui.CouiPreference
+import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
+import io.github.mangi.eta.ui.components.coui.CouiSettingsIcon
+import io.github.mangi.eta.ui.components.coui.CouiSwitchPreference
 import io.github.mangi.eta.ui.navigation.AppRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+<<<<<<< HEAD
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.TextField
+=======
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.SmallTitle
+>>>>>>> origin/main
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowDialog
+
+private object SettingsIconColors {
+    val Blue = Color(0xFF4285F4)
+    val Green = StatusSuccess
+    val Orange = Color(0xFFFA7B17)
+    val Yellow = StatusWarning
+}
+
+@Composable
+private fun SettingsGroupCard(content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 12.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SettingsIcon(
+    icon: ImageVector,
+    tint: Color,
+    enabled: Boolean = true,
+) {
+    val glyphSize = when (icon) {
+        Icons.AutoMirrored.Rounded.MenuBook -> 22.dp
+        else -> 24.dp
+    }
+    Box(
+        modifier = Modifier
+            .padding(end = 8.dp)
+            .size(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(glyphSize),
+            tint = if (enabled) tint else MiuixTheme.colorScheme.disabledOnSecondaryVariant,
+        )
+    }
+}
 
 /**
  * 模块配置界面。
@@ -294,9 +377,58 @@ private fun SettingsPageContent(
     var settingsQuery by remember { mutableStateOf("") }
     val powerAssistantTargets = PowerAssistantTarget.entries
     val powerAssistantItems = powerAssistantTargets.map { target ->
-        DropdownItem(text = target.displayName(context))
+        target.displayName(context)
+    }
+    val onPowerTargetSelect: (Int) -> Unit = { index ->
+        val target = powerAssistantTargets.getOrNull(index)
+        val targetPrefs = prefs
+        if (target != null && targetPrefs != null) {
+            if (putStringSync(
+                    prefs = targetPrefs,
+                    key = Prefs.Keys.POWER_KEY_ASSISTANT_TARGET,
+                    value = target.persistedValue,
+                )
+            ) {
+                powerAssistantTarget = target
+                enhancementHistory.recordCommittedTarget(target)
+            } else {
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(R.string.settings_write_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+    val onAccessibilityProtectionToggle: (Boolean) -> Unit = { enabled ->
+        if (!accessibilityProtectionPending) {
+            accessibilityProtectionPending = true
+            AccessibilityProtectionClient.setEnabled(
+                context = context,
+                enabled = enabled,
+            ) { result ->
+                accessibilityProtectionPending = false
+                accessibilityProtectionEnabled = result.enabled
+                accessibilityGranted = isAgentAccessibilityEnabled(context)
+                val failureMessage = when (result.status) {
+                    AccessibilityProtectionClient.ControlStatus.APPLIED -> null
+                    AccessibilityProtectionClient.ControlStatus.UNAVAILABLE ->
+                        context.getString(R.string.accessibility_protection_unavailable)
+                    AccessibilityProtectionClient.ControlStatus.REJECTED ->
+                        context.getString(R.string.accessibility_protection_rejected)
+                }
+                if (failureMessage != null) {
+                    Toast.makeText(
+                        context.applicationContext,
+                        failureMessage,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
     }
 
+<<<<<<< HEAD
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_set_up_7debf9),
         onBack = onBack,
@@ -336,16 +468,24 @@ private fun SettingsPageContent(
                     onToggle = { agentExpanded = !agentExpanded },
                 ) {
                     EtaArrowPreference(
+=======
+    when (LocalUiStyle.current) {
+        AppearanceUiStyle.COUI -> {
+            val pageColors = CouiPageDefaults.themeColors()
+            val dialogColors = CouiDialogDefaults.themeColors()
+            CouiScaffoldPage(
+                title = stringResource(R.string.ui_set_up_7debf9),
+                onBack = onBack,
+            ) {
+                Group(title = stringResource(R.string.settings_llm_providers)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.ui_model_provider_e8c7f5),
                         summary = providerSummary,
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Cloud,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Cloud, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.ModelProviders) },
                     )
+<<<<<<< HEAD
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
@@ -387,13 +527,16 @@ private fun SettingsPageContent(
                     expanded = settingsSectionExpanded(settingsQuery, delegationExpanded),
                     onToggle = { delegationExpanded = !delegationExpanded },
                 ) {
+=======
+                    CouiIconDivider()
+>>>>>>> origin/main
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
                         title = stringResource(R.string.ui_deep_thinking_enabled_by_default_c032d6),
                         key = Prefs.Keys.AGENT_THINKING_ENABLED,
                         icon = Icons.Rounded.Psychology,
-                        iconTint = EtaPreferenceColors.Blue,
+                        iconTint = SettingsIconColors.Blue,
                     )
 
                     EtaPreferenceDivider()
@@ -522,8 +665,8 @@ private fun SettingsPageContent(
                         iconTint = EtaPreferenceColors.Yellow,
                     )
                 }
-            }
 
+<<<<<<< HEAD
             // ── 上下文与扩展 ────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_CONTEXT_KEYWORDS)) item(key = "section_context_extensions") {
                 var contextExpanded by rememberSaveable { mutableStateOf(false) }
@@ -533,50 +676,46 @@ private fun SettingsPageContent(
                     expanded = settingsSectionExpanded(settingsQuery, contextExpanded),
                     onToggle = { contextExpanded = !contextExpanded },
                 ) {
+=======
+                Group(title = stringResource(R.string.settings_context_extensions)) {
+>>>>>>> origin/main
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
                         title = stringResource(R.string.settings_auto_compaction),
                         key = Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED,
                         icon = Icons.Rounded.Layers,
-                        iconTint = EtaPreferenceColors.Blue,
+                        iconTint = SettingsIconColors.Blue,
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.ui_memory_b55ff5),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.AutoMirrored.Rounded.MenuBook,
-                                tint = EtaPreferenceColors.Orange,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.AutoMirrored.Rounded.MenuBook,
+                                SettingsIconColors.Orange,
                             )
                         },
                         onClick = { onNavigate(AppRoute.Memory) },
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = "Subagent",
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Hub,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Hub, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.Subagents) },
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.route_skills),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.ImportContacts,
-                                tint = EtaPreferenceColors.Green,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.ImportContacts,
+                                SettingsIconColors.Green,
                             )
                         },
                         onClick = { onNavigate(AppRoute.Skills) },
                     )
+<<<<<<< HEAD
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
@@ -592,15 +731,20 @@ private fun SettingsPageContent(
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
+=======
+                    CouiIconDivider()
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.route_mcp_servers),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.AccountTree,
-                                tint = EtaPreferenceColors.Blue,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.AccountTree,
+                                SettingsIconColors.Blue,
                             )
                         },
                         onClick = { onNavigate(AppRoute.McpServers) },
                     )
+<<<<<<< HEAD
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
@@ -609,13 +753,22 @@ private fun SettingsPageContent(
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.SportsBar,
                                 tint = EtaPreferenceColors.Orange,
+=======
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = "角色",
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.SportsBar,
+                                SettingsIconColors.Orange,
+>>>>>>> origin/main
                             )
                         },
                         onClick = { onNavigate(AppRoute.Characters) },
                     )
                 }
-            }
 
+<<<<<<< HEAD
             // ── 工具 ───────────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_TOOLS_KEYWORDS)) item(key = "section_tools") {
                 var toolsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -626,42 +779,35 @@ private fun SettingsPageContent(
                     onToggle = { toolsExpanded = !toolsExpanded },
                 ) {
                     EtaArrowPreference(
+=======
+                Group(title = stringResource(R.string.ui_tool_a72ef1)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.settings_tools_list),
-                        startAction = { EtaPreferenceIcon(Icons.Rounded.Dashboard, tint = EtaPreferenceColors.Green) },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Dashboard, SettingsIconColors.Green) },
                         onClick = { onNavigate(AppRoute.Tools) },
                     )
-
-                    EtaPreferenceDivider()
-                    SwitchPref(
-                        context = context,
-                        prefs = agentPrefs,
-                        title = stringResource(R.string.ui_enable_web_browsing_tools_8b6b03),
-                        key = Prefs.Keys.AGENT_BROWSER_TOOLS,
-                        icon = Icons.Rounded.Language,
-                        iconTint = EtaPreferenceColors.Blue,
-                    )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.web_tools_settings_title),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.TravelExplore,
-                                tint = EtaPreferenceColors.Blue,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.TravelExplore,
+                                SettingsIconColors.Blue,
                             )
                         },
                         onClick = { onNavigate(AppRoute.WebToolsSettings) },
                     )
-
-                    EtaPreferenceDivider()
+                    CouiIconDivider()
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
                         title = stringResource(R.string.settings_virtual_display_title),
                         key = Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
                         icon = Icons.Rounded.Layers,
-                        iconTint = EtaPreferenceColors.Blue,
+                        iconTint = SettingsIconColors.Blue,
                     )
+<<<<<<< HEAD
 
                     EtaPreferenceDivider()
                     SwitchPref(
@@ -738,11 +884,15 @@ private fun SettingsPageContent(
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
+=======
+                    CouiIconDivider()
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.ui_linux_tool_environment_314d22),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Inventory2,
-                                tint = EtaPreferenceColors.Orange,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.Inventory2,
+                                SettingsIconColors.Orange,
                             )
                         },
                         onClick = { onNavigate(AppRoute.LinuxEnvironment) },
@@ -776,18 +926,22 @@ private fun SettingsPageContent(
                         },
                     )
                 }
-            }
 
+<<<<<<< HEAD
             if (settingsSectionMatches(settingsQuery, SETTINGS_ENHANCE_KEYWORDS)) item(key = "system_enhancements") {
                 EtaPreferenceGroup {
                     EtaArrowPreference(
+=======
+                Group {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.capability_enhancements),
-                        startAction = { EtaPreferenceIcon(Icons.Rounded.Security, tint = EtaPreferenceColors.Blue) },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Security, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.SystemEnhance) },
                     )
                 }
-            }
 
+<<<<<<< HEAD
             // ── 系统助手接管 ──────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_ASSISTANT_KEYWORDS)) item(key = "section_assistant_takeover") {
                 var assistantExpanded by rememberSaveable { mutableStateOf(false) }
@@ -798,64 +952,48 @@ private fun SettingsPageContent(
                     onToggle = { assistantExpanded = !assistantExpanded },
                 ) {
                     EtaArrowPreference(
+=======
+                Group(title = stringResource(R.string.ui_system_assistant_takes_over_f46043)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.ui_eta_system_assistant_003e9b),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.SupportAgent,
-                                tint = EtaPreferenceColors.Green,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.SupportAgent,
+                                SettingsIconColors.Green,
                             )
                         },
                         onClick = openAssistantSettings,
                     )
                     if (prefs != null || hasConnectedFramework) {
-                        EtaPreferenceDivider()
-                        EtaDropdownPreference(
+                        CouiIconDivider()
+                        CouiDropdownPreference(
                             title = stringResource(R.string.ui_long_press_the_power_button_1958d0),
                             items = powerAssistantItems,
                             selectedIndex = powerAssistantTargets.indexOf(powerAssistantTarget),
-                            onSelectedIndexChange = { index ->
-                                val target = powerAssistantTargets.getOrNull(index)
-                                    ?: return@EtaDropdownPreference
-                                val targetPrefs = prefs ?: return@EtaDropdownPreference
-                                if (putStringSync(
-                                        prefs = targetPrefs,
-                                        key = Prefs.Keys.POWER_KEY_ASSISTANT_TARGET,
-                                        value = target.persistedValue,
-                                    )
-                                ) {
-                                    powerAssistantTarget = target
-                                    enhancementHistory.recordCommittedTarget(target)
-                                } else {
-                                    Toast.makeText(
-                                        context.applicationContext,
-                                        context.getString(R.string.settings_write_failed),
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            },
-                            startAction = {
-                                EtaPreferenceIcon(
+                            onSelectedIndexChange = onPowerTargetSelect,
+                            icon = {
+                                CouiSettingsIcon(
                                     icon = Icons.Rounded.PowerSettingsNew,
-                                    tint = EtaPreferenceColors.Yellow,
+                                    tint = SettingsIconColors.Yellow,
                                     enabled = prefs != null,
                                 )
                             },
                             enabled = prefs != null,
                         )
-
-                        EtaPreferenceDivider()
+                        CouiIconDivider()
                         SwitchPref(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_automatically_set_default_assistant_f86963),
                             key = Prefs.Keys.ASSISTANT_AUTO_CONFIG,
                             icon = Icons.Rounded.Settings,
-                            iconTint = EtaPreferenceColors.Green,
+                            iconTint = SettingsIconColors.Green,
                         )
                     }
                 }
-            }
 
+<<<<<<< HEAD
             if (prefs != null || hasConnectedFramework) {
                 // ── 厂商助手兼容入口 ──────────────────────────────────────────
                 if (settingsSectionMatches(settingsQuery, SETTINGS_OEM_KEYWORDS)) item(key = "section_oem_assistant_compatibility") {
@@ -866,28 +1004,31 @@ private fun SettingsPageContent(
                         expanded = settingsSectionExpanded(settingsQuery, vendorExpanded),
                         onToggle = { vendorExpanded = !vendorExpanded },
                     ) {
+=======
+                if (prefs != null || hasConnectedFramework) {
+                    Group(title = stringResource(R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a)) {
+>>>>>>> origin/main
                         SwitchPref(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_enable_vendor_assistant_custom_models_c8e465),
                             key = Prefs.Keys.AGENT_CUSTOM_MODEL,
                             icon = Icons.Rounded.Cloud,
-                            iconTint = EtaPreferenceColors.Blue,
+                            iconTint = SettingsIconColors.Blue,
                         )
-
-                        EtaPreferenceDivider()
+                        CouiIconDivider()
                         SwitchPref(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_only_take_over_with_agent_prefix_d17556),
                             key = Prefs.Keys.AGENT_REQUIRE_PREFIX,
                             icon = Icons.Rounded.FilterAlt,
-                            iconTint = EtaPreferenceColors.Blue,
+                            iconTint = SettingsIconColors.Blue,
                         )
                     }
                 }
-            }
 
+<<<<<<< HEAD
             if (prefs != null || hasConnectedFramework || capabilities.root.isGranted || hasUsedSystemizer) {
                 // ── Gemini ─────────────────────────────────────────────────
                 if (settingsSectionMatches(settingsQuery, SETTINGS_GEMINI_KEYWORDS)) item(key = "section_gemini") {
@@ -899,52 +1040,54 @@ private fun SettingsPageContent(
                         onToggle = { geminiExpanded = !geminiExpanded },
                     ) {
                         if (prefs != null || hasConnectedFramework) {
+=======
+                if (prefs != null || hasConnectedFramework || capabilities.root.isGranted || hasUsedSystemizer) {
+                    Group(title = "Gemini") {
+                        val hasFrameworkRows = prefs != null || hasConnectedFramework
+                        if (hasFrameworkRows) {
+>>>>>>> origin/main
                             SwitchPref(
                                 context = context,
                                 prefs = prefs,
                                 title = stringResource(R.string.ui_maintain_hey_google_detection_after_screen_rest_9d6877),
                                 key = Prefs.Keys.HOTWORD_SELF_HEAL,
                                 icon = Icons.Rounded.Hearing,
-                                iconTint = EtaPreferenceColors.Green,
+                                iconTint = SettingsIconColors.Green,
                             )
-
-                            EtaPreferenceDivider()
+                            CouiIconDivider()
                             SwitchPref(
                                 context = context,
                                 prefs = prefs,
                                 title = stringResource(R.string.ui_lock_screen_evokes_automatic_voice_input_1cde18),
                                 key = Prefs.Keys.LOCKSCREEN_VOICE_COMMAND,
                                 icon = Icons.Rounded.Lock,
-                                iconTint = EtaPreferenceColors.Blue,
+                                iconTint = SettingsIconColors.Blue,
                             )
-
-                            EtaPreferenceDivider()
+                            CouiIconDivider()
                             SwitchPref(
                                 context = context,
                                 prefs = prefs,
                                 title = stringResource(R.string.ui_bright_screen_evokes_automatic_voice_input_4358fe),
                                 key = Prefs.Keys.SCREEN_ON_VOICE_COMMAND,
                                 icon = Icons.Rounded.SettingsVoice,
-                                iconTint = EtaPreferenceColors.Green,
+                                iconTint = SettingsIconColors.Green,
                             )
-
                         }
                         if (capabilities.root.isGranted || hasUsedSystemizer) {
-                            if (prefs != null || hasConnectedFramework) {
-                                EtaPreferenceDivider()
+                            if (hasFrameworkRows) {
+                                CouiIconDivider()
                             }
-                            EtaArrowPreference(
+                            CouiPreference(
                                 title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
-                                startAction = {
-                                    EtaPreferenceIcon(
+                                summary = if (capabilities.root.isGranted) null else stringResource(R.string.capability_root_required),
+                                icon = {
+                                    CouiSettingsIcon(
                                         icon = Icons.Rounded.Inventory,
-                                        tint = EtaPreferenceColors.Orange,
+                                        tint = SettingsIconColors.Orange,
                                         enabled = !installingSystemizer,
                                     )
                                 },
-                                summary = if (capabilities.root.isGranted) null else stringResource(R.string.capability_root_required),
                                 enabled = !installingSystemizer,
-                                holdDownState = showSystemizerDialog,
                                 onClick = {
                                     if (!capabilities.root.isGranted) {
                                         onNavigate(AppRoute.SystemEnhance)
@@ -956,8 +1099,8 @@ private fun SettingsPageContent(
                         }
                     }
                 }
-            }
 
+<<<<<<< HEAD
             if (prefs != null || hasConnectedFramework) {
                 // ── 一圈即搜 ────────────────────────────────────────────────
                 if (settingsSectionMatches(settingsQuery, SETTINGS_CIRCLE_KEYWORDS)) item(key = "section_circle_to_search") {
@@ -968,28 +1111,31 @@ private fun SettingsPageContent(
                         expanded = settingsSectionExpanded(settingsQuery, circleExpanded),
                         onToggle = { circleExpanded = !circleExpanded },
                     ) {
+=======
+                if (prefs != null || hasConnectedFramework) {
+                    Group(title = stringResource(R.string.ui_search_in_one_turn_179584)) {
+>>>>>>> origin/main
                         SwitchPref(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_long_press_on_the_gesture_bar_triggers_a_circle_to_s_b80117),
                             key = Prefs.Keys.GESTURE_BAR_CIRCLE_TO_SEARCH,
                             icon = Icons.Rounded.SwipeUp,
-                            iconTint = EtaPreferenceColors.Blue,
+                            iconTint = SettingsIconColors.Blue,
                         )
-
-                        EtaPreferenceDivider()
+                        CouiIconDivider()
                         SwitchPref(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_long_press_with_two_fingers_to_trigger_a_circle_sear_ab597a),
                             key = Prefs.Keys.DOUBLE_FINGER_CIRCLE_TO_SEARCH,
                             icon = Icons.Rounded.TouchApp,
-                            iconTint = EtaPreferenceColors.Blue,
+                            iconTint = SettingsIconColors.Blue,
                         )
                     }
                 }
-            }
 
+<<<<<<< HEAD
             // ── 通用 ────────────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_GENERAL_KEYWORDS)) item(key = "section_general") {
                 var generalExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1000,39 +1146,41 @@ private fun SettingsPageContent(
                     onToggle = { generalExpanded = !generalExpanded },
                 ) {
                     EtaArrowPreference(
+=======
+                Group(title = stringResource(R.string.settings_general)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.appearance_title),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Palette,
-                                tint = EtaPreferenceColors.Orange,
-                            )
-                        },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Palette, SettingsIconColors.Orange) },
                         onClick = { onNavigate(AppRoute.AppearanceSettings) },
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.speech_settings_title),
-                        startAction = { EtaPreferenceIcon(icon = Icons.Rounded.Mic, tint = EtaPreferenceColors.Blue) },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Mic, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.SpeechSettings) },
                     )
-                    EtaPreferenceDivider()
-                    LanguagePreference(iconTint = EtaPreferenceColors.Blue)
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
-                        title = stringResource(R.string.data_backup_title),
+                    CouiIconDivider()
+                    LanguagePreference(
+                        iconTint = SettingsIconColors.Blue,
                         startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Description,
-                                tint = EtaPreferenceColors.Blue,
+                            CouiSettingsIcon(Icons.Rounded.Language, SettingsIconColors.Blue)
+                        },
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = stringResource(R.string.data_backup_title),
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.Description,
+                                SettingsIconColors.Blue,
                             )
                         },
                         onClick = { onNavigate(AppRoute.DataBackup) },
                     )
                 }
-            }
 
+<<<<<<< HEAD
             // ── 权限 ────────────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_PERMISSIONS_KEYWORDS)) item(key = "section_permissions") {
                 var permissionsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1043,108 +1191,59 @@ private fun SettingsPageContent(
                     onToggle = { permissionsExpanded = !permissionsExpanded },
                 ) {
                     EtaArrowPreference(
+=======
+                Group(title = stringResource(R.string.ui_permissions_560165)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.ui_floating_window_permissions_076b77),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Layers,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
-                        endActions = {
-                            Text(
-                                text = stringResource(
-                                    if (overlayGranted) R.string.status_authorized else R.string.status_unauthorized,
-                                ),
-                                fontSize = MiuixTheme.textStyles.body2.fontSize,
-                                color = if (overlayGranted) {
-                                    MiuixTheme.colorScheme.onSurfaceVariantActions
-                                } else {
-                                    MiuixTheme.colorScheme.error
-                                },
-                            )
-                        },
+                        value = stringResource(
+                            if (overlayGranted) R.string.status_authorized else R.string.status_unauthorized,
+                        ),
+                        valueColor = if (overlayGranted) pageColors.summary else dialogColors.destructive,
+                        icon = { CouiSettingsIcon(Icons.Rounded.Layers, SettingsIconColors.Blue) },
                         onClick = {
                             if (!overlayGranted) {
                                 runCatching {
                                     context.startActivity(
-                                        android.content.Intent(
-                                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            android.net.Uri.parse("package:${context.packageName}"),
+                                        Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}"),
                                         ),
                                     )
                                 }
                             }
                         },
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    val accEnabled = accessibilityGranted || AgentAccessibilityService.isAvailable()
+                    CouiPreference(
                         title = stringResource(R.string.ui_accessibility_enhancement_tools_8fd257),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.AccessibilityNew,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
-                        endActions = {
-                            val enabled = accessibilityGranted || AgentAccessibilityService.isAvailable()
-                            Text(
-                                text = stringResource(
-                                    if (enabled) R.string.status_enabled else R.string.status_disabled,
-                                ),
-                                fontSize = MiuixTheme.textStyles.body2.fontSize,
-                                color = if (enabled) {
-                                    MiuixTheme.colorScheme.onSurfaceVariantActions
-                                } else {
-                                    MiuixTheme.colorScheme.primary
-                                },
+                        value = stringResource(
+                            if (accEnabled) R.string.status_enabled else R.string.status_disabled,
+                        ),
+                        valueColor = if (accEnabled) pageColors.summary else pageColors.accent,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.AccessibilityNew,
+                                SettingsIconColors.Blue,
                             )
                         },
                         onClick = {
                             runCatching {
-                                context.startActivity(
-                                    android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS),
-                                )
+                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             }
                         },
                     )
                     if (AccessibilityProtectionClient.isSupported() && (prefs != null || hasConnectedFramework)) {
-                        EtaPreferenceDivider()
-                        EtaSwitchPreference(
+                        CouiIconDivider()
+                        CouiSwitchPreference(
                             title = stringResource(R.string.ui_enforce_accessibility_55e838),
                             checked = accessibilityProtectionEnabled,
-                            onCheckedChange = { enabled ->
-                                if (accessibilityProtectionPending) {
-                                    return@EtaSwitchPreference
-                                }
-                                accessibilityProtectionPending = true
-                                AccessibilityProtectionClient.setEnabled(
-                                    context = context,
-                                    enabled = enabled,
-                                ) { result ->
-                                    accessibilityProtectionPending = false
-                                    accessibilityProtectionEnabled = result.enabled
-                                    accessibilityGranted = isAgentAccessibilityEnabled(context)
-                                    val failureMessage = when (result.status) {
-                                        AccessibilityProtectionClient.ControlStatus.APPLIED -> null
-                                        AccessibilityProtectionClient.ControlStatus.UNAVAILABLE ->
-                                            context.getString(R.string.accessibility_protection_unavailable)
-                                        AccessibilityProtectionClient.ControlStatus.REJECTED ->
-                                            context.getString(R.string.accessibility_protection_rejected)
-                                    }
-                                    if (failureMessage != null) {
-                                        Toast.makeText(
-                                            context.applicationContext,
-                                            failureMessage,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    }
-                                }
-                            },
-                            startAction = {
-                                EtaPreferenceIcon(
+                            onCheckedChange = onAccessibilityProtectionToggle,
+                            icon = {
+                                CouiSettingsIcon(
                                     icon = Icons.Rounded.VerifiedUser,
-                                    tint = EtaPreferenceColors.Blue,
+                                    tint = SettingsIconColors.Blue,
                                     enabled = prefs != null && !accessibilityProtectionPending,
                                 )
                             },
@@ -1152,8 +1251,8 @@ private fun SettingsPageContent(
                         )
                     }
                 }
-            }
 
+<<<<<<< HEAD
             // ── 关于 ────────────────────────────────────────────────────
             if (settingsSectionMatches(settingsQuery, SETTINGS_ABOUT_KEYWORDS)) item(key = "section_about") {
                 var aboutExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1164,113 +1263,593 @@ private fun SettingsPageContent(
                     onToggle = { aboutExpanded = !aboutExpanded },
                 ) {
                     EtaPreference(
+=======
+                Group(title = stringResource(R.string.ui_about_bed172)) {
+                    CouiPreference(
+>>>>>>> origin/main
                         title = stringResource(R.string.ui_about_version_title),
                         summary = appVersionSummary,
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Info,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Info, SettingsIconColors.Blue) },
+                        showChevron = false,
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.ui_about_update_title),
                         summary = if (checkingUpdate) {
                             stringResource(R.string.ui_about_update_checking)
                         } else {
                             null
                         },
-                        startAction = {
-                            EtaPreferenceIcon(
+                        icon = {
+                            CouiSettingsIcon(
                                 icon = Icons.Rounded.SystemUpdate,
-                                tint = EtaPreferenceColors.Green,
+                                tint = SettingsIconColors.Green,
                                 enabled = !checkingUpdate,
                             )
                         },
                         enabled = !checkingUpdate,
                         onClick = checkForUpdate,
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.ui_about_feedback_title),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.BugReport,
-                                tint = EtaPreferenceColors.Orange,
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.BugReport,
+                                SettingsIconColors.Orange,
                             )
                         },
                         onClick = { openUrl("https://github.com/Mangi-11/Eta/issues") },
                     )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.ui_about_github_star_title),
                         summary = stringResource(R.string.ui_about_github_star_hint),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Code,
-                                tint = EtaPreferenceColors.Blue,
-                            )
-                        },
+                        icon = { CouiSettingsIcon(Icons.Rounded.Code, SettingsIconColors.Blue) },
                         onClick = { openUrl("https://github.com/Mangi-11/Eta") },
                     )
                 }
+
+                CouiPageBottomSpacer()
             }
         }
 
-        SystemizerConfirmDialog(
-            show = showSystemizerDialog,
-            installing = installingSystemizer,
-            onDismissRequest = {
-                if (!installingSystemizer) {
-                    showSystemizerDialog = false
-                }
-            },
-            onConfirm = {
-                if (installingSystemizer) return@SystemizerConfirmDialog
-                if (!capabilities.root.isGranted) {
-                    showSystemizerDialog = false
-                    onNavigate(AppRoute.SystemEnhance)
-                    return@SystemizerConfirmDialog
-                }
-                enhancementHistory.recordSystemizerUse()
-                hasUsedSystemizer = true
-                showSystemizerDialog = false
-                installingSystemizer = true
-                coroutineScope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        GoogleAppSystemizerInstaller(context.applicationContext).install()
-                    }
-                    installingSystemizer = false
-                    Toast.makeText(
-                        context.applicationContext,
-                        result.toToastMessage(context),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            },
-        )
-
-        availableUpdate?.let { update ->
-            EtaWindowDialog(
-                show = true,
-                title = stringResource(R.string.ui_update_available_title),
-                summary = stringResource(R.string.ui_update_available_message, update.version, appVersionName),
-                onDismissRequest = { availableUpdate = null },
+        AppearanceUiStyle.MIUIX -> {
+            MiuixScaffoldPage(
+                title = stringResource(R.string.ui_set_up_7debf9),
+                onBack = onBack,
             ) {
-                MiuixDialogActions(
+                item(key = "section_agent") {
+                    SmallTitle(stringResource(R.string.settings_llm_providers))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_model_provider_e8c7f5),
+                            summary = providerSummary,
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Cloud,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.ModelProviders) },
+                        )
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.ui_deep_thinking_enabled_by_default_c032d6),
+                            key = Prefs.Keys.AGENT_THINKING_ENABLED,
+                            icon = Icons.Rounded.Psychology,
+                            iconTint = SettingsIconColors.Blue,
+                        )
+                    }
+                }
+
+                item(key = "section_context_extensions") {
+                    SmallTitle(stringResource(R.string.settings_context_extensions))
+                    SettingsGroupCard {
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_auto_compaction),
+                            key = Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED,
+                            icon = Icons.Rounded.Layers,
+                            iconTint = SettingsIconColors.Blue,
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_memory_b55ff5),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.AutoMirrored.Rounded.MenuBook,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.Memory) },
+                        )
+                        ArrowPreference(
+                            title = "Subagent",
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Hub,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.Subagents) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.route_skills),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.ImportContacts,
+                                    tint = SettingsIconColors.Green,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.Skills) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.route_mcp_servers),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.AccountTree,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.McpServers) },
+                        )
+                        ArrowPreference(
+                            title = "角色",
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.SportsBar,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.Characters) },
+                        )
+                    }
+                }
+
+                item(key = "section_tools") {
+                    SmallTitle(stringResource(R.string.ui_tool_a72ef1))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_tools_list),
+                            startAction = { SettingsIcon(Icons.Rounded.Dashboard, tint = SettingsIconColors.Green) },
+                            onClick = { onNavigate(AppRoute.Tools) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.web_tools_settings_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.TravelExplore,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.WebToolsSettings) },
+                        )
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_virtual_display_title),
+                            key = Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
+                            icon = Icons.Rounded.Layers,
+                            iconTint = SettingsIconColors.Blue,
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_linux_tool_environment_314d22),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Inventory2,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.LinuxEnvironment) },
+                        )
+                    }
+                }
+
+                item(key = "system_enhancements") {
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.capability_enhancements),
+                            startAction = { SettingsIcon(Icons.Rounded.Security, tint = SettingsIconColors.Blue) },
+                            onClick = { onNavigate(AppRoute.SystemEnhance) },
+                        )
+                    }
+                }
+
+                item(key = "section_assistant_takeover") {
+                    SmallTitle(stringResource(R.string.ui_system_assistant_takes_over_f46043))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_eta_system_assistant_003e9b),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.SupportAgent,
+                                    tint = SettingsIconColors.Green,
+                                )
+                            },
+                            onClick = openAssistantSettings,
+                        )
+                        if (prefs != null || hasConnectedFramework) {
+                            OverlayDropdownPreference(
+                                title = stringResource(R.string.ui_long_press_the_power_button_1958d0),
+                                items = powerAssistantItems,
+                                selectedIndex = powerAssistantTargets.indexOf(powerAssistantTarget),
+                                onSelectedIndexChange = onPowerTargetSelect,
+                                startAction = {
+                                    SettingsIcon(
+                                        icon = Icons.Rounded.PowerSettingsNew,
+                                        tint = SettingsIconColors.Yellow,
+                                        enabled = prefs != null,
+                                    )
+                                },
+                                enabled = prefs != null,
+                            )
+                            SwitchPref(
+                                context = context,
+                                prefs = prefs,
+                                title = stringResource(R.string.ui_automatically_set_default_assistant_f86963),
+                                key = Prefs.Keys.ASSISTANT_AUTO_CONFIG,
+                                icon = Icons.Rounded.Settings,
+                                iconTint = SettingsIconColors.Green,
+                            )
+                        }
+                    }
+                }
+
+                if (prefs != null || hasConnectedFramework) {
+                    item(key = "section_oem_assistant_compatibility") {
+                        SmallTitle(stringResource(R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a))
+                        SettingsGroupCard {
+                            SwitchPref(
+                                context = context,
+                                prefs = prefs,
+                                title = stringResource(R.string.ui_enable_vendor_assistant_custom_models_c8e465),
+                                key = Prefs.Keys.AGENT_CUSTOM_MODEL,
+                                icon = Icons.Rounded.Cloud,
+                                iconTint = SettingsIconColors.Blue,
+                            )
+                            SwitchPref(
+                                context = context,
+                                prefs = prefs,
+                                title = stringResource(R.string.ui_only_take_over_with_agent_prefix_d17556),
+                                key = Prefs.Keys.AGENT_REQUIRE_PREFIX,
+                                icon = Icons.Rounded.FilterAlt,
+                                iconTint = SettingsIconColors.Blue,
+                            )
+                        }
+                    }
+                }
+
+                if (prefs != null || hasConnectedFramework || capabilities.root.isGranted || hasUsedSystemizer) {
+                    item(key = "section_gemini") {
+                        SmallTitle("Gemini")
+                        SettingsGroupCard {
+                            if (prefs != null || hasConnectedFramework) {
+                                SwitchPref(
+                                    context = context,
+                                    prefs = prefs,
+                                    title = stringResource(R.string.ui_maintain_hey_google_detection_after_screen_rest_9d6877),
+                                    key = Prefs.Keys.HOTWORD_SELF_HEAL,
+                                    icon = Icons.Rounded.Hearing,
+                                    iconTint = SettingsIconColors.Green,
+                                )
+                                SwitchPref(
+                                    context = context,
+                                    prefs = prefs,
+                                    title = stringResource(R.string.ui_lock_screen_evokes_automatic_voice_input_1cde18),
+                                    key = Prefs.Keys.LOCKSCREEN_VOICE_COMMAND,
+                                    icon = Icons.Rounded.Lock,
+                                    iconTint = SettingsIconColors.Blue,
+                                )
+                                SwitchPref(
+                                    context = context,
+                                    prefs = prefs,
+                                    title = stringResource(R.string.ui_bright_screen_evokes_automatic_voice_input_4358fe),
+                                    key = Prefs.Keys.SCREEN_ON_VOICE_COMMAND,
+                                    icon = Icons.Rounded.SettingsVoice,
+                                    iconTint = SettingsIconColors.Green,
+                                )
+                            }
+                            if (capabilities.root.isGranted || hasUsedSystemizer) {
+                                ArrowPreference(
+                                    title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
+                                    startAction = {
+                                        SettingsIcon(
+                                            icon = Icons.Rounded.Inventory,
+                                            tint = SettingsIconColors.Orange,
+                                            enabled = !installingSystemizer,
+                                        )
+                                    },
+                                    summary = if (capabilities.root.isGranted) null else stringResource(R.string.capability_root_required),
+                                    enabled = !installingSystemizer,
+                                    holdDownState = showSystemizerDialog,
+                                    onClick = {
+                                        if (!capabilities.root.isGranted) {
+                                            onNavigate(AppRoute.SystemEnhance)
+                                        } else if (!installingSystemizer) {
+                                            showSystemizerDialog = true
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (prefs != null || hasConnectedFramework) {
+                    item(key = "section_circle_to_search") {
+                        SmallTitle(stringResource(R.string.ui_search_in_one_turn_179584))
+                        SettingsGroupCard {
+                            SwitchPref(
+                                context = context,
+                                prefs = prefs,
+                                title = stringResource(R.string.ui_long_press_on_the_gesture_bar_triggers_a_circle_to_s_b80117),
+                                key = Prefs.Keys.GESTURE_BAR_CIRCLE_TO_SEARCH,
+                                icon = Icons.Rounded.SwipeUp,
+                                iconTint = SettingsIconColors.Blue,
+                            )
+                            SwitchPref(
+                                context = context,
+                                prefs = prefs,
+                                title = stringResource(R.string.ui_long_press_with_two_fingers_to_trigger_a_circle_sear_ab597a),
+                                key = Prefs.Keys.DOUBLE_FINGER_CIRCLE_TO_SEARCH,
+                                icon = Icons.Rounded.TouchApp,
+                                iconTint = SettingsIconColors.Blue,
+                            )
+                        }
+                    }
+                }
+
+                item(key = "section_general") {
+                    SmallTitle(stringResource(R.string.settings_general))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.appearance_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Palette,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.AppearanceSettings) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.speech_settings_title),
+                            startAction = { SettingsIcon(icon = Icons.Rounded.Mic, tint = SettingsIconColors.Blue) },
+                            onClick = { onNavigate(AppRoute.SpeechSettings) },
+                        )
+                        LanguagePreference(
+                            iconTint = SettingsIconColors.Blue,
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Language,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.data_backup_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Description,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.DataBackup) },
+                        )
+                    }
+                }
+
+                item(key = "section_permissions") {
+                    SmallTitle(stringResource(R.string.ui_permissions_560165))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_floating_window_permissions_076b77),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Layers,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            endActions = {
+                                Text(
+                                    text = stringResource(
+                                        if (overlayGranted) R.string.status_authorized else R.string.status_unauthorized,
+                                    ),
+                                    fontSize = MiuixTheme.textStyles.body2.fontSize,
+                                    color = if (overlayGranted) {
+                                        MiuixTheme.colorScheme.onSurfaceVariantActions
+                                    } else {
+                                        MiuixTheme.colorScheme.error
+                                    },
+                                )
+                            },
+                            onClick = {
+                                if (!overlayGranted) {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(
+                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                Uri.parse("package:${context.packageName}"),
+                                            ),
+                                        )
+                                    }
+                                }
+                            },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_accessibility_enhancement_tools_8fd257),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.AccessibilityNew,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            endActions = {
+                                val enabled = accessibilityGranted || AgentAccessibilityService.isAvailable()
+                                Text(
+                                    text = stringResource(
+                                        if (enabled) R.string.status_enabled else R.string.status_disabled,
+                                    ),
+                                    fontSize = MiuixTheme.textStyles.body2.fontSize,
+                                    color = if (enabled) {
+                                        MiuixTheme.colorScheme.onSurfaceVariantActions
+                                    } else {
+                                        MiuixTheme.colorScheme.primary
+                                    },
+                                )
+                            },
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                    )
+                                }
+                            },
+                        )
+                        if (AccessibilityProtectionClient.isSupported() && (prefs != null || hasConnectedFramework)) {
+                            SwitchPreference(
+                                title = stringResource(R.string.ui_enforce_accessibility_55e838),
+                                checked = accessibilityProtectionEnabled,
+                                onCheckedChange = onAccessibilityProtectionToggle,
+                                startAction = {
+                                    SettingsIcon(
+                                        icon = Icons.Rounded.VerifiedUser,
+                                        tint = SettingsIconColors.Blue,
+                                        enabled = prefs != null && !accessibilityProtectionPending,
+                                    )
+                                },
+                                enabled = prefs != null && !accessibilityProtectionPending,
+                            )
+                        }
+                    }
+                }
+
+                item(key = "section_about") {
+                    SmallTitle(stringResource(R.string.ui_about_bed172))
+                    SettingsGroupCard {
+                        BasicComponent(
+                            title = stringResource(R.string.ui_about_version_title),
+                            summary = appVersionSummary,
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Info,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_about_update_title),
+                            summary = if (checkingUpdate) {
+                                stringResource(R.string.ui_about_update_checking)
+                            } else {
+                                null
+                            },
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.SystemUpdate,
+                                    tint = SettingsIconColors.Green,
+                                    enabled = !checkingUpdate,
+                                )
+                            },
+                            enabled = !checkingUpdate,
+                            onClick = checkForUpdate,
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_about_feedback_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.BugReport,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { openUrl("https://github.com/Mangi-11/Eta/issues") },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.ui_about_github_star_title),
+                            summary = stringResource(R.string.ui_about_github_star_hint),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Code,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { openUrl("https://github.com/Mangi-11/Eta") },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    SystemizerConfirmDialog(
+        show = showSystemizerDialog,
+        installing = installingSystemizer,
+        onDismissRequest = {
+            if (!installingSystemizer) {
+                showSystemizerDialog = false
+            }
+        },
+        onConfirm = {
+            if (installingSystemizer) return@SystemizerConfirmDialog
+            if (!capabilities.root.isGranted) {
+                showSystemizerDialog = false
+                onNavigate(AppRoute.SystemEnhance)
+                return@SystemizerConfirmDialog
+            }
+            enhancementHistory.recordSystemizerUse()
+            hasUsedSystemizer = true
+            showSystemizerDialog = false
+            installingSystemizer = true
+            coroutineScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    GoogleAppSystemizerInstaller(context.applicationContext).install()
+                }
+                installingSystemizer = false
+                Toast.makeText(
+                    context.applicationContext,
+                    result.toToastMessage(context),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        },
+    )
+
+    availableUpdate?.let { update ->
+        when (LocalUiStyle.current) {
+            AppearanceUiStyle.COUI -> {
+                CouiConfirmDialog(
+                    visible = true,
+                    title = stringResource(R.string.ui_update_available_title),
+                    message = stringResource(R.string.ui_update_available_message, update.version, appVersionName),
                     confirmText = stringResource(R.string.ui_update_go_download),
-                    onCancel = { availableUpdate = null },
                     onConfirm = {
                         availableUpdate = null
                         openUrl(update.url)
                     },
+                    onDismissRequest = { availableUpdate = null },
                 )
             }
+            AppearanceUiStyle.MIUIX -> {
+                WindowDialog(
+                    show = true,
+                    title = stringResource(R.string.ui_update_available_title),
+                    summary = stringResource(R.string.ui_update_available_message, update.version, appVersionName),
+                    onDismissRequest = { availableUpdate = null },
+                ) {
+                    MiuixDialogActions(
+                        confirmText = stringResource(R.string.ui_update_go_download),
+                        onCancel = { availableUpdate = null },
+                        onConfirm = {
+                            availableUpdate = null
+                            openUrl(update.url)
+                        },
+                    )
+                }
+            }
         }
+<<<<<<< HEAD
 
         if (workspaceDialog) {
             EtaWindowDialog(
@@ -1311,9 +1890,10 @@ private fun SettingsPageContent(
                 }
             }
         }
+=======
+    }
+>>>>>>> origin/main
 }
-
-// ── 系统化确认对话框 ─────────────────────────────────────────────────────────
 
 @Composable
 private fun SystemizerConfirmDialog(
@@ -1322,34 +1902,43 @@ private fun SystemizerConfirmDialog(
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    EtaWindowDialog(
-        show = show,
-        title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
-        summary = stringResource(R.string.ui_system_applications_have_voice_wake_up_permissions_f_0190f2),
-        onDismissRequest = onDismissRequest,
-    ) {
-        MiuixDialogActions(
-            confirmText = if (installing) {
-                stringResource(R.string.status_processing)
-            } else {
-                stringResource(R.string.action_confirm)
-            },
-            cancelEnabled = !installing,
-            confirmEnabled = !installing,
-            onCancel = onDismissRequest,
-            onConfirm = onConfirm,
-        )
+    val confirmText = if (installing) {
+        stringResource(R.string.status_processing)
+    } else {
+        stringResource(R.string.action_confirm)
+    }
+    when (LocalUiStyle.current) {
+        AppearanceUiStyle.COUI -> {
+            CouiConfirmDialog(
+                visible = show,
+                title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
+                message = stringResource(R.string.ui_system_applications_have_voice_wake_up_permissions_f_0190f2),
+                confirmText = confirmText,
+                confirmEnabled = !installing,
+                cancelEnabled = !installing,
+                onConfirm = onConfirm,
+                onDismissRequest = onDismissRequest,
+            )
+        }
+        AppearanceUiStyle.MIUIX -> {
+            WindowDialog(
+                show = show,
+                title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
+                summary = stringResource(R.string.ui_system_applications_have_voice_wake_up_permissions_f_0190f2),
+                onDismissRequest = onDismissRequest,
+            ) {
+                MiuixDialogActions(
+                    confirmText = confirmText,
+                    cancelEnabled = !installing,
+                    confirmEnabled = !installing,
+                    onCancel = onDismissRequest,
+                    onConfirm = onConfirm,
+                )
+            }
+        }
     }
 }
 
-// ── 带图标的布尔开关 ─────────────────────────────────────────────────────────
-
-/**
- * 单个布尔开关：状态随 [prefs]/[key] 变化重读，切换时同步写入。
- *
- * 配置来源由调用方按能力边界传入。Hook 开关仍可能因 LSPosed 未连接而禁用；Agent
- * Runtime 开关始终使用 App 本地配置。
- */
 @Composable
 private fun SwitchPref(
     context: Context,
@@ -1376,14 +1965,9 @@ private fun SwitchPref(
         targetPrefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { targetPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    EtaSwitchPreference(
-        title = title,
-        summary = summary,
-        checked = checked,
-        onCheckedChange = { value ->
-            // 同步提交；RemotePreferences.commit() 失败（binder 提交失败）时回滚 UI 状态，
-            // 避免 UI 显示已切换而 hook 进程实际未收到。
-            val targetPrefs = prefs ?: return@EtaSwitchPreference
+    val onToggle: (Boolean) -> Unit = { value ->
+        val targetPrefs = prefs
+        if (targetPrefs != null) {
             if (putBooleanSync(targetPrefs, key, value)) {
                 checked = value
                 history.recordCommittedBoolean(key, value)
@@ -1397,30 +1981,46 @@ private fun SwitchPref(
                     Toast.LENGTH_SHORT,
                 ).show()
             }
-        },
-        startAction = {
-            EtaPreferenceIcon(icon = icon, enabled = enabled, tint = iconTint)
-        },
-        enabled = enabled,
-    )
+        }
+    }
+
+    when (LocalUiStyle.current) {
+        AppearanceUiStyle.COUI -> {
+            CouiSwitchPreference(
+                title = title,
+                summary = summary,
+                checked = checked,
+                onCheckedChange = onToggle,
+                icon = { CouiSettingsIcon(icon = icon, tint = iconTint, enabled = enabled) },
+                enabled = enabled,
+            )
+        }
+        AppearanceUiStyle.MIUIX -> {
+            SwitchPreference(
+                title = title,
+                summary = summary,
+                checked = checked,
+                onCheckedChange = onToggle,
+                startAction = {
+                    SettingsIcon(icon = icon, enabled = enabled, tint = iconTint)
+                },
+                enabled = enabled,
+            )
+        }
+    }
 }
 
-/**
- * 同步写入布尔值。RemotePreferences 的 [commit] 先更新本进程 map 再同步等待 binder 提交，
- * 失败（binder RemoteException）返回 false 但本进程 map 已被改写——此时 hook 进程收不到新值。
- * 返回是否提交成功，供调用方决定是否更新 UI。
- */
 private fun putBooleanSync(
     prefs: SharedPreferences,
     key: String,
-    value: Boolean
+    value: Boolean,
 ): Boolean =
     runCatching { prefs.edit().putBoolean(key, value).commit() }.getOrDefault(false)
 
 private fun putStringSync(
     prefs: SharedPreferences,
     key: String,
-    value: String
+    value: String,
 ): Boolean =
     runCatching { prefs.edit().putString(key, value).commit() }.getOrDefault(false)
 
@@ -1434,11 +2034,11 @@ private fun PowerAssistantTarget.displayName(context: Context): String =
 private fun isAgentAccessibilityEnabled(context: Context): Boolean {
     val expected = ComponentName(
         context,
-        AgentAccessibilityService::class.java
+        AgentAccessibilityService::class.java,
     ).flattenToString()
-    val enabledServices = android.provider.Settings.Secure.getString(
+    val enabledServices = Settings.Secure.getString(
         context.contentResolver,
-        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
     ).orEmpty()
     return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
 }

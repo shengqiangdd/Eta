@@ -75,6 +75,7 @@ internal object AgentConversationStore {
         val conversationsById: Map<String, AgentChatHomeUiState>,
         val titles: Map<String, String>,
         val updatedAt: Map<String, Long>,
+        val pinnedIds: Set<String> = emptySet(),
         /**
          * 加载后列表下标与库中 sort_index 不一致的会话。流式占位等未入库消息会在排序中留下空洞，
          * 重启后列表被压紧；增量保存按下标截断后缀，这些会话必须先整段重写一次。
@@ -317,8 +318,9 @@ internal object AgentConversationStore {
         conversationsById: Map<String, AgentChatHomeUiState>,
         titles: Map<String, String>,
         updatedAt: Map<String, Long>,
+        pinnedIds: Set<String> = emptySet(),
     ) = AgentConversationPersistence().save(
-        context, Snapshot(selectedConversationId, conversationsById, titles, updatedAt),
+        context, Snapshot(selectedConversationId, conversationsById, titles, updatedAt, pinnedIds),
     )
 
     internal suspend fun saveChanges(
@@ -341,7 +343,18 @@ internal object AgentConversationStore {
                         deletedConversationIds += stored.keys - current.keys
                         deletedConversationIds.forEach { dao.deleteConversationCascade(it) }
                         for ((id, state) in current) {
+<<<<<<< HEAD
                             val old = previous[id].takeIf { id in stored }
+=======
+                            if (!state.isConversationLoaded) {
+                                val row = stored[id] ?: continue
+                                if (row.title != state.title || row.updatedAt != state.updatedAt || row.isPinned != state.isPinned) {
+                                    dao.updateConversationTitle(id, state.title, state.updatedAt, state.isPinned)
+                                }
+                                continue
+                            }
+                            val old = previous[id].takeIf { id in stored && it?.isConversationLoaded == true }
+>>>>>>> origin/main
                             if (old == null || !state.sameMetadata(old)) {
                                 phase = "encode_metadata"
                                 val row = ConversationEntity(
@@ -354,7 +367,11 @@ internal object AgentConversationStore {
                                     createdAt = stored[id]?.createdAt ?: state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     updatedAt = state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     modelId = state.modelId,
+<<<<<<< HEAD
                                     pinned = state.isPinned,
+=======
+                                    isPinned = state.isPinned,
+>>>>>>> origin/main
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
@@ -467,6 +484,7 @@ internal object AgentConversationStore {
         val states = linkedMapOf<String, AgentChatHomeUiState>()
         val titles = mutableMapOf<String, String>()
         val updatedAt = mutableMapOf<String, Long>()
+<<<<<<< HEAD
         val unaligned = mutableSetOf<String>()
 
         // 只把「当前会话」的消息读进内存：其余会话保留元数据 + 最后一条消息做预览，
@@ -533,6 +551,9 @@ internal object AgentConversationStore {
             timed("preview2") { loadPreviewMessages() }
         }
 
+=======
+        val pinnedIds = mutableSetOf<String>()
+>>>>>>> origin/main
         conversations.forEach { conversation ->
             val isSelected = conversation.id == selected
             val selStartNs = System.nanoTime()
@@ -643,6 +664,7 @@ internal object AgentConversationStore {
             ).let(RoleplayConversationReducer::decorate)
             titles[conversation.id] = conversation.title.takeUnless { it == LEGACY_UNNAMED_TITLE }.orEmpty()
             updatedAt[conversation.id] = conversation.updatedAt
+            if (conversation.isPinned) pinnedIds += conversation.id
         }
 
         // 启动时这笔开销此前没有任何日志：界面卡一下、内存高一点，都归不了因。
@@ -678,6 +700,7 @@ internal object AgentConversationStore {
             conversationsById = states,
             titles = titles,
             updatedAt = updatedAt,
+            pinnedIds = pinnedIds,
             unalignedConversationIds = unaligned,
         )
     }
@@ -716,7 +739,17 @@ internal object AgentConversationStore {
                         outputTokens = usage?.outputTokens,
                         reasoningTokens = usage?.reasoningTokens,
                         cachedTokens = usage?.cachedTokens,
+<<<<<<< HEAD
                         promptTokens = usage?.promptTokens,
+=======
+                        stepCount = usage?.stepCount,
+                        llmMs = usage?.llmMs,
+                        toolMs = usage?.toolMs,
+                        ttftMs = usage?.ttftMs,
+                        ttftSteps = usage?.ttftSteps,
+                        decodeMs = usage?.decodeMs,
+                        decodeTokens = usage?.decodeTokens,
+>>>>>>> origin/main
                     )
                 }
             }
@@ -795,7 +828,17 @@ internal object AgentConversationStore {
                     outputTokens = outputTokens,
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
+<<<<<<< HEAD
                     promptTokens = promptTokens,
+=======
+                    stepCount = stepCount,
+                    llmMs = llmMs,
+                    toolMs = toolMs,
+                    ttftMs = ttftMs,
+                    ttftSteps = ttftSteps,
+                    decodeMs = decodeMs,
+                    decodeTokens = decodeTokens,
+>>>>>>> origin/main
                 ).takeUnless { it.isEmpty },
             )
 

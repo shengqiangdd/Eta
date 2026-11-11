@@ -129,8 +129,19 @@ internal class AgentRunMessageProjector(
             message is AgentMessageUi && isAssistantMessageForRound(message.id, runId, round)
         }
         if (targetIndex < 0) return messages
+        val turnStartIndex = messages.indexOfLast { message ->
+            message is UserMessageUi ||
+                (message is SystemNoticeMessageUi && message.code == SystemNoticeCode.ModelRetry && message.id.startsWith("assistant-$runId-retry-"))
+        }
         return messages.mapIndexed { index, message ->
-            if (index == targetIndex && message is AgentMessageUi) message.copy(usage = usage) else message
+            when {
+                index == targetIndex && message is AgentMessageUi -> message.copy(usage = usage)
+                index > turnStartIndex && index < targetIndex &&
+                    message is AgentMessageUi &&
+                    isAssistantMessageForRun(message.id, runId) &&
+                    message.usage != null -> message.copy(usage = null)
+                else -> message
+            }
         }
     }
 
@@ -934,4 +945,11 @@ internal fun AgentTokenUsage.toUi(): TokenUsageUi =
         reasoningTokens = reasoningTokens,
         cachedTokens = cachedTokens,
         promptTokens = promptTokens,
+        stepCount = stepCount,
+        llmMs = llmMs,
+        toolMs = toolMs,
+        ttftMs = ttftMs,
+        ttftSteps = ttftSteps,
+        decodeMs = decodeMs,
+        decodeTokens = decodeTokens,
     )

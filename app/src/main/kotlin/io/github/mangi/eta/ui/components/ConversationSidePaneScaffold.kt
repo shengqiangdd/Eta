@@ -111,7 +111,11 @@ fun ConversationSidePaneScaffold(
     onDismiss: () -> Unit,
     onSearchChange: (String) -> Unit,
     onConversationSelected: (String) -> Unit,
+<<<<<<< HEAD
     onConversationPin: (ConversationSummaryUi) -> Unit,
+=======
+    onConversationTogglePin: (ConversationSummaryUi) -> Unit,
+>>>>>>> origin/main
     onConversationRename: (ConversationSummaryUi) -> Unit,
     onConversationExport: (ConversationSummaryUi) -> Unit,
     onConversationExportHistory: (ConversationSummaryUi) -> Unit,
@@ -280,7 +284,11 @@ fun ConversationSidePaneScaffold(
                         listState = panelListState,
                         onSearchChange = onSearchChange,
                         onConversationSelected = onConversationSelected,
+<<<<<<< HEAD
                         onConversationPin = onConversationPin,
+=======
+                        onConversationTogglePin = onConversationTogglePin,
+>>>>>>> origin/main
                         onConversationRename = onConversationRename,
                         onConversationExport = onConversationExport,
                         onConversationExportHistory = onConversationExportHistory,

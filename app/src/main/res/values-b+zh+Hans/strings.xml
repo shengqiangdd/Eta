@@ -43,6 +43,9 @@
   <string name="action_stop">停止</string>
   <string name="action_pin">置顶</string>
   <string name="action_unpin">取消置顶</string>
+  <string name="action_edit">编辑</string>
+  <string name="action_pin_conversation">置顶对话</string>
+  <string name="action_unpin_conversation">取消置顶</string>
   <string name="action_rename">重命名</string>
   <string name="action_export">导出</string>
   <string name="action_done">完成</string>
@@ -158,6 +161,9 @@
   <string name="appearance_title">外观与主题</string>
   <string name="appearance_group_color">颜色与主题</string>
   <string name="appearance_group_interface">界面与效果</string>
+  <string name="appearance_ui_style">界面样式</string>
+  <string name="appearance_ui_style_coui">COUI</string>
+  <string name="appearance_ui_style_miuix">Miuix</string>
   <string name="appearance_theme_mode">主题模式</string>
   <string name="appearance_theme_system">跟随系统</string>
   <string name="appearance_theme_light">浅色</string>
@@ -1380,6 +1386,9 @@
   <string name="chat_previous_candidate">上一条候选回复</string>
   <string name="chat_next_candidate">下一条候选回复</string>
   <string name="chat_image_attachment">图片附件</string>
+  <string name="chat_view_image">查看图片</string>
+  <string name="reasoning_chip_off">思考</string>
+  <string name="reasoning_chip_default">深度思考</string>
   <string name="chat_edit_preserve_following">保存后原位更新这条消息，并保留后续对话</string>
   <string name="chat_save_message">保存消息</string>
   <string name="chat_character_story_start">故事从这里开始</string>
@@ -2214,4 +2223,7 @@
   <string name="usage_row_turns">轮次</string>
   <string name="usage_row_context">上下文</string>
   <string name="usage_scope_partial">仅统计已加载的消息（更早的消息尚未载入，向上滚动可纳入）。</string>
+  <string name="conversation_branch">在新对话中分支</string>
+  <string name="conversation_branch_title">%1$s · 分支</string>
+  <string name="conversation_branch_unavailable">无法从此处分支：仅支持上下文完整且工具调用已结束的轮次。</string>
 </resources>

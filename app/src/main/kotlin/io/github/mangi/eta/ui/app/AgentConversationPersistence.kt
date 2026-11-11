@@ -18,11 +18,15 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
     private val mutex = Mutex()
     // 未对齐的会话不进入基线，首次保存按新会话整段写入，重排 sort_index。
     private var saved = initial?.let { snapshot -> project(snapshot) - snapshot.unalignedConversationIds }.orEmpty()
+    // 已提交但尚未进入 Main 状态的分支必须合入旧快照，直到保存队列观察到发布后的状态。
+    private var unpublishedBranches = emptyMap<String, Content>()
 
     suspend fun save(context: Context, snapshot: AgentConversationStore.Snapshot) = mutex.withLock {
-        val current = project(snapshot)
+        val projected = project(snapshot)
+        val current = unpublishedBranches + projected
         AgentConversationStore.saveChanges(context, snapshot.selectedConversationId, current, saved)
         saved = current
+        unpublishedBranches = unpublishedBranches - projected.keys
     }
 
     /**
@@ -79,6 +83,20 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         )
     }
 
+    /**
+     * 上游命名：创建分支后直接登记为已发布内容；保留以兼容上游调用点，并支持置顶位。
+     * 本 fork 的分支创建走 [branch] 的 placeholder 登记，这个入口用于其他登记场景。
+     */
+    suspend fun adoptConversation(
+        id: String,
+        state: AgentChatHomeUiState,
+        title: String,
+        updatedAt: Long,
+        isPinned: Boolean = false,
+    ) = mutex.withLock {
+        saved = saved + (id to Content(state, title, updatedAt, isPinned))
+    }
+
     /** 分支创建后的元信息；UI 状态由 [AgentAppState] 在 Main 线程构造，保持单一来源。 */
     internal data class BranchOutcome(
         val modelId: String?,
@@ -123,7 +141,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
 
     private fun project(snapshot: AgentConversationStore.Snapshot): Map<String, Content> =
         snapshot.conversationsById.mapValues { (id, state) ->
-            Content(state, snapshot.titles[id].orEmpty(), snapshot.updatedAt[id] ?: 0L)
+            Content(state, snapshot.titles[id].orEmpty(), snapshot.updatedAt[id] ?: 0L, id in snapshot.pinnedIds)
         }
 
     internal data class Content(
@@ -148,8 +166,13 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         /** 是否置顶；属于元数据，变化时必须触发写库（见 [sameMetadata]）。 */
         val isPinned: Boolean = false,
     ) {
-        constructor(state: AgentChatHomeUiState, title: String, updatedAt: Long) : this(
-            title, updatedAt, state.reasoningEffort, state.appliedRuntimeRunIds,
+        constructor(
+            state: AgentChatHomeUiState,
+            title: String,
+            updatedAt: Long,
+            isPinned: Boolean = false,
+        ) : this(
+            title, updatedAt, isPinned, state.reasoningEffort, state.appliedRuntimeRunIds,
             state.roleplay, if (state.roleplay == null) RoleplayMessageState() else state.roleplayMessages,
             state.modelId, state.messages, state.history,
             state.historyDeferred,
@@ -163,7 +186,8 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         )
 
         fun sameMetadata(other: Content): Boolean =
-            title == other.title && updatedAt == other.updatedAt && reasoningEffort == other.reasoningEffort &&
+            title == other.title && updatedAt == other.updatedAt && isPinned == other.isPinned &&
+                reasoningEffort == other.reasoningEffort &&
                 appliedRuntimeRunIds == other.appliedRuntimeRunIds && roleplay == other.roleplay &&
                 roleplayMessages == other.roleplayMessages && modelId == other.modelId &&
                 isPinned == other.isPinned

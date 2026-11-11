@@ -28,11 +28,15 @@ internal class AgentMemoryStore(
 ) {
     private val appContext = context.applicationContext
 
+    private var hasLoadedOnce = false
+
     var memoryState by mutableStateOf(AgentMemoryUiState())
         private set
 
     fun refreshMemory() {
-        memoryState = memoryState.copy(isLoading = true, notice = null)
+        if (!hasLoadedOnce) {
+            memoryState = memoryState.copy(isLoading = true, notice = null)
+        }
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val snapshot = AgentMemoryRepository.snapshot()
@@ -48,14 +52,19 @@ internal class AgentMemoryStore(
             }.fold(
                 onSuccess = { loaded ->
                     withContext(Dispatchers.Main) {
+                        val keepDraft = hasLoadedOnce && memoryState.hasUnsavedChanges
+                        val nextDraft = if (keepDraft) memoryState.draft else snapshot.content
+                        val nextBytes = if (keepDraft) memoryState.draftBytes else snapshot.byteSize
+                        hasLoadedOnce = true
                         memoryState = AgentMemoryUiState(
                             enabled = loaded.enabled,
                             isLoading = false,
-                            draft = loaded.snapshot,
+                            draft = nextDraft,
                             savedContent = loaded.snapshot,
-                            draftBytes = loaded.byteSize,
+                            draftBytes = nextBytes,
                             coreBudgetChars = loaded.coreBudget,
                             sections = loaded.sections,
+                            notice = memoryState.notice,
                         )
                     }
                 },

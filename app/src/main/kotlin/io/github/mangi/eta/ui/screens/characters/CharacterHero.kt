@@ -47,13 +47,17 @@ import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.roleplay.CharacterMacros
 import io.github.mangi.eta.agent.roleplay.CharacterProfile
+import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.CharacterAvatar
-import io.github.mangi.eta.ui.components.EtaTextButton
+import io.github.mangi.eta.ui.components.coui.CouiButton
+import io.github.mangi.eta.ui.components.coui.CouiButtonRole
 import io.github.mangi.eta.ui.components.rememberCharacterImage
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.squircle.squircleBorder
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.squircle.squircleSurface
@@ -219,6 +223,7 @@ internal fun CharacterHero(
                 )
             }
             Spacer(Modifier.height(20.dp))
+<<<<<<< HEAD
             EtaTextButton(
                 text = stringResource(R.string.character_start_chat),
                 enabled = !busy,
@@ -226,6 +231,25 @@ internal fun CharacterHero(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.textButtonColorsPrimary(),
             )
+=======
+            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                CouiButton(
+                    text = "开始对话",
+                    enabled = !busy,
+                    onClick = onStart,
+                    role = CouiButtonRole.Primary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                TextButton(
+                    text = "开始对话",
+                    enabled = !busy,
+                    onClick = onStart,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
+>>>>>>> origin/main
         }
     }
 }

@@ -86,6 +86,7 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(EXTRA_OPEN_ROUTE)
     }
 
+<<<<<<< HEAD
     /**
      * 测试版专用：`--es eta.debug.virtual_display create|release`。
      *
@@ -170,6 +171,51 @@ class MainActivity : ComponentActivity() {
             val focus = window.decorView.findFocus() ?: return@post
             val connection = focus.onCreateInputConnection(EditorInfo()) ?: return@post
             connection.commitText(text, 1)
+=======
+                AgentAppTheme(
+                    appearance = appearance,
+                    applyInterfaceScale = true,
+                    onResolvedDarkModeChange = ::updateSystemBars,
+                ) {
+                    AgentAppRoot(
+                        assistantConversationKey = launchRequests.assistantConversationKey,
+                        requestedConversationId = launchRequests.conversationId,
+                        onRequestedConversationOpened = {
+                            launchRequests = launchRequests.copy(conversationId = null)
+                            intent?.action = null
+                        },
+                        requestedArchivedConversation = launchRequests.archivedConversation,
+                        onArchivedConversationOpened = {
+                            launchRequests = launchRequests.copy(archivedConversation = null)
+                            intent?.action = null
+                        },
+                        sharedContent = launchRequests.sharedContent,
+                        onSharedContentAccepted = {
+                            launchRequests = launchRequests.copy(sharedContent = null)
+                            intent?.action = null
+                        },
+                        openSpeechSettings = launchRequests.speechSettings,
+                        openTerminal = launchRequests.terminal,
+                        onTerminalOpened = {
+                            launchRequests = launchRequests.copy(terminal = false)
+                            intent?.action = null
+                        },
+                        onSpeechSettingsOpened = {
+                            launchRequests = launchRequests.copy(speechSettings = false)
+                            intent?.action = null
+                        },
+                        onAssistantConversationOpened = { opened ->
+                            launchRequests = launchRequests.copy(assistantConversationKey = null)
+                            intent?.action = null
+                            if (opened) {
+                                EtaAssistantOverlayService.notifyHandoffReady(this@MainActivity)
+                            }
+                        },
+                    )
+                }
+            }
+            contentReady = true
+>>>>>>> origin/main
         }
     }
 

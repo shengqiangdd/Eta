@@ -2,13 +2,14 @@ package io.github.mangi.eta.ui.screens.backup
 
 import android.content.Context
 import android.widget.Toast
+<<<<<<< HEAD
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+=======
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+>>>>>>> origin/main
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Description
-import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,15 +19,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.itos.coui.layout.Divider
+import com.itos.coui.layout.Group
+import com.itos.coui.text.CouiTextKind
+import com.itos.coui.text.Text as CouiText
 import io.github.mangi.eta.R
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.safeStackTrace
+<<<<<<< HEAD
 import io.github.mangi.eta.data.backup.AutoBackupOutcome
 import io.github.mangi.eta.data.backup.AutoBackupRepository
 import io.github.mangi.eta.data.backup.AutoBackupScheduler
@@ -57,6 +61,17 @@ import java.io.FileOutputStream
 import java.io.FilterInputStream
 import java.io.FilterOutputStream
 import java.io.IOException
+=======
+import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.data.repository.EtaBackupSummary
+import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.MiuixDialogActions
+import io.github.mangi.eta.ui.components.MiuixScaffoldPage
+import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
+import io.github.mangi.eta.ui.components.coui.CouiPageBottomSpacer
+import io.github.mangi.eta.ui.components.coui.CouiPreference
+import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
+>>>>>>> origin/main
 import java.io.InputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
@@ -64,10 +79,17 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+<<<<<<< HEAD
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
+=======
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.Card
+>>>>>>> origin/main
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 @Composable
 internal fun DataBackupScreen(
@@ -184,6 +206,7 @@ internal fun DataBackupScreen(
         }
     }
 
+<<<<<<< HEAD
     when (pickerMode) {
         BackupPickerMode.EXPORT_DIRECTORY -> {
             WorkspacePathPicker(
@@ -361,6 +384,102 @@ internal fun DataBackupScreen(
                         pickerMode = BackupPickerMode.IMPORT_FILE
                     },
                 )
+=======
+    when (LocalUiStyle.current) {
+        AppearanceUiStyle.COUI -> {
+            CouiScaffoldPage(
+                title = stringResource(R.string.data_backup_title),
+                onBack = onBack,
+            ) {
+                Group {
+                    CouiPreference(
+                        title = stringResource(R.string.data_backup_warning_title),
+                        summary = stringResource(R.string.data_backup_warning_summary),
+                        showChevron = false,
+                    )
+                }
+                Group(title = stringResource(R.string.data_backup_actions)) {
+                    CouiPreference(
+                        title = stringResource(R.string.data_backup_export),
+                        summary = if (busy) {
+                            stringResource(R.string.data_backup_working)
+                        } else {
+                            stringResource(R.string.data_backup_export_summary)
+                        },
+                        enabled = !busy,
+                        trailing = if (busy) {
+                            { InfiniteProgressIndicator(size = 20.dp) }
+                        } else {
+                            null
+                        },
+                        onClick = { exportLauncher.launch(defaultBackupFileName()) },
+                    )
+                    Divider()
+                    CouiPreference(
+                        title = stringResource(R.string.data_backup_import),
+                        summary = stringResource(R.string.data_backup_import_summary),
+                        enabled = !busy,
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain"))
+                        },
+                    )
+                }
+                CouiPageBottomSpacer()
+            }
+        }
+
+        AppearanceUiStyle.MIUIX -> {
+            MiuixScaffoldPage(
+                title = stringResource(R.string.data_backup_title),
+                onBack = onBack,
+            ) {
+                item(key = "warning") {
+                    Card(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp)
+                            .padding(top = 8.dp, bottom = 12.dp),
+                    ) {
+                        BasicComponent(
+                            title = stringResource(R.string.data_backup_warning_title),
+                            summary = stringResource(R.string.data_backup_warning_summary),
+                        )
+                    }
+                }
+                item(key = "actions") {
+                    SmallTitle(stringResource(R.string.data_backup_actions))
+                    Card(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp)
+                            .padding(bottom = 12.dp),
+                    ) {
+                        ArrowPreference(
+                            title = stringResource(R.string.data_backup_export),
+                            summary = if (busy) {
+                                stringResource(R.string.data_backup_working)
+                            } else {
+                                stringResource(R.string.data_backup_export_summary)
+                            },
+                            enabled = !busy,
+                            endActions = {
+                                if (busy) {
+                                    InfiniteProgressIndicator(size = 20.dp)
+                                }
+                            },
+                            onClick = {
+                                exportLauncher.launch(defaultBackupFileName())
+                            },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.data_backup_import),
+                            summary = stringResource(R.string.data_backup_import_summary),
+                            enabled = !busy,
+                            onClick = {
+                                importLauncher.launch(arrayOf("application/json", "text/plain"))
+                            },
+                        )
+                    }
+                }
+>>>>>>> origin/main
             }
         }
     }
@@ -381,6 +500,7 @@ internal fun DataBackupScreen(
     }
 
     if (showImportDialog) {
+<<<<<<< HEAD
         EtaWindowDialog(
             show = true,
             title = stringResource(R.string.data_backup_import_confirm_title),
@@ -471,13 +591,78 @@ private fun BackupIcon(icon: ImageVector, loading: Boolean) {
     ) {
         if (loading) {
             InfiniteProgressIndicator(size = 20.dp)
+=======
+        val confirmText = if (busy) {
+            stringResource(R.string.data_backup_working)
+>>>>>>> origin/main
         } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp),
-                tint = MiuixTheme.colorScheme.onBackground,
-            )
+            stringResource(R.string.action_import)
+        }
+        val onDismissImport: () -> Unit = {
+            if (!busy) {
+                showImportDialog = false
+                pendingImportUri = null
+            }
+        }
+        val onConfirmImport: () -> Unit = {
+            val uri = pendingImportUri
+            if (uri != null) {
+                showImportDialog = false
+                scope.launch {
+                    busy = true
+                    try {
+                        val input = context.contentResolver.openInputStream(uri)
+                            ?: error(context.getString(R.string.data_backup_file_open_failed))
+                        val summary = input.use { onImport(it) }
+                        Toast.makeText(
+                            context,
+                            context.getString(
+                                R.string.data_backup_imported,
+                                summary.conversationCount,
+                                summary.providerCount,
+                            ),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } catch (throwable: Throwable) {
+                        showFailure(throwable)
+                    } finally {
+                        pendingImportUri = null
+                        busy = false
+                    }
+                }
+            }
+        }
+        when (LocalUiStyle.current) {
+            AppearanceUiStyle.COUI -> {
+                CouiConfirmDialog(
+                    visible = true,
+                    title = stringResource(R.string.data_backup_import_confirm_title),
+                    message = stringResource(R.string.data_backup_import_confirm_summary),
+                    confirmText = confirmText,
+                    confirmEnabled = !busy,
+                    cancelEnabled = !busy,
+                    destructive = true,
+                    onConfirm = onConfirmImport,
+                    onDismissRequest = onDismissImport,
+                )
+            }
+            AppearanceUiStyle.MIUIX -> {
+                WindowDialog(
+                    show = true,
+                    title = stringResource(R.string.data_backup_import_confirm_title),
+                    summary = stringResource(R.string.data_backup_import_confirm_summary),
+                    onDismissRequest = onDismissImport,
+                ) {
+                    MiuixDialogActions(
+                        confirmText = confirmText,
+                        destructive = true,
+                        cancelEnabled = !busy,
+                        confirmEnabled = !busy,
+                        onCancel = onDismissImport,
+                        onConfirm = onConfirmImport,
+                    )
+                }
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ package io.github.mangi.eta.data.repository
 import android.content.Context
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.model.AppearanceSettings
+import io.github.mangi.eta.data.model.AppearanceUiStyle
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.encodeToString
@@ -70,5 +71,9 @@ object AppearanceSettingsRepository {
 
     suspend fun update(transform: (AppearanceSettings) -> AppearanceSettings) {
         SettingsDataStore.updateAppearanceSettings(transform)
+    }
+
+    suspend fun selectUiStyle(style: AppearanceUiStyle) {
+        SettingsDataStore.selectUiStyle(style)
     }
 }

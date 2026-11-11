@@ -1,30 +1,37 @@
 package io.github.mangi.eta.ui.app
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ShortText
 import androidx.compose.material.icons.outlined.FilterAlt
 import androidx.compose.material.icons.outlined.MoreHoriz
+<<<<<<< HEAD
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
+=======
+import androidx.compose.material.icons.rounded.Code
+>>>>>>> origin/main
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Stop
@@ -38,27 +45,53 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.itos.coui.icons.CouiIcons
+import com.itos.coui.layout.CouiPageDefaults
+import com.itos.coui.layout.Scaffold as CouiLayoutScaffold
+import com.itos.coui.menu.CouiMenuItem
+import com.itos.coui.menu.Menu
+import com.itos.coui.menu.couiMenuAnchor
+import com.itos.coui.menu.rememberCouiMenuAnchor
+import com.itos.coui.theme.CouiTheme
+import com.itos.coui.theme.LocalCouiTextStyle
+import com.itos.coui.topappbar.CouiTopAppBarDefaults
+import com.itos.coui.topappbar.TopAppBar as CouiTopAppBar
+import com.itos.coui.topappbar.TopAppBarButtonGroup
 import io.github.mangi.eta.R
+<<<<<<< HEAD
 import io.github.mangi.eta.data.model.ChatViewMode
+=======
+import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.data.model.TtsProvider
+import io.github.mangi.eta.data.repository.SpeechSettingsRepository
+>>>>>>> origin/main
 import io.github.mangi.eta.ui.components.AdaptiveTopAppBar
-import io.github.mangi.eta.ui.components.CharacterAvatar
+import io.github.mangi.eta.ui.components.AgentTopBarChatHeader
+import io.github.mangi.eta.ui.components.ChatActionIcons
+import io.github.mangi.eta.ui.components.ChatImagePreviewHost
 import io.github.mangi.eta.ui.components.ConversationSidePaneScaffold
 import io.github.mangi.eta.ui.components.MiuixBackButton
 import io.github.mangi.eta.ui.components.RoleplayChatUi
 import io.github.mangi.eta.ui.components.TopBarBackdrop
 import io.github.mangi.eta.ui.components.VirtualDisplayPanel
 import io.github.mangi.eta.ui.components.captureForTopBar
+import io.github.mangi.eta.ui.components.coui.CouiBackButton
+import io.github.mangi.eta.ui.components.coui.CouiTopAppBarIconButton
 import io.github.mangi.eta.ui.components.rememberTopBarBackdrop
 import io.github.mangi.eta.ui.components.topBarContainerColor
+<<<<<<< HEAD
 import io.github.mangi.eta.ui.layout.rememberIsWideScreen
+=======
+import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+>>>>>>> origin/main
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.navigation.AppRoute
@@ -73,6 +106,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowListPopup
 import io.github.mangi.eta.ui.voice.SpeechAutoReadToggle
@@ -109,7 +143,11 @@ internal fun AgentAppShell(
     onChatViewModeChange: (ChatViewMode) -> Unit = {},
     onSearchMessages: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
+<<<<<<< HEAD
     onConversationPin: (ConversationSummaryUi) -> Unit,
+=======
+    onConversationTogglePin: (ConversationSummaryUi) -> Unit,
+>>>>>>> origin/main
     onConversationRename: (ConversationSummaryUi) -> Unit,
     onConversationExport: (ConversationSummaryUi) -> Unit,
     onConversationExportHistory: (ConversationSummaryUi) -> Unit,
@@ -122,14 +160,17 @@ internal fun AgentAppShell(
     onOpenSettings: () -> Unit,
     onOpenModelProviders: () -> Unit,
     modifier: Modifier = Modifier,
+    homeTitle: String? = null,
     homeCharacter: RoleplayChatUi? = null,
+    homeModelPickerState: AgentModelPickerUiState? = null,
+    isHomeStreaming: Boolean = false,
+    onHomeModelSelected: (String) -> Unit = {},
     onOpenCharacter: () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    val scrollBehavior = MiuixScrollBehavior()
-    val backdrop = rememberTopBarBackdrop()
-    val topBarColor = topBarContainerColor(backdrop)
+    val uiStyle = LocalUiStyle.current
     val pageContent: @Composable () -> Unit = {
+<<<<<<< HEAD
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets.safeDrawing.only(
@@ -181,11 +222,147 @@ internal fun AgentAppShell(
                             .padding(top = padding.calculateTopPadding() + 8.dp, end = 12.dp),
                     )
                 }
+=======
+        when (uiStyle) {
+            AppearanceUiStyle.COUI -> {
+                val dark = CouiTheme.isDark
+                val colors = CouiPageDefaults.themeColors(dark)
+                val isHome = currentRoute is AppRoute.Home
+                CouiLayoutScaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = MiuixTheme.colorScheme.surface,
+                    windowInsets = WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                    ),
+                    topBar = {
+                        if (currentRoute !is AppRoute.Settings) {
+                            CouiTopAppBar(
+                                title = {
+                                    if (isHome && homeModelPickerState != null) {
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            AgentTopBarChatHeader(
+                                                conversationTitle = homeTitle,
+                                                character = homeCharacter,
+                                                state = homeModelPickerState,
+                                                isStreaming = isHomeStreaming,
+                                                onModelSelected = onHomeModelSelected,
+                                                onOpenCharacter = onOpenCharacter,
+                                            )
+                                        }
+                                    } else {
+                                        BasicText(
+                                            text = titleForRoute(currentRoute),
+                                            style = LocalCouiTextStyle.current,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                },
+                                navigationIcon = {
+                                    if (isHome) {
+                                        CouiTopAppBarIconButton(
+                                            icon = Icons.AutoMirrored.Outlined.ShortText,
+                                            contentDescription = stringResource(R.string.action_conversation_history),
+                                            onClick = onOpenConversationPane,
+                                            dark = dark,
+                                            colors = colors,
+                                        )
+                                    } else {
+                                        CouiBackButton(onClick = onBack, dark = dark, colors = colors)
+                                    }
+                                },
+                                actions = {
+                                    if (isHome) {
+                                        TopAppBarButtonGroup {
+                                            CouiTopBarOverflowMenu(
+                                                dark = dark,
+                                                colors = colors,
+                                                onNewConversation = onNewConversation,
+                                                onOpenTerminal = onOpenTerminal,
+                                                onLaunchKimiWeb = onLaunchKimiWeb,
+                                                kimiWebLabel = kimiWebLabel,
+                                                canStopKimiWeb = canStopKimiWeb,
+                                                onStopKimiWeb = onStopKimiWeb,
+                                                onRefreshKimiWeb = onRefreshKimiWeb,
+                                                onOpenBrowser = onOpenBrowser,
+                                            )
+                                        }
+                                    }
+                                },
+                                dark = dark,
+                                colors = CouiTopAppBarDefaults.colors(
+                                    backgroundColor = MiuixTheme.colorScheme.surface,
+                                    titleColor = colors.title,
+                                    dark = dark,
+                                ),
+                            )
+                        }
+                    },
+                ) { padding ->
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        content(padding)
+                    }
+                }
+            }
+            AppearanceUiStyle.MIUIX -> {
+                // 首页顶栏高度固定，不参与折叠；未绑定顶栏的滚动行为会吞掉聊天列表的单向滑动。
+                val scrollBehavior = if (currentRoute is AppRoute.Home) null else MiuixScrollBehavior()
+                val backdrop = rememberTopBarBackdrop()
+                val topBarColor = topBarContainerColor(backdrop)
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    contentWindowInsets = WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                    ),
+                    topBar = {
+                        if (currentRoute !is AppRoute.Settings) {
+                            TopBarBackdrop(backdrop) {
+                                AgentTopBar(
+                                    route = currentRoute,
+                                    scrollBehavior = scrollBehavior,
+                                    color = topBarColor,
+                                    onBack = onBack,
+                                    onOpenConversationPane = onOpenConversationPane,
+                                    onNewConversation = onNewConversation,
+                                    onOpenTerminal = onOpenTerminal,
+                                    onLaunchKimiWeb = onLaunchKimiWeb,
+                                    kimiWebLabel = kimiWebLabel,
+                                    canStopKimiWeb = canStopKimiWeb,
+                                    onStopKimiWeb = onStopKimiWeb,
+                                    onRefreshKimiWeb = onRefreshKimiWeb,
+                                    onOpenBrowser = onOpenBrowser,
+                                    homeTitle = homeTitle,
+                                    homeCharacter = homeCharacter,
+                                    homeModelPickerState = homeModelPickerState,
+                                    isHomeStreaming = isHomeStreaming,
+                                    onHomeModelSelected = onHomeModelSelected,
+                                    onOpenCharacter = onOpenCharacter,
+                                )
+                            }
+                        }
+                    },
+                ) { padding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .captureForTopBar(backdrop)
+                            .then(
+                                if (scrollBehavior != null) Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+                                else Modifier,
+                            ),
+                    ) {
+                        content(padding)
+                    }
+                }
+>>>>>>> origin/main
             }
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    ChatImagePreviewHost(modifier = modifier) {
         if (conversationPaneState != null && currentRoute is AppRoute.Home) {
             ConversationSidePaneScaffold(
                 state = conversationPaneState,
@@ -195,7 +372,11 @@ internal fun AgentAppShell(
                 onDismiss = onDismissConversationPane,
                 onSearchChange = onSearchConversations,
                 onConversationSelected = onSelectConversation,
+<<<<<<< HEAD
                 onConversationPin = onConversationPin,
+=======
+                onConversationTogglePin = onConversationTogglePin,
+>>>>>>> origin/main
                 onConversationRename = onConversationRename,
                 onConversationExport = onConversationExport,
                 onConversationExportHistory = onConversationExportHistory,
@@ -217,9 +398,103 @@ internal fun AgentAppShell(
 }
 
 @Composable
+private fun CouiTopBarOverflowMenu(
+    dark: Boolean,
+    colors: com.itos.coui.layout.CouiPageColors,
+    onNewConversation: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onLaunchKimiWeb: () -> Unit,
+    kimiWebLabel: String,
+    canStopKimiWeb: Boolean,
+    onStopKimiWeb: () -> Unit,
+    onRefreshKimiWeb: () -> Unit,
+    onOpenBrowser: () -> Unit,
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val speechSettings by remember { SpeechSettingsRepository.settingsFlow() }.collectAsState(initial = null)
+    val hasSpeechPlayback = speechSettings?.let { it.tts != TtsProvider.NONE } == true
+    val autoReadEnabled = speechSettings?.chatAutoSpeak == true
+    val anchor = rememberCouiMenuAnchor()
+
+    val newConversationText = stringResource(R.string.action_new_conversation)
+    val openTerminalText = stringResource(R.string.action_open_terminal)
+    val stopKimiWebText = stringResource(R.string.capability_kimi_stop)
+    val openBrowserText = stringResource(R.string.action_open_browser)
+    val autoReadText = stringResource(
+        if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
+    )
+    val menuItems = remember(
+        newConversationText,
+        openTerminalText,
+        kimiWebLabel,
+        openBrowserText,
+        stopKimiWebText,
+        canStopKimiWeb,
+        autoReadText,
+        hasSpeechPlayback,
+        autoReadEnabled,
+    ) {
+        buildList {
+            add(CouiMenuItem(value = 0, text = newConversationText, icon = ChatActionIcons.NewChat))
+            add(CouiMenuItem(value = 1, text = openTerminalText, icon = Icons.Rounded.Terminal))
+            add(CouiMenuItem(value = 2, text = kimiWebLabel, icon = Icons.Rounded.Code))
+            add(CouiMenuItem(value = 3, text = openBrowserText, icon = Icons.Rounded.Language))
+            if (canStopKimiWeb) {
+                add(CouiMenuItem(value = 4, text = stopKimiWebText, icon = Icons.Rounded.Stop))
+            }
+            if (hasSpeechPlayback) {
+                add(
+                    CouiMenuItem(
+                        value = 5,
+                        text = autoReadText,
+                        icon = if (autoReadEnabled) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
+                    ),
+                )
+            }
+        }
+    }
+
+    Box {
+        CouiTopAppBarIconButton(
+            icon = CouiIcons.More,
+            contentDescription = stringResource(R.string.action_more),
+            modifier = Modifier.couiMenuAnchor(anchor),
+            dark = dark,
+            colors = colors,
+            onClick = {
+                onRefreshKimiWeb()
+                anchor.open { showMenu = true }
+            },
+        )
+        Menu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+            items = menuItems,
+            onItemClick = { item ->
+                showMenu = false
+                when (item.value) {
+                    0 -> onNewConversation()
+                    1 -> onOpenTerminal()
+                    2 -> onLaunchKimiWeb()
+                    3 -> onOpenBrowser()
+                    4 -> onStopKimiWeb()
+                    5 -> speechSettings?.let { current ->
+                        scope.launch {
+                            SpeechSettingsRepository.save(current.copy(chatAutoSpeak = !current.chatAutoSpeak))
+                        }
+                    }
+                }
+            },
+            anchor = anchor,
+        )
+    }
+}
+
+@Composable
 private fun AgentTopBar(
     route: AppRoute?,
-    scrollBehavior: ScrollBehavior,
+    scrollBehavior: ScrollBehavior?,
     color: Color,
     onBack: () -> Unit,
     onOpenConversationPane: () -> Unit,
@@ -231,15 +506,23 @@ private fun AgentTopBar(
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+<<<<<<< HEAD
     onOpenCapabilities: () -> Unit,
     onOpenWorkspace: () -> Unit,
     chatViewMode: ChatViewMode,
     onChatViewModeChange: (ChatViewMode) -> Unit,
     onSearchMessages: () -> Unit,
+=======
+    homeTitle: String?,
+>>>>>>> origin/main
     homeCharacter: RoleplayChatUi?,
+    homeModelPickerState: AgentModelPickerUiState?,
+    isHomeStreaming: Boolean,
+    onHomeModelSelected: (String) -> Unit,
     onOpenCharacter: () -> Unit,
 ) {
     val isHome = route is AppRoute.Home
+<<<<<<< HEAD
     // 宽屏下会话列表常驻左侧，这个「拉开列表」按钮点下去不会有任何变化，直接收起来。
     val wideScreen = rememberIsWideScreen()
     val navigationIcon: @Composable () -> Unit = {
@@ -279,14 +562,46 @@ private fun AgentTopBar(
                 onOpenBrowser = onOpenBrowser,
                 onOpenCapabilities = onOpenCapabilities,
                 onOpenWorkspace = onOpenWorkspace,
+=======
+    if (isHome && homeModelPickerState != null) {
+        HomeMiuixTopBar(
+            color = color,
+            onOpenConversationPane = onOpenConversationPane,
+            onNewConversation = onNewConversation,
+            onOpenTerminal = onOpenTerminal,
+            onLaunchKimiWeb = onLaunchKimiWeb,
+            kimiWebLabel = kimiWebLabel,
+            canStopKimiWeb = canStopKimiWeb,
+            onStopKimiWeb = onStopKimiWeb,
+            onRefreshKimiWeb = onRefreshKimiWeb,
+            onOpenBrowser = onOpenBrowser,
+        ) {
+            AgentTopBarChatHeader(
+                conversationTitle = homeTitle,
+                character = homeCharacter,
+                state = homeModelPickerState,
+                isStreaming = isHomeStreaming,
+                onModelSelected = onHomeModelSelected,
+                onOpenCharacter = onOpenCharacter,
+>>>>>>> origin/main
             )
         }
+        return
     }
 
+<<<<<<< HEAD
     // 首页聊天舞台与浏览器、终端这类整屏工具页没有可驱动折叠的滚动列表，大标题会一直展开、
     // 白占一屏顶部；它们使用紧凑标题，其余二级内容页统一使用可折叠大标题。
     val compactTitle = isHome || route is AppRoute.Browser || route is AppRoute.Terminal
     if (compactTitle) {
+=======
+    val navigationIcon: @Composable () -> Unit = {
+        MiuixBackButton(onClick = onBack)
+    }
+    val actions: @Composable RowScope.() -> Unit = {}
+
+    if (route is AppRoute.Terminal) {
+>>>>>>> origin/main
         SmallTopAppBar(
             title = titleForRoute(route),
             color = color,
@@ -305,6 +620,7 @@ private fun AgentTopBar(
     }
 }
 
+<<<<<<< HEAD
 /**
  * 顶栏的聊天视图菜单：全部 / 对话 / 轨迹。
  *
@@ -382,15 +698,68 @@ private fun ChatViewModeMenu(
                 }
             }
         }
+=======
+@Composable
+private fun HomeMiuixTopBar(
+    color: Color,
+    onOpenConversationPane: () -> Unit,
+    onNewConversation: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onLaunchKimiWeb: () -> Unit,
+    kimiWebLabel: String,
+    canStopKimiWeb: Boolean,
+    onStopKimiWeb: () -> Unit,
+    onRefreshKimiWeb: () -> Unit,
+    onOpenBrowser: () -> Unit,
+    centerContent: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(color)
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top))
+            .height(56.dp)
+            .clipToBounds()
+            .pointerInput(Unit) {
+                detectTapGestures { }
+            }
+            .padding(
+                start = TopAppBarDefaults.NavigationIconPadding,
+                end = TopAppBarDefaults.ActionIconPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onOpenConversationPane) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.ShortText,
+                modifier = Modifier.size(24.dp),
+                contentDescription = stringResource(R.string.action_conversation_history),
+            )
+        }
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            centerContent()
+        }
+        TopBarOverflowMenu(
+            onNewConversation = onNewConversation,
+            onOpenTerminal = onOpenTerminal,
+            onLaunchKimiWeb = onLaunchKimiWeb,
+            kimiWebLabel = kimiWebLabel,
+            canStopKimiWeb = canStopKimiWeb,
+            onStopKimiWeb = onStopKimiWeb,
+            onRefreshKimiWeb = onRefreshKimiWeb,
+            onOpenBrowser = onOpenBrowser,
+        )
+>>>>>>> origin/main
     }
 }
 
 private val TopBarMenuIconSize = 20.dp
 
-/**
- * 首页顶栏溢出菜单。WindowListPopup 以父布局为锚点，因此与触发按钮包在同一个 Box 中，
- * 弹层从按钮下方右对齐展开。
- */
 @Composable
 private fun TopBarOverflowMenu(
     onSearchMessages: () -> Unit,
@@ -473,7 +842,7 @@ private fun TopBarOverflowMenu(
                         text = newConversationText,
                         icon = { modifier ->
                             Icon(
-                                imageVector = Icons.Rounded.AddComment,
+                                imageVector = ChatActionIcons.NewChat,
                                 contentDescription = null,
                                 modifier = modifier.size(TopBarMenuIconSize),
                             )
@@ -529,7 +898,27 @@ private fun TopBarOverflowMenu(
                             },
                         ) to onStopKimiWeb,
                     )
+<<<<<<< HEAD
                 }
+=======
+                } else {
+                    emptyList()
+                }) + if (hasSpeechPlayback) {
+                    listOf(
+                        DropdownItem(
+                            text = autoReadText,
+                            icon = { modifier ->
+                                Icon(
+                                    imageVector = if (autoReadEnabled) Icons.AutoMirrored.Rounded.VolumeUp
+                                    else Icons.AutoMirrored.Rounded.VolumeOff,
+                                    contentDescription = null,
+                                    modifier = modifier.size(TopBarMenuIconSize),
+                                )
+                            },
+                        ),
+                    )
+                } else emptyList()
+>>>>>>> origin/main
             }
             ListPopupColumn {
                 entries.forEachIndexed { index, (item, action) ->
@@ -588,39 +977,16 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.SharedFolders -> stringResource(R.string.route_shared_folders)
     is AppRoute.LinuxFiles -> stringResource(R.string.route_linux_files)
     is AppRoute.ModelProviders -> stringResource(R.string.route_model_providers)
+<<<<<<< HEAD
     is AppRoute.CommunityCatalog -> stringResource(R.string.route_community_catalog)
     is AppRoute.CommunityCatalogProvider -> stringResource(R.string.route_community_catalog_provider)
+=======
+    is AppRoute.CommunityCatalog -> "从 models.dev 添加"
+    is AppRoute.CommunityCatalogProvider -> "选择模型"
+>>>>>>> origin/main
     is AppRoute.McpServers -> stringResource(R.string.route_mcp_servers)
     is AppRoute.McpServerDetail -> stringResource(R.string.route_mcp_server_detail)
     is AppRoute.ModelProviderDetail -> stringResource(R.string.route_provider_details)
     is AppRoute.ModelProviderNew -> stringResource(R.string.route_new_provider)
     null -> stringResource(R.string.app_name)
-}
-
-@Composable
-private fun CharacterTopBarIdentity(character: RoleplayChatUi, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .padding(start = 4.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CharacterAvatar(
-            name = character.characterName,
-            avatarPath = character.avatarPath,
-            size = 32.dp,
-            shape = CircleShape,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = character.characterName,
-            style = MiuixTheme.textStyles.body1,
-            fontWeight = FontWeight.Medium,
-            color = MiuixTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 180.dp),
-        )
-    }
 }

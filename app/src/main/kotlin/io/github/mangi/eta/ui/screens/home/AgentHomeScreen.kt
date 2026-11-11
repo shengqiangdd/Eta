@@ -5,7 +5,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+<<<<<<< HEAD
 import io.github.mangi.eta.data.model.ChatViewMode
+=======
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+>>>>>>> origin/main
 import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.AgentConversationLoadState
 import io.github.mangi.eta.ui.components.LocalAgentBrowserSession
@@ -47,8 +52,13 @@ internal fun AgentHomeScreen(
     searchOpenRequests: Int = 0,
     onOpenRunDetail: (String) -> Unit = {},
     isDrawerOpen: Boolean = false,
+<<<<<<< HEAD
     historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
     isLoadingConversation: Boolean = false,
+=======
+    isBranching: Boolean = false,
+    topInset: Dp = 0.dp,
+>>>>>>> origin/main
     modifier: Modifier = Modifier,
 ) {
     key(chatConversationCompositionKey(conversationKey)) {
@@ -62,6 +72,7 @@ internal fun AgentHomeScreen(
                 modifier = modifier,
             )
         } else {
+<<<<<<< HEAD
         val todoPlan = rememberTodoPlan(conversationKey)
         val taskLedger = rememberTaskLedger(conversationKey)
         val goal = rememberAgentGoal(conversationKey)
@@ -154,6 +165,69 @@ internal fun AgentHomeScreen(
             modifier = modifier,
         )
         }
+=======
+            val browser = remember(conversationKey) {
+                BrowserSessionRegistry.get(conversationKey ?: BrowserSessionRegistry.MANUAL_SESSION_KEY)
+            }
+            CompositionLocalProvider(
+                LocalRoleplayChat provides state.roleplayChatUi(),
+                LocalAgentBrowserSession provides browser,
+            ) {
+                AgentChatBody(
+                    messages = state.messages,
+                    modelPickerState = modelPickerState,
+                    topInset = topInset,
+                    isCompacting = state.isCompacting,
+                    isBranching = isBranching,
+                    input = state.input,
+                    isStreaming = state.isStreaming,
+                    reasoningEffort = state.reasoningEffort,
+                    availableReasoningEfforts = state.availableReasoningEfforts,
+                    pendingImages = state.pendingImages,
+                    pendingFileReferences = state.pendingFileReferences,
+                    queuedMessages = state.queuedMessages,
+                    inputSyncVersion = state.inputSyncVersion,
+                    focusInputOnSync = state.focusInputOnSync,
+                    messageEdit = state.messageEdit,
+                    onReasoningEffortChange = { onAction(AgentHomeAction.ReasoningEffortChanged(it)) },
+                    onCompactContext = { onAction(AgentHomeAction.CompactContext) },
+                    canCompactContext = state.canCompactContext,
+                    onModelSelected = { onAction(AgentHomeAction.ModelSelected(it)) },
+                    onSubmit = { text -> onAction(AgentHomeAction.SubmitMessage(text)) },
+                    onInterruptAndSubmit = { text -> onAction(AgentHomeAction.InterruptAndSubmitMessage(text)) },
+                    onSteerQueuedMessage = { id -> onAction(AgentHomeAction.SteerQueuedMessage(id)) },
+                    onRecallQueuedMessage = { id, draft -> onAction(AgentHomeAction.RecallQueuedMessage(id, draft)) },
+                    onRemoveQueuedMessage = { id -> onAction(AgentHomeAction.RemoveQueuedMessage(id)) },
+                    onStop = { onAction(AgentHomeAction.StopRun) },
+                    onAttachImage = { uri -> onAction(AgentHomeAction.ImageAttached(uri)) },
+                    onRemoveImage = { id -> onAction(AgentHomeAction.RemoveImage(id)) },
+                    onAttachFiles = { uris -> onAction(AgentHomeAction.FilesAttached(uris)) },
+                    onAttachFolder = { uri -> onAction(AgentHomeAction.FolderAttached(uri)) },
+                    onAttachFilePath = { path -> onAction(AgentHomeAction.FilePathAttached(path)) },
+                    onRemoveFileReference = { id -> onAction(AgentHomeAction.RemoveFileReference(id)) },
+                    onEditMessage = { id -> onAction(AgentHomeAction.EditMessage(id)) },
+                    onCancelMessageEdit = { onAction(AgentHomeAction.CancelMessageEdit) },
+                    onDeleteMessage = { id -> onAction(AgentHomeAction.DeleteMessage(id)) },
+                    onRegenerateMessage = { id -> onAction(AgentHomeAction.RegenerateMessage(id)) },
+                    onBranchMessage = { id ->
+                        conversationKey?.let { onAction(AgentHomeAction.BranchConversation(it, id)) }
+                    },
+                    onSelectReplyCandidate = { id, index -> onAction(AgentHomeAction.SelectReplyCandidate(id, index)) },
+                    onSuggestionClick = { prompt ->
+                        onAction(AgentHomeAction.SubmitMessage(prompt))
+                    },
+                    onRunTraceClick = { onAction(AgentHomeAction.ExpandRunTrace) },
+                    onOpenBrowser = { onAction(AgentHomeAction.OpenBrowser) },
+                    hasEarlierMessages = state.hasEarlierMessages,
+                    messageStartIndex = state.messageStartIndex,
+                    historyLoadState = historyLoadState,
+                    onLoadEarlierMessages = { onAction(AgentHomeAction.LoadEarlierMessages) },
+                    onHistoryViewportChanged = { onAction(AgentHomeAction.HistoryViewportChanged(it)) },
+                    isDrawerOpen = isDrawerOpen,
+                    modifier = modifier,
+                )
+            }
+>>>>>>> origin/main
         }
     }
 }

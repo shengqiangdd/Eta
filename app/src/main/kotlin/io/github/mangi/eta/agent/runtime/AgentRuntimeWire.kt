@@ -1254,6 +1254,7 @@ internal object AgentRuntimeWire {
     private fun Bundle.optionalInt(key: String): Int? =
         if (containsKey(key)) getInt(key) else null
 
+<<<<<<< HEAD
     /**
      * 读一个可能以 int 或 long 形式存在的毫秒值。
      *
@@ -1272,6 +1273,20 @@ internal object AgentRuntimeWire {
             else -> null
         }
     }
+=======
+    @Suppress("DEPRECATION")
+    private fun Bundle.optionalLong(key: String): Long? =
+        if (!containsKey(key)) {
+            null
+        } else {
+            when (val raw = get(key)) {
+                is Long -> raw
+                is Int -> raw.toLong()
+                is Number -> raw.toLong()
+                else -> null
+            }
+        }
+>>>>>>> origin/main
 
     private fun Bundle.putTokenUsage(usage: AgentTokenUsage) {
         usage.contextTokens?.let { putInt("usage_context", it) }
@@ -1279,7 +1294,17 @@ internal object AgentRuntimeWire {
         usage.outputTokens?.let { putInt("usage_output", it) }
         usage.reasoningTokens?.let { putInt("usage_reasoning", it) }
         usage.cachedTokens?.let { putInt("usage_cache", it) }
+<<<<<<< HEAD
         usage.promptTokens?.let { putInt("usage_prompt", it) }
+=======
+        usage.stepCount?.let { putInt("usage_steps", it) }
+        usage.llmMs?.let { putLong("usage_llm_ms", it) }
+        usage.toolMs?.let { putLong("usage_tool_ms", it) }
+        usage.ttftMs?.let { putLong("usage_ttft_ms", it) }
+        usage.ttftSteps?.let { putInt("usage_ttft_steps", it) }
+        usage.decodeMs?.let { putLong("usage_decode_ms", it) }
+        usage.decodeTokens?.let { putInt("usage_decode_tokens", it) }
+>>>>>>> origin/main
     }
 
     private fun Bundle.getTokenUsage(): AgentTokenUsage =
@@ -1289,7 +1314,17 @@ internal object AgentRuntimeWire {
             outputTokens = optionalInt("usage_output"),
             reasoningTokens = optionalInt("usage_reasoning"),
             cachedTokens = optionalInt("usage_cache"),
+<<<<<<< HEAD
             promptTokens = optionalInt("usage_prompt"),
+=======
+            stepCount = optionalInt("usage_steps"),
+            llmMs = optionalLong("usage_llm_ms"),
+            toolMs = optionalLong("usage_tool_ms"),
+            ttftMs = optionalLong("usage_ttft_ms"),
+            ttftSteps = optionalInt("usage_ttft_steps"),
+            decodeMs = optionalLong("usage_decode_ms"),
+            decodeTokens = optionalInt("usage_decode_tokens"),
+>>>>>>> origin/main
         )
 
     private fun decodeCustomHeaders(raw: String?): List<CustomHeader> =

@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 数据库版本号：实体改动必须同步 +1 并补一条 MIGRATION，单测会卡住不一致的情况。 */
-internal const val ETA_DATABASE_VERSION = 27
+internal const val ETA_DATABASE_VERSION = 28
 
 @Database(
     entities = [
@@ -158,6 +158,27 @@ internal abstract class EtaDatabase : RoomDatabase() {
         internal val MIGRATION_26_27 = Migration(26, 27) { database ->
             database.execSQL(SQL_V26_ADD_TIMING_COLUMNS)
             database.execSQL(SQL_V26_ADD_DECODE_MS)
+        }
+
+        /**
+         * 与上游 25 版对齐：上游在 24→25 里加的是消息级耗时/token 明细，
+         * 而本 fork 的 24→25 是 auth_mode——同一个版本号在两条线上含义不同。
+         *
+         * 本 fork 的迁移链保持独立（版本号连续向上），所以上游那批列在这里补：
+         * 不这么做会缺列，运行时查询直接报 no such column。
+         *
+         * 与已有的 first_token_ms 的关系：ttft_ms 是上游的等价物，语义更完整
+         * （ttft_steps 记录首个 token 发生在第几步）。两者都写，读的时候优先 ttft_ms。
+         *
+         * 旧行全部 NULL —— 读取端必须当「没数据」，不能当 0。
+         */
+        internal val MIGRATION_27_28 = Migration(27, 28) { database ->
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN step_count INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN llm_ms INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN tool_ms INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN ttft_ms INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN ttft_steps INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN decode_tokens INTEGER")
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -369,6 +390,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
             MIGRATION_24_25,
             MIGRATION_25_26,
             MIGRATION_26_27,
+            MIGRATION_27_28,
         )
     }
 }

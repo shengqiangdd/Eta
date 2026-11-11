@@ -48,8 +48,8 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("SELECT COUNT(*) FROM conversation_messages")
     suspend fun countMessages(): Int
 
-    @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt WHERE id = :conversationId")
-    suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long)
+    @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt, pinned = :isPinned WHERE id = :conversationId")
+    suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long, isPinned: Boolean = false)
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +

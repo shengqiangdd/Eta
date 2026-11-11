@@ -161,7 +161,13 @@ internal class AgentLocalTools(
     private val virtualDisplayEnabled: () -> Boolean = {
         Prefs.isEnabled(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED)
     },
+<<<<<<< HEAD
     /** 画布后端探测（LSPosed 可用的另一条创建路径）。 */
+=======
+    private val isToolEnabled: (String) -> Boolean = {
+        Prefs.isToolEnabled(it)
+    },
+>>>>>>> origin/main
     private val lsposedAvailable: () -> Boolean = { EtaApp.serviceInstance != null },
     /**
      * GUI 独占锁。非空时，所有「会动屏幕」的工具都要先拿到它：多会话并行时只能有一个 run
@@ -517,6 +523,12 @@ internal class AgentLocalTools(
             ) {
                 return@runCatching textResult(errorResult("ROOT_REQUIRED", "此操作需要 Root 授权，本次未执行"))
             }
+            if (!isToolEnabled(toolCall.name)) {
+                return@runCatching AgentModelClient.ToolResult(
+                    content = errorResult("TOOL_DISABLED", "工具 ${toolCall.name} 已在工具列表中关闭，本次未执行"),
+                    sensitive = AgentSensitiveToolPolicy.isSensitive(toolCall.name),
+                )
+            }
             deviceToolPermissionError(toolCall.name)?.let { return@runCatching it }
             memoryToolPermissionError(toolCall.name)?.let { return@runCatching it }
             when (val decision = beforeToolExecution(toolCall.name)) {
@@ -681,9 +693,20 @@ internal class AgentLocalTools(
             }
             val body = JSONObject(
                 errorResult(
+<<<<<<< HEAD
                     code = code,
                     message = throwable.message ?: throwable.javaClass.simpleName,
                 ),
+=======
+                    code = when (throwable) {
+                        is InvalidToolArgumentException, is org.json.JSONException -> "INVALID_ARGUMENT"
+                        is DeviceControlUnavailableException -> "ACCESSIBILITY_UNAVAILABLE"
+                        is ActiveDisplayUnavailableException -> "DISPLAY_UNAVAILABLE"
+                        else -> "TOOL_ERROR"
+                    },
+                    message = throwable.message ?: throwable.javaClass.simpleName
+                )
+>>>>>>> origin/main
             )
             // 不可重试的错误必须说出来：只给错误码时，模型会把「屏不对」当成「参数不对」再试一次。
             if (throwable is InvalidToolArgumentException && !throwable.retryable) {
@@ -697,6 +720,24 @@ internal class AgentLocalTools(
                 result.copy(sensitive = true)
             }
         }
+
+    private fun executeForegroundIntent(toolName: String, action: () -> JSONObject): JSONObject {
+        fun execute(): JSONObject {
+            if (closed.get()) throw AgentRunCancelledException()
+            if (!isToolEnabled(toolName)) {
+                return JSONObject(errorResult("TOOL_DISABLED", "工具 $toolName 已在工具列表中关闭，本次未执行"))
+            }
+            deviceToolPermissionError(toolName)?.let { return JSONObject(it.content) }
+            return when (val decision = beforeToolExecution(toolName)) {
+                ToolExecutionDecision.Allow -> {
+                    publishedObservation.set(PublishedObservation())
+                    action()
+                }
+                is ToolExecutionDecision.Reject -> JSONObject(errorResult(decision.code, decision.message))
+            }
+        }
+        return guiControl?.withAction { execute() } ?: execute()
+    }
 
     private fun deviceToolPermissionError(
         toolName: String,
@@ -1520,8 +1561,137 @@ internal class AgentLocalTools(
         return if (vd.active && vd.displayId == id) {
             id
         } else {
-            activeDisplayId = Display.DEFAULT_DISPLAY
-            Display.DEFAULT_DISPLAY
+            publishedObservation.set(PublishedObservation())
+            throw ActiveDisplayUnavailableException()
+        }
+    }
+
+    private fun checkCancellation() {
+        if (closed.get() || Thread.currentThread().isInterrupted) throw AgentRunCancelledException()
+    }
+
+    private fun publishObservation(observation: PublishedObservation) {
+        checkCancellation()
+        publishedObservation.set(observation)
+        if (closed.get() || Thread.currentThread().isInterrupted) {
+            publishedObservation.compareAndSet(observation, PublishedObservation())
+            throw AgentRunCancelledException()
+        }
+    }
+
+    private fun observeScreen(args: JSONObject, generation: Long?): AgentModelClient.ToolResult {
+        publishedObservation.set(PublishedObservation())
+        val startedAt = SystemClock.elapsedRealtime()
+        val options = AgentScreenObservationContract.resolve(args)
+        val displayId = currentActiveDisplayId()
+        val observation = screenObservationProvider?.invoke(options)
+            ?: deviceController.observe(
+                includeScreenshot = options.includeScreenshot,
+                includeUiTree = options.includeUiTree,
+                maxNodes = options.maxNodes,
+                displayId = displayId,
+            )
+        publishObservation(
+            PublishedObservation(
+                elements = observation.elementObservation,
+                coordinateSpace = observation.coordinateSpace,
+                generation = generation.takeIf { JSONObject(observation.content).optBoolean("ok") },
+            ),
+        )
+        logger.debug {
+            "Agent local tool action=observe_screen outcome=completed " +
+                "display=$displayId observation=${observation.elementObservation?.id} " +
+                "nodes=${observation.elementObservation?.nodes?.size ?: 0} " +
+                "image=${observation.image?.bytes ?: 0} elapsed_ms=${SystemClock.elapsedRealtime() - startedAt} " +
+                "coordinate=${observation.coordinateSpace?.summary()}"
+        }
+        return AgentModelClient.ToolResult(
+            content = observation.content,
+            images = listOfNotNull(observation.image)
+        )
+    }
+
+    /**
+     * 成功的 GUI 动作附带一次轻量观察：只读 UI 树、不截图，节点数减半。
+     * 模型据此确认动作生效并直接用新的 observation_id 继续操作，不必再单独 observe_screen；
+     * 失败或结果未知的动作不附带，保持"先重新观察"的既有约束。
+     */
+    private fun afterAction(raw: String): AgentModelClient.ToolResult {
+        checkCancellation()
+        val result = runCatching { JSONObject(raw) }.getOrNull()
+        if (result == null || !result.optBoolean("ok")) return textResult(raw)
+        val before = publishedObservation.get().elements
+        val after = runCatching {
+            val displayId = currentActiveDisplayId()
+            screenObservationProvider?.invoke(AFTER_ACTION_OPTIONS)
+                ?: deviceController.observe(
+                    includeScreenshot = false,
+                    includeUiTree = true,
+                    maxNodes = AFTER_ACTION_OPTIONS.maxNodes,
+                    displayId = displayId,
+                )
+        }.getOrElse { throwable ->
+            publishedObservation.set(PublishedObservation())
+            checkCancellation()
+            if (throwable is AgentRunCancelledException) throw throwable
+            logger.debug { "Agent local tool after-action observation failed: type=${throwable.javaClass.simpleName}" }
+            RootShellDeviceController.Observation(
+                content = JSONObject()
+                    .put("ok", false)
+                    .put("ui_tree_status", "query_failed")
+                    .put("code", if (throwable is ActiveDisplayUnavailableException) "DISPLAY_UNAVAILABLE" else "OBSERVATION_FAILED")
+                    .put("ui_tree_note", "动作已执行，但后续观察失败；旧节点与坐标已失效，请先重新观察，不要重复动作")
+                    .toString(),
+                image = null,
+                coordinateSpace = null,
+                elementObservation = null,
+            )
+        }
+        // 新快照取代动作前的快照：旧 index 在界面变化后本就不可靠，继续保留只会让模型误用。
+        publishObservation(
+            if (after.elementObservation == null) PublishedObservation()
+            else publishedObservation.get().copy(elements = after.elementObservation, coordinateSpace = after.coordinateSpace),
+        )
+        result.put("after", AgentAfterActionSummary.build(before, after))
+        return textResult(result.toString())
+    }
+
+    private fun tap(args: JSONObject): String {
+        val displayId = currentActiveDisplayId()
+        val point = convertPoint(
+            x = args.getInt("x"),
+            y = args.getInt("y"),
+            coordinateSpace = args.optString("coordinate_space"),
+            displayId = displayId,
+        )
+        return clearOverlay(displayId, point) {
+            if (!CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+                AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
+            }
+            showTap(point.x, point.y, displayId)
+            deviceController.tap(point.x, point.y, displayId)
+        }
+    }
+
+    private fun tapArea(args: JSONObject): String {
+        val displayId = currentActiveDisplayId()
+        val x1 = args.getInt("x1")
+        val y1 = args.getInt("y1")
+        val x2 = args.getInt("x2")
+        val y2 = args.getInt("y2")
+        val coordinateSpace = args.optString("coordinate_space")
+        val first = convertPoint(x1, y1, coordinateSpace, displayId)
+        val second = convertPoint(x2, y2, coordinateSpace, displayId)
+        val point = ScreenPoint(
+            x = ((first.x.toLong() + second.x.toLong()) / 2L).toInt(),
+            y = ((first.y.toLong() + second.y.toLong()) / 2L).toInt(),
+        )
+        return clearOverlay(displayId, point) {
+            if (!CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+                AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
+            }
+            showTap(point.x, point.y, displayId)
+            deviceController.tap(point.x, point.y, displayId)
         }
     }
 
@@ -2104,6 +2274,7 @@ internal class AgentLocalTools(
                 appName = app.appName,
                 launchIntent = launchIntent,
                 rootAvailable = rootAvailable,
+                checkCancellation = ::checkCancellation,
             )
         } else {
             null
@@ -2112,6 +2283,7 @@ internal class AgentLocalTools(
             activeDisplayId = launchedVirtualId
             launchedVirtualId
         } else {
+            checkCancellation()
             activeDisplayId = Display.DEFAULT_DISPLAY
             context.startActivity(launchIntent)
             Display.DEFAULT_DISPLAY
@@ -2121,7 +2293,29 @@ internal class AgentLocalTools(
         } else {
             CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
         }
+<<<<<<< HEAD
         logger.info("Agent local tool action=launch_app outcome=started canvas=$finalCanvas display=$finalDisplayId")
+=======
+
+        val verification = AppLaunchVerification.awaitWindow(
+            packageName = app.packageName,
+            displayId = finalDisplayId,
+            query = { remainingMillis ->
+                AgentAccessibilityService.current()?.observeNodeSnapshot(
+                    maxNodes = 1,
+                    displayId = finalDisplayId,
+                    includeNodes = false,
+                    timeoutMillis = remainingMillis,
+                ) ?: AgentAccessibilityService.NodeSnapshotObservation(
+                    status = AgentAccessibilityService.NodeSnapshotStatus.SERVICE_UNAVAILABLE,
+                    snapshot = null,
+                    window = null,
+                )
+            },
+            checkCancellation = ::checkCancellation,
+        )
+        logger.info("Agent local tool action=launch_app outcome=${verification.launchStatus} canvas=$finalCanvas display=$finalDisplayId")
+>>>>>>> origin/main
         return JSONObject()
             .put("ok", true)
             .put("tool", "launch_app")
@@ -2130,6 +2324,13 @@ internal class AgentLocalTools(
             .put("canvas", finalCanvas)
             .put("display", finalDisplayId)
             .put("display_id", finalDisplayId)
+            .put("launch_status", verification.launchStatus)
+            .put("window_observation", verification.toJson())
+            .apply {
+                if (!verification.confirmed) {
+                    put("note", "启动请求已提交，但尚未确认目标窗口；请先观察当前画布，不要直接重放启动或点击")
+                }
+            }
             .toString()
     }
 
@@ -3450,6 +3651,7 @@ internal class AgentLocalTools(
                 intent = intent,
                 targetLabel = uri.host ?: uri.scheme.orEmpty(),
                 rootAvailable = rootAvailable,
+                checkCancellation = ::checkCancellation,
             )
         } else {
             null
@@ -3458,6 +3660,7 @@ internal class AgentLocalTools(
             activeDisplayId = virtualId
             virtualId
         } else {
+            checkCancellation()
             activeDisplayId = Display.DEFAULT_DISPLAY
             context.startActivity(intent)
             Display.DEFAULT_DISPLAY
@@ -4313,6 +4516,10 @@ internal class AgentLocalTools(
         /** 同样的调用再来一次会不会有不同的结果；屏不对这类情况恒为 false。 */
         val retryable: Boolean = true,
     ) : IllegalArgumentException(message)
+
+    private class ActiveDisplayUnavailableException : IllegalStateException(
+        "当前虚拟屏已关闭，旧观察已失效；请重新启动目标应用后再观察和操作",
+    )
 
     private data class PublishedObservation(
         val elements: RootShellDeviceController.ElementObservation? = null,

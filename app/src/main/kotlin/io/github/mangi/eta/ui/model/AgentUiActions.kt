@@ -33,6 +33,7 @@ sealed interface AgentHomeAction {
     /** 从这条消息处分叉出一个新会话；原会话保留不动。 */
     data class BranchMessage(val id: String) : AgentHomeAction
     data class RegenerateMessage(val id: String) : AgentHomeAction
+    data class BranchConversation(val conversationId: String, val messageId: String) : AgentHomeAction
     data class SelectReplyCandidate(val id: String, val index: Int) : AgentHomeAction
     data object OpenBrowser : AgentHomeAction
 }

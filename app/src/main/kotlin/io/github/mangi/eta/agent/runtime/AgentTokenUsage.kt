@@ -28,6 +28,13 @@ internal data class AgentTokenUsage(
      * 否则「已包含」的协议会被重复计算，命中率被系统性低估。
      */
     val promptTokens: Int? = null,
+    val stepCount: Int? = null,
+    val llmMs: Long? = null,
+    val toolMs: Long? = null,
+    val ttftMs: Long? = null,
+    val ttftSteps: Int? = null,
+    val decodeMs: Long? = null,
+    val decodeTokens: Int? = null,
 ) {
     val isEmpty: Boolean
         get() = contextTokens == null &&
@@ -35,5 +42,11 @@ internal data class AgentTokenUsage(
             outputTokens == null &&
             reasoningTokens == null &&
             cachedTokens == null &&
-            promptTokens == null
-}
+            promptTokens == null &&
+            stepCount == null &&
+            llmMs == null &&
+            toolMs == null &&
+            ttftMs == null &&
+            ttftSteps == null &&
+            decodeMs == null &&
+            decodeTokens == null}

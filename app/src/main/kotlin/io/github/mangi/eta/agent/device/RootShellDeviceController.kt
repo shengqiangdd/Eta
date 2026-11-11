@@ -166,6 +166,7 @@ internal class RootShellDeviceController(
             return Observation(accessibilityUnavailable(), null, null, null)
         }
         val nodeLimit = maxNodes.coerceIn(1, 120)
+<<<<<<< HEAD
         val virtual = resolveVirtualSession(displayId)
         // 上游按 displayId 贯穿的那几处需要一个非空屏 id：
         // 这套 API 里 null 就是主屏（Display.DEFAULT_DISPLAY = 0）。
@@ -222,6 +223,33 @@ internal class RootShellDeviceController(
                 nodeLimit,
                 displayId = targetDisplayId,
             )
+=======
+        val display = screenSize(displayId)
+        val isVirtual = CanvasRoutingPolicy.isVirtualDisplay(displayId)
+        val accessibilityObservation = accessibility?.observeNodeSnapshot(
+            maxNodes = nodeLimit,
+            displayId = displayId,
+            includeNodes = includeUiTree,
+        )
+        // 系统 uiautomator 会暂时抑制其他无障碍服务，不能因活跃服务返回空树而反复启动它。
+        val mayUseUiAutomator = ScreenObservationMetadata.mayUseUiAutomator(
+            requested = includeUiTree,
+            accessibilityConnected = accessibility != null,
+            rootAvailable = rootAvailable(),
+            virtualDisplay = isVirtual,
+        )
+        val uiAutomatorDump = if (mayUseUiAutomator) {
+            readUiNodeDump(nodeLimit)
+        } else {
+            null
+        }
+        val focus = ScreenObservationMetadata.focus(
+            window = accessibilityObservation?.window,
+            uiAutomatorPackageName = uiAutomatorDump?.nodes?.firstOrNull()?.packageName,
+        )
+        val elementObservation = if (includeUiTree) {
+            val accessibilitySnapshot = accessibilityObservation?.snapshot
+>>>>>>> origin/main
             if (accessibilitySnapshot != null) {
                 ElementObservation(
                     id = accessibilitySnapshot.id,
@@ -233,10 +261,15 @@ internal class RootShellDeviceController(
                     truncated = accessibilitySnapshot.truncated,
                     accessibilitySnapshot = accessibilitySnapshot,
                 )
+<<<<<<< HEAD
             } else if (rootAvailable()) {
                 val dump = dumpUiNodesReported(nodeLimit, displayId = virtual?.displayId)
                 uiDumpFailure = dump.failure
                 val rootNodes = dump.nodes
+=======
+            } else if (uiAutomatorDump?.outcome == ShellActionOutcomePolicy.Outcome.SUCCEEDED) {
+                val rootNodes = uiAutomatorDump.nodes
+>>>>>>> origin/main
                 ElementObservation(
                     id = "u${ROOT_OBSERVATION_IDS.incrementAndGet()}",
                     source = ElementSource.UIAUTOMATOR,
@@ -254,6 +287,7 @@ internal class RootShellDeviceController(
             null
         }
         val nodes = elementObservation?.nodes.orEmpty()
+<<<<<<< HEAD
         // 节点投影：紧凑线格式 + 体积预算（取舍见 UiNodeWire 的 KDoc）。
         // 超预算时少输出尾部节点，而不是让整段结果被溢写落盘 —— 一旦落盘，
         // 上下文里只剩预览，模型必须再 read_file 一次才拿得到节点，步数直接翻倍。
@@ -270,6 +304,23 @@ internal class RootShellDeviceController(
         } else {
             ScreenCapture.notRequested()
         }
+=======
+        val uiTreeStatus = ScreenObservationMetadata.uiTreeStatus(
+            requested = includeUiTree,
+            accessibilityStatus = accessibilityObservation?.status,
+            dumpOutcome = uiAutomatorDump?.outcome,
+            nodeCount = nodes.size,
+        )
+        if (isVirtual) {
+            val topPkg = accessibilityObservation?.window?.packageName
+            if (!topPkg.isNullOrBlank()) {
+                io.github.mangi.eta.agent.runtime.AgentAppContext.resolve()?.let { ctx ->
+                    VirtualDisplayController.onTopPackageObserved(ctx, topPkg, rootAvailable)
+                }
+            }
+        }
+        val capture = if (includeScreenshot) captureScreenshot(displayId) else ScreenCapture.notRequested()
+>>>>>>> origin/main
         val image = capture.image
         val coordinateSpace = if (image?.width != null && image.height != null) {
             CoordinateSpace(
@@ -316,6 +367,7 @@ internal class RootShellDeviceController(
             .put(
                 "accessibility",
                 JSONObject()
+<<<<<<< HEAD
                     .put("available", accessibility != null)
                     // 虚拟屏上绝不能报主屏的包：那是"这块屏的前台"以外的事实，
                     // 会让模型以为虚拟屏里跑的是用户主屏那个应用（实测误导过）。
@@ -342,6 +394,22 @@ internal class RootShellDeviceController(
 
                             else ->
                                 "无障碍服务未启用，节点来自 uiautomator；坐标工具会回退到 Root Shell"
+=======
+                    .put(
+                        "available",
+                        accessibility != null &&
+                            accessibilityObservation?.status != AgentAccessibilityService.NodeSnapshotStatus.SERVICE_UNAVAILABLE,
+                    )
+                    .put("package", accessibilityObservation?.window?.packageName.orEmpty())
+                    .put(
+                        "note",
+                        if (elementObservation?.source == ElementSource.ACCESSIBILITY && nodes.isNotEmpty()) {
+                            "节点来自无障碍服务，支持 tap_element、type_text、scroll_element 等稳定节点动作"
+                        } else if (elementObservation?.source == ElementSource.UIAUTOMATOR && nodes.isNotEmpty()) {
+                            "节点来自 uiautomator，节点动作通过 Root Shell 执行"
+                        } else {
+                            ScreenObservationMetadata.uiTreeNote(uiTreeStatus, image != null)
+>>>>>>> origin/main
                         }
                     )
             )
@@ -393,6 +461,8 @@ internal class RootShellDeviceController(
                     .put("launch_app", virtual == null || rootAvailable()),
             )
             .put("node_limit", elementObservation?.maxNodes ?: 0)
+            .put("ui_tree_status", uiTreeStatus)
+            .put("ui_tree_note", ScreenObservationMetadata.uiTreeNote(uiTreeStatus, image != null))
             .put("ui_tree_truncated", elementObservation?.truncated ?: false)
             .put("ui_nodes", nodeProjection.nodes)
             .put("ui_nodes_shown", nodeProjection.shown)
@@ -1405,10 +1475,21 @@ internal class RootShellDeviceController(
                     return attachLanding(
                         nodeActionJson("press_key", result).let {
                             JSONObject(it).put("button", normalized).toString()
+<<<<<<< HEAD
                         },
                         route,
                         null,
                     )
+=======
+                        }
+                    }
+                    // 虚拟屏隐藏了软键盘（DISPLAY_IME_POLICY_HIDE），若节点不响应 ACTION_IME_ENTER，有 Root 时继续回退发送 KEYCODE_ENTER。
+                    if (!rootAvailable()) {
+                        return nodeActionJson("press_key", result).let {
+                            JSONObject(it).put("button", normalized).toString()
+                        }
+                    }
+>>>>>>> origin/main
                 }
             }
         }
@@ -1871,6 +1952,7 @@ internal class RootShellDeviceController(
         )
     }
 
+<<<<<<< HEAD
     private fun dumpUiNodes(maxNodes: Int, displayId: Int? = null): List<UiNode> =
         dumpUiNodesReported(maxNodes, displayId).nodes
 
@@ -1895,6 +1977,22 @@ internal class RootShellDeviceController(
             )
         }
         if (!rootAvailable()) return UiDumpResult(emptyList(), "Root 授权不可用，无法用 uiautomator")
+=======
+    private data class UiNodeDump(
+        val nodes: List<UiNode>,
+        val outcome: ShellActionOutcomePolicy.Outcome,
+    )
+
+    private fun dumpUiNodes(maxNodes: Int): List<UiNode> = readUiNodeDump(maxNodes).nodes
+
+    private fun readUiNodeDump(maxNodes: Int): UiNodeDump {
+        // 旧 uiautomator 观察的节点验证也会到达这里，服务重连后必须停止该通道。
+        if (AgentAccessibilityService.current() != null) {
+            logger.debug { "Agent device action=dump_ui outcome=skipped code=ACCESSIBILITY_CONNECTED" }
+            return UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
+        }
+        if (!rootAvailable()) return UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
+>>>>>>> origin/main
         val result = runSuText(
                 "uiautomator dump --compressed /data/local/tmp/eta_window.xml >/dev/null && " +
                 "cat /data/local/tmp/eta_window.xml && rm -f /data/local/tmp/eta_window.xml",
@@ -1905,6 +2003,7 @@ internal class RootShellDeviceController(
                 "Agent device action=dump_ui outcome=failed source=root " +
                     "exitCode=${result.exitCode} outputChars=${result.output.length}"
             )
+<<<<<<< HEAD
             return UiDumpResult(
                 emptyList(),
                 "uiautomator dump 失败（exit=${result.exitCode}，输出 ${result.output.length} 字符）",
@@ -2040,6 +2139,22 @@ internal class RootShellDeviceController(
             )
         }
         return diagnostics
+=======
+            val outcome = ShellActionOutcomePolicy.classify(result.exitCode)
+                .takeUnless { it == ShellActionOutcomePolicy.Outcome.SUCCEEDED }
+                ?: ShellActionOutcomePolicy.Outcome.FAILED
+            return UiNodeDump(emptyList(), outcome)
+        }
+        return try {
+            UiNodeDump(parseUiNodes(result.output, maxNodes), ShellActionOutcomePolicy.Outcome.SUCCEEDED)
+        } catch (_: org.xmlpull.v1.XmlPullParserException) {
+            logger.warn("Agent device action=dump_ui outcome=failed source=root code=INVALID_XML")
+            UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
+        } catch (_: IOException) {
+            logger.warn("Agent device action=dump_ui outcome=failed source=root code=XML_READ_FAILED")
+            UiNodeDump(emptyList(), ShellActionOutcomePolicy.Outcome.FAILED)
+        }
+>>>>>>> origin/main
     }
 
     private fun parseUiNodes(xml: String, maxNodes: Int): List<UiNode> {
@@ -2647,10 +2762,10 @@ internal class RootShellDeviceController(
     private fun String.toRectOrNull(): Rect? {
         val match = Regex("""\[(\-?\d+),(\-?\d+)]\[(\-?\d+),(\-?\d+)]""").find(this) ?: return null
         return Rect(
-            match.groupValues[1].toInt(),
-            match.groupValues[2].toInt(),
-            match.groupValues[3].toInt(),
-            match.groupValues[4].toInt()
+            match.groupValues[1].toIntOrNull() ?: return null,
+            match.groupValues[2].toIntOrNull() ?: return null,
+            match.groupValues[3].toIntOrNull() ?: return null,
+            match.groupValues[4].toIntOrNull() ?: return null,
         )
     }
 

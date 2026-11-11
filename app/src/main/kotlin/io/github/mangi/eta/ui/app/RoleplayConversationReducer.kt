@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.app
 
 import io.github.mangi.eta.agent.model.AgentModelClient.ConversationMessage
+import io.github.mangi.eta.agent.roleplay.RoleplayHistoryProjection
 import io.github.mangi.eta.agent.roleplay.RoleplayMessageLink
 import io.github.mangi.eta.agent.roleplay.RoleplayReplyRevision
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
@@ -93,33 +94,26 @@ internal object RoleplayConversationReducer {
         // deferred 时 journal 没有载入内存，不能拿 history 当素材重建 —— 那样会把压缩过的投影
         // 当成完整历史写回。原样返回既有 history：操作由 AgentAppState 入口拒绝，这里只保证不损坏数据。
         if (state.journalDeferred) return state.history
-        return projectJournalFrom(state)
+        // 上游的投影器会校验缺失块；不可重建时退回未修订的 history，保持本 fork 的非空契约。
+        return RoleplayHistoryProjection.project(state.journal.ifEmpty { state.history }, state.roleplayMessages) {
+            state.messageContent(it)
+        } ?: state.history
     }
 
-    private fun projectJournalFrom(state: AgentChatUiState): List<ConversationMessage> = buildList {
-        val grouped = state.roleplayMessages.links.entries.groupBy { it.value.transcriptMessageId }
-        val journal = state.journal.ifEmpty { state.history }
-        if (journal.any { it.contextSummary }) add(ConversationMessage(
-            role = "system", content = "早期历史仅保留摘要；正文修订只应用于仍有原文的消息，不能恢复已缺失的历史。",
-        ))
-        journal.forEach { entry ->
-            val links = grouped[entry.messageId].orEmpty().sortedBy { it.value.blockOrder }
-            val changed = links.any { it.key in state.roleplayMessages.revisions }
-            if (!changed) add(entry) else {
-                val body = links.mapNotNull { (id, _) ->
-                    state.roleplayMessages.revisions[id]?.content ?: when (val message = state.messages.firstOrNull { it.id == id }) {
-                        is UserMessageUi -> message.content
-                        is AgentMessageUi -> message.content
-                        else -> null
-                    }
-                }.joinToString("\n\n")
-                if (entry.role == "user") add(ConversationMessage(
-                    role = "system",
-                    content = "以下历史用户正文经用户修订；后续已有工具记录来自原请求，不能视为修订后请求已被执行。",
-                ))
-                add(entry.copy(content = body, contentJson = ""))
-            }
+    fun requiredOriginalContentIds(state: AgentChatUiState): Set<String> {
+        if (state.roleplay == null) return emptySet()
+        val visibleIds = state.messages.asSequence()
+            .filter { it is UserMessageUi || it is AgentMessageUi }
+            .mapTo(mutableSetOf()) { it.id }
+        val relevantIds = visibleIds + state.roleplayMessages.revisions.keys + state.roleplayMessages.pendingRewrites.values
+        val transcriptIds = relevantIds.mapNotNullTo(mutableSetOf()) {
+            state.roleplayMessages.links[it]?.transcriptMessageId
         }
+        return state.roleplayMessages.links.entries.asSequence()
+            .filter { (id, link) ->
+                link.transcriptMessageId in transcriptIds && id !in visibleIds && id !in state.roleplayMessages.revisions
+            }
+            .mapTo(mutableSetOf()) { it.key }
     }
 
     fun rewriteHistory(state: AgentChatUiState, messageId: String): List<ConversationMessage>? {
@@ -130,11 +124,18 @@ internal object RoleplayConversationReducer {
         val siblings = state.roleplayMessages.links.entries
             .filter { it.value.transcriptMessageId == link.transcriptMessageId && it.value.blockOrder < link.blockOrder }
             .sortedBy { it.value.blockOrder }
-            .mapNotNull { (id, _) -> (state.messages.firstOrNull { it.id == id } as? AgentMessageUi)?.content }
+            .mapNotNull { (id, _) -> state.messageContent(id) }
         return history.take(index) + if (siblings.isEmpty()) emptyList() else listOf(
             ConversationMessage("assistant", siblings.joinToString("\n\n")),
         )
     }
+
+    private fun AgentChatUiState.messageContent(id: String): String? =
+        roleplayMessages.revisions[id]?.content ?: when (val message = messages.firstOrNull { it.id == id }) {
+            is UserMessageUi -> message.content
+            is AgentMessageUi -> message.content
+            else -> roleplayOriginalContents[id]
+        }
 
     fun applyRewrite(state: AgentChatUiState, runId: String, result: AgentRuntimeWire.RunResult): AgentChatUiState {
         if (runId in state.appliedRuntimeRunIds) return state

@@ -1,55 +1,40 @@
 # Eta 设置与管理组件
 
-Eta 在现有 Miuix 上提供面向设置、管理列表和功能入口的统一组件。视觉采用 ColorOS 17 风格的分组、图标配色、间距与控件比例；主题、连续圆角、控件动画、系统触感和弹层生命周期继续由 Miuix 提供。组件不依赖特定 ROM，依赖版本以项目构建配置为准。
+Eta 支持全局界面样式切换，提供 **COUI** 与 **Miuix** 两种选择。新安装及升级后尚未明确保存样式选择的用户默认使用 **COUI**；用户在“设置 → 外观与主题 → 界面样式”明确选择后，后续升级保留已选样式。两套界面共享同一套业务状态、Store、Repository 与路由栈，切换样式时通过 `AgentAppTheme` 的 `movableContentOf` 移动同一组合树，不丢失导航历史、页面草稿或正在运行的任务。
 
-## 组件选择
+## 根主题与缩放不变式
 
-| 场景 | 组件 |
-| --- | --- |
-| 标准列表页 | `MiuixScaffoldPage`，已接入 `EtaPreferenceTheme` |
-| 自定义分页或页面 | `MiuixScaffold`，已接入相同主题与宽屏骨架 |
-| 卡片容器 | `EtaCard` |
-| 设置项分组、分组标题 | `EtaPreferenceGroup`、`EtaPreferenceGroupTitle` |
-| 独立懒加载条目组成的卡片 | `EtaPreferenceGroupItem`，传入实际首尾位置 |
-| 信息、状态或自定义正文行 | `EtaPreference` |
-| 跳转行、开关行 | `EtaArrowPreference`、`EtaSwitchPreference` |
-| 自定义行内开关 | `EtaSwitch`，复用同一控件尺寸与 Miuix 行为 |
-| 单选、复选行 | `EtaRadioButtonPreference`、`EtaCheckboxPreference` |
-| Scaffold 内选择菜单 | `EtaOverlayDropdownPreference` |
-| 窗口层选择菜单 | `EtaWindowSpinnerPreference` |
-| 需要完整 DropdownItem 的选择菜单 | `EtaDropdownPreference` |
-| 图标、正文对齐分割线 | `EtaPreferenceIcon`、`EtaPreferenceDivider` |
-| 图标、标题、摘要型功能入口 | `EtaFeatureCard` |
-| 按钮、确认按钮行 | `EtaTextButton`、现有 `MiuixDialogActions` |
-| 窗口层或 Scaffold 内对话框 | `EtaWindowDialog`、`EtaOverlayDialog` |
+- `AgentAppTheme` 同时提供 `CouiTheme`（COUI 模式）与 `MiuixTheme`，并通过 `LocalUiStyle` 暴露当前 `AppearanceUiStyle`（`COUI` / `MIUIX`）。
+- COUI 模式在开启模糊且设备支持 `RuntimeShader` 时，在根部挂载 `ProvideCouiMenuBackdrop(isolateContent = false)`，供全局 COUI `Menu`、`Dialog` 与 `InputDialog` 采样窗口背景。
+- 界面缩放以 `configuration.densityDpi.toFloat() / DisplayMetrics.DENSITY_DEFAULT` 作为 100% 尺寸基准，并在 `applyInterfaceScale = true` 时同步写入宿主 `context.resources.displayMetrics.density`，保证主页面、独立 Activity（`AgentBrowserActivity`）以及 `Dialog` / `Popup` 独立窗口拥有一致的缩放比例。
 
-`EtaPreferenceDefaults`、`EtaCardDefaults` 和 `EtaControlDefaults` 是尺寸的事实源；`EtaPreferenceColors` 管理分类图标颜色。分类色由调用方按功能选择，品牌图标保留原色，错误及其他运行状态继续使用现有状态语义。
+## 组件选择与双界面组织
 
-## 分组与边距
+页面层将 `rememberSaveable`、草稿状态、Store 与副作用声明在 `when (LocalUiStyle.current)` 分支之前，再分别组织 COUI 与 Miuix 的界面组合：
 
-`EtaPreferenceGroup` 默认自带页面横向边距和底部组间距。显式传入 `modifier` 时，由调用方管理外部布局；不要再重复叠加一套默认边距。卡片内部设置行自行消费行内边距，表单块按自己的内容需求消费内边距。
+| 场景 | COUI 组合（`ui/components/coui/` 及 `com.itos.coui.*`） | Miuix 组合（`ui/components/` 及 `top.yukonga.miuix.kmp.*`） |
+| --- | --- | --- |
+| 二级页（Column + 回弹滚动） | `CouiScaffoldPage`（`Scaffold` + `LargeTopAppBar` / `TopAppBar` + `couiVerticalScroll`） | `MiuixScaffoldPage` |
+| 二级页（长动态列表） | `CouiLazyScaffoldPage` | `MiuixScaffoldPage` |
+| 自定义容器二级页（分页、整页编辑器） | `CouiScaffold` | `MiuixScaffold` |
+| 顶栏返回与操作按钮 | `CouiBackButton`、`CouiTopAppBarIconButton`、`CouiTopAppBarTextButton`、`TopAppBarButtonGroup` | `MiuixBackButton`、`IconButton`、`TextButton` |
+| 分组卡片与标题 | `com.itos.coui.layout.Group(title = ...)` | `SmallTitle` + `Card` |
+| 懒加载连续分组条目 | `EtaPreferenceGroupItem` → `CouiGroupItem` | `EtaPreferenceGroupItem` |
+| 跳转行 / 信息行 | `CouiPreference`（右侧箭头使用 `CouiIcons.Next`，`12.dp × 24.dp`） | `ArrowPreference` / `BasicComponent` |
+| 开关行 | `CouiSwitchPreference`（整行 `Role.Switch` + `CouiHapticFeedback.Switch`） | `SwitchPreference` |
+| 下拉 / 弹窗选择行 | `CouiDropdownPreference` / `CouiPopupPreference`（`rememberCouiMenuAnchor` + `Modifier.couiMenuAnchor` + `CouiIcons.Popup` `14.dp × 24.dp` + `Menu`） | `OverlayDropdownPreference` / `WindowSpinnerPreference` / `OverlaySpinnerPreference` |
+| 复选 / 单选行 | `CouiCheckboxPreference` / `CouiSelectPreference` | `CheckboxPreference` / `Checkbox` |
+| 滑块行 | `CouiSliderPreference` | `SliderPreference` |
+| 分组内分割线 | `Divider()`（无前导图标）/ `CouiIconDivider()`（有前导图标） | Miuix 列表间距 |
+| 搜索栏 | `CouiSearchBarBox`（COUI `SearchBar` + 局部 `CouiBackdrop`） | `SearchBar` + `InputField` |
+| 分页 / 筛选标签 | `CouiChipTabs`（COUI `ChipTabRow`） | `TabRow` / `EtaChoiceChip` |
+| 行内输入框 | `CouiTextField` | `TextField` |
+| 页面胶囊按钮 | `CouiButton`（`CouiButtonRole`） | `TextButton` |
+| 确认 / 提示 / 底部弹框 | `CouiConfirmDialog`、`CouiNoticeDialog`、`com.itos.coui.dialog.Dialog`（`CouiDialogPlacement.Bottom`） | `WindowDialog`、`OverlayDialog`、`OverlayBottomSheet` |
+| 单行输入弹窗 | `CouiInputDialog`（`com.itos.coui.dialog.InputDialog`） | `WindowDialog` + `TextField` |
+| 上下文 / 溢出菜单 | `com.itos.coui.menu.Menu` + `rememberCouiMenuAnchor` | `WindowListPopup` / `OverlayListPopup` / `OverlayIconDropdownMenu` |
 
-```kotlin
-EtaPreferenceGroupTitle("连接")
-EtaPreferenceGroup {
-    EtaArrowPreference(
-        title = "服务提供商",
-        startAction = {
-            EtaPreferenceIcon(icon = providerIcon, tint = EtaPreferenceColors.Blue)
-        },
-        onClick = onOpenProvider,
-    )
-    EtaPreferenceDivider()
-    EtaSwitchPreference(
-        title = "启用连接",
-        checked = enabled,
-        onCheckedChange = onEnabledChange,
-        startAction = {
-            EtaPreferenceIcon(icon = connectionIcon, tint = EtaPreferenceColors.Blue)
-        },
-    )
-}
-```
+## 分组、分割线与状态边界
 
 无图标行不要提供空的图标插槽；对应分割线使用 `hasLeading = false`。条件行与其前置分割线置于同一可见分支，只在已有前一项时绘制。长列表用稳定 key 的独立 Lazy 条目和 `EtaPreferenceGroupItem`，不要为了卡片外观将模型或文件全集放进一个 Lazy 条目。
 

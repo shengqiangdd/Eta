@@ -63,6 +63,7 @@ internal data class ConversationIndexRow(
     @ColumnInfo(name = "message_preview") val messagePreview: String?,
     @ColumnInfo(name = "tool_name") val toolName: String?,
     @ColumnInfo(name = "has_roleplay") val hasRoleplay: Boolean,
+    @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
 )
 
 internal data class ConversationIdentity(
@@ -70,6 +71,7 @@ internal data class ConversationIdentity(
     val title: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
 )
 
 internal data class ConversationMessageContent(val id: String, val content: String)
@@ -138,6 +140,13 @@ internal data class ConversationMessageEntity(
      * 服务商总输入。旧行是 NULL（25 及以前没有这一列），读取端必须回退到 input_tokens。
      */
     @ColumnInfo(name = "prompt_tokens") val promptTokens: Int? = null,
+    @ColumnInfo(name = "step_count") val stepCount: Int? = null,
+    @ColumnInfo(name = "llm_ms") val llmMs: Long? = null,
+    @ColumnInfo(name = "tool_ms") val toolMs: Long? = null,
+    @ColumnInfo(name = "ttft_ms") val ttftMs: Long? = null,
+    @ColumnInfo(name = "ttft_steps") val ttftSteps: Int? = null,
+    @ColumnInfo(name = "decode_ms") val decodeMs: Long? = null,
+    @ColumnInfo(name = "decode_tokens") val decodeTokens: Int? = null,
     @ColumnInfo(name = "elapsed_seconds") val elapsedSeconds: Int? = null,
     /**
      * 首字延迟（毫秒）：从发出请求到收到第一个内容碑。
@@ -151,7 +160,6 @@ internal data class ConversationMessageEntity(
      *
      * 用它除输出 token 才是真正的生成速度；用总耗时会把工具等待算进去。旧数据为 null。
      */
-    @ColumnInfo(name = "decode_ms") val decodeMs: Int? = null,
     @ColumnInfo(name = "tool_name") val toolName: String? = null,
     @ColumnInfo(name = "tool_status") val toolStatus: String? = null,
     @ColumnInfo(name = "arguments_summary") val argumentsSummary: String? = null,
