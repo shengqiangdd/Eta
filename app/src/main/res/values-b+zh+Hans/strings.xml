@@ -2201,7 +2201,12 @@
   <string name="speech_auto_read_off">自动朗读已关闭，点按开启</string>
   <string name="speech_auto_read_on">自动朗读已开启，点按关闭</string>
 
-  <string name="usage_summary_input">输入</string>
-  <string name="usage_summary_output">输出</string>
-  <string name="usage_summary_cache_hit">缓存命中</string>
+  <string name="usage_section_input">输入</string>
+  <string name="usage_open_action">查看用量</string>
+  <string name="usage_section_output">输出</string>
+  <string name="usage_row_cache_hit">缓存命中</string>
+  <string name="usage_row_uncached">未命中缓存</string>
+  <string name="usage_row_reasoning">推理</string>
+  <string name="usage_row_turns">轮次</string>
+  <string name="usage_row_context">上下文</string>
 </resources>

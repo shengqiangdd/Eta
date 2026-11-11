@@ -59,21 +59,4 @@ internal object AgentSessionUsageFormatter {
             String.format(Locale.US, "%.1fs", firstTokenMillis / 1000.0)
         }
     }
-
-    /**
-     * 组装 tooltip 里的多行摘要。缺数据的项整行省略，不写「—」占位
-     * （tooltip 空间有限，占位行只会挤掉有用信息）。
-     */
-    fun summaryLines(
-        usage: AgentSessionUsageUi,
-        inputLabel: String,
-        outputLabel: String,
-        cacheLabel: String,
-    ): List<String> {
-        val lines = mutableListOf<String>()
-        if (usage.promptTokens > 0) lines += "$inputLabel ${abbreviateCount(usage.promptTokens)}"
-        usage.totalOutputTokens?.let { lines += "$outputLabel ${abbreviateCount(it)}" }
-        percentOrNull(usage.cacheHitRate)?.let { lines += "$cacheLabel $it" }
-        return lines
-    }
 }

@@ -3,6 +3,10 @@ package io.github.mangi.eta.ui.components
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -43,6 +47,7 @@ internal fun AgentContextUsageButton(
 ) {
     val scope = rememberCoroutineScope()
     val tooltipState = rememberTooltipState(isPersistent = true)
+    var showUsagePopover by remember { mutableStateOf(false) }
     val progress = usage.progress
     val progressColor = when {
         progress == null -> MiuixTheme.colorScheme.onSurfaceVariantActions
@@ -62,20 +67,17 @@ internal fun AgentContextUsageButton(
         usage.contextTokens == null -> stringResource(R.string.context_usage_after_response)
         else -> stringResource(R.string.context_usage_previous_response, summary)
     }
-    // 累计用量按行拼接；缺数据的项已在 summaryLines 里整行省略。
-    val sessionLines = sessionUsage?.let { u ->
-        AgentSessionUsageFormatter.summaryLines(
-            usage = u,
-            inputLabel = stringResource(R.string.usage_summary_input),
-            outputLabel = stringResource(R.string.usage_summary_output),
-            cacheLabel = stringResource(R.string.usage_summary_cache_hit),
+
+    if (showUsagePopover && sessionUsage != null) {
+        SessionUsagePopover(
+            usage = sessionUsage,
+            onDismissRequest = { showUsagePopover = false },
         )
-    }.orEmpty()
-    val fullDetail = if (sessionLines.isEmpty()) detail else detail + "\n" + sessionLines.joinToString("\n")
+    }
+
     val usageDescription = stringResource(
         R.string.context_usage_description,
-        (detail + if (sessionLines.isEmpty()) "" else " " + sessionLines.joinToString(" "))
-            .replace('\n', ' '),
+        detail.replace('\n', ' '),
     )
     val tooltipColors = TooltipDefaults.richTooltipColors()
     TooltipBox(
@@ -89,28 +91,46 @@ internal fun AgentContextUsageButton(
                         style = MiuixTheme.textStyles.subtitle,
                     )
                 },
-                action = if (canCompact) {
-                    {
-                        TextButton(
-                            text = stringResource(R.string.context_compact_action),
-                            onClick = {
-                                onCompact()
-                                tooltipState.dismiss()
-                            },
-                            minWidth = 0.dp,
-                            minHeight = 34.dp,
-                            cornerRadius = 17.dp,
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                        )
+                action = when {
+                    // 有用量数据时优先给「查看用量」：卡片里的信息量远多于 tooltip 正文。
+                    sessionUsage != null && !sessionUsage.isEmpty -> {
+                        {
+                            TextButton(
+                                text = stringResource(R.string.usage_open_action),
+                                onClick = {
+                                    tooltipState.dismiss()
+                                    showUsagePopover = true
+                                },
+                                minWidth = 0.dp,
+                                minHeight = 34.dp,
+                                cornerRadius = 17.dp,
+                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
                     }
-                } else {
-                    null
+                    canCompact -> {
+                        {
+                            TextButton(
+                                text = stringResource(R.string.context_compact_action),
+                                onClick = {
+                                    onCompact()
+                                    tooltipState.dismiss()
+                                },
+                                minWidth = 0.dp,
+                                minHeight = 34.dp,
+                                cornerRadius = 17.dp,
+                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                    else -> null
                 },
                 colors = tooltipColors,
             ) {
                 Text(
-                    text = fullDetail,
+                    text = detail,
                     color = tooltipColors.contentColor,
                     style = MiuixTheme.textStyles.body2,
                 )

@@ -69,22 +69,4 @@ class AgentSessionUsageFormatterTest {
         assertNull(AgentSessionUsageFormatter.firstTokenOrNull(-1))
     }
 
-    @Test
-    fun `摘要只输出有数据的行`() {
-        val usage = AgentSessionUsageUi(
-            promptTokens = 1_200,
-            outputTokens = 300,
-            cachedTokens = 900,
-        )
-        val lines = AgentSessionUsageFormatter.summaryLines(usage, "输入", "输出", "缓存命中")
-        assertEquals(listOf("输入 1.2k", "输出 300", "缓存命中 75%"), lines)
-    }
-
-    @Test
-    fun `没有输入数据时不输出缓存命中行`() {
-        val usage = AgentSessionUsageUi(outputTokens = 50)
-        val lines = AgentSessionUsageFormatter.summaryLines(usage, "输入", "输出", "缓存命中")
-        // 缺数据整行省略，不写 "缓存命中 —" 挤占 tooltip 空间。
-        assertEquals(listOf("输出 50"), lines)
-    }
 }
