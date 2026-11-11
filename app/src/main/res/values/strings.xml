@@ -40,6 +40,9 @@
   <string name="action_stop">Stop</string>
   <string name="action_pin">Pin</string>
   <string name="action_unpin">Unpin</string>
+  <string name="action_edit">Edit</string>
+  <string name="action_pin_conversation">Pin</string>
+  <string name="action_unpin_conversation">Unpin</string>
   <string name="action_rename">Rename</string>
   <string name="action_export">Export</string>
   <string name="action_done">Done</string>
@@ -1403,6 +1406,9 @@
   <string name="chat_previous_candidate">Previous candidate reply</string>
   <string name="chat_next_candidate">Next candidate reply</string>
   <string name="chat_image_attachment">Image attachment</string>
+  <string name="chat_view_image">View image</string>
+  <string name="reasoning_chip_off">Think</string>
+  <string name="reasoning_chip_default">Deep Think</string>
   <string name="chat_edit_preserve_following">Saving updates this message in place and keeps the rest of the conversation</string>
   <string name="chat_save_message">Save message</string>
   <string name="chat_character_story_start">The story begins here</string>
@@ -2270,4 +2276,7 @@
   <string name="usage_row_context">Context</string>
   <string name="usage_scope_partial">Counted from loaded messages only (earlier messages are not loaded yet, scroll up to include them).</string>
   <string name="page_clear_84fcd7">Clear</string>
+  <string name="conversation_branch">Branch into a new conversation</string>
+  <string name="conversation_branch_title">%1$s · Branch</string>
+  <string name="conversation_branch_unavailable">Cannot branch here: only turns with complete context and finished tool calls are supported.</string>
 </resources>

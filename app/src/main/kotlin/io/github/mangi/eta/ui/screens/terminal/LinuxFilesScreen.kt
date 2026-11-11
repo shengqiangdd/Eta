@@ -327,7 +327,7 @@ private fun FileRow(
     onClick: () -> Unit,
 ) {
     val icon = if (isDir) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile
-    EtaPreferenceGroupItem(isFirst = isFirst, isLast = isLast, hasLeading = true) {
+    EtaPreferenceGroupItem(isFirst = isFirst, isLast = isLast, hasLeadingIcon = true) {
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
                 val colors = CouiPageDefaults.themeColors()

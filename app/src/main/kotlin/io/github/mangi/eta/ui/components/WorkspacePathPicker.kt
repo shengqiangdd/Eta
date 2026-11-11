@@ -176,7 +176,7 @@ internal fun WorkspacePathPicker(
         }
         if (parent != null && parent != current) {
             item(key = "picker-parent") {
-                EtaPreferenceGroupItem(isFirst = true, isLast = false, hasLeading = true) {
+                EtaPreferenceGroupItem(isFirst = true, isLast = false, hasLeadingIcon = true) {
                     EtaArrowPreference(
                         title = stringResource(R.string.capability_workspace_parent),
                         startAction = {
@@ -201,7 +201,7 @@ internal fun WorkspacePathPicker(
                 EtaPreferenceGroupItem(
                     isFirst = index == 0 && parent == null,
                     isLast = index == list.lastIndex,
-                    hasLeading = true,
+                    hasLeadingIcon = true,
                 ) {
                     EtaArrowPreference(
                         title = entry.name,

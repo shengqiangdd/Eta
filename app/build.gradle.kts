@@ -68,8 +68,8 @@ android {
         applicationId = "io.github.mangi.eta" + (providers.gradleProperty("eta.applicationIdSuffix").orNull ?: "")
         minSdk = 33
         targetSdk = 37
-        // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增（见上方 etaVersionCode）。
-        versionCode = etaVersionCode
+        // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
+        versionCode = 2026111101
         versionName = "3.4.2"
 
         ndk {

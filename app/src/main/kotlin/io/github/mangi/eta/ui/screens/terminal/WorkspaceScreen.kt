@@ -467,7 +467,7 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
                 EtaPreferenceGroupItem(
                     isFirst = true,
                     isLast = currentEntries.isNullOrEmpty(),
-                    hasLeading = true,
+                    hasLeadingIcon = true,
                 ) {
                     EtaArrowPreference(
                         title = stringResource(R.string.capability_workspace_parent),
@@ -498,7 +498,7 @@ internal fun WorkspaceScreen(conversationId: String?, onBack: () -> Unit) {
                 EtaPreferenceGroupItem(
                     isFirst = index == 0 && !hasParent,
                     isLast = index == currentEntries.lastIndex,
-                    hasLeading = true,
+                    hasLeadingIcon = true,
                 ) {
                     EtaArrowPreference(
                         title = entry.name,

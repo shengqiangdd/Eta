@@ -78,7 +78,6 @@ enum class AppearanceUiStyle(val persistedValue: String) {
             entries.firstOrNull { it.persistedValue == value } ?: COUI
     }
 }
-
 @Serializable
 enum class AppearanceThemeMode(val persistedValue: String) {
     SYSTEM("system"),
@@ -138,13 +137,6 @@ enum class AppearanceTopBarBlurStyle(val persistedValue: String) {
     }
 }
 
-/**
- * 由持久化值解析聊天视图模式，并兼容旧的布尔键「只看对话」。
- *
- * [legacyDialogOnly] 只在 [persistedValue] 缺失时才参与判断：一旦新版本写过新键（哪怕是
- * 「全部」），旧键就不能再把它改回去。抽成纯函数是为了给这条迁移规则本身留测试 ——
- * 迁移错了，用户升级后会看到一段本不该被收起/展开的会话。
- */
 fun resolveChatViewMode(persistedValue: String?, legacyDialogOnly: Boolean?): ChatViewMode =
     when {
         persistedValue != null -> ChatViewMode.fromPersistedValue(persistedValue)

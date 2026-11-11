@@ -49,4 +49,5 @@ internal data class AgentTokenUsage(
             ttftMs == null &&
             ttftSteps == null &&
             decodeMs == null &&
-            decodeTokens == null}
+            decodeTokens == null
+}
