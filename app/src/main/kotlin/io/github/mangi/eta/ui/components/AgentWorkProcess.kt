@@ -256,15 +256,12 @@ private fun AgentWorkHeader(
         working -> stringResource(R.string.work_analyzing)
         else -> workSummaryText(summary)
     }
-<<<<<<< HEAD
     val text = baseText
-    Column(modifier = Modifier.fillMaxWidth()) {
-=======
     val colors = MiuixTheme.colorScheme
     val isDark = colors.surface.luminance() < 0.5f
     val mutedInk = colors.onSurface.copy(alpha = if (isDark) 0.56f else 0.52f)
     val iconInk = colors.onSurface.copy(alpha = if (isDark) 0.50f else 0.45f)
->>>>>>> origin/main
+    Column(modifier = Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -289,15 +286,9 @@ private fun AgentWorkHeader(
         Spacer(modifier = Modifier.width(WorkGutterGap))
         ShimmerText(
             text = text,
-<<<<<<< HEAD
             active = working || waitingForControl,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-=======
-            active = working,
             style = MiuixTheme.textStyles.body2.copy(fontSize = 13.5.sp),
             color = mutedInk,
->>>>>>> origin/main
             modifier = Modifier.weight(1f, fill = false),
         )
         if (traceRunId != null && onOpenRunDetail != null) {
@@ -677,9 +668,6 @@ internal fun ExpandChevron(
 internal val WorkRowHeight: Dp = 30.dp
 internal val WorkGutterWidth: Dp = 18.dp
 internal val WorkGutterGap: Dp = 8.dp
-<<<<<<< HEAD
-private val WorkNodeSize: Dp = 20.dp
-
 /**
  * 从消息 id 反解运行 id。
  *
@@ -697,7 +685,6 @@ internal fun List<AgentChatMessageUi>.traceRunId(): String? {
     }
     return null
 }
-=======
+
 private val WorkNodeHaloSize: Dp = 18.dp
 private val WorkDoneIconSize: Dp = 13.5.dp
->>>>>>> origin/main

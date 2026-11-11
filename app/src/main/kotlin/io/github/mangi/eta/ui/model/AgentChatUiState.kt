@@ -144,13 +144,11 @@ data class TokenUsageUi(
     val outputTokens: Int? = null,
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
-<<<<<<< HEAD
     /**
      * 服务商返回的总输入（缓存读写已折算进去）。旧消息没有这个值，界面必须回退到「输入」——
      * 把原样 input 当成总输入，Anthropic 下会少算掉全部缓存读写。
      */
     val promptTokens: Int? = null,
-=======
     val stepCount: Int? = null,
     val llmMs: Long? = null,
     val toolMs: Long? = null,
@@ -158,7 +156,6 @@ data class TokenUsageUi(
     val ttftSteps: Int? = null,
     val decodeMs: Long? = null,
     val decodeTokens: Int? = null,
->>>>>>> origin/main
 ) {
     val isEmpty: Boolean
         get() = contextTokens == null &&
@@ -166,9 +163,7 @@ data class TokenUsageUi(
             outputTokens == null &&
             reasoningTokens == null &&
             cachedTokens == null &&
-<<<<<<< HEAD
-            promptTokens == null
-=======
+            promptTokens == null &&
             stepCount == null &&
             llmMs == null &&
             toolMs == null &&
@@ -182,7 +177,6 @@ data class TokenUsageUi(
             (toolMs != null && toolMs > 0L) ||
             (ttftMs != null && (ttftSteps ?: 1) > 0) ||
             (decodeMs != null && decodeMs > 0L && (decodeTokens ?: outputTokens ?: 0) > 0)
->>>>>>> origin/main
 }
 
 @Immutable

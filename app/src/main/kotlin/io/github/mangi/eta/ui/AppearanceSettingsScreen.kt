@@ -31,11 +31,8 @@ import io.github.mangi.eta.data.model.AppearancePaletteStyle
 import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
-<<<<<<< HEAD
-import io.github.mangi.eta.data.model.ChatViewMode
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
->>>>>>> origin/main
+import io.github.mangi.eta.data.model.ChatViewMode
 import io.github.mangi.eta.data.model.MAX_INTERFACE_SCALE
 import io.github.mangi.eta.data.model.MIN_INTERFACE_SCALE
 import io.github.mangi.eta.data.model.normalizeInterfaceScale
@@ -184,6 +181,20 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                         },
                     )
                     Divider()
+                    // 三选一而不是开关：这个偏好有两个互斥的收窄方向（只看对话 / 只看轨迹），
+                    // 开关只能表达其中一个。文案里写清两种视图各自收起什么，避免用户选了却
+                    // 不知道为什么消息变少了。
+                    CouiDropdownPreference(
+                        title = stringResource(R.string.appearance_chat_view_mode),
+                        summary = stringResource(R.string.appearance_chat_view_mode_summary),
+                        items = ChatViewMode.uiOrder.map { chatViewModeLabel(it) },
+                        selectedIndex = maxOf(0, ChatViewMode.uiOrder.indexOf(appearance.chatViewMode)),
+                        onSelectedIndexChange = { index ->
+                            val mode = ChatViewMode.uiOrder.getOrNull(index) ?: return@CouiDropdownPreference
+                            update { current -> current.copy(chatViewMode = mode) }
+                        },
+                    )
+                    Divider()
                     CouiSliderPreference(
                         title = stringResource(R.string.appearance_interface_scale),
                         summary = stringResource(R.string.appearance_interface_scale_summary),
@@ -300,50 +311,6 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                         }
                     }
                 }
-<<<<<<< HEAD
-                EtaPreferenceDivider(hasLeading = false)
-                EtaSwitchPreference(
-                    title = stringResource(R.string.appearance_swipe_dismiss),
-                    summary = stringResource(R.string.appearance_swipe_dismiss_summary),
-                    checked = appearance.swipeDismissEnabled,
-                    onCheckedChange = { enabled ->
-                        update { current -> current.copy(swipeDismissEnabled = enabled) }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = false)
-                EtaSwitchPreference(
-                    title = stringResource(R.string.appearance_predictive_back),
-                    summary = stringResource(R.string.appearance_predictive_back_summary),
-                    checked = appearance.predictiveBackEnabled,
-                    onCheckedChange = { enabled ->
-                        update { current -> current.copy(predictiveBackEnabled = enabled) }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = false)
-                // 三选一而不是开关：这个偏好现在有两个互斥的收窄方向（只看对话 / 只看轨迹），
-                // 开关只能表达其中一个。文案里写清两种视图各自收起什么，避免用户选了却不知道
-                // 为什么消息变少了。
-                EtaOverlayDropdownPreference(
-                    title = stringResource(R.string.appearance_chat_view_mode),
-                    summary = stringResource(R.string.appearance_chat_view_mode_summary),
-                    items = ChatViewMode.uiOrder.map { chatViewModeLabel(it) },
-                    selectedIndex = maxOf(0, ChatViewMode.uiOrder.indexOf(appearance.chatViewMode)),
-                    onSelectedIndexChange = { index ->
-                        val mode = ChatViewMode.uiOrder.getOrNull(index)
-                            ?: return@EtaOverlayDropdownPreference
-                        update { current -> current.copy(chatViewMode = mode) }
-                    },
-                )
-                EtaPreferenceDivider(hasLeading = false)
-                EtaArrowPreference(
-                    title = stringResource(R.string.appearance_interface_scale),
-                    summary = stringResource(R.string.appearance_interface_scale_summary),
-                    endActions = {
-                        Text(
-                            text = "${scaleDraft.roundToInt()}%",
-                            fontSize = MiuixTheme.textStyles.body2.fontSize,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-=======
 
                 item(key = "appearance_interface") {
                     SmallTitle(text = stringResource(R.string.appearance_group_interface))
@@ -360,7 +327,6 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                                 update { current -> current.copy(blurEnabled = enabled) }
                             },
                             enabled = blurSupported,
->>>>>>> origin/main
                         )
                         AnimatedVisibility(
                             visible = appearance.blurEnabled && blurSupported,
@@ -451,12 +417,3 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
         }
     }
 }
-
-@Composable
-private fun chatViewModeLabel(mode: ChatViewMode): String = stringResource(
-    when (mode) {
-        ChatViewMode.ALL -> R.string.chat_view_mode_all
-        ChatViewMode.DIALOG -> R.string.chat_view_mode_dialog
-        ChatViewMode.TRACE -> R.string.chat_view_mode_trace
-    },
-)
