@@ -61,26 +61,7 @@ internal object VirtualDisplayController {
     @Volatile
     private var highFrequencyPreview: Boolean = false
 
-<<<<<<< HEAD
-    private var frameThread: HandlerThread? = null
-    private var frameHandler: Handler? = null
-    private var imageReader: ImageReader? = null
-    private var inProcessVirtualDisplay: VirtualDisplay? = null
-    private var rootBridgeProcess: Process? = null
-    private var processSupervisor: ShellProcessSupervisor? = null
-
-    private var activeDisplayId: Int = Display.DEFAULT_DISPLAY
-    /** root 桥接进程已明确回报 policy=hide；in-process 路径由 system Hook 负责，不置此标志。 */
-    @Volatile
-    private var activeImePolicyHidden: Boolean = false
-    @Volatile
-    private var rootBridgeImePolicyHidden: Boolean = false
-    private var displayWidth: Int = 1080
-    private var displayHeight: Int = 2400
-    private var displayDensityDpi: Int = 420
-=======
     private var displayResources: VirtualDisplaySessionResources? = null
->>>>>>> origin/main
     private var latestFullBitmap: Bitmap? = null
     private var lastUiFrameAtElapsedMs: Long = 0L
     private val mutedPackages = linkedSetOf<String>()
@@ -134,69 +115,6 @@ internal object VirtualDisplayController {
                 }
                 releaseSession(appContext, rootAvailable, existing.token)
             }
-<<<<<<< HEAD
-            releaseLocked(appContext, rootAvailable)
-
-            val thread = HandlerThread("eta-virtual-display-frame").apply { start() }
-            val handler = Handler(thread.looper)
-            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
-            reader.setOnImageAvailableListener(::onFrameAvailable, handler)
-
-            frameThread = thread
-            frameHandler = handler
-            imageReader = reader
-            displayWidth = width
-            displayHeight = height
-            displayDensityDpi = densityDpi
-
-            if (!forceRootBridge) {
-                val createdInProcess = tryCreateInProcessVirtualDisplay(
-                    appContext = appContext,
-                    surface = reader.surface,
-                    width = width,
-                    height = height,
-                    densityDpi = densityDpi,
-                )
-                if (createdInProcess != null) {
-                    val id = createdInProcess.display?.displayId ?: Display.INVALID_DISPLAY
-                    if (CanvasRoutingPolicy.isVirtualDisplay(id)) {
-                        inProcessVirtualDisplay = createdInProcess
-                        activeDisplayId = id
-                        activeImePolicyHidden = false
-                        mutableSnapshots.value = VirtualDisplaySnapshot(
-                            active = true,
-                            displayId = id,
-                            width = width,
-                            height = height,
-                        )
-                        AndroidAgentLogger.info("Virtual display created in-process: displayId=$id size=${width}x$height")
-                        return id
-                    }
-                    runCatching { createdInProcess.release() }
-                }
-            }
-
-            if (rootAvailable()) {
-                val rootId = tryCreateRootBridgedVirtualDisplay(
-                    appContext = appContext,
-                    surface = reader.surface,
-                    width = width,
-                    height = height,
-                    densityDpi = densityDpi,
-                    rootAvailable = rootAvailable,
-                )
-                if (rootId != null && CanvasRoutingPolicy.isVirtualDisplay(rootId)) {
-                    activeDisplayId = rootId
-                    activeImePolicyHidden = rootBridgeImePolicyHidden
-                    mutableSnapshots.value = VirtualDisplaySnapshot(
-                        active = true,
-                        displayId = rootId,
-                        width = width,
-                        height = height,
-                    )
-                    AndroidAgentLogger.info("Virtual display created via root bridge: displayId=$rootId size=${width}x$height")
-                    return rootId
-=======
             val token = synchronized(lock) { sessionState.begin() }
             val frameWorker = HandlerThread("eta-virtual-display-frame")
             var reader: ImageReader? = null
@@ -265,7 +183,6 @@ internal object VirtualDisplayController {
                     VirtualDisplaySessionResources(
                         reader, frameWorker, inProcessDisplay, rootBridge, manager, listener,
                     ).close()
->>>>>>> origin/main
                 }
             }
         }
@@ -605,43 +522,6 @@ internal object VirtualDisplayController {
         rootAvailable: () -> Boolean,
         expected: VirtualDisplaySessionState.Token? = null,
     ) {
-<<<<<<< HEAD
-        highFrequencyPreview = false
-        activeDisplayId = Display.DEFAULT_DISPLAY
-        activeImePolicyHidden = false
-        rootBridgeImePolicyHidden = false
-        mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
-
-        if (context != null && mutedPackages.isNotEmpty()) {
-            restoreMutedPackages(context.applicationContext, rootAvailable)
-        } else {
-            mutedPackages.clear()
-        }
-
-        inProcessVirtualDisplay?.let { vd ->
-            runCatching { vd.release() }
-        }
-        inProcessVirtualDisplay = null
-
-        val bridge = rootBridgeProcess
-        val supervisor = processSupervisor
-        rootBridgeProcess = null
-        processSupervisor = null
-        if (bridge != null) {
-            thread(name = "eta-vd-bridge-cleanup", isDaemon = true) {
-                runCatching {
-                    bridge.outputStream.write("release\n".toByteArray(Charsets.UTF_8))
-                    bridge.outputStream.flush()
-                    bridge.outputStream.close()
-                }
-                if (supervisor != null) {
-                    supervisor.beginClosing()
-                    if (bridge.isAlive) supervisor.terminateAndReap(bridge) else supervisor.reapProcess(bridge)
-                    supervisor.unregisterProcess(bridge)
-                } else {
-                    runCatching { bridge.destroyForcibly() }
-                }
-=======
         val resources = synchronized(lock) {
             if (expected != null && !sessionState.isCurrent(expected)) return
             sessionState.invalidate()
@@ -651,7 +531,6 @@ internal object VirtualDisplayController {
                 restoreMutedPackages(context.applicationContext, rootAvailable)
             } else {
                 mutedPackages.clear()
->>>>>>> origin/main
             }
             val detached = displayResources
             displayResources = null
@@ -735,7 +614,6 @@ internal object VirtualDisplayController {
         if (pixelStride <= 0 || rowStride <= 0) return null
         val paddedWidth = ImageBufferGeometry.paddedWidth(rowStride, pixelStride, width) ?: return null
 
-<<<<<<< HEAD
         // 缓冲区长度由生产者决定：ImageReader 在 resize/重建、或首帧未填满时，
         // remaining 可能小于 paddedWidth * height * 4。此时按整幅高度建图再
         // copyPixelsFromBuffer 会读越界（表现为崩溃或整帧花屏），按实际可用
@@ -744,17 +622,6 @@ internal object VirtualDisplayController {
             ?: return null
 
         val rawBitmap = createBitmap(paddedWidth, safeHeight, Bitmap.Config.ARGB_8888)
-=======
-        val requiredBytes = paddedWidth * height * 4
-        val safeHeight = if (buffer.remaining() >= requiredBytes) {
-            height
-        } else {
-            (buffer.remaining() / (paddedWidth * 4)).coerceAtMost(height)
-        }
-        if (safeHeight <= 0) return null
-
-        val rawBitmap = Bitmap.createBitmap(paddedWidth, safeHeight, Bitmap.Config.ARGB_8888)
->>>>>>> origin/main
         rawBitmap.copyPixelsFromBuffer(buffer)
         return if (paddedWidth == width && safeHeight == height) {
             rawBitmap

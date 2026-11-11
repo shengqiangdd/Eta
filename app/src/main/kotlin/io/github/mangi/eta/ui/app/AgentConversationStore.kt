@@ -343,18 +343,16 @@ internal object AgentConversationStore {
                         deletedConversationIds += stored.keys - current.keys
                         deletedConversationIds.forEach { dao.deleteConversationCascade(it) }
                         for ((id, state) in current) {
-<<<<<<< HEAD
-                            val old = previous[id].takeIf { id in stored }
-=======
-                            if (!state.isConversationLoaded) {
+                            if (!it.isConversationLoaded) {
+                                // 未加载的会话不该为了改标题而把整段消息读进内存：
+                                // 只更新元数据行，然后继续。
                                 val row = stored[id] ?: continue
-                                if (row.title != state.title || row.updatedAt != state.updatedAt || row.isPinned != state.isPinned) {
-                                    dao.updateConversationTitle(id, state.title, state.updatedAt, state.isPinned)
+                                if (row.title != it.title || row.updatedAt != it.updatedAt || row.isPinned != it.isPinned) {
+                                    dao.updateConversationTitle(id, it.title, it.updatedAt, it.isPinned)
                                 }
                                 continue
                             }
                             val old = previous[id].takeIf { id in stored && it?.isConversationLoaded == true }
->>>>>>> origin/main
                             if (old == null || !state.sameMetadata(old)) {
                                 phase = "encode_metadata"
                                 val row = ConversationEntity(
@@ -367,11 +365,7 @@ internal object AgentConversationStore {
                                     createdAt = stored[id]?.createdAt ?: state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     updatedAt = state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     modelId = state.modelId,
-<<<<<<< HEAD
-                                    pinned = state.isPinned,
-=======
-                                    isPinned = state.isPinned,
->>>>>>> origin/main
+                            pinned = state.isPinned,
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
@@ -484,7 +478,6 @@ internal object AgentConversationStore {
         val states = linkedMapOf<String, AgentChatHomeUiState>()
         val titles = mutableMapOf<String, String>()
         val updatedAt = mutableMapOf<String, Long>()
-<<<<<<< HEAD
         val unaligned = mutableSetOf<String>()
 
         // 只把「当前会话」的消息读进内存：其余会话保留元数据 + 最后一条消息做预览，
@@ -550,10 +543,6 @@ internal object AgentConversationStore {
             // 只在 debug 构建里做：release 不该为诊断多付一次启动查询。
             timed("preview2") { loadPreviewMessages() }
         }
-
-=======
-        val pinnedIds = mutableSetOf<String>()
->>>>>>> origin/main
         conversations.forEach { conversation ->
             val isSelected = conversation.id == selected
             val selStartNs = System.nanoTime()
@@ -739,9 +728,7 @@ internal object AgentConversationStore {
                         outputTokens = usage?.outputTokens,
                         reasoningTokens = usage?.reasoningTokens,
                         cachedTokens = usage?.cachedTokens,
-<<<<<<< HEAD
                         promptTokens = usage?.promptTokens,
-=======
                         stepCount = usage?.stepCount,
                         llmMs = usage?.llmMs,
                         toolMs = usage?.toolMs,
@@ -749,7 +736,6 @@ internal object AgentConversationStore {
                         ttftSteps = usage?.ttftSteps,
                         decodeMs = usage?.decodeMs,
                         decodeTokens = usage?.decodeTokens,
->>>>>>> origin/main
                     )
                 }
             }
@@ -828,9 +814,7 @@ internal object AgentConversationStore {
                     outputTokens = outputTokens,
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
-<<<<<<< HEAD
                     promptTokens = promptTokens,
-=======
                     stepCount = stepCount,
                     llmMs = llmMs,
                     toolMs = toolMs,
@@ -838,7 +822,6 @@ internal object AgentConversationStore {
                     ttftSteps = ttftSteps,
                     decodeMs = decodeMs,
                     decodeTokens = decodeTokens,
->>>>>>> origin/main
                 ).takeUnless { it.isEmpty },
             )
 

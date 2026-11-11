@@ -178,7 +178,6 @@ internal object VirtualDisplayCommandMain {
             exitProcess(1)
         }
 
-<<<<<<< HEAD
         // 当前进程已切到 SYSTEM_UID(1000)，可以直接设置 per-display IME policy。
         // 这样即使设备只有 Root、没有 system_server Hook，也能避免键盘回退到主屏。
         // display 可能还没同步到 WindowManagerService，短暂重试几次；失败则如实回报。
@@ -191,7 +190,6 @@ internal object VirtualDisplayCommandMain {
             Thread.sleep(IME_POLICY_RETRY_DELAY_MS)
         }
         println("$IME_POLICY_PREFIX${if (imePolicyHidden) "hide" else "unavailable"}")
-=======
         retainedVirtualDisplay = virtualDisplay
         retainedSurface = surface
         if (!CanvasRoutingPolicy.hasRequiredDisplayFlags(virtualDisplay.display.flags) ||
@@ -201,8 +199,6 @@ internal object VirtualDisplayCommandMain {
             println(RESULT_PREFIX + JSONObject().put("ok", false).put("code", "DISPLAY_ISOLATION_UNAVAILABLE"))
             exitProcess(1)
         }
-
->>>>>>> origin/main
         println("$READY_PREFIX$displayId")
         System.out.flush()
 
@@ -234,12 +230,10 @@ internal object VirtualDisplayCommandMain {
         exitProcess(0)
     }
 
-<<<<<<< HEAD
     // 以 root / system 身份通过 IActivityManager 拿系统 ContentProvider：
     // 这是 Surface 从 App 进程交给特权子进程的唯一合法通道；任一环节失败都返回 null，
     // 调用方会把 SURFACE_UNAVAILABLE 报给上层，不会假装成功。
     @android.annotation.SuppressLint("PrivateApi")
-=======
     private fun releaseRetainedDisplay() {
         val vd = retainedVirtualDisplay
         val surf = retainedSurface
@@ -273,8 +267,6 @@ internal object VirtualDisplayCommandMain {
         val actual = getPolicy?.invoke(wms, displayId) as? Int
         actual == CanvasRoutingPolicy.DISPLAY_IME_POLICY_HIDE
     }.getOrDefault(false)
-
->>>>>>> origin/main
     private fun acquireSurfaceFromApp(userId: Int, surfaceToken: String): Surface? {
         val activityManager = Class.forName("android.app.ActivityManager")
             .getMethod("getService")

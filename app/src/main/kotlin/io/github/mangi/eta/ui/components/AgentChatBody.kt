@@ -71,16 +71,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-<<<<<<< HEAD
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
-=======
-import androidx.compose.ui.draw.dropShadow
->>>>>>> origin/main
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -95,18 +91,13 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-<<<<<<< HEAD
 import androidx.compose.ui.text.style.TextAlign
-=======
 import androidx.compose.ui.text.font.FontWeight
->>>>>>> origin/main
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
 import io.github.mangi.eta.config.Prefs
-=======
 import androidx.compose.ui.unit.sp
 import com.itos.coui.effect.couiButtonFeedback
 import com.itos.coui.layout.CouiPageDefaults
@@ -114,29 +105,22 @@ import com.itos.coui.shape.CouiShape
 import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
 import com.itos.coui.theme.CouiTheme
->>>>>>> origin/main
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
-<<<<<<< HEAD
 import io.github.mangi.eta.agent.runtime.AppExitCause
 import io.github.mangi.eta.data.model.ChatViewMode
-=======
 import io.github.mangi.eta.data.model.AppearanceUiStyle
->>>>>>> origin/main
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.repository.ConversationBranchBoundary
 import io.github.mangi.eta.ui.model.branchMessageOutline
 import io.github.mangi.eta.ui.app.AgentConversationRevisionReducer
-<<<<<<< HEAD
 import io.github.mangi.eta.ui.app.LocalBlurEnabled
 import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
 import io.github.mangi.eta.ui.model.AgentAskUi
-=======
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.markdown.StreamingMarkdownStateCache
 import io.github.mangi.eta.ui.model.ConversationHistoryLoadState
->>>>>>> origin/main
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
@@ -301,13 +285,10 @@ internal fun AgentChatBody(
     historyLoadState: ConversationHistoryLoadState = ConversationHistoryLoadState.Idle,
     onLoadEarlierMessages: () -> Unit = {},
     onHistoryViewportChanged: (Boolean) -> Unit = {},
-<<<<<<< HEAD
     /** 非空时消息上出现「从这里分叉」入口；实现在 [AgentAppState.branchFromMessage]。 */
     onBranchMessage: ((AgentChatMessageUi) -> Unit)? = null,
-=======
     isDrawerOpen: Boolean = false,
     topInset: Dp = 0.dp,
->>>>>>> origin/main
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -826,13 +807,10 @@ private fun AgentChatScaffold(
     availableReasoningEfforts: List<ReasoningEffort>,
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
-<<<<<<< HEAD
     queuedMessages: List<QueuedMessageUi> = emptyList(),
-=======
     queuedMessages: List<QueuedMessageUi>,
     inputSyncVersion: Int,
     focusInputOnSync: Boolean,
->>>>>>> origin/main
     messageEdit: MessageEditUiState?,
     showEmptySuggestions: Boolean,
     keepBottomAnchored: Boolean,
@@ -893,7 +871,13 @@ private fun AgentChatScaffold(
     onOpenBrowser: () -> Unit,
     onOpenRunDetail: (String) -> Unit = {},
     currentBrowserMessageId: String?,
-<<<<<<< HEAD
+    hasEarlierMessages: Boolean,
+    messageStartIndex: Int,
+    historyLoadState: ConversationHistoryLoadState,
+    onLoadEarlierMessages: () -> Unit,
+    onHistoryViewportChanged: (Boolean) -> Unit,
+    topInset: Dp,
+    modifier: Modifier = Modifier,
     /** 输入框里待发送的引用；null 表示没有引用。 */
     quotedMessage: ComposerQuoteUi? = null,
     onClearQuote: () -> Unit = {},
@@ -1015,16 +999,7 @@ private fun AgentChatScaffold(
         turnCurrent?.coerceIn(0, (turnCount - 1).coerceAtLeast(0))
     }
 
-=======
-    hasEarlierMessages: Boolean,
-    messageStartIndex: Int,
-    historyLoadState: ConversationHistoryLoadState,
-    onLoadEarlierMessages: () -> Unit,
-    onHistoryViewportChanged: (Boolean) -> Unit,
-    topInset: Dp,
-    modifier: Modifier = Modifier,
-) {
->>>>>>> origin/main
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
@@ -1036,7 +1011,6 @@ private fun AgentChatScaffold(
             bottom = 0.dp,
         ),
         bottomBar = {
-<<<<<<< HEAD
             Column {
                 ChatStatusNoticeBar(
                     notices = visibleStatusNotices,
@@ -1061,10 +1035,8 @@ private fun AgentChatScaffold(
                 input = input,
                 inputSyncVersion = inputSyncVersion,
                 modelPickerState = modelPickerState,
-=======
             AgentChatBottomBar(
                 input = input,
->>>>>>> origin/main
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 sessionUsage = sessionUsage,
@@ -1167,21 +1139,18 @@ private fun AgentChatScaffold(
                 messageActionsEnabled = !isStreaming && !isCompacting && !isBranching && messageEdit == null,
                 editTargetMessageId = messageEdit?.targetMessageId,
                 currentBrowserMessageId = currentBrowserMessageId,
-<<<<<<< HEAD
                 onQuoteMessage = onQuoteMessage,
                 onBranchMessage = onBranchMessage,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .then(if (frostEnabled) Modifier.layerBackdrop(messageBackdrop) else Modifier),
-=======
                 hasEarlierMessages = hasEarlierMessages,
                 messageStartIndex = messageStartIndex,
                 historyLoadState = historyLoadState,
                 onLoadEarlierMessages = onLoadEarlierMessages,
                 onHistoryViewportChanged = onHistoryViewportChanged,
                 modifier = Modifier.fillMaxSize(),
->>>>>>> origin/main
             )
             }
         }
@@ -1987,7 +1956,6 @@ internal fun resolveFinalResultMessageIds(
 
 @Composable
 private fun AgentChatBottomBar(
-<<<<<<< HEAD
     todoPlan: AgentTodoPlan?,
     taskLedger: AgentTaskLedger?,
     goal: AgentGoal?,
@@ -1998,9 +1966,7 @@ private fun AgentChatBottomBar(
     input: String,
     inputSyncVersion: Int = 0,
     modelPickerState: AgentModelPickerUiState,
-=======
     input: String,
->>>>>>> origin/main
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
     sessionUsage: AgentSessionUsageUi? = null,
@@ -2011,13 +1977,10 @@ private fun AgentChatBottomBar(
     availableReasoningEfforts: List<ReasoningEffort>,
     pendingImages: List<PendingImageUi>,
     pendingFileReferences: List<PendingFileReferenceUi>,
-<<<<<<< HEAD
     queuedMessages: List<QueuedMessageUi> = emptyList(),
-=======
     queuedMessages: List<QueuedMessageUi>,
     inputSyncVersion: Int,
     focusInputOnSync: Boolean,
->>>>>>> origin/main
     messageEdit: MessageEditUiState?,
     onSubmit: (String) -> Unit,
     onSteerAndSubmit: (String) -> Unit = onSubmit,

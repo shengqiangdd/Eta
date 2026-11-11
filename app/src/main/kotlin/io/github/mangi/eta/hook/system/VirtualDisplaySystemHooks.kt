@@ -5,14 +5,11 @@ import android.content.Context
 import android.hardware.display.VirtualDisplayConfig
 import android.os.Binder
 import android.os.Build
-<<<<<<< HEAD
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
-=======
 import android.view.Display
->>>>>>> origin/main
 import androidx.annotation.RequiresApi
 import io.github.libxposed.api.XposedModule
 import io.github.mangi.eta.agent.device.VirtualDisplayImePolicy
@@ -62,11 +59,7 @@ internal object VirtualDisplaySystemHooks {
     ): HookInstallation {
         val hooks = HookRegistrar(module, rootLogger, "VirtualDisplay")
         return hooks.install {
-<<<<<<< HEAD
-            installDisplayManagerHooks(hooks, classLoader)
-=======
             installDisplayManagerHooks(module, hooks, classLoader)
->>>>>>> origin/main
             installCrossAppLaunchHooks(hooks, classLoader)
             installTaskMoveHooks(hooks, classLoader)
         }
@@ -131,10 +124,6 @@ internal object VirtualDisplaySystemHooks {
             args[0] = upgraded
             args[3] = "android"
             activeEtaDisplayCreation.set(true)
-<<<<<<< HEAD
-            val result = try {
-                chain.proceed(args.toTypedArray())
-=======
             val identityToken = Binder.clearCallingIdentity()
             try {
                 val result = chain.proceed(args.toTypedArray())
@@ -151,7 +140,6 @@ internal object VirtualDisplaySystemHooks {
                     activeEtaDisplayIds.add(result)
                 }
                 result
->>>>>>> origin/main
             } finally {
                 Binder.restoreCallingIdentity(identityToken)
                 activeEtaDisplayCreation.set(false)
