@@ -151,11 +151,13 @@ For feature requests, bug reports, or contributions, feel free to share your ide
 
 ## License
 
-Eta uses the [PolyForm Noncommercial License 1.0.0](LICENSE): noncommercial use (personal use, study, modification, noncommercial redistribution) needs no permission; commercial use requires prior written permission from the [author](https://github.com/Mangi-11).
+Copyright © 2026 [蛮吉 (Mangi-11)](https://github.com/Mangi-11)
 
-Redistribution of copies, including modified versions, is permitted by the license so long as the terms travel with it, including the line
-`Required Notice: Copyright © 2026 蛮吉 (Mangi-11).`; it may not be used commercially, sold, or installed for a fee.
+This project is open source under GPL-3.0; see [LICENSE](LICENSE) for details.
 
-If you build on Eta, please also keep the references list above — without those upstream projects there would be no Eta.
+GPL-3.0 permits commercial use, modification, and redistribution, provided that distributed
+versions are also released under GPL-3.0 with the copyright notice retained. If you build on
+Eta, please also keep the references list above — without those upstream projects there would
+be no Eta (this is a request, not a licence condition).
 
 <sub>Community: <a href="https://linux.do">LINUX DO</a></sub>

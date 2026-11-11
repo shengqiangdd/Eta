@@ -167,13 +167,12 @@ AI 时代下，处理外部 PR 变得比以往更加困难：大量由 AI 生成
 
 ## 许可证
 
-Eta 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：非商业用途（个人使用、学习、修改、非商业分发）无需授权；商业使用需事先获得[作者](https://github.com/Mangi-11)书面许可。
+Copyright © 2026 [蛮吉 (Mangi-11)](https://github.com/Mangi-11)
 
-二次分发（包括修改版）是许可范围内的，只需随附本许可证条款及其中的
-`Required Notice: Copyright © 2026 蛮吉 (Mangi-11).` 一行；但不得用于商业目的，
-也不得贩卖或收费代装。
+本项目基于 GPL-3.0 开源，详情请参阅 [LICENSE](LICENSE)。
 
-如果基于 Eta 做二次开发，也请保留上面「参考与致谢」中的项目列表 —— 没有这些
-上游项目，就没有 Eta。
+GPL-3.0 允许商业使用、修改与再分发，条件是分发时同样以 GPL-3.0 开放源码并保留版权声明。
+如果基于 Eta 做二次开发，也请保留上面「参考与致谢」中的项目列表 —— 没有这些上游项目，
+就没有 Eta（这是请求，不是许可条件）。
 
 <sub></sub>社区：<a href="https://linux.do">LINUX DO</sub>
