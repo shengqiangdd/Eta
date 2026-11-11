@@ -277,24 +277,27 @@ internal fun AgentChatBody(
     //
     // 这是同步文件 IO，必须离开 composition 主线程：单份追踪可达 1.8MB，
     // 每帧读一次会直接卡住滚动。
-    val lastRunId = remember(messages) {
-        messages.asSequence()
-            .filterIsInstance<ThinkingMessageUi>()
-            .mapNotNull { runIdOf(it.id) }
-            .lastOrNull()
-    }
-    val runTiming by produceState(initialValue = null as RunTiming?, lastRunId) {
-        value = if (lastRunId == null) {
+    //
+    // 按**会话**找追踪，而不是拿消息 id 前缀去反推 runId：
+    // 后者是隐式约定（`run-x-thinking-1-0` → `run-x`），改一次消息 id 格式就静默失效，
+    // 表现是速度段凭空消失且不报错。追踪的 meta 里现在有 `conv` 字段，按它精确匹配。
+    val runTiming by produceState(initialValue = null as RunTiming?, goalScopeId) {
+        value = if (goalScopeId.isNullOrBlank()) {
             null
         } else {
             withContext(Dispatchers.IO) {
-                runCatching { AgentRunTraceStore.read(lastRunId!!) }.getOrNull()?.let { trace ->
-                    RunTiming(
-                        firstTokenMs = trace.lastFirstTokenMs?.toInt(),
-                        decodeTokens = trace.speed.decodeMs?.toInt(),
-                        speedNumeratorTokens = trace.speed.tokens?.toInt(),
-                        speedTokensPerSecond = trace.outputTokensPerSecond,
-                    )
+                val runId = runCatching { AgentRunTraceStore.latestRunIdFor(goalScopeId) }.getOrNull()
+                if (runId == null) {
+                    null
+                } else {
+                    runCatching { AgentRunTraceStore.read(runId) }.getOrNull()?.let { trace ->
+                        RunTiming(
+                            firstTokenMs = trace.lastFirstTokenMs?.toInt(),
+                            decodeTokens = trace.speed.decodeMs?.toInt(),
+                            speedNumeratorTokens = trace.speed.tokens?.toInt(),
+                            speedTokensPerSecond = trace.outputTokensPerSecond,
+                        )
+                    }
                 }
             }
         }

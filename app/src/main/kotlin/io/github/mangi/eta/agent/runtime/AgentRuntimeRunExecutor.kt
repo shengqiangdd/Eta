@@ -494,6 +494,9 @@ internal class AgentRuntimeRunExecutor(
             }
             val completedResponse = AgentModelClient.complete(
                 config = request.config,
+                // 追踪文件按 runId 命名，UI 要按会话找它的运行 —— 这里把归属写进 meta。
+                // conversationId 在本作用域是可空的；空串表示「未知」，追踪端不写该键。
+                conversationId = conversationId.orEmpty(),
                 sessionId = request.effectiveModelSessionId,
                 operationId = request.runId,
                 initialUserMessageId = uiPayload?.promptMessageId(request.runId) ?: "user-${request.runId}",

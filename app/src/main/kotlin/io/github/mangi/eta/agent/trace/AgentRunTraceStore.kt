@@ -69,6 +69,8 @@ internal object AgentRunTraceStore {
         val error: String?,
         val entries: List<Entry>,
         val truncated: Boolean,
+        /** 所属会话；旧追踪没有这个键时为 null。 */
+        val conversationId: String? = null,
     ) {
         val rounds: Int get() = entries.filter { it.kind == KIND_ROUND }.size
         val toolCalls: Int get() = entries.count { it.kind == KIND_TOOL }
@@ -160,6 +162,8 @@ internal object AgentRunTraceStore {
         val totalTokens: Int,
         val error: String?,
         val sizeBytes: Long,
+        /** 所属会话；旧追踪没有这个键时为 null（未知，不是「属于某个会话」）。 */
+        val conversationId: String? = null,
     ) {
         val durationMs: Long
             get() = (finishedAt ?: startedAt) - startedAt
@@ -205,6 +209,8 @@ internal object AgentRunTraceStore {
         provider: String,
         purpose: String = "",
         contextWindow: Int? = null,
+        /** 本次运行所属会话；空串表示未知（旧调用方 / 子代理）。 */
+        conversationId: String = "",
     ) {
         val target = dirOrNull() ?: return
         val safeId = safeRunId(runId) ?: return
@@ -224,6 +230,9 @@ internal object AgentRunTraceStore {
                     .put("provider", provider.take(120))
                     .put("purpose", purpose.take(24))
                     .put("window", contextWindow ?: 0)
+                    // 会话归属：没有它，UI 只能靠消息 id 前缀反推 runId（隐式约定）。
+                    // 空串不写，保持旧文件格式不变；读取端把缺失当「未知」，不当成某个会话。
+                    .apply { if (conversationId.isNotBlank()) put("conv", conversationId.take(120)) }
                 FileOutputStream(file, false).use { stream ->
                     stream.write((meta.toString() + "\n").toByteArray(Charsets.UTF_8))
                 }
@@ -411,6 +420,32 @@ internal object AgentRunTraceStore {
         )
     }
 
+    /**
+     * 某个会话最近一次「带会话标记」的运行追踪 id。
+     *
+     * 存在的理由：界面要用「这次对话跑了多快」。追踪文件按 runId 命名，
+     * 而 meta 里以前没有会话字段 —— 上层只能拿消息 id 前缀去猜（`run-x-thinking-1-0`）。
+     * 那是隐式约定：改一次消息 id 格式就静默失效，界面上速度段凭空消失且不报错。
+     *
+     * 这里按 meta.conv 精确匹配。旧追踪没有该字段（null），不会被误认成任何一个会话。
+     */
+    fun latestRunIdFor(conversationId: String, limit: Int = MAX_RUNS): String? {
+        if (conversationId.isBlank()) return null
+        val target = dirOrNull() ?: return null
+        val files = runCatching {
+            target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+        for (file in files.take(limit.coerceIn(1, MAX_RUNS))) {
+            // 只读第一行（meta）判断归属，不解析整份文件：
+            // 单份追踪可达 1.8MB，为了找一个 id 而全量解析 80 份是不可接受的。
+            val meta = firstJson(file) ?: continue
+            if (meta.optString("conv") == conversationId) return file.nameWithoutExtension
+        }
+        return null
+    }
+
     fun list(limit: Int = 50): List<Summary> {
         val target = dirOrNull() ?: return emptyList()
         val files = runCatching {
@@ -544,6 +579,7 @@ internal object AgentRunTraceStore {
             totalTokens = tokens,
             error = error,
             sizeBytes = file.length(),
+            conversationId = meta.optString("conv").takeIf(String::isNotBlank),
         )
     }
 
@@ -587,6 +623,7 @@ internal object AgentRunTraceStore {
             error = error,
             entries = entries,
             truncated = truncated,
+            conversationId = firstJson(file)?.optString("conv")?.takeIf(String::isNotBlank),
         )
     }
 

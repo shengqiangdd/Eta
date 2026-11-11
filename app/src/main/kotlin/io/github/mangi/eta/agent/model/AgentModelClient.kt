@@ -146,6 +146,18 @@ internal object AgentModelClient {
         onTranscript: (List<ConversationMessage>) -> Unit = {},
         /** 工具层读取轮次的通道；null 表示不接收执行中进度（纯单测、压缩等路径）。 */
         progressScope: ProgressScope? = null,
+        /**
+         * 这次运行属于哪个会话。
+         *
+         * 追踪文件按 runId 命名，而 UI 要按会话找它的运行 —— 没有这个字段时，
+         * 上层只能靠「消息 id 前缀 = runId」这个**隐式约定**反推（`run-x-thinking-1-0`）。
+         * 那个约定没有任何契约保证，改一次消息 id 格式就会静默失效，
+         * 界面上表现为速度段凭空消失，且不会报任何错。
+         *
+         * 放在末尾是刻意的：插在中间会让已有调用方的位置参数整体错位
+         * （本仓库的测试大量这样调用，实测一次就红了 8 处）。
+         */
+        conversationId: String = "",
         onEvent: (AgentEvent) -> Unit = {},
     ): ModelResponse.Text {
         config.validate()
@@ -156,6 +168,7 @@ internal object AgentModelClient {
             provider = config.providerName,
             purpose = if (rewriteReply) "rewrite" else if (compactOnly) "compact" else "chat",
             contextWindow = config.knownContextWindow,
+            conversationId = conversationId,
         )
         val tracedOnEvent: (AgentEvent) -> Unit = { event ->
             AgentRunTraceStore.record(operationId, event)
