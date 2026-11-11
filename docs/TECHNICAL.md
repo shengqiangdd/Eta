@@ -5982,3 +5982,85 @@ git config --local credential.helper \
 代价是依赖环境变量存在：换一个没有 `Github_Token` 的 shell 会推送失败
 （报 `could not read Username`），这是**明确的失败**而不是用错身份，
 可以接受。
+
+## fix171：输出总量把推理又加了一遍（同一误解的第二处）
+
+### 数据
+
+会话 `conv-a0e48b17` 的实际累计：
+
+| 项 | 值 |
+| output 累计 | 314,398 |
+| reasoning 累计 | 36,516（占 output 的 11.6%） |
+| 卡片显示 | **350,914** ← 虚高 36,516 |
+| 应为 | 314,398 |
+
+fix170 只修了**速度分子**，这里 `totalOutputTokens` 里同样的
+`outputTokens + reasoningTokens` 漏掉了。注释还写着「正文 + 推理」——
+这个误解是系统性的，不是笔误。
+
+### 根因：跨 provider 的语义不统一
+
+同样的字段名在不同协议下含义不同：
+
+| provider | output 是否含推理 | 推理字段 |
+| OpenAI chat | **含** | `completion_tokens_details.reasoning_tokens` |
+| OpenAI responses | **含** | `output_tokens_details.reasoning_tokens` |
+| Anthropic | **含** | `usage.thinking_output_tokens` |
+| **Gemini** | **不含** | `total_thought_tokens`（与 output 并列） |
+
+前三个是「明细」，Gemini 是「并列」。下游任何基于 `outputTokens` 的计算
+（总量、速度、占比）都会随 provider 漂移，而且**不会有任何报错**。
+
+### 修法
+
+**在读到的第一时间统一**，而不是让每个下游各自处理：
+
+1. `AgentTokenUsage.outputTokens` 的文档明确写成「已含推理」，并列出四家协议
+   分别怎么折算 —— 这是整个模块的契约。
+2. Gemini 解析时相加：`outputTokens = total_output_tokens + total_thought_tokens`。
+3. `totalOutputTokens` 去掉相加，并删掉那句「正文 + 推理」的错误注释。
+
+这和 `promptTokens` 的处理是同一个思路（注释里早写着「各协议语义不同，
+在解析层统一折算成总量」），只是输出侧漏了。
+
+### 测试
+
+`TotalOutputTokensTest`（5 条）：总量等于各轮 output 之和、推理占比高时
+不虚高（真机 output=100/reasoning=88 那种）、完全没有输出时为 null、
+只有推理没有 output 时不拿推理顶替总量、推理总量仍单独统计。
+
+其中一条我先断言了 `null`，实际实现返回 `0`。**实现比我的预期更合理**：
+有 reasoning 说明这条消息确实有用量，只是 output 未知，返回 0 表示
+「输出为零」而不是「没有数据」；断言已按实现修正并注明理由。
+
+### 一个已有的测试在守卫这个 bug
+
+改完 `totalOutputTokens` 后门禁报：`输出总量包含推理 token FAILED`。
+那条用例写的是：
+
+```kotlin
+fun `输出总量包含推理 token`() {
+    val usage = of(listOf(assistant(TokenUsageUi(outputTokens = 100, reasoningTokens = 400))))
+    // 推理也是模型真实生成的；排除它会让 tok/s 虚高。
+    assertEquals(500, usage.totalOutputTokens)
+}
+```
+
+两个前提都错：
+
+1. **样本不真实**：`output=100 / reasoning=400` —— 推理比输出大四倍。
+   真机 200 条样本全部满足 `reasoning ≤ output`。
+2. **理由说反了**：注释写「排除推理会让 tok/s 虚高」，实际是**加上它才虚高**。
+
+所以这条测试不是「发现了回归」，而是**把错误行为固化成了期望**。
+这类测试比没有测试更危险：它会让正确的修复看起来像 bug。
+
+已改为 `输出总量不重复计入推理 token`，样本换成合法的
+`output=100 / reasoning=40`，并在注释里说明为什么改成这样，
+避免以后有人只看测试名就改回去。
+
+### 教训
+
+改一个被测试守着的数字时，先读那条测试的**样本和理由**，不要只看它红了。
+如果样本在现实里不可能出现，那它守的很可能不是正确行为。

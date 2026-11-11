@@ -3,7 +3,21 @@ package io.github.mangi.eta.agent.runtime
 internal data class AgentTokenUsage(
     val contextTokens: Int? = null,
     val inputTokens: Int? = null,
+    /**
+     * 输出 token 总量，**已包含推理**。
+     *
+     * 这是跨 provider 的统一口径，不是某个协议的原始字段：
+     * - OpenAI（chat / responses）：`completion_tokens` / `output_tokens` 本身已含
+     *   `reasoning_tokens`（在 `*_tokens_details` 里）；
+     * - Anthropic：`output_tokens` 已含 `thinking_output_tokens`；
+     * - Gemini：`total_output_tokens` **不含** `total_thought_tokens`，解析时相加折算。
+     *
+     * 不统一的话，同一个字段名在不同 provider 下含义不同，下游任何基于它的计算
+     * （输出总量、生成速度、推理占比）都会随 provider 漂移，而且不会有任何报错。
+     */
     val outputTokens: Int? = null,
+
+    /** 推理 token，是 [outputTokens] 的**子集**（已按上面的口径统一）。 */
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
     /**

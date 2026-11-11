@@ -81,12 +81,19 @@ class AgentSessionUsageUiTest {
     }
 
     @Test
-    fun `输出总量包含推理 token`() {
+    fun `输出总量不重复计入推理 token`() {
+        // 这条用例原先断言 output+reasoning，样本还写成 output=100 / reasoning=400 ——
+        // 推理比输出大四倍，真实数据里不可能（reasoning 是 output 的子集）。
+        // 注释当时写「排除它会让 tok/s 虚高」，方向也说反了：加上它才虚高。
+        //
+        // 供应商把推理放在 output 的明细里（OpenAI 的 *_tokens_details、
+        // Anthropic 的 thinking_output_tokens）；Gemini 是并列的，已在解析层折进 output。
+        // 所以总量就是 output，见 TotalOutputTokensTest 的完整论证。
         val usage = AgentSessionUsageUi.of(
-            listOf(assistant(TokenUsageUi(outputTokens = 100, reasoningTokens = 400))),
+            listOf(assistant(TokenUsageUi(outputTokens = 100, reasoningTokens = 40))),
         )
-        // 推理也是模型真实生成的；排除它会让 tok/s 虚高。
-        assertEquals(500, usage.totalOutputTokens)
+        assertEquals(100, usage.totalOutputTokens)
+        assertEquals(40, usage.reasoningTokens)
     }
 
     @Test

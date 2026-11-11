@@ -58,9 +58,19 @@ internal data class AgentSessionUsageUi(
     val uncachedInputTokens: Int?
         get() = if (promptTokens > 0) (promptTokens - cachedTokens).coerceAtLeast(0) else null
 
-    /** 输出总量（正文 + 推理）；两者都缺时为 null 而不是 0。 */
+    /**
+     * 输出总量；完全没有输出时为 null 而不是 0。
+     *
+     * **不含 reasoningTokens 的额外加总**：供应商把推理放在 output 的明细里
+     * （`output_tokens_details.reasoning_tokens`、`thinking_output_tokens`），
+     * 它是 output 的子集，不是并列项。真机 200 条样本全部满足 reasoning ≤ output。
+     *
+     * 早先这里写成 `outputTokens + reasoningTokens`，会把总量抬高 ——
+     * 实测某个会话累计虚高 11.6%（350,914 vs 314,398），推理密集的轮次更多。
+     * 卡片上那行「其中推理」显示的是 [reasoningTokens]，语义已经点明是子集。
+     */
     val totalOutputTokens: Int?
-        get() = if (outputTokens == 0 && reasoningTokens == 0) null else outputTokens + reasoningTokens
+        get() = if (outputTokens == 0 && reasoningTokens == 0) null else outputTokens
 
     val isEmpty: Boolean
         get() = contextTokens == null && promptTokens == 0 && outputTokens == 0 && reasoningTokens == 0

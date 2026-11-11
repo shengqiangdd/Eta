@@ -297,11 +297,18 @@ internal class GeminiInteractionsStream(
             return value.toLong().takeIf { it in 0..Int.MAX_VALUE.toLong() && it.toDouble() == value.toDouble() }
                 ?.toInt() ?: malformed()
         }
+        val out = token("total_output_tokens", usage.outputTokens)
+        val thought = token("total_thought_tokens", usage.reasoningTokens)
         usage = AgentTokenUsage(
             contextTokens = token("total_tokens", usage.contextTokens),
             inputTokens = token("total_input_tokens", usage.inputTokens),
-            outputTokens = token("total_output_tokens", usage.outputTokens),
-            reasoningTokens = token("total_thought_tokens", usage.reasoningTokens),
+            // Gemini 的 total_thought_tokens 与 total_output_tokens **并列**（thought 不计入
+            // output），这与 OpenAI / Anthropic 相反 —— 那两家的 reasoning 是 output 的明细。
+            //
+            // 统一折算成「output 已含推理」：否则同一个 outputTokens 字段在不同 provider 下
+            // 含义不同，下游任何基于它的计算（总量、速度、占比）都会随 provider 漂移。
+            outputTokens = if (out == null && thought == null) null else (out ?: 0) + (thought ?: 0),
+            reasoningTokens = thought,
             cachedTokens = token("total_cached_tokens", usage.cachedTokens),
             // Interactions 的 total_input_tokens 是各 hop 输入总量，total_cached_tokens 是其中命中部分。
             promptTokens = token("total_input_tokens", usage.promptTokens),
