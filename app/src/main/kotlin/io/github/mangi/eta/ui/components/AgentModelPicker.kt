@@ -107,12 +107,8 @@ internal fun AgentTopBarChatHeader(
     conversationTitle: String?,
     character: RoleplayChatUi?,
     state: AgentModelPickerUiState,
-<<<<<<< HEAD
     popupAnchorTopPx: Int,
     popupMaxHeight: Dp,
-=======
-    isStreaming: Boolean,
->>>>>>> origin/main
     onModelSelected: (String) -> Unit,
     onOpenCharacter: () -> Unit,
     modifier: Modifier = Modifier,

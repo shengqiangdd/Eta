@@ -283,21 +283,17 @@ internal class AgentAppState(
     private var defaultProviderId: String? = null
     private var fileAttachmentOwnerVersion = 0L
 
-<<<<<<< HEAD
     private var selectedConversationId: String? = bootSnapshot.selectedConversationId
     /** 会话是否已经从库里载入过；深链 / 分享要等它为 true 才能落地。 */
     var conversationsLoaded by mutableStateOf(initialConversations != null)
-=======
     private var branchingConversationId by mutableStateOf<String?>(null)
     val isBranchingCurrentConversation: Boolean
         get() = branchingConversationId != null && branchingConversationId == selectedConversationId
 
     var isLoadingConversation by mutableStateOf(false)
->>>>>>> origin/main
         private set
     private var conversationsById: Map<String, AgentChatHomeUiState> = bootSnapshot.conversationsById
 
-<<<<<<< HEAD
     /**
      * 草稿的权威副本（纯内存，不参与 Compose 快照）。
      *
@@ -318,13 +314,11 @@ internal class AgentAppState(
     private var conversationUpdatedAt: Map<String, Long> = bootSnapshot.updatedAt
     /** 每个会话的消息条数；来自 SQL 统计，未载入消息的会话也有值（见 Snapshot.messageCounts）。 */
     private var conversationMessageCounts: Map<String, Int> = bootSnapshot.messageCounts
-=======
     private var selectedConversationId: String? = initialConversations.selectedConversationId
     private var conversationsById: Map<String, AgentChatHomeUiState> = initialConversations.conversationsById
     private var conversationTitles: Map<String, String> = initialConversations.titles
     private var conversationUpdatedAt: Map<String, Long> = initialConversations.updatedAt
     private var conversationPinnedIds: Set<String> = initialConversations.pinnedIds
->>>>>>> origin/main
 
     var homeState by mutableStateOf(
         selectedConversationId?.let(conversationsById::get) ?: emptyChatState(defaultThinkingEnabled)
@@ -598,11 +592,7 @@ internal class AgentAppState(
 
     suspend fun importBackup(input: InputStream): EtaBackupSummary {
         val locallyBusy = withContext(Dispatchers.Main.immediate) {
-<<<<<<< HEAD
-            currentRunId != null || conversationsById.values.any { it.isStreaming }
-=======
             branchingConversationId != null || runStore.hasActiveRuns || conversationsById.values.any { it.isStreaming }
->>>>>>> origin/main
         }
         if (locallyBusy) {
             throw IllegalStateException(appContext.getString(R.string.agent_error_stop_running_task))
@@ -623,11 +613,7 @@ internal class AgentAppState(
         }
 
         val pendingPersistence = synchronized(persistenceLock) {
-<<<<<<< HEAD
-            check(!persistencePaused) { appContext.getString(R.string.agent_error_backup_importing) }
-=======
             check(!persistencePaused && branchingConversationId == null) { "请等待会话保存完成" }
->>>>>>> origin/main
             persistencePaused = true
             persistenceJob
         }
@@ -657,7 +643,6 @@ internal class AgentAppState(
             AgentConversationStore.load(appContext)
         }
         withContext(Dispatchers.Main.immediate) {
-<<<<<<< HEAD
             applyLoadedSnapshot(snapshot)
         }
     }
@@ -708,7 +693,6 @@ internal class AgentAppState(
                 pendingSharedContent = null
                 applySharedContent(plan)
             }
-=======
             conversationSelectionVersion += 1
             cancelHistoryPageLoad()
             conversationSelectionJob?.cancel()
@@ -733,7 +717,6 @@ internal class AgentAppState(
                 searchQuery = "",
             )
             refreshConversationSummaries()
->>>>>>> origin/main
         }
     }
 
@@ -1590,7 +1573,6 @@ internal class AgentAppState(
         applySharedContent(plan)
     }
 
-<<<<<<< HEAD
     private fun applySharedContent(plan: SharedContentPlan) {
         createConversation()
         val conversationId = newConversationId()
@@ -1623,7 +1605,6 @@ internal class AgentAppState(
                     is SharedContentNote.TextTruncated -> appContext.getString(
                         R.string.shared_content_text_truncated,
                         note.keptChars,
-=======
     private suspend fun ensureConversationLoaded(conversationId: String): Boolean =
         withContext(Dispatchers.Main.immediate) {
             conversationLoadMutex.withLock {
@@ -1721,7 +1702,6 @@ internal class AgentAppState(
                     conversationPersistence.adoptConversation(
                         conversationId, window, title, updatedAt,
                         conversationId in conversationPinnedIds,
->>>>>>> origin/main
                     )
                     is SharedContentNote.ImagesLimited -> appContext.getString(
                         R.string.shared_content_images_limited,
@@ -1923,12 +1903,9 @@ internal class AgentAppState(
     }
 
     fun selectReplyCandidate(messageId: String, index: Int) {
-<<<<<<< HEAD
         if (rejectWhileMessagesLoading()) return
         if (homeState.isStreaming || homeState.messageEdit != null) return
-=======
         if (homeState.isStreaming || homeState.messageEdit != null || isBranchingCurrentConversation) return
->>>>>>> origin/main
         val updated = RoleplayConversationReducer.select(homeState, messageId, index) ?: return
         updateCurrentConversation(updated)
         refreshConversationSummaries()
@@ -2678,13 +2655,10 @@ internal class AgentAppState(
     }
 
     fun beginMessageEdit(messageId: String) {
-<<<<<<< HEAD
         if (rejectWhileMessagesLoading()) return
         if (homeState.isStreaming || homeState.messageEdit != null) return
         if (rejectRevisionWithoutJournal()) return
-=======
         if (homeState.isStreaming || homeState.messageEdit != null || isBranchingCurrentConversation) return
->>>>>>> origin/main
         if (homeState.roleplay != null) {
             if (messageId !in homeState.roleplayMessages.links) return
             val content = when (val message = homeState.messages.firstOrNull { it.id == messageId }) {
@@ -2752,13 +2726,10 @@ internal class AgentAppState(
         }
 
     fun deleteMessageTurn(messageId: String) {
-<<<<<<< HEAD
         if (rejectWhileMessagesLoading()) return
         if (homeState.isStreaming || homeState.messageEdit != null) return
         if (rejectRevisionWithoutJournal()) return
-=======
         if (homeState.isStreaming || homeState.messageEdit != null || isBranchingCurrentConversation) return
->>>>>>> origin/main
         val conversationId = selectedConversationId ?: return
         if (homeState.roleplay != null && messageId.startsWith("greeting-")) {
             val originalId = homeState.roleplayMessages.links[messageId]?.transcriptMessageId ?: return
@@ -2802,13 +2773,10 @@ internal class AgentAppState(
     }
 
     fun regenerateMessage(messageId: String) {
-<<<<<<< HEAD
         if (rejectWhileMessagesLoading()) return
         if (homeState.isStreaming || homeState.messageEdit != null) return
         if (rejectRevisionWithoutJournal()) return
-=======
         if (homeState.isStreaming || homeState.messageEdit != null || isBranchingCurrentConversation) return
->>>>>>> origin/main
         val conversationId = selectedConversationId ?: return
         if (homeState.roleplay != null) {
             val target = homeState.messages.filterIsInstance<AgentMessageUi>().firstOrNull { it.id == messageId } ?: return
@@ -2854,11 +2822,7 @@ internal class AgentAppState(
     fun compactCurrentContext() {
         if (rejectWhileMessagesLoading()) return
         val conversationId = selectedConversationId ?: return
-<<<<<<< HEAD
-        if (runIdForConversation(conversationId) != null || !homeState.canCompactContext || modelPickerState.isChanging) return
-=======
         if (isBranchingCurrentConversation || runStore.activeRunId(conversationId) != null || !homeState.canCompactContext || modelPickerState.isChanging) return
->>>>>>> origin/main
         launchConversationRun(
             conversationId = conversationId,
             runId = java.util.UUID.randomUUID().toString(),
@@ -4711,19 +4675,16 @@ internal class AgentAppState(
         val searchingHistory = query.isNotEmpty() && historySearchAppliedQuery != query
         val unsearched = if (historyCovered) 0 else conversationsById.count { (_, state) -> state.messagesDeferred }
         val summaries = conversationsById.entries
-<<<<<<< HEAD
             // 置顶优先，其余按最近更新时间；置顶的顺序也按更新时间稳定。
             .sortedWith(
                 compareByDescending<Map.Entry<String, AgentChatHomeUiState>> { it.value.isPinned }
                     .thenByDescending { conversationUpdatedAt[it.key] ?: 0L },
-=======
             .sortedWith(
                 compareByDescending<Map.Entry<String, AgentChatHomeUiState>> { (id, _) ->
                     id in conversationPinnedIds
                 }.thenByDescending { (id, _) ->
                     conversationUpdatedAt[id] ?: 0L
                 }
->>>>>>> origin/main
             )
             .map { (id, state) ->
                 val lastMessage = state.messages.lastOrNull() ?: state.previewMessage
@@ -4767,14 +4728,11 @@ internal class AgentAppState(
                     },
                     updatedAtMillis = conversationUpdatedAt[id] ?: 0L,
                     mode = ConversationModeUi.Chat,
-<<<<<<< HEAD
                     characterName = state.roleplay?.characterName,
                     characterAvatarPath = state.roleplay?.avatarPath,
-=======
                     isPinned = id in conversationPinnedIds,
                     characterName = state.roleplay?.characterName ?: state.conversationCharacterName,
                     characterAvatarPath = state.roleplay?.avatarPath ?: state.conversationCharacterAvatarPath,
->>>>>>> origin/main
                     isActiveRun = state.isStreaming,
                     isPaused = state.isPaused,
                     isPinned = state.isPinned,
@@ -4922,7 +4880,6 @@ internal class AgentAppState(
         const val MAX_PREVIEW_CHARS = 48
         const val LEGACY_STOPPED_ERROR = "已停止"
         const val SYNTHETIC_STATUS_STOPPED = "eta_status:stopped"
-<<<<<<< HEAD
         // 数据状态以较粗粒度发布，文字显现由独立的帧时钟连续推进。
         const val STREAM_UI_UPDATE_INTERVAL_MS = 80L
         /** 保屏续期间隔：远小于 12 小时上限，长任务不会悄悄失去保屏。 */
@@ -4940,11 +4897,9 @@ internal class AgentAppState(
         const val STOP_RETRY_INTERVAL_MS = 3_000L
         // 内容搜索要扫全库正文（本机 1.9 万条 / 1400 万字符约百毫秒级）：等用户停手再查，不逐字扫。
         const val HISTORY_SEARCH_DEBOUNCE_MS = 300L
-=======
         private val SHARED_IMAGE_EXTENSIONS = setOf(
             "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif",
         )
->>>>>>> origin/main
 
         fun emptyChatState(thinkingEnabled: Boolean): AgentChatHomeUiState =
             AgentChatHomeUiState(

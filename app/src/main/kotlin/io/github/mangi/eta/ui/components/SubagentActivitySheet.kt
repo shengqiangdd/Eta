@@ -169,20 +169,6 @@ internal fun SubagentActivityRow(
         }
     }
 
-<<<<<<< HEAD
-    OverlayBottomSheet(
-        show = showInspector,
-        title = taskTitle,
-        onDismissRequest = { showInspector = false },
-    ) {
-        SubagentInspectorContent(
-            snapshot = snapshot,
-            running = running,
-            failed = hardFailed,
-            interrupted = interrupted,
-            stalled = stalled,
-        )
-=======
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             val dark = CouiTheme.isDark
@@ -219,7 +205,6 @@ internal fun SubagentActivityRow(
                 )
             }
         }
->>>>>>> origin/main
     }
 }
 

@@ -92,81 +92,6 @@ internal fun ToolSwitchRow(
         AgentToolsAction.OpenEnhancements -> null
         else -> null
     }
-<<<<<<< HEAD
-    EtaFeatureCard(
-        title = tool.title,
-        summary = description,
-        modifier = modifier,
-        onClick = { if (action != null) onAction(action) else showDescription = true },
-        icon = {
-            EtaPreferenceIcon(
-                icon = iconForTool(tool.id),
-                tint = if (disabled) MiuixTheme.colorScheme.onSurfaceVariantActions else EtaPreferenceColors.Green,
-            )
-        },
-        action = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onToggleDisabled != null) {
-                    // 卡片自身的单击已用于「查看/跳转」，启用开关必须独立成按钮，
-                    // 否则会和单击抢手势：长按在列表里还容易被滚动吃掉。
-                    IconButton(onClick = onToggleDisabled) {
-                        Icon(
-                            imageVector = if (disabled) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                            contentDescription = stringResource(
-                                if (disabled) R.string.tools_enable_action else R.string.tools_disable_action,
-                                tool.title,
-                            ),
-                            modifier = Modifier.size(18.dp),
-                            tint = if (disabled) MiuixTheme.colorScheme.primary
-                            else MiuixTheme.colorScheme.onSurfaceVariantActions,
-                        )
-                    }
-                }
-                if (action != null || onToggleDisabled != null) {
-                    IconButton(onClick = { showDescription = true }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Info,
-                            contentDescription = stringResource(R.string.ui_description_named, tool.title),
-                            modifier = Modifier.size(18.dp),
-                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                        )
-                    }
-                }
-            }
-        },
-    ) {
-        requirementText?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = it,
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-            )
-        }
-        if (disabled) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = stringResource(R.string.tools_disabled_badge),
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-            )
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = actionText,
-                style = MiuixTheme.textStyles.footnote1,
-                color = if (action != null && !disabled) MiuixTheme.colorScheme.primary
-                    else MiuixTheme.colorScheme.onSurfaceVariantActions,
-                modifier = Modifier.weight(1f),
-            )
-            if (action != null) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MiuixTheme.colorScheme.primary,
-=======
     val iconVector = iconForTool(tool.id)
 
     when (LocalUiStyle.current) {
@@ -310,7 +235,6 @@ internal fun ToolSwitchRow(
                     enabled = true,
                     interactionSource = interactionSource,
                     onDragCheckedChange = commitToggle,
->>>>>>> origin/main
                 )
             }
         }

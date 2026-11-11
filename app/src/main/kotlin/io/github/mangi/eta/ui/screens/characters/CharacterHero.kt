@@ -223,7 +223,6 @@ internal fun CharacterHero(
                 )
             }
             Spacer(Modifier.height(20.dp))
-<<<<<<< HEAD
             EtaTextButton(
                 text = stringResource(R.string.character_start_chat),
                 enabled = !busy,
@@ -231,25 +230,6 @@ internal fun CharacterHero(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.textButtonColorsPrimary(),
             )
-=======
-            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
-                CouiButton(
-                    text = "开始对话",
-                    enabled = !busy,
-                    onClick = onStart,
-                    role = CouiButtonRole.Primary,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                TextButton(
-                    text = "开始对话",
-                    enabled = !busy,
-                    onClick = onStart,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
-            }
->>>>>>> origin/main
         }
     }
 }
