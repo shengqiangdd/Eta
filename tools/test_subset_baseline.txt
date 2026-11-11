@@ -332,7 +332,6 @@ io.github.mangi.eta.ui.components.ChatTurnNavigatorTest  # 纯 JVM，已由 STAG
 io.github.mangi.eta.ui.components.ChatViewFilterTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.components.ConversationPaneMotionTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.components.ConversationPaneStateTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
-io.github.mangi.eta.ui.components.EtaPreferenceRenderingTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.components.FilePreviewReaderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.components.HistoryScrollDemandTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.components.InputPopupPositionProviderTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
@@ -361,3 +360,5 @@ io.github.mangi.eta.ui.navigation.AppRouteSerializationTest  # 纯 JVM，已由 
 io.github.mangi.eta.ui.pages.providers.ProviderLoginStoreTest  # 纯 JVM，已由 STAGES=test-all 的 wide 阶段覆盖
 io.github.mangi.eta.ui.screens.browser.AgentBrowserActivityTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
 io.github.mangi.eta.ui.screens.browser.BrowserAddressTargetTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
+io.github.mangi.eta.agent.accessibility.AccessibilityWindowObservationTest  # Robolectric，Linux/aarch64 不支持其 native runtime
+io.github.mangi.eta.agent.device.RootUiAutomatorFallbackTest  # Robolectric，Linux/aarch64 不支持其 native runtime

@@ -134,6 +134,11 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.trace.AgentSelfBriefEndToEndTest
   --tests io.github.mangi.eta.agent.memory.AgentFailureHintsTest
   --tests io.github.mangi.eta.agent.memory.AgentSelfBriefTest
+  --tests io.github.mangi.eta.agent.accessibility.AccessibilityQueryExecutorTest
+  --tests io.github.mangi.eta.agent.accessibility.WindowContentGenerationsTest
+  --tests io.github.mangi.eta.agent.device.ScreenObservationMetadataTest
+  --tests io.github.mangi.eta.agent.tool.AppLaunchVerificationTest
+  --tests io.github.mangi.eta.agent.virtualdisplay.VirtualDisplaySessionStateTest
   --tests io.github.mangi.eta.agent.memory.ConversationMemoryPinsTest
   --tests io.github.mangi.eta.agent.memory.AgentMemoryLearningsTest
   --tests io.github.mangi.eta.agent.model.AgentToolResultPrunerTest

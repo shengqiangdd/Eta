@@ -3,14 +3,12 @@ package io.github.mangi.eta.agent.tool
 import android.graphics.Rect
 import io.github.mangi.eta.agent.device.RootShellDeviceController.ElementObservation
 import io.github.mangi.eta.agent.device.RootShellDeviceController.ElementSource
-import io.github.mangi.eta.agent.device.RootShellDeviceController.Observation
 import io.github.mangi.eta.agent.device.RootShellDeviceController.UiNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.json.JSONObject
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
@@ -18,7 +16,7 @@ class AgentAfterActionSummaryTest {
     @Test
     fun unchangedScreenIsReportedSoTheModelDoesNotRepeatTheSameAction() {
         val before = observation("o1", "app.a", listOf(node(0, "搜索")))
-        val summary = summarize(before, observation("o2", "app.a", listOf(node(0, "搜索"))))
+        val summary = AgentAfterActionSummary.build(before, observation("o2", "app.a", listOf(node(0, "搜索"))))
         assertFalse(summary.getBoolean("screen_changed"))
         assertFalse(summary.getBoolean("package_changed"))
         assertEquals("o2", summary.getString("observation_id"))
@@ -28,7 +26,7 @@ class AgentAfterActionSummaryTest {
     fun changedScreenCarriesCompactNodesAndPackageSwitch() {
         val before = observation("o1", "app.a", listOf(node(0, "搜索")))
         val after = observation("o2", "app.b", listOf(node(0, "结果", clickable = true)))
-        val summary = summarize(before, after)
+        val summary = AgentAfterActionSummary.build(before, after)
         assertTrue(summary.getBoolean("screen_changed"))
         assertTrue(summary.getBoolean("package_changed"))
         val compact = summary.getJSONArray("ui_nodes").getJSONObject(0)
@@ -69,7 +67,7 @@ class AgentAfterActionSummaryTest {
     fun toggleStateAndHintAreVisibleToTheModel() {
         val toggle = node(0, "蓝牙").copy(checked = false)
         val field = node(1, "").copy(editable = true, hint = "搜索联系人")
-        val nodes = summarize(null, observation("o1", "app", listOf(toggle, field)))
+        val nodes = AgentAfterActionSummary.build(null, observation("o1", "app", listOf(toggle, field)))
             .getJSONArray("ui_nodes")
         assertFalse(nodes.getJSONObject(0).getBoolean("checked"))
         assertEquals("搜索联系人", nodes.getJSONObject(1).getString("hint"))

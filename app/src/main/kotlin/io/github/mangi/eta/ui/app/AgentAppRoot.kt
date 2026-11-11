@@ -612,8 +612,6 @@ fun AgentAppRoot(
                                         messageDeleteTarget = MessageMutationTarget(action.id, impact.laterTurnCount)
                                     }
                                 }
-                                is AgentHomeAction.BranchMessage ->
-                                    agentState.branchFromMessage(action.id)
                                 is AgentHomeAction.BranchConversation -> {
                                     // 从别的会话的行内菜单点「分叉」：先切过去再分叉，
                                     // 否则 branchFromMessage 会拿当前会话的消息去找这个 id，

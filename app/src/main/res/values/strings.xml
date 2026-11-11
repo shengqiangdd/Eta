@@ -40,9 +40,6 @@
   <string name="action_stop">Stop</string>
   <string name="action_pin">Pin</string>
   <string name="action_unpin">Unpin</string>
-  <string name="action_edit">Edit</string>
-  <string name="action_pin_conversation">Pin</string>
-  <string name="action_unpin_conversation">Unpin</string>
   <string name="action_rename">Rename</string>
   <string name="action_export">Export</string>
   <string name="action_done">Done</string>
@@ -654,7 +651,6 @@
   <string name="page_deleting_6f941d">Deleting…</string>
   <string name="page_fail_3e3c80">Failed</string>
   <string name="page_covered_model_automatic_capabilities_3fa7d4">Covered model automatic capabilities</string>
-  <string name="page_current_model_a0af8f">default model</string>
   <string name="page_retrieving_a880c9">Retrieving…</string>
   <string name="page_support_thinking_5b9e4c">Supports Reasoning</string>
   <string name="page_there_is_no_model_yet_please_pull_it_from_the_remote_ced865">There is no model yet, please pull it from the remote end or add it manually.</string>
@@ -662,7 +658,6 @@
   <string name="page_add_model_532a64">Add model</string>
   <string name="page_edit_model_29e31e">Edit model</string>
   <string name="page_custom_model_25be0f">Custom model</string>
-  <string name="page_set_as_current_model_183d7d">Set as default model</string>
   <string name="page_the_remote_end_did_not_return_a_usable_conversation__781487">The remote end did not return a usable conversation model, the existing model has been retained</string>
   <string name="page_reset_3d8134">Reset</string>
   <string name="page_base_url_must_be_a_valid_http_s_address_0e7d58">Base URL must be a valid HTTP(S) address</string>
@@ -942,7 +937,6 @@
     <item quantity="one">Delete %d model</item>
     <item quantity="other">Delete %d models</item>
   </plurals>
-  <string name="provider_delete_models_pick_hint">Pick models to delete</string>
   <string name="provider_auto_reasoning_detected">Detected automatically</string>
   <string name="provider_auto_reasoning_unknown">Auto: unsupported or unknown</string>
   <string name="provider_context_tag">%1$s context</string>
@@ -1409,9 +1403,6 @@
   <string name="chat_previous_candidate">Previous candidate reply</string>
   <string name="chat_next_candidate">Next candidate reply</string>
   <string name="chat_image_attachment">Image attachment</string>
-  <string name="chat_view_image">View image</string>
-  <string name="reasoning_chip_off">Think</string>
-  <string name="reasoning_chip_default">Deep Think</string>
   <string name="chat_edit_preserve_following">Saving updates this message in place and keeps the rest of the conversation</string>
   <string name="chat_save_message">Save message</string>
   <string name="chat_character_story_start">The story begins here</string>
@@ -2278,8 +2269,5 @@
   <string name="usage_row_turns">Turns</string>
   <string name="usage_row_context">Context</string>
   <string name="usage_scope_partial">Counted from loaded messages only (earlier messages are not loaded yet, scroll up to include them).</string>
-  <string name="conversation_branch">Branch into a new conversation</string>
-  <string name="conversation_branch_title">%1$s · Branch</string>
-  <string name="conversation_branch_unavailable">Cannot branch here: only turns with complete context and finished tool calls are supported.</string>
   <string name="page_clear_84fcd7">Clear</string>
 </resources>

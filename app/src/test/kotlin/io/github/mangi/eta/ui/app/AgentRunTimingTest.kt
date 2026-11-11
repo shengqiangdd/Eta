@@ -41,8 +41,8 @@ class AgentRunTimingTest {
         messages = projector.finalizeThinking("run", messages)
 
         val thinking = messages.filterIsInstance<ThinkingMessageUi>().single()
-        assertEquals("首字延迟必须从请求发出算起，不是从首字自己算", 500, thinking.firstTokenMs)
-        assertEquals(2_000, thinking.decodeMs)
+        assertEquals("首字延迟必须从请求发出算起，不是从首字自己算", 500L, thinking.firstTokenMs)
+        assertEquals(2_000L, thinking.decodeMs)
     }
 
     @Test
@@ -56,8 +56,8 @@ class AgentRunTimingTest {
         messages = projector.finalizeThinking("run", messages)
 
         val thinking = messages.filterIsInstance<ThinkingMessageUi>().single()
-        assertEquals(300, thinking.firstTokenMs)
-        assertEquals(0, thinking.decodeMs)
+        assertEquals(300L, thinking.firstTokenMs)
+        assertEquals(0L, thinking.decodeMs)
     }
 
     @Test
@@ -97,9 +97,9 @@ class AgentRunTimingTest {
         val byRound = messages.filterIsInstance<ThinkingMessageUi>().associateBy { it.id }
         val first = byRound.getValue("run-thinking-1-0")
         val tenth = byRound.getValue("run-thinking-10-0")
-        assertEquals(100, first.firstTokenMs)
+        assertEquals(100L, first.firstTokenMs)
         // 若前缀误匹配，这里会算出 1200（把轮次 1 的起点当成本轮起点）。
-        assertEquals(200, tenth.firstTokenMs)
+        assertEquals(200L, tenth.firstTokenMs)
     }
 
     @Test
@@ -121,7 +121,7 @@ class AgentRunTimingTest {
         again = projector.finalizeThinking("run", again)
 
         val thinking = again.filterIsInstance<ThinkingMessageUi>().single()
-        assertEquals("清理未生效：起点仍是上一轮的", 70, thinking.firstTokenMs)
+        assertEquals("清理未生效：起点仍是上一轮的", 70L, thinking.firstTokenMs)
         assertTrue(thinking.firstTokenMs!! >= 0)
     }
 }

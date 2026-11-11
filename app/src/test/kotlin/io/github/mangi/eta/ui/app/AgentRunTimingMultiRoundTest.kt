@@ -74,7 +74,7 @@ class AgentRunTimingMultiRoundTest {
         assertEquals(
             "重试后算出了 0，界面会显示成瞬间响应",
             null,
-            thinking.firstTokenMs?.takeIf { it == 0 },
+            thinking.firstTokenMs?.takeIf { it == 0L },
         )
     }
 }

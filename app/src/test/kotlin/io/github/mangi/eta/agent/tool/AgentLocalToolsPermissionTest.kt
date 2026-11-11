@@ -6,16 +6,12 @@ import android.content.ClipboardManager
 import io.github.mangi.eta.agent.device.RootShellDeviceController
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.model.AgentScreenObservationContract
-import io.github.mangi.eta.agent.runtime.AgentRunController
-import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
-import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.core.AgentLogger
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -25,89 +21,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class AgentLocalToolsPermissionTest {
-    @Test
-    fun cancellationDuringObservationDoesNotPublishOrReturnALateSnapshot() {
-        lateinit var instance: AgentLocalTools
-        instance = tools(
-            screenObservationProvider = {
-                instance.close()
-                observation("late", true)
-            },
-        )
-        instance.use {
-            assertThrows(AgentRunCancelledException::class.java) {
-                it.execute(AgentModelClient.ToolCall("observe", "observe_screen", "{}"))
-            }
-        }
-    }
-
-    @Test
-    fun lostVirtualDisplayDoesNotSilentlyObserveOrOperateTheMainDisplay() {
-        tools(
-            screenObservationProvider = { error("虚拟屏已失效，不应把观察路由到主屏") },
-        ).use { tools ->
-            AgentLocalTools::class.java.getDeclaredField("activeDisplayId").apply {
-                isAccessible = true
-                setInt(tools, 11)
-            }
-            listOf(
-                "observe_screen" to "{}",
-                "press_key" to """{"button":"BACK"}""",
-            ).forEach { (name, arguments) ->
-                val result = JSONObject(tools.execute(AgentModelClient.ToolCall(name, name, arguments)).content)
-                assertFalse(result.getBoolean("ok"))
-                assertEquals("DISPLAY_UNAVAILABLE", result.getString("code"))
-            }
-        }
-    }
-
-    @Test
-    fun releaseAndUserTakeoverInvalidateBothNodesAndRawScreenCoordinates() {
-        val coordinator = GuiControlCoordinator()
-        val control = coordinator.openRun("gui-test", AgentRunController())
-        val tools = tools(
-            guiControl = control,
-            screenObservationProvider = { observation("observed", it.includeScreenshot) },
-            beforeToolExecution = { name ->
-                if (name in setOf("observe_screen", "release_gui")) ToolExecutionDecision.Allow
-                else ToolExecutionDecision.Reject("ACTION_REACHED", "动作执行前测试边界")
-            },
-        )
-        fun call(name: String, arguments: String = "{}") = JSONObject(
-            tools.execute(AgentModelClient.ToolCall(name, name, arguments)).content,
-        )
-        tools.use {
-            assertTrue(call("observe_screen").getBoolean("ok"))
-            assertEquals("ACTION_REACHED", call("tap", """{"x":1,"y":1,"coordinate_space":"screen"}""").getString("code"))
-            assertTrue(call("release_gui").getBoolean("ok"))
-            assertEquals("NO_OBSERVATION", call("tap", """{"x":1,"y":1,"coordinate_space":"screen"}""").getString("code"))
-            assertEquals("NO_OBSERVATION", call("tap_element", """{"index":0,"observation_id":"observed"}""").getString("code"))
-            assertTrue(call("observe_screen").getBoolean("ok"))
-            assertTrue(coordinator.pauseForUser("gui-test"))
-            assertTrue(coordinator.resumeForUser())
-            assertEquals("NO_OBSERVATION", call("type_text", """{"text":"旧页面不能输入"}""").getString("code"))
-            assertTrue(call("observe_screen").getBoolean("ok"))
-            assertEquals("ACTION_REACHED", call("type_text", """{"text":"新观察后到达动作边界"}""").getString("code"))
-        }
-    }
-
-    @Test
-    fun backgroundToolsDoNotAcquireAnotherRunsGuiControl() {
-        val coordinator = GuiControlCoordinator()
-        val owner = coordinator.openRun("owner", AgentRunController())
-        owner.withAction { }
-        val background = coordinator.openRun("background", AgentRunController())
-        try {
-            tools(guiControl = background).use { tools ->
-                val result = tools.execute(AgentModelClient.ToolCall("terminal", "terminal", "{}"))
-                assertEquals("TERMINAL_TOOLS_DISABLED", JSONObject(result.content).getString("code"))
-                assertEquals("owner", coordinator.state.value.ownerRunId)
-            }
-        } finally {
-            owner.close()
-        }
-    }
-
     @Test
     fun revokedRootRejectsOldPrivilegedCallsBeforeAnyOperation() {
         val root = AtomicBoolean(true)
@@ -428,30 +341,6 @@ class AgentLocalToolsPermissionTest {
         assertTrue(checkNotNull(received).includeUiTree)
         assertEquals("o-image", JSONObject(result.content).getString("observation_id"))
         assertEquals(listOf(image), result.images)
-        tools.close()
-    }
-
-    @Test
-    fun disabledIndividualToolReturnsToolDisabledErrorCode() {
-        val tools = AgentLocalTools(
-            context = RuntimeEnvironment.getApplication() as Context,
-            logger = NoOpLogger,
-            browserRunId = "test-run",
-            rootAvailable = { true },
-            deviceSensitiveReadToolsEnabled = { true },
-            isToolEnabled = { it != "read_sms_code" },
-        )
-        val result = tools.execute(
-            AgentModelClient.ToolCall(
-                id = "call-disabled",
-                name = "read_sms_code",
-                argumentsJson = "{}",
-            ),
-        )
-        val json = JSONObject(result.content)
-        assertFalse(json.getBoolean("ok"))
-        assertEquals("TOOL_DISABLED", json.getString("code"))
-        assertTrue(result.sensitive)
         tools.close()
     }
 

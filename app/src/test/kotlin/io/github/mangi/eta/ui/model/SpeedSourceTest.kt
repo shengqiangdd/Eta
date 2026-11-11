@@ -20,10 +20,10 @@ class SpeedSourceTest {
         usage = TokenUsageUi(outputTokens = tokens),
     )
 
-    private fun timing(firstTokenMs: Int? = 800, decodeMs: Int? = 2_000, tokens: Int? = 100) =
+    private fun timing(firstTokenMs: Long? = 800L, decodeMs: Long? = 2_000L, tokens: Long? = 100L) =
         RunTiming(
             firstTokenMs = firstTokenMs,
-            decodeTokens = decodeMs,
+            decodeMs = decodeMs,
             speedNumeratorTokens = tokens,
             speedTokensPerSecond = if (decodeMs != null && decodeMs > 0) tokens!! * 1000.0 / decodeMs else null,
         )
@@ -36,8 +36,8 @@ class SpeedSourceTest {
             lookupStatus = TraceLookupStatus.Found,
         )
         assertEquals(SpeedSource.Trace, usage.speedSource)
-        assertEquals(800, usage.lastFirstTokenMs)
-        assertEquals(2_000, usage.lastDecodeMs)
+        assertEquals(800L, usage.lastFirstTokenMs)
+        assertEquals(2_000L, usage.lastDecodeMs)
         assertEquals(100, usage.lastOutputTokens)
     }
 
@@ -96,8 +96,8 @@ class SpeedSourceTest {
             runTiming = timing(firstTokenMs = 500, decodeMs = 1_000, tokens = 50),
             lookupStatus = TraceLookupStatus.Found,
         )
-        assertEquals("追踪的首字优先", 500, usage.lastFirstTokenMs)
-        assertEquals("追踪的解码耗时优先", 1_000, usage.lastDecodeMs)
+        assertEquals("追踪的首字优先", 500L, usage.lastFirstTokenMs)
+        assertEquals("追踪的解码耗时优先", 1_000L, usage.lastDecodeMs)
         assertEquals("追踪的输出 token 优先", 50, usage.lastOutputTokens)
         assertEquals(SpeedSource.Trace, usage.speedSource)
     }
@@ -110,7 +110,7 @@ class SpeedSourceTest {
             runTiming = RunTiming(firstTokenMs = 700),
             lookupStatus = TraceLookupStatus.Found,
         )
-        assertEquals(700, usage.lastFirstTokenMs)
+        assertEquals(700L, usage.lastFirstTokenMs)
         assertNull("速度三项不齐，不该出现速度", usage.lastDecodeMs)
         assertEquals(SpeedSource.Trace, usage.speedSource)
     }

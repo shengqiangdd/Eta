@@ -43,9 +43,6 @@
   <string name="action_stop">停止</string>
   <string name="action_pin">置頂</string>
   <string name="action_unpin">取消置頂</string>
-  <string name="action_edit">編輯</string>
-  <string name="action_pin_conversation">釘選對話</string>
-  <string name="action_unpin_conversation">取消釘選</string>
   <string name="action_rename">重新命名</string>
   <string name="action_done">完成</string>
   <string name="action_open">開啟</string>
@@ -627,7 +624,6 @@
   <string name="page_deleting_6f941d">刪除中…</string>
   <string name="page_fail_3e3c80">失敗</string>
   <string name="page_covered_model_automatic_capabilities_3fa7d4">已覆蓋模型自動能力</string>
-  <string name="page_current_model_a0af8f">預設模型</string>
   <string name="page_retrieving_a880c9">拉取中…</string>
   <string name="page_support_thinking_5b9e4c">支援思考</string>
   <string name="page_there_is_no_model_yet_please_pull_it_from_the_remote_ced865">暫無模型，請從遠端拉取或手動新增</string>
@@ -635,7 +631,6 @@
   <string name="page_add_model_532a64">新增模型</string>
   <string name="page_edit_model_29e31e">編輯模型</string>
   <string name="page_custom_model_25be0f">自訂模型</string>
-  <string name="page_set_as_current_model_183d7d">設為預設模型</string>
   <string name="page_the_remote_end_did_not_return_a_usable_conversation__781487">遠端未傳回可用對話模型，已保留現有模型</string>
   <string name="page_reset_3d8134">重設</string>
   <string name="page_base_url_must_be_a_valid_http_s_address_0e7d58">Base URL 必須是有效的 HTTP(S) 位址</string>
@@ -910,7 +905,6 @@
   <plurals name="provider_delete_models_action">
     <item quantity="other">刪除 %d 個模型</item>
   </plurals>
-  <string name="provider_delete_models_pick_hint">選擇要刪除的模型</string>
   <string name="provider_auto_reasoning_detected">已自動識別</string>
   <string name="provider_auto_reasoning_unknown">自動：不支援或未知</string>
   <string name="provider_context_tag">%1$s 內容脈絡</string>
@@ -1347,9 +1341,6 @@
   <string name="chat_previous_candidate">上一則候選回覆</string>
   <string name="chat_next_candidate">下一則候選回覆</string>
   <string name="chat_image_attachment">圖片附件</string>
-  <string name="chat_view_image">查看圖片</string>
-  <string name="reasoning_chip_off">思考</string>
-  <string name="reasoning_chip_default">深度思考</string>
   <string name="chat_edit_preserve_following">儲存後原位更新這則訊息，並保留後續對話</string>
   <string name="chat_save_message">儲存訊息</string>
   <string name="chat_character_story_start">故事從這裡開始</string>
@@ -2223,8 +2214,5 @@
   <string name="usage_row_turns">輪次</string>
   <string name="usage_row_context">上下文</string>
   <string name="usage_scope_partial">僅統計已載入的訊息（更早的訊息尚未載入，向上捲動可納入）。</string>
-  <string name="conversation_branch">在新對話中分支</string>
-  <string name="conversation_branch_title">%1$s · 分支</string>
-  <string name="conversation_branch_unavailable">無法從此處分支：僅支援上下文完整且工具呼叫已結束的輪次。</string>
   <string name="page_clear_84fcd7">清空</string>
 </resources>

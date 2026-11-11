@@ -135,7 +135,11 @@ internal fun AgentHomeScreen(
             onEditMessage = { id -> onAction(AgentHomeAction.EditMessage(id)) },
             onCancelMessageEdit = { onAction(AgentHomeAction.CancelMessageEdit) },
             onDeleteMessage = { id -> onAction(AgentHomeAction.DeleteMessage(id)) },
-            onBranchMessage = { message -> onAction(AgentHomeAction.BranchMessage(message.id)) },
+            onBranchMessage = { message ->
+                // 带上所属会话：从别的会话的行内菜单点分叉时，只传 messageId
+                // 会让处理端拿当前会话去找这条消息，找不到就静默失败。
+                conversationKey?.let { onAction(AgentHomeAction.BranchConversation(it, message.id)) }
+            },
             onRegenerateMessage = { id -> onAction(AgentHomeAction.RegenerateMessage(id)) },
             onSelectReplyCandidate = { id, index -> onAction(AgentHomeAction.SelectReplyCandidate(id, index)) },
             onSuggestionClick = { prompt ->
