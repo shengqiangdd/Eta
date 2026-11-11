@@ -219,7 +219,7 @@ internal object AgentRunTraceStore {
             awaitingFirstToken.remove(runId)
             runCatching {
                 target.mkdirs()
-                prune(target)
+                prune(target, conversationId)
                 val file = File(target, "$safeId.jsonl")
                 val meta = JSONObject()
                     .put("k", KIND_META)
@@ -429,7 +429,7 @@ internal object AgentRunTraceStore {
      *
      * 这里按 meta.conv 精确匹配。旧追踪没有该字段（null），不会被误认成任何一个会话。
      */
-    fun latestRunIdFor(conversationId: String, limit: Int = MAX_RUNS): String? {
+    fun latestRunIdFor(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): String? {
         if (conversationId.isBlank()) return null
         val target = dirOrNull() ?: return null
         val files = runCatching {
@@ -437,7 +437,15 @@ internal object AgentRunTraceStore {
                 ?.sortedByDescending { it.lastModified() }
                 ?: emptyList()
         }.getOrDefault(emptyList())
-        for (file in files.take(limit.coerceIn(1, MAX_RUNS))) {
+        // 不要用 MAX_RUNS 当前缀扫描的上限。
+        //
+        // MAX_RUNS 是**写入侧**的保留配额（旧文件会被删掉），拿它当读取上限意味着
+        // 「找得到」与「文件数」耦合在一起：一旦磁盘上有超过 80 份（多会话交替、
+        // 或将来调大保留策略），更早的那份就永远找不到了，而且调用方传多大的 limit
+        // 都会被 coerceIn 悄悄压回 80。
+        //
+        // 保留一个绝对值上限只是为了不让病态目录把 IO 拖死（每份 meta 约 0.4ms）。
+        for (file in files.take(limit.coerceAtLeast(1))) {
             // 只读第一行（meta）判断归属，不解析整份文件：
             // 单份追踪可达 1.8MB，为了找一个 id 而全量解析 80 份是不可接受的。
             val meta = firstJson(file) ?: continue
@@ -453,7 +461,7 @@ internal object AgentRunTraceStore {
                 ?.sortedByDescending { it.lastModified() }
                 ?: emptyList()
         }.getOrDefault(emptyList())
-        return files.take(limit.coerceIn(1, MAX_RUNS)).mapNotNull { file ->
+        return files.take(limit.coerceAtLeast(1)).mapNotNull { file ->
             runCatching { summarize(file) }.getOrNull()
         }
     }
@@ -518,16 +526,75 @@ internal object AgentRunTraceStore {
         append(runId, JSONObject().put("k", KIND_FIRST).put("r", round))
     }
 
-    private fun prune(target: File) {
+    /**
+     * 按容量回收旧追踪。
+     *
+     * [keepConversationId] 是**马上要写**的这次运行所属会话：它的历史记录优先保留。
+     *
+     * 不这么做的话，多轮交替使用时会出问题：A 会话用了一阵，切到 B 会话跑几十轮，
+     * A 的追踪就被挤没了；回到 A 时速度段消失，而且**没有任何提示**。
+     * 用户看到的是「这功能有时灵有时不灵」，这类沉默的退化最难排查。
+     *
+     * 只保该会话最近的一份：保留它是指标要用的（`latestRunIdFor` 取最近一次），
+     * 没必要为它囤积全部历史，否则一个会话就能把配额吃光。
+     */
+    private fun prune(target: File, keepConversationId: String = "") {
         val files = target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
-            ?.sortedByDescending { it.lastModified() }
+            ?.sortedByDescending { file -> file.lastModified() }
             ?: return
-        var total = 0L
+        // 每个会话各保最近一份。
+        //
+        // 只保「当前会话」是不够的：A 跑一次，切到 B 跑几十轮，A 的追踪照样被挤掉；
+        // 等切回 A 时，它才成为「当前会话」，但那时记录已经没了 —— 保不回来。
+        // 所以要在**任何会话被挤掉之前**就替它留一份，这才是「切回来还能看到」的前提。
+        //
+        // 空 conv（旧追踪、子代理）不参与：它们的会话归不下来，替它们留位会白占配额。
+        val pinnedConv = mutableSetOf<String>()
+        val pinned = mutableSetOf<File>()
+        for (file in files) {
+            val conv = runCatching { firstJson(file)?.optString("conv") }.getOrNull()
+            if (conv.isNullOrBlank()) continue
+            if (pinnedConv.add(conv)) pinned += file
+        }
+        // pin 的份数要设上限：会话数量没有上界，若是每个会话都永久留一份，
+        // 配额会被无限多的「各一份」撑爆，等于保留策略失效。
+        //
+        // 上限取配额的一半：剩下一半留给「最近用过的」，让目录里始终有历史可查，
+        // 也不至于因为会话多就把常用记录挤出去。
+        val pinBudget = (retention.maxRuns / 2).coerceAtLeast(1)
+        if (pinned.size > pinBudget) {
+            // 超了就只保**最近活跃**的那几个会话（files 已按 mtime 降序）。
+            val keepFiles = pinned.take(pinBudget).toSet()
+            pinned.retainAll(keepFiles)
+        }
+        // 配额太小时，当前会话（马上要看的这份）优先。
+        if (keepConversationId.isNotBlank()) {
+            val current = files.firstOrNull { file ->
+                runCatching { firstJson(file)?.optString("conv") }.getOrNull() == keepConversationId
+            }
+            if (current != null && current !in pinned) {
+                pinned += current
+                val overflow = pinned.size - pinBudget.coerceAtLeast(1)
+                if (overflow > 0) {
+                    // 挤掉最久未活跃的那份，保住当前会话与配额。
+                    val victim = pinned.firstOrNull { it != current }
+                    if (victim != null) pinned -= victim
+                }
+            }
+        }
+        // 先把 pinned 计入配额，后面按「最新优先」填满剩余额度。
+        // 否则 pinned 排在后面时会先被前面的文件挤掉，等于没保。
+        var total = pinned.sumOf { it.length() }
         // 调用方紧接着要写一份新文件：保留 maxRuns - 1 份旧的，总数才不会超。
-        val keep = (retention.maxRuns - 1).coerceAtLeast(0)
-        files.forEachIndexed { index, file ->
-            total += file.length()
-            if (index >= keep || total > retention.maxTotalBytes) {
+        var remaining = (retention.maxRuns - 1).coerceAtLeast(0) - pinned.size
+        if (remaining < 0) remaining = 0
+        files.forEach { file ->
+            if (file in pinned) return@forEach
+            val fits = remaining > 0 && total + file.length() <= retention.maxTotalBytes
+            if (fits) {
+                total += file.length()
+                remaining--
+            } else {
                 runCatching { file.delete() }
             }
         }
@@ -715,6 +782,14 @@ internal object AgentRunTraceStore {
     private const val FORMAT_VERSION = 1
     private const val DIRECTORY_NAME = "run-traces"
     private const val MAX_RUNS = 80
+
+    /**
+     * `latestRunIdFor` 默认扫描的文件数上限。
+     *
+     * 与 [MAX_RUNS] 分开：那是保留策略（决定删什么），这是查找范围（决定能找多远）。
+     * 两者绑在一起时，保留策略一收紧，历史会话的指标就会莫名其妙地消失。
+     */
+    private const val DEFAULT_LOOKUP_LIMIT = 512
     private const val MAX_TOTAL_BYTES = 48L * 1024 * 1024
     private const val MAX_RUN_BYTES = 3L * 1024 * 1024
     private const val MAX_RUN_ID_LENGTH = 80
