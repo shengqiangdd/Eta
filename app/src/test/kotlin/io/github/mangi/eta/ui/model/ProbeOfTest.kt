@@ -38,7 +38,7 @@ class ProbeOfTest {
         val probe = probeOf(AgentRunTraceStore.LookupResult(AgentRunTraceStore.LookupStatus.Found, "run-x"), t)
 
         assertEquals(TraceLookupStatus.Found, probe.status)
-        assertEquals(300, probe.timing?.firstTokenMs)
+        assertEquals(300L, probe.timing?.firstTokenMs)
     }
 
     @Test

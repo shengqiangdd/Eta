@@ -252,6 +252,9 @@ internal object VirtualDisplayCommandMain {
         }
     }
 
+    // 反射调用 WindowManagerService.setDisplayImePolicy：这是系统隐藏接口，
+    // 没有公开替代（虚拟屏上的输入法显隐只能这么做）。失败会走 runCatching 返回 false。
+    @android.annotation.SuppressLint("PrivateApi")
     private fun applyDisplayImePolicyHide(displayId: Int): Boolean = runCatching {
         if (!CanvasRoutingPolicy.isVirtualDisplay(displayId)) return@runCatching false
         switchToSystemUidIfPossible()
@@ -267,6 +270,9 @@ internal object VirtualDisplayCommandMain {
         val actual = getPolicy?.invoke(wms, displayId) as? Int
         actual == CanvasRoutingPolicy.DISPLAY_IME_POLICY_HIDE
     }.getOrDefault(false)
+    // 从目标应用进程拿 Surface：需要 IActivityManager.getContentProviderExternal，
+    // 这是系统隐藏接口，没有公开替代。失败返回 null，调用方回退到截图。
+    @android.annotation.SuppressLint("PrivateApi")
     private fun acquireSurfaceFromApp(userId: Int, surfaceToken: String): Surface? {
         val activityManager = Class.forName("android.app.ActivityManager")
             .getMethod("getService")

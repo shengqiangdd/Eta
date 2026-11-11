@@ -40,12 +40,12 @@ class AgentRunTimingMultiRoundTest {
         val byId = messages.filterIsInstance<ThinkingMessageUi>().associateBy { it.id }
         assertEquals(
             "第 1 轮的首字延迟被第 2 轮的起点覆盖了",
-            300,
+            300L,
             byId.getValue("run-thinking-1-0").firstTokenMs,
         )
         assertEquals(
             "第 2 轮的首字延迟算错",
-            600,
+            600L,
             byId.getValue("run-thinking-2-0").firstTokenMs,
         )
     }
