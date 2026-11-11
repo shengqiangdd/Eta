@@ -142,12 +142,20 @@ For feature requests, bug reports, or contributions, feel free to share your ide
 ## References and acknowledgements
 
 - [Pi Coding Agent](https://github.com/earendil-works/pi): the main reference for Eta's agent runtime, including the agent loop, tool calling, steering, and transcript state management.
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): reference for several interaction and presentation designs, including transcript view modes (`transcriptView` / `stepGrouping`), work-collapse timing (`collapseTiming`), busy-send behaviour (`BusyEnterBehavior`), the first-token and decode-time measures (`decodeMs`), and the `working_directory` tool contract.
+- [Claude Code](https://github.com/anthropics/claude-code): reference for file-tool behaviour, including Read-before-Edit and MultiEdit-style batch editing.
+- [Codex](https://github.com/openai/codex): `apply_patch`-style cross-file batch editing, and the habit of confirming build commands before touching an unfamiliar repository.
 - [OmniBot](https://github.com/omnimind-ai/OmniBot): a reference project for AI agents on Android.
 - [libxposed API](https://github.com/libxposed/api): the modern Xposed API.
 - [Miuix](https://github.com/compose-miuix-ui/miuix): the UI component library.
 
 ## License
 
-Eta uses the [PolyForm Noncommercial License 1.0.0](LICENSE); personal redistribution, sales, paid installation, and other commercial use require prior written permission from the [author](https://github.com/Mangi-11).
+Eta uses the [PolyForm Noncommercial License 1.0.0](LICENSE): noncommercial use (personal use, study, modification, noncommercial redistribution) needs no permission; commercial use requires prior written permission from the [author](https://github.com/Mangi-11).
+
+Redistribution of copies, including modified versions, is permitted by the license so long as the terms travel with it, including the line
+`Required Notice: Copyright © 2026 蛮吉 (Mangi-11).`; it may not be used commercially, sold, or installed for a fee.
+
+If you build on Eta, please also keep the references list above — without those upstream projects there would be no Eta.
 
 <sub>Community: <a href="https://linux.do">LINUX DO</a></sub>

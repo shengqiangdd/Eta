@@ -158,12 +158,22 @@ AI 时代下，处理外部 PR 变得比以往更加困难：大量由 AI 生成
 ## 参考与致谢
 
 - [Pi Coding Agent](https://github.com/earendil-works/pi)：Eta Agent Runtime 的核心参考，包括 Agent Loop、Tool Calling、steering 与 transcript 状态管理。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）：交互与呈现层的多项设计参考，包括 transcript 视图档位（`transcriptView` / `stepGrouping`）、工作过程折叠时机（`collapseTiming`）、运行中发送行为（`BusyEnterBehavior`）、首字与解码耗时口径（`decodeMs`），以及 `working_directory` 工具契约。
+- [Claude Code](https://github.com/anthropics/claude-code)：文件工具行为的参考，包括 Read-before-Edit（编辑前必须先读）与 MultiEdit 式批量编辑。
+- [Codex](https://github.com/openai/codex)：`apply_patch` 式跨文件批量编辑，以及「在陌生仓库里先确认构建命令再动手」的项目探测思路。
 - [OmniBot](https://github.com/omnimind-ai/OmniBot)：Android AI Agent 方向的参考项目。
 - [libxposed API](https://github.com/libxposed/api)：现代 Xposed API。
 - [Miuix](https://github.com/compose-miuix-ui/miuix)：UI 组件库。
 
 ## 许可证
 
-Eta 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，未经[作者](https://github.com/Mangi-11)书面授权，禁止个人二次分发、贩卖、收费代装及其他商业使用。
+Eta 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：非商业用途（个人使用、学习、修改、非商业分发）无需授权；商业使用需事先获得[作者](https://github.com/Mangi-11)书面许可。
+
+二次分发（包括修改版）是许可范围内的，只需随附本许可证条款及其中的
+`Required Notice: Copyright © 2026 蛮吉 (Mangi-11).` 一行；但不得用于商业目的，
+也不得贩卖或收费代装。
+
+如果基于 Eta 做二次开发，也请保留上面「参考与致谢」中的项目列表 —— 没有这些
+上游项目，就没有 Eta。
 
 <sub></sub>社区：<a href="https://linux.do">LINUX DO</sub>
