@@ -111,6 +111,7 @@ import io.github.mangi.eta.ui.model.AgentSessionUsageUi
 import io.github.mangi.eta.ui.model.RunTiming
 import io.github.mangi.eta.ui.model.TraceLookupStatus
 import io.github.mangi.eta.ui.model.TraceProbe
+import io.github.mangi.eta.ui.model.probeOf
 import io.github.mangi.eta.ui.model.runIdOf
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
@@ -285,33 +286,29 @@ internal fun AgentChatBody(
     // 表现是速度段凭空消失且不报错。追踪的 meta 里现在有 `conv` 字段，按它精确匹配。
     // 同时带回「为什么没有」：只给 null 时，界面分不清「没跑过」和「记录被回收」，
     // 前者不需要解释，后者需要 —— 都沉默的话用户看到的是「有时有、有时没有」。
+    // 刷新键不能只有 goalScopeId。
+    //
+    // 追踪是这一轮**结束后**才写盘的：同一个会话里再跑一轮，goalScopeId 不变，
+    // produceState 不会重跑，卡片一直显示上一轮的数字 —— 而且看起来完全正常，
+    // 用户不可能发现。
+    //
+    // 用「是否正在流式输出」当唯一刷新信号：一轮结束时它翻成 false，正好是追踪
+    // 落盘之后。**不能**把 messages.size 加进键 —— 流式期间消息条数一直在变，
+    // 那等于每帧读一次 1.8MB 的文件，滚动会被拖死。
     val traceProbe by produceState(
         initialValue = TraceProbe(),
         goalScopeId,
+        isStreaming,
     ) {
         value = if (goalScopeId.isNullOrBlank()) {
             TraceProbe(status = TraceLookupStatus.NoConversation)
         } else {
             withContext(Dispatchers.IO) {
                 val result = runCatching { AgentRunTraceStore.lookup(goalScopeId) }.getOrNull()
-                val status = when (result?.status) {
-                    AgentRunTraceStore.LookupStatus.Found -> TraceLookupStatus.Found
-                    AgentRunTraceStore.LookupStatus.Missing -> TraceLookupStatus.Missing
-                    AgentRunTraceStore.LookupStatus.NoStore -> TraceLookupStatus.NoStore
-                    else -> TraceLookupStatus.NoConversation
+                val trace = result?.runId?.let { id ->
+                    runCatching { AgentRunTraceStore.read(id) }.getOrNull()
                 }
-                val runId = result?.runId
-                val timing = runId?.let { id ->
-                    runCatching { AgentRunTraceStore.read(id) }.getOrNull()?.let { trace ->
-                        RunTiming(
-                            firstTokenMs = trace.lastFirstTokenMs?.toInt(),
-                            decodeTokens = trace.speed.decodeMs?.toInt(),
-                            speedNumeratorTokens = trace.speed.tokens?.toInt(),
-                            speedTokensPerSecond = trace.outputTokensPerSecond,
-                        )
-                    }
-                }
-                TraceProbe(status = status, timing = timing)
+                probeOf(result, trace)
             }
         }
     }

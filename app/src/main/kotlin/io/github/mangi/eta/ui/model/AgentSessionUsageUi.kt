@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.model
 
+import io.github.mangi.eta.agent.trace.AgentRunTraceStore
+
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 
 /**
@@ -213,6 +215,30 @@ internal enum class SpeedSource {
 
     /** 存储里有追踪记录，但没有属于这个会话的 —— 大概率是跑过但被回收了。 */
     Recycled,
+}
+
+/**
+ * 把追踪查询结果装配成界面要的 [TraceProbe]。
+ *
+ * 从 composable 里抽出来是为了可测：这段逻辑决定「有没有速度、要不要解释」，
+ * 埋在 `produceState` 的 lambda 里就只能靠斜眼读代码来保证正确性。
+ */
+internal fun probeOf(result: AgentRunTraceStore.LookupResult?, trace: AgentRunTraceStore.Trace?): TraceProbe {
+    val status = when (result?.status) {
+        AgentRunTraceStore.LookupStatus.Found -> TraceLookupStatus.Found
+        AgentRunTraceStore.LookupStatus.Missing -> TraceLookupStatus.Missing
+        AgentRunTraceStore.LookupStatus.NoStore -> TraceLookupStatus.NoStore
+        else -> TraceLookupStatus.NoConversation
+    }
+    val timing = trace?.let {
+        RunTiming(
+            firstTokenMs = it.lastFirstTokenMs?.toInt(),
+            decodeTokens = it.speed.decodeMs?.toInt(),
+            speedNumeratorTokens = it.speed.tokens?.toInt(),
+            speedTokensPerSecond = it.outputTokensPerSecond,
+        )
+    }
+    return TraceProbe(status = status, timing = timing)
 }
 
 /**

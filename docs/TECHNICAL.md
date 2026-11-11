@@ -5730,3 +5730,48 @@ data class LookupResult(val status: LookupStatus, val runId: String? = null)
 主包数据库 432MB，升级前复制到 `/data/local/tmp/eta/backup-before-upgrade.db`。
 这类操作不可逆，备份是唯一退路 —— 虽然本次不含迁移、风险低，
 但「风险低」不等于「不用防」。
+
+## fix168：卡片一直显示上一轮的数字
+
+### 怎么发现的
+
+装进主包后读代码复核，发现 `produceState` 的刷新键只有 `goalScopeId`：
+
+```kotlin
+val traceProbe by produceState(initialValue = TraceProbe(), goalScopeId) { … }
+```
+
+追踪是**这一轮结束后**才写盘的。同一个会话里再跑一轮，`goalScopeId` 没变，
+`produceState` 不会重跑，卡片就一直显示上一轮的 TTFT 和速度。
+
+这个 bug 特别阴：数字看起来完全正常，只是**属于上一轮**。用户不可能发现，
+我自己的界面验证也发现不了 —— 那次只跑了一轮。
+
+### 修法
+
+刷新键加上 `isStreaming`：一轮结束时它翻成 `false`，正好是追踪落盘之后。
+
+**不能**把 `messages.size` 加进键。第一版我加了它，随即意识到：流式输出期间
+消息条数一直在变，那等于每帧读一次最大 1.8MB 的文件，滚动会被拖死。
+「看起来更实时」的写法反而制造卡顿。
+
+### 顺带把装配逻辑抽出来
+
+原来「查追踪 → 拼 RunTiming → 定状态」这段埋在 `produceState` 的 lambda 里，
+测不到也读不顺。抽成 `probeOf(result, trace)`：
+
+- `Found` + 追踪 → 带数据
+- `Found` + 读文件失败 → 状态保留、不给数据（不能声称「被回收」）
+- `Missing` / `NoStore` / `null` → 各自如实映射
+- 追踪只有 request 没有 first → timing 存在但首字为 null
+
+`ProbeOfTest`（5 条）覆盖这些分支。
+
+### 一次操作失误
+
+我在门禁运行期间又单独跑了一个 Gradle 测试，两边争用同一个
+`test-results/binary` 目录，把中间文件写坏，门禁报
+`NoSuchFileException: in-progress-results-generic.bin` 并以 exit 1 结束。
+
+**不是代码问题**，但结果是那次门禁作废、必须重跑。教训：门禁是独占的，
+不能和任何其它 Gradle 任务并发。
