@@ -1644,6 +1644,8 @@
   <string name="conversation_branch_failed">沒能建立分支，原會話未受影響。</string>
   <string name="conversation_branch_not_ready">會話還在載入，稍後再試一次分叉。</string>
   <string name="conversation_branch_action">從這裡分叉</string>
+  <string name="conversation_branch_created">已分叉，現在位於新會話。</string>
+  <string name="conversation_branch_in_progress">正在建立分支…</string>
   <string name="action_export">匯出</string>
   <string name="conversation_export_assistant">助手</string>
   <string name="conversation_export_default_name">對話</string>

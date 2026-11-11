@@ -1704,6 +1704,8 @@
   <string name="conversation_branch_failed">Could not create the branch. The original chat is unchanged.</string>
   <string name="conversation_branch_not_ready">Still loading chats. Try branching again in a moment.</string>
   <string name="conversation_branch_action">Branch from here</string>
+  <string name="conversation_branch_created">Branched. You are now in the new chat.</string>
+  <string name="conversation_branch_in_progress">Creating the branch…</string>
   <string name="usage_range_title">Range</string>
   <string name="usage_range_today">Today</string>
   <string name="usage_range_note">Records the usage returned by each model call. Stored on this device only; nothing is uploaded or billed here.</string>

@@ -1677,6 +1677,8 @@
   <string name="conversation_branch_failed">没能创建分支，原会话未受影响。</string>
   <string name="conversation_branch_not_ready">会话还在加载，稍后再试一次分叉。</string>
   <string name="conversation_branch_action">从这里分叉</string>
+  <string name="conversation_branch_created">已分叉，现在位于新会话。</string>
+  <string name="conversation_branch_in_progress">正在创建分支…</string>
   <string name="usage_range_title">统计范围</string>
   <string name="usage_range_today">今天</string>
   <string name="usage_range_note">记录每次模型调用返回的用量，仅保存在本机；不上传、不计费。</string>

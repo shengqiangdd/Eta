@@ -1402,14 +1402,35 @@ internal class AgentAppState(
      * 持久化。`AgentConversationPersistence.branch` 只把内容登记成 deferred，切过去时由
      * [selectConversation] 走本地的窗口分页按需加载，不改 `messagesWindowStart` 语义。
      */
+    /**
+     * 正在创建分支。
+     *
+     * 为什么需要：分支是一次数据库事务，而界面在完成前**没有任何变化**
+     * （新会话前缀与原会话相同）。用户很容易以为没点中而反复点，
+     * 每点一次就多一个会话——实测时我自己就连点了三次，
+     * 库里多了三个「分支会话」。
+     */
+    private val branchGuard = BranchRequestGuard()
+
     fun branchFromMessage(messageId: String, title: String? = null) {
+        // 先把可能提前返回的校验做完，再拿守卫。
+        // 反过来写的话，下面任一个 return 都会把锁永久留住，
+        // 之后每次点分叉都只提示「正在创建」—— 比最初那个
+        // 静默失败还难排查。
         if (homeState.messageEdit != null) cancelMessageEdit()
         if (persistencePaused) {
             // 载入未完成时建会话会被紧随其后的整体替换冲掉，与 acceptSharedContent 同一类风险。
             Toast.makeText(appContext, R.string.conversation_branch_not_ready, Toast.LENGTH_SHORT).show()
             return
         }
-        val sourceId = selectedConversationId ?: return
+        val sourceId = selectedConversationId ?: run {
+            Toast.makeText(appContext, R.string.conversation_branch_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!branchGuard.tryBegin()) {
+            Toast.makeText(appContext, R.string.conversation_branch_in_progress, Toast.LENGTH_SHORT).show()
+            return
+        }
         val branchId = newConversationId()
         val now = System.currentTimeMillis()
         val branchTitle = title?.takeIf { it.isNotBlank() }
@@ -1434,11 +1455,16 @@ internal class AgentAppState(
                 refreshConversationSummaries()
                 // 切过去时 selectConversation 会看到三个 deferred 标记并按需加载。
                 selectConversation(branchId)
+                // 必需的反馈：新会话的前缀与原会话一模一样，
+                // 不提示的话用户看不出「已经到了另一个会话」。
+                Toast.makeText(appContext, R.string.conversation_branch_created, Toast.LENGTH_SHORT).show()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // 失败必须让用户知道：否则点了分叉却什么都没出现，会被当成没点中。
                 Toast.makeText(appContext, R.string.conversation_branch_failed, Toast.LENGTH_LONG).show()
+            } finally {
+                branchGuard.finish()
             }
         }
     }
