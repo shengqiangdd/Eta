@@ -469,19 +469,51 @@ internal object AgentRunTraceStore {
         // 都会被 coerceIn 悄悄压回 80。
         //
         // 保留一个绝对值上限只是为了不让病态目录把 IO 拖死（每份 meta 约 0.4ms）。
+        // 候选：属于本会话的追踪。
+        val mine = mutableListOf<File>()
         for (file in files.take(limit.coerceAtLeast(1))) {
             // 只读第一行（meta）判断归属，不解析整份文件：
             // 单份追踪可达 1.8MB，为了找一个 id 而全量解析 80 份是不可接受的。
             val meta = firstJson(file) ?: continue
-            if (meta.optString("conv") == conversationId) {
-                return LookupResult(LookupStatus.Found, file.nameWithoutExtension)
-            }
+            if (meta.optString("conv") == conversationId) mine += file
         }
+        if (mine.isEmpty()) {
+            // 目录里有追踪，但没有一份属于这个会话：要么它没跑过，要么跑过但被回收了。
+            // 这里分不出这两种，所以归为 Missing —— 文案只能说「没有可用的运行记录」，
+            // 不能断言「被清理了」（那是没有根据的确定语气）。
+            return LookupResult(LookupStatus.Missing)
+        }
+        // 优先取**已完成**的那一份。
+        //
+        // 不能直接用最新 mtime：mtime 在每次追加时都会更新，所以「最新」往往正是
+        // **此刻还在跑的这个 run**。它可能还没写 `first`（这一轮还没吐出第一个字），
+        // 于是速率先落到上一次运行上去 —— 界面上看到的数字属于上一轮，
+        // 而用户以为那是这一轮的。
+        //
+        // 现状：还在跑的 run 里没有 `finish`，有 `finish` 的才是跑完的。
+        // 都已完成时，最新那份仍是正确答案。
+        val newestFirst = mine.take(MAX_LOOKUP_READ)
+        newestFirst.firstOrNull { runFinished(it) }?.let { file ->
+            // 已完成里挑最新：mine 已按 mtime 降序，第一个完成的就是最近完成的。
+            return LookupResult(LookupStatus.Found, file.nameWithoutExtension)
+        }
+        // 一份都没完成（首次运行仍在进行）：退回最新的一份，让界面至少有个进度值。
+        return LookupResult(LookupStatus.Found, mine.first().nameWithoutExtension)
         // 目录里有追踪，但没有一份属于这个会话：要么它没跑过，要么跑过但被回收了。
         // 这里分不出这两种，所以归为 Missing —— 文案只能说「没有可用的运行记录」，
         // 不能断言「被清理了」（那是没有根据的确定语气）。
         return LookupResult(LookupStatus.Missing)
     }
+
+    /**
+     * 这次运行是否已经结束。
+     *
+     * 读整份文件判断 `finish` —— 只在「最近这几份里挑一份」时用，
+     * 而且调用方限制在 [MAX_LOOKUP_READ] 份内，代价可控。
+     */
+    private fun runFinished(file: File): Boolean = runCatching {
+        file.useLines { lines -> lines.any { it.contains("\"k\":\"${KIND_DONE}\"") } }
+    }.getOrDefault(false)
 
     /** [lookup] 的结果状态。 */
     enum class LookupStatus {
@@ -839,6 +871,14 @@ internal object AgentRunTraceStore {
      * 两者绑在一起时，保留策略一收紧，历史会话的指标就会莫名其妙地消失。
      */
     private const val DEFAULT_LOOKUP_LIMIT = 512
+
+    /**
+     * 判断「是否已完成」时最多读几份追踪。
+     *
+     * 每份都要扫全文找 `finish`（1.8MB 左右），所以只在这个小窗口里找，
+     * 不随目录规模增长。窗口内的都属于同一会话，正常情况下第一份就是。
+     */
+    private const val MAX_LOOKUP_READ = 8
     private const val MAX_TOTAL_BYTES = 48L * 1024 * 1024
     private const val MAX_RUN_BYTES = 3L * 1024 * 1024
     private const val MAX_RUN_ID_LENGTH = 80
