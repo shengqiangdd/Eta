@@ -84,6 +84,8 @@ internal fun AgentHomeScreen(
             taskLedger = taskLedger,
             goal = goal,
             goalScopeId = conversationKey,
+            // 用量卡片只能统计内存里的消息，需要知道更早的有没有加载。
+            messagesWindowStart = state.messagesWindowStart,
             pendingAsk = pendingAsk,
             // `ask_user` 的语义是「模型到此为止，等我回答」：回答必须是下一轮用户消息，
             // 绝不能变成排队消息。运行中也不排队 —— 由 answerPendingAsk 先落消息、再停旧 run，

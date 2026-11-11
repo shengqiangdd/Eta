@@ -2268,4 +2268,5 @@
   <string name="usage_row_reasoning">of which reasoning</string>
   <string name="usage_row_turns">Turns</string>
   <string name="usage_row_context">Context</string>
+  <string name="usage_scope_partial">Counted from loaded messages only (earlier messages are not loaded yet, scroll up to include them).</string>
 </resources>

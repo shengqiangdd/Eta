@@ -281,7 +281,8 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.model.ProbeOfTest
   --tests io.github.mangi.eta.agent.trace.TraceLookupFinishedTest
   --tests io.github.mangi.eta.ui.model.SpeedNumeratorTest
-  --tests io.github.mangi.eta.ui.model.TotalOutputTokensTest'
+  --tests io.github.mangi.eta.ui.model.TotalOutputTokensTest
+  --tests io.github.mangi.eta.ui.model.UsageScopeTest'
 
 # 反向自测尝试过、但**没做成**（2026-10-24）：原打算扫 `ui/app` 下所有 `*Test.kt`，
 # 要求每个类都出现在 FAST_TEST_FILTERS 里，否则红。实测**恒红**：该目录下还有一大堆

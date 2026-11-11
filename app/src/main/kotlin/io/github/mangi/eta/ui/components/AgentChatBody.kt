@@ -196,6 +196,14 @@ internal fun AgentChatBody(
     goal: AgentGoal? = null,
     /** 目标的会话作用域；卡片上的暂停/继续/编辑/清除直接写回它，null 表示当前没有可落盘的会话。 */
     goalScopeId: String? = null,
+    /**
+     * 内存里 [messages] 这批消息在数据库中的起始下标；0 表示这就是完整会话。
+     *
+     * 用量卡片只能统计内存里已有的消息（大会话只把最近若干条放进 UI，更早的按需加载）。
+     * 不把这个事实告诉用户，卡片上的「输入 55,774,471 tok」看起来像会话全量，
+     * 实测在 49036 条的会话里它其实只占约 1%。真机上 28 个会话有 21 个超过窗口。
+     */
+    messagesWindowStart: Int = 0,
     pendingAsk: AgentAskUi? = null,
     onAnswerAsk: (String) -> Unit = {},
     modelPickerState: AgentModelPickerUiState,
@@ -319,6 +327,7 @@ internal fun AgentChatBody(
             contextUsage.contextWindow,
             runTiming = runTiming,
             lookupStatus = traceProbe.status,
+            messagesWindowStart = messagesWindowStart,
         )
     }
 

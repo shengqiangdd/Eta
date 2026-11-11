@@ -2213,4 +2213,5 @@
   <string name="usage_row_reasoning">其中推理</string>
   <string name="usage_row_turns">輪次</string>
   <string name="usage_row_context">上下文</string>
+  <string name="usage_scope_partial">僅統計已載入的訊息（更早的訊息尚未載入，向上捲動可納入）。</string>
 </resources>

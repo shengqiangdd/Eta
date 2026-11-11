@@ -17,7 +17,8 @@ import io.github.mangi.eta.ui.model.AgentChatMessageUi
  *    OpenAI 兼容端点的 `inputTokens` 本身已含缓存，反推会在命中时算出负数。
  * 3. **会话累计是求和，不是取最后一次**。逐轮累加才有意义；取最新一条会把多轮回退成单轮。
  *
- * 输出 token 含推理 token：推理也是模型真实生成的，排除它会让速度虚高。
+ * 输出 token **已含**推理 token（见 [TokenUsageUi.outputTokens] 的跨 provider 口径），
+ * 所以推理是子集、不能再相加：相加会让总量与速度虚高（真机实测最坏 1.88x）。
  */
 internal data class AgentSessionUsageUi(
     val contextTokens: Int? = null,
@@ -45,6 +46,13 @@ internal data class AgentSessionUsageUi(
      * 把状态显式带上来，界面才能给出准确的说明而不是让那一块凭空消失。
      */
     val speedSource: SpeedSource = SpeedSource.None,
+    /**
+     * 是否只统计了会话的一部分（更早的消息还没加载进内存）。
+     *
+     * 界面据此标注范围。默认为 false 而不是「未知」：多数会话本来就没被截断，
+     * 每张卡片都挂一句「可能不全」会变成噪音，只在真正截断时才说。
+     */
+    val partialScope: Boolean = false,
 ) {
     /** 缓存命中率；分母为 0 或数据不足时为 null（界面显示「—」，不要显示 0%）。 */
     val cacheHitRate: Float?
@@ -94,6 +102,13 @@ internal data class AgentSessionUsageUi(
             runTiming: RunTiming? = null,
             /** 追踪查找的状态（来自 AgentRunTraceStore.lookup）。 */
             lookupStatus: TraceLookupStatus = TraceLookupStatus.NoConversation,
+            /**
+             * [messages] 在数据库里的起始下标；> 0 表示更早的消息没加载进内存。
+             *
+             * 卡片只能统计手上这些消息。不说明的话，大会话里那串「输入 N tok」
+             * 会被当成会话全量 —— 实测 49036 条的会话里它只占约 1%。
+             */
+            messagesWindowStart: Int = 0,
         ): AgentSessionUsageUi {
             var cached = 0
             var prompt = 0
@@ -180,6 +195,7 @@ internal data class AgentSessionUsageUi(
                 lastDecodeMs = lastDecodeMs,
                 lastOutputTokens = lastRoundOutput,
                 speedSource = speedSource,
+                partialScope = messagesWindowStart > 0,
             )
         }
     }

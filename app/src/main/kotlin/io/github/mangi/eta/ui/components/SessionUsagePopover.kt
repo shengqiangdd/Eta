@@ -117,6 +117,15 @@ internal fun SessionUsagePopover(
                         ?: "—",
                 )
             }
+            // 只统计了部分消息时必须说清楚。
+            //
+            // 大会话不会把全部消息放进内存（真机 28 个会话里 21 个超过窗口，最大的
+            // 49036 条而窗口只有 500 条）。不标注的话，这里那串「输入 N tok」
+            // 会被当成整个会话的成本 —— 实测偏差可达两个数量级。
+            if (usage.partialScope) {
+                Spacer(Modifier.height(8.dp))
+                StatsNoteRow(stringResource(R.string.usage_scope_partial))
+            }
 
             StatsSectionDivider()
 
