@@ -524,7 +524,11 @@ fun AgentAppRoot(
             onOpenPermissions = { pushRoute(AppRoute.Permissions) },
             onOpenSettings = { pushRoute(AppRoute.Settings) },
             onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
+            homeTitle = if (route is AppRoute.Home) agentState.currentConversationTitle else null,
             homeCharacter = if (route is AppRoute.Home) agentState.homeState.roleplayChatUi() else null,
+            homeModelPickerState = if (route is AppRoute.Home) agentState.modelPickerState else null,
+            isHomeStreaming = route is AppRoute.Home && agentState.homeState.isStreaming,
+            onHomeModelSelected = agentState::selectModel,
             onOpenCharacter = {
                 agentState.homeState.roleplay?.let { pushRoute(AppRoute.CharacterDetail(it.characterId)) }
             },

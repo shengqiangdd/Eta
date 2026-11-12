@@ -416,6 +416,20 @@ internal class AgentAppState(
     )
         private set
 
+    /**
+     * 顶栏要显示的当前会话标题（取自上游 3.4.2）。
+     *
+     * 空会话不显示标题：刚进首页还没选中会话时，标题栏应该让位给角色/模型选择，
+     * 而不是显示一条无意义的占位。
+     */
+    val currentConversationTitle: String?
+        get() {
+            val state = homeState
+            if (state.messages.isEmpty() && state.messagesWindowStart == 0) return null
+            val id = conversationPaneState.selectedConversationId ?: return null
+            return conversationTitles[id]?.takeIf(String::isNotBlank)
+        }
+
     init {
         if (BuildConfig.DEBUG) {
             // 真机验证用的注入点：只清本地运行态、不停服务端 run（复现失配，见 docs §21.3）。

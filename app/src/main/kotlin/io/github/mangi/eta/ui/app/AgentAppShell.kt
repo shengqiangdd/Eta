@@ -76,6 +76,45 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowListPopup
 import io.github.mangi.eta.ui.voice.SpeechAutoReadToggle
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.pointer.pointerInput
+import com.itos.coui.icons.CouiIcons
+import com.itos.coui.layout.CouiPageDefaults
+import com.itos.coui.layout.Scaffold as CouiLayoutScaffold
+import com.itos.coui.menu.CouiMenuItem
+import com.itos.coui.menu.Menu
+import com.itos.coui.menu.couiMenuAnchor
+import com.itos.coui.menu.rememberCouiMenuAnchor
+import com.itos.coui.theme.CouiTheme
+import com.itos.coui.theme.LocalCouiTextStyle
+import com.itos.coui.topappbar.CouiTopAppBarDefaults
+import com.itos.coui.topappbar.TopAppBar as CouiTopAppBar
+import com.itos.coui.topappbar.TopAppBarButtonGroup
+import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.data.model.TtsProvider
+import io.github.mangi.eta.data.repository.SpeechSettingsRepository
+import io.github.mangi.eta.ui.components.AgentTopBarChatHeader
+import io.github.mangi.eta.ui.components.ChatActionIcons
+import io.github.mangi.eta.ui.components.ChatImagePreviewHost
+import io.github.mangi.eta.ui.components.coui.CouiBackButton
+import io.github.mangi.eta.ui.components.coui.CouiTopAppBarIconButton
+import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 
 /**
  * Agent App 统一壳层。
@@ -122,11 +161,16 @@ internal fun AgentAppShell(
     onOpenSettings: () -> Unit,
     onOpenModelProviders: () -> Unit,
     modifier: Modifier = Modifier,
+    homeTitle: String? = null,
     homeCharacter: RoleplayChatUi? = null,
+    homeModelPickerState: AgentModelPickerUiState? = null,
+    isHomeStreaming: Boolean = false,
+    onHomeModelSelected: (String) -> Unit = {},
     onOpenCharacter: () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    val scrollBehavior = MiuixScrollBehavior()
+    // 首页顶栏高度固定，不参与折叠；未绑定顶栏的滚动行为会吞掉聊天列表的单向滑动。
+    val scrollBehavior = if (currentRoute is AppRoute.Home) null else MiuixScrollBehavior()
     val backdrop = rememberTopBarBackdrop()
     val topBarColor = topBarContainerColor(backdrop)
     val pageContent: @Composable () -> Unit = {
@@ -157,7 +201,11 @@ internal fun AgentAppShell(
                             chatViewMode = chatViewMode,
                             onChatViewModeChange = onChatViewModeChange,
                             onSearchMessages = onSearchMessages,
+                            homeTitle = homeTitle,
                             homeCharacter = homeCharacter,
+                            homeModelPickerState = homeModelPickerState,
+                            isHomeStreaming = isHomeStreaming,
+                            onHomeModelSelected = onHomeModelSelected,
                             onOpenCharacter = onOpenCharacter,
                         )
                     }
@@ -168,7 +216,10 @@ internal fun AgentAppShell(
                 modifier = Modifier
                     .fillMaxSize()
                     .captureForTopBar(backdrop)
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                    .then(
+                        if (scrollBehavior != null) Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+                        else Modifier,
+                    ),
             ) {
                 content(padding)
                 // 只在聊天页显示预览面板：设置、运行详情等页面不该被它遮挡。
@@ -219,7 +270,7 @@ internal fun AgentAppShell(
 @Composable
 private fun AgentTopBar(
     route: AppRoute?,
-    scrollBehavior: ScrollBehavior,
+    scrollBehavior: ScrollBehavior?,
     color: Color,
     onBack: () -> Unit,
     onOpenConversationPane: () -> Unit,
@@ -236,10 +287,45 @@ private fun AgentTopBar(
     chatViewMode: ChatViewMode,
     onChatViewModeChange: (ChatViewMode) -> Unit,
     onSearchMessages: () -> Unit,
+    homeTitle: String?,
     homeCharacter: RoleplayChatUi?,
+    homeModelPickerState: AgentModelPickerUiState?,
+    isHomeStreaming: Boolean,
+    onHomeModelSelected: (String) -> Unit,
     onOpenCharacter: () -> Unit,
 ) {
     val isHome = route is AppRoute.Home
+    // 首页有模型选择状态时优先用「双行头部」：标题/角色在上，模型选择器在下，
+    // 这样切换模型不用先回到输入区。取自上游 3.4.2 的顶栏重构（c42cff0d）。
+    if (isHome && homeModelPickerState != null) {
+        HomeMiuixTopBar(
+            color = color,
+            onOpenConversationPane = onOpenConversationPane,
+            onNewConversation = onNewConversation,
+            onOpenTerminal = onOpenTerminal,
+            onLaunchKimiWeb = onLaunchKimiWeb,
+            kimiWebLabel = kimiWebLabel,
+            canStopKimiWeb = canStopKimiWeb,
+            onStopKimiWeb = onStopKimiWeb,
+            onRefreshKimiWeb = onRefreshKimiWeb,
+            onOpenBrowser = onOpenBrowser,
+            onSearchMessages = onSearchMessages,
+            onOpenCapabilities = onOpenCapabilities,
+            onOpenWorkspace = onOpenWorkspace,
+            chatViewMode = chatViewMode,
+            onChatViewModeChange = onChatViewModeChange,
+        ) {
+            AgentTopBarChatHeader(
+                conversationTitle = homeTitle,
+                character = homeCharacter,
+                state = homeModelPickerState,
+                isStreaming = isHomeStreaming,
+                onModelSelected = onHomeModelSelected,
+                onOpenCharacter = onOpenCharacter,
+            )
+        }
+        return
+    }
     // 宽屏下会话列表常驻左侧，这个「拉开列表」按钮点下去不会有任何变化，直接收起来。
     val wideScreen = rememberIsWideScreen()
     val navigationIcon: @Composable () -> Unit = {
@@ -621,6 +707,88 @@ private fun CharacterTopBarIdentity(character: RoleplayChatUi, onClick: () -> Un
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 180.dp),
+        )
+    }
+}
+
+/**
+ * 首页顶栏（单行、固定高度）。
+ *
+ * 与上游 3.4.2 的差异：这里保留本地的「搜索消息 / 能力 / 工作区」入口，
+ * 上游那版只留了新对话、终端、Kimi Web、浏览器。除了菜单项更多，
+ * 结构保持一致：左侧会话列表按钮、中间模型选择器、右侧溢出菜单。
+ */
+@Composable
+private fun HomeMiuixTopBar(
+    color: Color,
+    onOpenConversationPane: () -> Unit,
+    onNewConversation: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onLaunchKimiWeb: () -> Unit,
+    kimiWebLabel: String,
+    canStopKimiWeb: Boolean,
+    onStopKimiWeb: () -> Unit,
+    onRefreshKimiWeb: () -> Unit,
+    onOpenBrowser: () -> Unit,
+    onSearchMessages: () -> Unit,
+    onOpenCapabilities: () -> Unit,
+    onOpenWorkspace: () -> Unit,
+    chatViewMode: ChatViewMode,
+    onChatViewModeChange: (ChatViewMode) -> Unit,
+    centerContent: @Composable () -> Unit,
+) {
+    // 宽屏下会话列表常驻左侧，旧顶栏也会收起这个按钮。
+    val wideScreen = rememberIsWideScreen()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(color)
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top))
+            .height(56.dp)
+            .clipToBounds()
+            .pointerInput(Unit) {
+                detectTapGestures { }
+            }
+            .padding(
+                start = TopAppBarDefaults.NavigationIconPadding,
+                end = TopAppBarDefaults.ActionIconPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 宽屏下会话列表常驻，这个按钮点了没变化；旧顶栏也是这么收起的。
+        if (!wideScreen) {
+            IconButton(onClick = onOpenConversationPane) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ShortText,
+                    modifier = Modifier.size(24.dp),
+                    contentDescription = stringResource(R.string.action_conversation_history),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            centerContent()
+        }
+        // 双行头部的右侧动作区沿用旧顶栏的顺序：视图模式、自动朗读、溢出菜单。
+        // 这三个是本地 fork 加的入口，合并上游顶栏重构时曾只留下溢出菜单。
+        ChatViewModeMenu(mode = chatViewMode, onSelect = onChatViewModeChange)
+        SpeechAutoReadToggle()
+        TopBarOverflowMenu(
+            onSearchMessages = onSearchMessages,
+            onNewConversation = onNewConversation,
+            onOpenTerminal = onOpenTerminal,
+            onLaunchKimiWeb = onLaunchKimiWeb,
+            kimiWebLabel = kimiWebLabel,
+            canStopKimiWeb = canStopKimiWeb,
+            onStopKimiWeb = onStopKimiWeb,
+            onRefreshKimiWeb = onRefreshKimiWeb,
+            onOpenBrowser = onOpenBrowser,
+            onOpenCapabilities = onOpenCapabilities,
+            onOpenWorkspace = onOpenWorkspace,
         )
     }
 }
