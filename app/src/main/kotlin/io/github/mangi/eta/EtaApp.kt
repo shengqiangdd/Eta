@@ -19,6 +19,7 @@ import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.BootLog
 import io.github.mangi.eta.core.DiagnosticsRetention
+import io.github.mangi.eta.core.MemoryWatermark
 import io.github.mangi.eta.core.StartupTrace
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
@@ -46,6 +47,11 @@ import kotlinx.coroutines.runBlocking
  * UI 侧通过 [XposedService] 写入 RemotePreferences。
  */
 class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
+
+    /**
+     * 同级别水位上次记录的时间。只在主线程（系统内存回调）读写，无需同步。
+     */
+    private val lastMemoryWatermarkAt = HashMap<MemoryWatermark.Trigger, Long>()
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -154,6 +160,9 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // 必须在释放任何缓存**之前**采样：这些回调之后紧跟着 evictAll/trimTo，
+        // 释完再记只能看到被压下去的水位，恰好抹掉了最需要知道的那一刻。
+        recordMemoryWatermark(MemoryWatermark.Trigger.fromTrimLevel(level))
         when {
             level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
                 BrowserSessionRegistry.releaseIdlePages()
@@ -171,9 +180,31 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onLowMemory() {
         super.onLowMemory()
+        recordMemoryWatermark(MemoryWatermark.Trigger.LOW_MEMORY)
         BrowserSessionRegistry.releaseIdlePages()
         CharacterImageCache.evictAll()
         StaticDocumentCache.evictAll()
+    }
+
+    /**
+     * 把当前堆水位写进 boot.log。
+     *
+     * 为什么需要这个：三次 OOM 崩溃（3.4.0，堆上限 256MB 用满）
+     * 事后只能从 crash 日志看到「分配失败」一个断面，完全不知道堆是怎么涨上去的、
+     * 涨到多少、涨了多久。boot.log 会随诊断一起保留，下次就能对着时间线看。
+     *
+     * 开销：只在系统内存回调里跑，不在渲染或滚动路径；写入是 BootLog 的异步单线程，
+     * 不阻塞主线程。同级别 60 秒内只记一次，避免压力期被同一行刷屏。
+     */
+    private fun recordMemoryWatermark(trigger: MemoryWatermark.Trigger?) {
+        if (trigger == null) return
+        val runtime = Runtime.getRuntime()
+        val now = System.currentTimeMillis()
+        val last = lastMemoryWatermarkAt[trigger]
+        if (!MemoryWatermark.shouldRecord(trigger, last, now)) return
+        lastMemoryWatermarkAt[trigger] = now
+        val used = runtime.totalMemory() - runtime.freeMemory()
+        BootLog.append(MemoryWatermark.format(trigger, used, runtime.maxMemory()))
     }
 
     override fun onServiceBind(service: XposedService) {

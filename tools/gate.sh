@@ -158,7 +158,12 @@ has_stage() {
 # AgentSelfAuditTest 是纯 JVM（判定逻辑不碰 Android），2026-11-01 随 eta_self_audit 一起加：
 # 它守着「窗口外的旧崩溃、别人的崩溃、有 root 兜底的通知权限都不算本应用缺陷」，
 # 以及「没有 root 时必须写进 unavailable，而不是报『没有崩溃』」。
-FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
+#
+# MemoryWatermarkTest（2026-11-12）：内存水位记录的纯逻辑。这段代码只在系统内存
+# 压力回调里跑，平时永远不会执行到，写错了也只能等到真 OOM 时才发现——而那时它
+# 恰好是唯一的证据。用的是 AOSP 固定常量，不碰 Android 类，纯 JVM 可跑。
+FAST_TEST_FILTERS='--tests io.github.mangi.eta.core.MemoryWatermarkTest
+  --tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
   --tests io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest
   --tests io.github.mangi.eta.agent.tool.AgentSelfAuditTest
