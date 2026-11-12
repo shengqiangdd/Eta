@@ -78,14 +78,22 @@ def main() -> int:
 
     print(f"过滤规则 {len(pats)} 条")
     print(f"全量：{len(per_class)} 类 / {total} 用例（失败 {failed}、跳过 {skipped}、通过 {passed}）")
-    print(f"门禁内：{in_gate} 例（其中失败 {in_gate_failed}）→ 覆盖 {pct:.1f}%")
-    print(f"门禁外通过：{outside_passed} 例")
+    # 这个百分比算的是默认 test 阶段（FAST_TEST_FILTERS），不是 test-wide。
+    # 两个阶段用途不同：默认 test 是改一行代码时的快速回归，test-wide 才是全量
+    # （它按 wide-tests.txt 跑）。只看这个数字会误以为门禁漏了一大半。
+    print(f"默认 test 阶段覆盖：{in_gate} 例（其中失败 {in_gate_failed}）→ {pct:.1f}%")
+    print("  （这是 FAST_TEST_FILTERS 的快速回归子集；全量看 test-wide + wide-tests.txt）")
+    print(f"不在快速子集但已通过：{outside_passed} 例（由 test-wide 覆盖）")
     print("失败原因 top5：")
     for msg, count in reasons.most_common(5):
         print(f"  {count:>4} | {msg}")
 
     if "--write-wide" in sys.argv[1:]:
-        wide = sorted(n for n, v in per_class.items() if v["failed"] == 0 and v["skipped"] == 0)
+        # 只要求无失败，不要求无跳过：
+        # 跳过通常是因为环境限制（例如测试进程是 root 时造不出只读父目录），
+        # 用 skipped == 0 会把整类排除掉。TerminalPrivateStorageTest 就是这情况：
+        # 6 个用例里 1 个合理跳过，其余 5 个本来能进门禁，却因此全被排除。
+        wide = sorted(n for n, v in per_class.items() if v["failed"] == 0)
         target = os.path.join(ROOT, "tools/wide-tests.txt")
         # 说明头必须跟着写回去：wide-tests.txt 会被反复重刷，
         # 如果每刷一次就抹掉注释，下一个人就不知道这份名单从哪来、怎么维护。
