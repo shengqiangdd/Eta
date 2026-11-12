@@ -17,6 +17,15 @@ import kotlinx.coroutines.launch
 
 /** WebView 保持在固定窗口内，进出动画由系统合成窗口，避免整页绘制裁剪介入网页渲染。 */
 class AgentBrowserActivity : ComponentActivity() {
+
+    /**
+     * 页面打开期间持有挂载引用，销毁时释放。
+     *
+     * 不持有的话，会话注册表就不知道「这个页面还有人看着」，可以把它当成空闲会话回收掉
+     * ——用户在面板里看着的页面就会凭空变成空白。
+     */
+    private var mountBinding: AutoCloseable? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val sessionKey = intent.getStringExtra(EXTRA_SESSION_KEY)?.takeIf { it.isNotBlank() }
@@ -25,6 +34,7 @@ class AgentBrowserActivity : ComponentActivity() {
             return
         }
         enableEdgeToEdge()
+        mountBinding = BrowserSessionRegistry.mount(sessionKey)
         val session = BrowserSessionRegistry.get(sessionKey)
         lifecycleScope.launch {
             val initialAppearance = AppearanceSettingsRepository.settings()
@@ -46,6 +56,14 @@ class AgentBrowserActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        // 先释放挂载引用再交给 super：让注册表能在本次销毁里就把会话标成可回收，
+        // 而不是拖到下一次内存压力回调。
+        mountBinding?.let { runCatching { it.close() } }
+        mountBinding = null
+        super.onDestroy()
     }
 
     companion object {

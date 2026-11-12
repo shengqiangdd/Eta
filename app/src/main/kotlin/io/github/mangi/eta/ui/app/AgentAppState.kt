@@ -17,6 +17,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.device.AgentFileReferenceGateway
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.runtime.BackgroundResumeStore
@@ -1802,6 +1803,10 @@ internal class AgentAppState(
         conversationPaneState = conversationPaneState.copy(selectedConversationId = selectedConversationId)
         refreshConversationSummaries()
         persistConversations()
+        // 会话没了，它的浏览器页面也再没人能打开：会话键就是 conversationId
+        // （见 AgentConversationIdentity.fromHandoff）。不释放的话页面会一直占着
+        // WebView，直到被 LRU 淘汰——而淘汰上限是 8，删掉的会话会先把位置占满。
+        runCatching { BrowserSessionRegistry.requestRemove(conversationId) }
     }
 
     fun renameConversation(conversationId: String, title: String) {
