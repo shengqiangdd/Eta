@@ -289,7 +289,7 @@ internal class AgentMemoryStore(
 
 
 /** 解析章节为界面目录项；解析失败时退化为空目录，不影响整页编辑。 */
-private fun String.toSectionUi(): List<AgentMemorySectionUi> = runCatching {
+internal fun String.toSectionUi(): List<AgentMemorySectionUi> = runCatching {
     AgentMemoryDocument.sections(this).map { section ->
         AgentMemorySectionUi(
             title = section.title,

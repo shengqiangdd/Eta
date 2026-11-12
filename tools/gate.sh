@@ -255,6 +255,7 @@ FAST_TEST_FILTERS='--tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.ui.app.AgentPendingAskAnswersTest
   --tests io.github.mangi.eta.agent.runtime.AgentRuntimeRequestConfigResolverTest
   --tests io.github.mangi.eta.data.repository.AgentMemoryDuplicateSectionTest
+  --tests io.github.mangi.eta.ui.app.AgentMemorySectionUiTest
   --tests io.github.mangi.eta.agent.model.ToolSchemaSizeProbe
   --tests io.github.mangi.eta.agent.runtime.AgentKeepScreenLockPolicyTest
   --tests io.github.mangi.eta.data.repository.CatalogContextWindowFillTest
