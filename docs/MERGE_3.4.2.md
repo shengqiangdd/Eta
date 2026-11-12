@@ -267,3 +267,60 @@ COUI 顶栏被丢掉，选 COUI 的用户看到的是 MIUIX 顶栏」。我按�
   说明这个 API 的名字不够自解释；将来如果大改记忆模块，建议改名为 `endExclusive`
 - 合并提交是单父（squash 式），历史里没有保留上游 25 个提交的链。如果以后要按上游
   单个提交追查某一行的来历，会查不到
+
+### OOM 崩溃：排查到哪、还缺什么（2026-11-12）
+
+`eta_self_audit` 在 72 小时窗口内报出 3 次 P0 `OutOfMemoryError`，全部来自
+3.4.0-debug，堆上限 268435456（256MB）被用满：
+
+| 时间 | 进程已运行 | 崩溃栈位置 |
+| --- | --- | --- |
+| 11-11 19:39 | 77.1 分钟 | Compose 语义树遍历（`getAllUncoveredSemanticsNodesToIntObjectMap`） |
+| 11-11 19:54 | 14.6 分钟 | 协程恢复（`CancellableContinuationImpl`） |
+| 11-11 20:14 | 8.5 分钟 | okio 读 socket |
+
+**已排除**（都有实测或代码证据，不是"看起来没问题"）：
+
+- *图片解码失控*：`AgentImageCodec` / `AgentModelImageEncoder` 都设了 `inSampleSize`
+  降采样、`inJustDecodeBounds` 先探尺寸、`try/finally` 里 `recycle()`，单图上限 12MB。
+- *缓存无界*：`CharacterImageCache` 32MiB 按真实像素字节计重；`StaticMarkdownDocumentCache`
+  按源码字符计重（512K 字符 / 96 条）；`EtaApp` 在 `onTrimMemory`/`onLowMemory`
+  分级 `trimTo`/`evictAll`，还额外用前后台切换做释放点。
+- *地址空间不足*：进程是纯 64 位（arm64-v8a），VmSize 9.5GB，不受 32 位限制。
+- *空闲时内存虚高*：`dumpsys meminfo` 实测空闲态 Dalvik Alloc 仅 17MB、Native 50MB，
+  离 256MB 很远。
+
+**没有做的事，以及为什么**：
+
+没有加 `android:largeHeap="true"`。它能把这个机型的上限从 256MB 提到 512MB
+（`dalvik.vm.heapgrowthlimit=256m` → `heapsize=512m`），但那是把症状挪走而不是修。
+参照：微信和企业微信同样要处理大量图片、消息和网页，两者都没开 `largeHeap` —
+说明 256MB 对这类场景是够的，吃满就说明有东西该修。除非有证据表明某条路径
+确实需要瞬时大内存，否则不该动这个开关。
+
+**缺的关键一步**：没有复现路径。三次都发生在长时间使用的真机上，本环境造不出
+同等负载（长会话 + 大量图片 + WebView + 无障碍服务同时工作）。上面那个
+"语义树遍历"的栈最可疑——12 层递归，且 Eta 自己就是无障碍服务、代码里没有任何
+`importantForAccessibility` 控制——但这只是线索，不是结论。
+
+下一次崩溃时，`boot.log` 里会有崩溃前的水位记录（见 16aaddef），届时能看出
+是缓慢增长还是某次操作后陡增。**在拿到那份数据之前，任何"已修复"的说法都不成立。**
+
+**也排除了的后续线索**（2026-11-12 追加）：
+
+- *无障碍服务监听自身界面*：`agent_accessibility_service.xml` 确实订阅了
+  `typeWindowContentChanged`/`typeViewScrolled`/`typeViewTextChanged` 且
+  `notificationTimeout=50`，Eta 自己的聊天列表滚动和流式输出都会触发它。
+  但代码侧的成本很低：`TYPE_VIEW_SCROLLED` 走 `scrollEventObservationGate`，
+  只有正在等某个滚动观察时才做实际解析（还要复制事件、切后台线程）；
+  其余事件只做 `bumpWindowContentGeneration` 的原子自增。
+  截图路径也有 `ScreenshotWindowPolicy` 排除自身无障碍浮层。不是热点。
+- *`largeHeap`*：见上，不开。
+
+也就是说：**五条可以静态排查的路径全部有证据排除，剩下的必须在真机重负载下
+才能定位。** 这一步已经超出本环境能力（造不出长会话 + 大量图片 + WebView +
+无障碍服务同时工作的场景），不再靠猜消耗时间。
+
+要继续推进，需要的是：在真机上用到崩溃（长会话挂很久 / 大量图片），
+然后取 `files/diagnostics/boot.log` 里的水位时间线 + 同时段的
+`dumpsys meminfo <pid>` 输出。有这两样就能判断是缓慢增长还是某次操作陡增。
