@@ -47,4 +47,6 @@ data class SectionEditorUi(
     val title: String,
     val draft: String,
     val isSaving: Boolean = false,
+    /** 打开时该章节起始行；重名标题靠它区分，保存时也按它定位。 */
+    val startLine: Int = 0,
 )

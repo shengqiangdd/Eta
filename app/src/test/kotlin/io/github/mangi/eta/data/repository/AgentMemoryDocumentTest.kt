@@ -100,4 +100,17 @@ class AgentMemoryDocumentTest {
         assertTrue(AgentMemoryDocument.sections("").isEmpty())
         assertTrue(AgentMemoryDocument.sections("no headings here").isEmpty())
     }
+
+    @Test
+    fun `duplicate titles are only addressable by distinction other than name`() {
+        // 章节目录按标题发出 OpenSection；重名时 find 会返回 null。
+        // 这个用例把现状钉住：重名章节确实无法用标题唯一定位，
+        // 所以目录项不能只带标题。
+        val doc = "# 备注\n甲\n\n# 备注\n乙\n"
+        val sections = AgentMemoryDocument.sections(doc)
+        assertEquals(2, sections.size)
+        assertEquals(listOf(1, 4), sections.map { it.startLine })
+        assertNull(AgentMemoryDocument.find(sections, "备注"))
+        assertEquals(2, AgentMemoryDocument.candidates(sections, "备注").size)
+    }
 }

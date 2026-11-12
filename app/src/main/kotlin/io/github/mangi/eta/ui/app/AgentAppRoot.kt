@@ -988,7 +988,7 @@ fun AgentAppRoot(
                             AgentMemoryAction.Save -> memory.saveMemory()
                             AgentMemoryAction.Clear -> memory.clearMemory()
                             AgentMemoryAction.DismissNotice -> memory.dismissMemoryNotice()
-                            is AgentMemoryAction.OpenSection -> memory.openSection(action.title)
+                            is AgentMemoryAction.OpenSection -> memory.openSection(action.title, action.startLine)
                             is AgentMemoryAction.SectionDraftChanged ->
                                 memory.updateSectionDraft(action.content)
                             AgentMemoryAction.SaveSection -> memory.saveSection()

@@ -187,14 +187,21 @@ internal class AgentMemoryStore(
         memoryState = memoryState.copy(notice = null)
     }
 
-    fun openSection(title: String) {
-        val target = AgentMemoryDocument.find(AgentMemoryDocument.sections(memoryState.draft), title)
+    fun openSection(title: String, startLine: Int) {
+        // 按行号定位，不按标题：重名标题（比如两个「备注」）按标题找会歧义，
+        // 而目录里每一行都有唯一的 startLine。
+        val target = AgentMemoryDocument.sections(memoryState.draft)
+            .firstOrNull { it.startLine == startLine && it.title == title }
         if (target == null) {
             memoryState = memoryState.copy(notice = appContext.getString(R.string.memory_notice_section_missing, title))
             return
         }
         memoryState = memoryState.copy(
-            sectionEditor = SectionEditorUi(title = target.title, draft = target.body),
+            sectionEditor = SectionEditorUi(
+                title = target.title,
+                draft = target.body,
+                startLine = target.startLine,
+            ),
             notice = null,
         )
     }
@@ -230,6 +237,7 @@ internal class AgentMemoryStore(
                         revision = snapshot.revision,
                         section = editor.title,
                         content = editor.draft,
+                        startLine = editor.startLine.takeIf { it > 0 },
                     ),
                 )
             }.fold(

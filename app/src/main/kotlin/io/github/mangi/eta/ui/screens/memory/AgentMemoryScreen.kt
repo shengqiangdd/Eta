@@ -176,7 +176,7 @@ internal fun AgentMemoryScreen(
                     } else {
                         MemorySectionOutline(
                             sections = state.sections,
-                            onOpen = { onAction(AgentMemoryAction.OpenSection(it)) },
+                            onOpen = { onAction(AgentMemoryAction.OpenSection(it.title, it.startLine)) },
                         )
                     }
                     MemorySaveBar(
@@ -246,7 +246,7 @@ internal fun AgentMemoryScreen(
                     } else {
                         MemorySectionOutline(
                             sections = state.sections,
-                            onOpen = { onAction(AgentMemoryAction.OpenSection(it)) },
+                            onOpen = { onAction(AgentMemoryAction.OpenSection(it.title, it.startLine)) },
                         )
                     }
                     MemorySaveBar(
@@ -677,7 +677,7 @@ private fun formatNumber(value: Int): String = NumberFormat.getIntegerInstance()
 @Composable
 private fun MemorySectionOutline(
     sections: List<AgentMemorySectionUi>,
-    onOpen: (String) -> Unit,
+    onOpen: (AgentMemorySectionUi) -> Unit,
 ) {
     if (sections.isEmpty()) return
     val colors = MiuixTheme.colorScheme
@@ -711,7 +711,7 @@ private fun MemorySectionOutline(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable { onOpen(section.title) }
+                    .clickable { onOpen(section) }
                     .padding(
                         start = if (isCoui) CouiPageDefaults.horizontalMargin else 8.dp,
                         // COUI 的卡片内容右侧留白比 MiuiX 宽，跟 MemoryDocumentCard 保持一致

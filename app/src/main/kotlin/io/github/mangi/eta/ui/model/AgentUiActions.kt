@@ -75,7 +75,8 @@ sealed interface AgentMemoryAction {
     data object Save : AgentMemoryAction
     data object Clear : AgentMemoryAction
     data object DismissNotice : AgentMemoryAction
-    data class OpenSection(val title: String) : AgentMemoryAction
+    /** 按标题打开会歧义（重名标题很常见，比如两个「备注」），所以带行号定位。 */
+    data class OpenSection(val title: String, val startLine: Int) : AgentMemoryAction
     data class SectionDraftChanged(val content: String) : AgentMemoryAction
     data object SaveSection : AgentMemoryAction
     data object CancelSection : AgentMemoryAction

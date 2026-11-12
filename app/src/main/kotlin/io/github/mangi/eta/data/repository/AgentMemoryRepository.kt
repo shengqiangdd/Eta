@@ -55,6 +55,11 @@ internal sealed interface AgentMemoryMutation {
         override val revision: String,
         val section: String,
         val content: String,
+        /**
+         * 可选的行号定位。标题重名时（真实 MEMORY.md 里「踩坑记录」「门禁与产物」
+         * 都重复出现）按标题会报歧义，UI 传行号可以精确到具体那一节。
+         */
+        val startLine: Int? = null,
     ) : AgentMemoryMutation
 }
 
@@ -341,7 +346,10 @@ internal class AgentMemoryStore(
         mutation: AgentMemoryMutation.ReplaceSection,
     ): String {
         val sections = AgentMemoryDocument.sections(snapshot.content)
-        val target = resolveSection(sections, mutation.section)
+        // 带行号时优先按行号定位，避开重名歧义；没带则维持原来的按标题解析。
+        val target = mutation.startLine
+            ?.let { line -> sections.firstOrNull { it.startLine == line } }
+            ?: resolveSection(sections, mutation.section)
         return AgentMemoryDocument.replaceSection(snapshot.content, target, mutation.content)
     }
 

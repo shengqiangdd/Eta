@@ -34,4 +34,15 @@ class AgentMemoryDuplicateSectionTest {
         val sections = AgentMemoryDocument.sections(duplicated)
         assertEquals("核心记忆", AgentMemoryDocument.find(sections, "核心记忆")?.title)
     }
+
+    @Test
+    fun `startLine picks the exact duplicate section for replacement`() {
+        // 章节目录必须能编辑重名章节里的具体那一节，不能因为标题撞车就整个失效。
+        val sections = AgentMemoryDocument.sections(duplicated)
+        val second = sections.first { it.title == "用户偏好" && it.startLine == 4 }
+        val replaced = AgentMemoryDocument.replaceSection(duplicated, second, "- 改过了")
+        val after = AgentMemoryDocument.sections(replaced)
+        assertEquals("- 旧", after.first { it.startLine == 2 }.body)
+        assertEquals("- 改过了", after.first { it.startLine == 4 }.body)
+    }
 }
