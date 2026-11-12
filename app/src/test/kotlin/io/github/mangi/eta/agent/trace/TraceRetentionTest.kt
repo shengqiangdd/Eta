@@ -29,8 +29,10 @@ class TraceRetentionTest {
 
     @After
     fun cleanup() {
-        // 单例：还原成默认目录大小上限，避免影响其它测试。
-        AgentRunTraceStore.init(temp.root)
+        // 单例：回到未初始化状态，让后续测试各自 init。
+        // 原先重置成 temp.root 是错的——TemporaryFolder 规则会在本类跑完后把那个目录删掉，
+        // 后到的测试会拿到一个已不存在的根；这里显式清空，谁的测试谁自己设。
+        AgentRunTraceStore.resetForTests()
     }
 
     @Test

@@ -108,6 +108,6 @@ class TraceLookupFinishedTest {
 
     @After
     fun cleanup() {
-        AgentRunTraceStore.init(temp.root)
+        AgentRunTraceStore.resetForTests()
     }
 }

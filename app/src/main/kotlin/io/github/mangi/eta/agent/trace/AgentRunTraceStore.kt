@@ -200,6 +200,19 @@ internal object AgentRunTraceStore {
         retention = policy
     }
 
+    /**
+     * 仅给测试用：回到未初始化状态，后续测试各自 init。
+     *
+     * 不提供的话，测试只能“重置”成某个具体目录；而 JUnit 的 TemporaryFolder
+     * 跑完会删目录，下一个测试就拿到一个已不存在的根。未初始化时写入本就静默跳过
+     * （见 [dirOrNull]），所以置空是安全的。
+     */
+    internal fun resetForTests() {
+        directory = null
+        retention = Retention()
+        synchronized(lock) { awaitingFirstToken.clear() }
+    }
+
     /** 是否已经初始化；未初始化时所有写入静默跳过（例如纯单元测试环境）。 */
     private fun dirOrNull(): File? = directory
 
@@ -452,12 +465,28 @@ internal object AgentRunTraceStore {
      * 完全不同：前者无须解释，后者说明数据存在过但已被清理。只返回 null 时
      * 调用方分不出来，只能沉默地什么都不显示，用户看到的是「有时有、有时没有」。
      */
+    /**
+     * 按「新→旧」排。
+     *
+     * 只按 mtime 不够稳：文件系统时间戳往往是毫秒甚至秒级粒度，短时间内连续写出的
+     * 多份追踪会拿到**相同**的 mtime，而 `sortedByDescending` 对并列元素的次序取决于
+     * 目录遍历顺序——换个文件系统或换次运行就会变，表现为「最新一份」有时是上一份。
+     * 真实后果：同一会话连跑多轮时，速度段可能挂到前一轮的追踪上。
+     * 所以并列时用文件名末尾的序号做次级键，保证可重现。
+     */
+    private val newestFirst = compareByDescending<File> { it.lastModified() }
+        .thenByDescending { trailingNumber(it.nameWithoutExtension) }
+
+    /** 取文件名末尾的数字（`run-19` → 19）；没有数字时返回 Long.MIN_VALUE，不影响主序。 */
+    private fun trailingNumber(name: String): Long =
+        name.takeLastWhile { it.isDigit() }.toLongOrNull() ?: Long.MIN_VALUE
+
     fun lookup(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): LookupResult {
         if (conversationId.isBlank()) return LookupResult(LookupStatus.NoConversation)
         val target = dirOrNull() ?: return LookupResult(LookupStatus.NoStore)
         val files = runCatching {
             target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
-                ?.sortedByDescending { it.lastModified() }
+                ?.sortedWith(newestFirst)
                 ?: emptyList()
         }.getOrDefault(emptyList())
         if (files.isEmpty()) return LookupResult(LookupStatus.NoStore)
@@ -539,7 +568,7 @@ internal object AgentRunTraceStore {
         val target = dirOrNull() ?: return emptyList()
         val files = runCatching {
             target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
-                ?.sortedByDescending { it.lastModified() }
+                ?.sortedWith(newestFirst)
                 ?: emptyList()
         }.getOrDefault(emptyList())
         return files.take(limit.coerceAtLeast(1)).mapNotNull { file ->

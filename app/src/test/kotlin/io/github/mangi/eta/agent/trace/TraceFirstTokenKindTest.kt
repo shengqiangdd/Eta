@@ -32,7 +32,7 @@ class TraceFirstTokenKindTest {
 
     @After
     fun cleanup() {
-        AgentRunTraceStore.init(temp.root)
+        AgentRunTraceStore.resetForTests()
     }
 
     private fun block(kind: AgentEvent.AssistantBlockKind, round: Int = 1) =
