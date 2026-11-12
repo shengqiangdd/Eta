@@ -36,4 +36,39 @@ class AcpPermissionPolicyTest {
         assertFalse(shouldDenyAcpCommand(""))
         assertFalse(shouldDenyAcpCommand("   "))
     }
+
+    /**
+     * 误判回归（2026-11-12）：旧写法把 `"rm -rf /"` 当纯子串匹配，
+     * 而删构建产物正是以它开头，于是日常清理被当成「删根目录」拦掉。
+     * 同理 `dd if=/dev/zero of=./tmp.img`（造个测试用空文件）也被当成抹盘。
+     *
+     * 修法：`/` 后面必须是行尾/空白/通配才算根目录，不能是 `/workspace` 这种具体路径。
+     */
+    @Test
+    fun deletingInsideProjectIsAllowed() {
+        assertFalse(shouldDenyAcpCommand("rm -rf /workspace/app/build"))
+        assertFalse(shouldDenyAcpCommand("rm -rf /tmp/scratch"))
+        assertFalse(shouldDenyAcpCommand("rm -rf ./build"))
+        assertFalse(shouldDenyAcpCommand("rm -rf node_modules"))
+    }
+
+    @Test
+    fun creatingImageFromDevZeroIsAllowed() {
+        // 写向普通文件而不是块设备，安全。
+        assertFalse(shouldDenyAcpCommand("dd if=/dev/zero of=./tmp.img bs=1M count=1"))
+    }
+
+    @Test
+    fun mentioningDangerousWordsIsAllowed() {
+        // 只是提到，不是执行。旧的「危险词」表会把它们全拒。
+        assertFalse(shouldDenyAcpCommand("git log --grep reboot"))
+        assertFalse(shouldDenyAcpCommand("echo 'remember to mkfs later'"))
+    }
+
+    @Test
+    fun writingBlockDeviceIsStillDenied() {
+        // 上面放宽了路径边界，这里守住真正的块设备写入写法不被一起放过。
+        assertTrue(shouldDenyAcpCommand("echo x > /dev/block/sda"))
+        assertTrue(shouldDenyAcpCommand("cat foo > /dev/sda"))
+    }
 }
