@@ -9,6 +9,7 @@ import io.github.mangi.eta.agent.model.AgentScreenObservationContract
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AgentLogger
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
@@ -84,7 +85,7 @@ class AgentLocalToolsPermissionTest {
             assertEquals("NO_OBSERVATION", call("tap_element", """{"index":0,"observation_id":"observed"}""").getString("code"))
             assertTrue(call("observe_screen").getBoolean("ok"))
             assertTrue(coordinator.pauseForUser("gui-test"))
-            assertTrue(coordinator.resumeForUser())
+            assertTrue(coordinator.resumeForUser("gui-test"))
             assertEquals("NO_OBSERVATION", call("type_text", """{"text":"旧页面不能输入"}""").getString("code"))
             assertTrue(call("observe_screen").getBoolean("ok"))
             assertEquals("ACTION_REACHED", call("type_text", """{"text":"新观察后到达动作边界"}""").getString("code"))
@@ -432,27 +433,18 @@ class AgentLocalToolsPermissionTest {
     }
 
     @Test
-    fun disabledIndividualToolReturnsToolDisabledErrorCode() {
-        val tools = AgentLocalTools(
-            context = RuntimeEnvironment.getApplication() as Context,
-            logger = NoOpLogger,
-            browserRunId = "test-run",
-            rootAvailable = { true },
-            deviceSensitiveReadToolsEnabled = { true },
-            isToolEnabled = { it != "read_sms_code" },
-        )
-        val result = tools.execute(
-            AgentModelClient.ToolCall(
-                id = "call-disabled",
-                name = "read_sms_code",
-                argumentsJson = "{}",
-            ),
-        )
-        val json = JSONObject(result.content)
-        assertFalse(json.getBoolean("ok"))
-        assertEquals("TOOL_DISABLED", json.getString("code"))
-        assertTrue(result.sensitive)
-        tools.close()
+    fun disabledIndividualToolIsReportedByPrefsSwitch() {
+        // 单个工具的开关从 AgentLocalTools 上移到了 Prefs：工具执行器先问
+        // Prefs.isToolEnabled 再决定要不要分发，关掉的工具直接回 TOOL_DISABLED。
+        // 所以这里验的是开关本身，而不是某一层自己记得的副本。
+        val context = RuntimeEnvironment.getApplication() as Context
+        Prefs.initLocal(context)
+        Prefs.setToolsEnabled(listOf("read_sms_code"), false)
+        assertFalse(Prefs.isToolEnabled("read_sms_code"))
+        assertTrue(Prefs.isToolEnabled("tap"))
+
+        Prefs.setToolsEnabled(listOf("read_sms_code"), true)
+        assertTrue(Prefs.isToolEnabled("read_sms_code"))
     }
 
     private fun tools(
@@ -462,6 +454,7 @@ class AgentLocalToolsPermissionTest {
         memoryWritable: Boolean = true,
         rootAvailable: () -> Boolean = { false },
         sensitiveReadEnabled: () -> Boolean = { false },
+        guiControl: GuiControlCoordinator.RunControl? = null,
         screenObservationProvider: (
             (AgentScreenObservationContract.Options) -> RootShellDeviceController.Observation
         )? = null,
@@ -479,6 +472,7 @@ class AgentLocalToolsPermissionTest {
             memoryWritable = memoryWritable,
             rootAvailable = rootAvailable,
             deviceSensitiveReadToolsEnabled = sensitiveReadEnabled,
+            guiControl = guiControl,
             screenObservationProvider = screenObservationProvider,
             beforeToolExecution = beforeToolExecution,
         )

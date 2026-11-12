@@ -145,7 +145,10 @@ class GeminiInteractionsTest {
             complete("completed", usage), events)
         assertEquals("你好", result.getString("content"))
         assertEquals(1, events.filterIsInstance<ProviderEvent.Usage>().size)
-        assertEquals(4, events.filterIsInstance<ProviderEvent.Usage>().single().usage.outputTokens)
+        // Gemini 的 total_thought_tokens 与 total_output_tokens 并列，解析时就折算成
+        // 「output 已含推理」，与 OpenAI/Anthropic 对齐（见 7985ab12）。
+        assertEquals(6, events.filterIsInstance<ProviderEvent.Usage>().single().usage.outputTokens)
+        assertEquals(2, events.filterIsInstance<ProviderEvent.Usage>().single().usage.reasoningTokens)
         assertEquals(16, events.filterIsInstance<ProviderEvent.Usage>().single().usage.contextTokens)
         assertEquals(10, events.filterIsInstance<ProviderEvent.Usage>().single().usage.promptTokens)
         assertEquals(10, events.filterIsInstance<ProviderEvent.Usage>().single().contextInputTokens)
@@ -166,7 +169,8 @@ class GeminiInteractionsTest {
         val received = events.filterIsInstance<ProviderEvent.Usage>().single()
         assertEquals(125, received.usage.contextTokens)
         assertEquals(100, received.contextInputTokens)
-        assertEquals(20, received.usage.outputTokens)
+        // output 20 + thought 5：同上，解析层已完成折算。
+        assertEquals(25, received.usage.outputTokens)
         assertEquals(5, received.usage.reasoningTokens)
         assertEquals(60, received.usage.cachedTokens)
         assertEquals(100, received.usage.promptTokens)

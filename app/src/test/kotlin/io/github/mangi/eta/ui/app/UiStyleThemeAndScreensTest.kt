@@ -247,6 +247,8 @@ class UiStyleThemeAndScreensTest {
                             context = activity,
                             onBack = { backPressedCount++ },
                             onExport = { error("unused") },
+                            onInspect = { error("unused") },
+                            onSnapshot = { error("unused") },
                             onImport = { error("unused") },
                         )
                         12 -> AgentMemoryScreen(state = memoryState, onAction = {})
@@ -261,7 +263,7 @@ class UiStyleThemeAndScreensTest {
                         21 -> LinuxEnvironmentScreen(context = activity, onNavigate = {}, onBack = { backPressedCount++ })
                         22 -> LinuxFilesScreen(context = activity, distribution = "alpine", onBack = { backPressedCount++ })
                         23 -> SharedFoldersScreen(context = activity, onBack = { backPressedCount++ })
-                        24 -> WorkspaceScreen(onBack = { backPressedCount++ })
+                        24 -> WorkspaceScreen(conversationId = null, onBack = { backPressedCount++ })
                         25 -> AgentBrowserScreen(session = browserSession, onBack = { backPressedCount++ })
                         26 -> AgentResultCard(
                             state = AgentOverlayState(

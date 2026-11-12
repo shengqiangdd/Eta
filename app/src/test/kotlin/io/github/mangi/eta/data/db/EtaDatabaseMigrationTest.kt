@@ -120,7 +120,7 @@ class EtaDatabaseMigrationTest {
             assertEquals(emptyList<CharacterEntity>(), runBlocking(Dispatchers.IO) { database.characterDao().characters() })
             assertEquals("off", conversations.first { it.id == "conv-1" }.reasoningEffort)
             assertEquals(null, conversations.first { it.id == "conv-1" }.modelId)
-            assertEquals(false, conversations.first { it.id == "conv-1" }.isPinned)
+            assertEquals(false, conversations.first { it.id == "conv-1" }.pinned)
             assertEquals("default", conversations.first { it.id == "conv-enabled" }.reasoningEffort)
             assertEquals(null, runBlocking(Dispatchers.IO) { database.conversationDao().state() })
             assertEquals(listOf("built-in", "manual"), provider.models.map { it.modelId })

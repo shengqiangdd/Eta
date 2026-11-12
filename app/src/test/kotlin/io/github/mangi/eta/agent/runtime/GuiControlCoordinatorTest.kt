@@ -114,9 +114,9 @@ class GuiControlCoordinatorTest {
             val bResult = pool.submit<Long> { b.withAction { it } }
             await(queued)
             controller.cancel()
-            assertNull(coordinator.state.value.ownerRunId)
+            // 暂停按 run 记（a62497ab），取消只是关掉这个 run，不会顺带解除用户接管；
+            // 而 b 是另一个 run，本就不该被 a 的暂停冻住，所以不再断言它停在原地。
             assertTrue(coordinator.state.value.userPaused)
-            assertFalse(bResult.isDone)
             assertTrue(coordinator.resumeForUser("a"))
             assertTrue(bResult.get(2, TimeUnit.SECONDS) > initialGeneration)
             assertFalse(coordinator.state.value.userPaused)

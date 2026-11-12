@@ -50,27 +50,26 @@ class AgentConversationBranchPersistenceTest {
         ))) }
         val persistence = AgentConversationPersistence()
         persistence.save(context, snapshot(original))
-        val source = AgentConversationStore.loadConversation(context, "source")!!
-        assertTrue(source.hasEarlierMessages)
-        assertFalse(source.messages.any { it.id == "assistant-30-0" })
+        // 读侧改为按需载入：loadMessages 取窗口，loadHistory 取模型投影。
+        val sourceMessages = AgentConversationStore.loadMessages(context, "source").messages
+        assertTrue(sourceMessages.size < 360)
+        assertFalse(sourceMessages.any { it.id == "assistant-30-0" })
 
-        val child = persistence.branch(context, "source", "assistant-30-0", "child", "原对话 · 分支", 2L)
-        val copied = AgentConversationStore.loadAllMessages(context, "child")
+        val outcome = persistence.branch(context, "source", "assistant-30-0", "child", "原对话 · 分支", 2L)
+        val copied = AgentConversationStore.loadMessages(context, "child").messages
         assertEquals(62, copied.size)
         assertEquals("回答 30", (copied.last() as AgentMessageUi).content)
-        assertEquals(original.journal.take(62).map { it.content }, child.history.map { it.content })
-        assertEquals(child.history, child.journal)
-        assertFalse(child.history.any { it.contextSummary || "秘密" in it.content })
+        val childHistory = AgentConversationStore.loadHistory(context, "child")
+        val childJournal = AgentConversationStore.loadJournal(context, "child")
+        assertEquals(original.journal.take(62).map { it.content }, childHistory.map { it.content })
+        assertEquals(childHistory, childJournal)
+        assertFalse(childHistory.any { it.contextSummary || "秘密" in it.content })
         assertEquals(360, dao.messageCount("source"))
-        assertEquals(original.history, AgentConversationStore.loadConversation(context, "source")!!.history)
+        assertEquals(original.history, AgentConversationStore.loadHistory(context, "source"))
         assertTrue(original.messages.map { it.id }.toSet().intersect(copied.map { it.id }.toSet()).isEmpty())
-        assertTrue(child.appliedRuntimeRunIds.isEmpty())
-        assertEquals("", child.input)
-        assertTrue(child.pendingImages.isEmpty())
-        assertTrue(child.queuedMessages.isEmpty())
-        assertEquals("model-local", child.modelId)
-        assertEquals(ReasoningEffort.HIGH, child.reasoningEffort)
-        assertFalse(dao.conversation("child")!!.isPinned)
+        assertEquals("model-local", outcome.modelId)
+        assertEquals(ReasoningEffort.HIGH, outcome.reasoningEffort)
+        assertFalse(dao.conversation("child")!!.pinned)
     }
 
     @Test
@@ -78,12 +77,12 @@ class AgentConversationBranchPersistenceTest {
         val initial = snapshot(conversation(100))
         val persistence = AgentConversationPersistence()
         persistence.save(context, initial)
-        val child = persistence.branch(context, "source", "assistant-99-0", "child", "分支", 2L)
-        assertTrue(child.hasEarlierMessages)
+        persistence.branch(context, "source", "assistant-99-0", "child", "分支", 2L)
         repeat(2) { persistence.save(context, initial) }
         assertEquals(200, dao.messageCount("child"))
 
-        val published = initial.copy(conversationsById = initial.conversationsById + ("child" to child),
+        val childState = AgentConversationStore.load(context).conversationsById.getValue("child")
+        val published = initial.copy(conversationsById = initial.conversationsById + ("child" to childState),
             titles = initial.titles + ("child" to "分支"), updatedAt = initial.updatedAt + ("child" to 2L))
         persistence.save(context, published)
         persistence.save(context, initial)
@@ -107,10 +106,10 @@ class AgentConversationBranchPersistenceTest {
         dao.deleteConversation("source")
         EtaDatabase.closeForTests()
 
-        val copied = AgentConversationStore.loadAllMessages(context, "child")
+        val copied = AgentConversationStore.loadMessages(context, "child").messages
         assertEquals(image, (copied.first() as UserMessageUi).images.single())
         assertEquals(longText, (copied.last() as AgentMessageUi).content)
-        assertEquals(longText, AgentConversationStore.loadConversation(context, "child")!!.journal.last().content)
+        assertEquals(longText, AgentConversationStore.loadJournal(context, "child").last().content)
         val rows = dao.messageRowsPage("child", 10, 0)
         assertTrue(rows.last().content.startsWith(ChunkedTextDao.REFERENCE_PREFIX))
         assertTrue(dao.textChunks("conversation_messages", copied.last().id, "content", 100, 0).isNotEmpty())
@@ -138,8 +137,10 @@ class AgentConversationBranchPersistenceTest {
         val initial = snapshot(source)
         val persistence = AgentConversationPersistence()
         persistence.save(context, initial)
-        val child = persistence.branch(context, "source", "assistant-0-1", "child", "分支", 2L)
+        val outcome = persistence.branch(context, "source", "assistant-0-1", "child", "分支", 2L)
         val target = ConversationBranchBoundary.remapId("child", "assistant-0-1")
+        // branch() 现在只回模型参数；内容一律从库里读回，不靠内存副本。
+        val child = AgentConversationStore.load(context).conversationsById.getValue("child")
         assertEquals(binding, child.roleplay)
         assertEquals("第一块\n\n改写第二块", child.history.last().content)
         assertEquals("第一块\n\n第二块", child.journal.last().content)
@@ -147,19 +148,21 @@ class AgentConversationBranchPersistenceTest {
         assertEquals(setOf(target), child.roleplayMessages.revisions.keys)
         assertTrue(child.messages.first().id.startsWith("greeting-"))
         assertEquals(1, (child.messages.last() as AgentMessageUi).selectedCandidate)
+        assertEquals("model-local", outcome.modelId)
 
-        val grandchild = persistence.branch(context, "child", target, "grandchild", "再次分支", 3L)
-        assertEquals(child.history.map { it.content }, grandchild.history.map { it.content })
+        persistence.branch(context, "child", target, "grandchild", "再次分支", 3L)
+        assertEquals(child.history.map { it.content }, loadHistoryOf("grandchild").map { it.content })
         val changedChild = RoleplayConversationReducer.select(child, target, 0)!!
         persistence.save(context, initial.copy(conversationsById = initial.conversationsById + ("child" to changedChild),
             titles = initial.titles + ("child" to "分支"), updatedAt = initial.updatedAt + ("child" to 2L)))
-        assertEquals("第一块\n\n第二块", AgentConversationStore.loadConversation(context, "child")!!.history.last().content)
-        assertEquals("第一块\n\n改写第二块", AgentConversationStore.loadConversation(context, "grandchild")!!.history.last().content)
-        assertEquals(source.history, AgentConversationStore.loadConversation(context, "source")!!.history)
+        assertEquals("第一块\n\n第二块", loadHistoryOf("child").last().content)
+        assertEquals("第一块\n\n改写第二块", loadHistoryOf("grandchild").last().content)
+        assertEquals(source.history, AgentConversationStore.loadHistory(context, "source"))
 
         val greeting = persistence.branch(context, "child", child.messages.first().id, "greeting-child", "开场分支", 4L)
-        assertEquals(1, greeting.messages.size)
-        assertEquals("开场白", greeting.history.single().content)
+        val greetingState = AgentConversationStore.load(context).conversationsById.getValue("greeting-child")
+        assertEquals(1, greetingState.messages.size)
+        assertEquals("开场白", greetingState.history.single().content)
     }
 
     @Test
@@ -197,6 +200,10 @@ class AgentConversationBranchPersistenceTest {
         assertEquals(1, dao.conversationIdentities().size)
         assertEquals(6, dao.messageCount("source"))
         assertEquals(source.journal, AgentConversationCodec.decodeTranscript(dao.contextCheckpoint("source")!!.journalJson))
+    }
+
+    private fun loadHistoryOf(conversationId: String) = runBlocking {
+        AgentConversationStore.loadHistory(context, conversationId)
     }
 
     private fun conversation(turns: Int): AgentChatHomeUiState {
