@@ -87,8 +87,24 @@ def main() -> int:
     if "--write-wide" in sys.argv[1:]:
         wide = sorted(n for n, v in per_class.items() if v["failed"] == 0 and v["skipped"] == 0)
         target = os.path.join(ROOT, "tools/wide-tests.txt")
+        # 说明头必须跟着写回去：wide-tests.txt 会被反复重刷，
+        # 如果每刷一次就抹掉注释，下一个人就不知道这份名单从哪来、怎么维护。
+        header = [
+            "# 本机（Linux/aarch64）能跑通的全部测试类，门禁 test-wide 阶段按这份名单执行。",
+            "#",
+            "# 为什么需要它：aarch64 没有 Robolectric 的 native runtime，93 个带",
+            "# @RunWith(RobolectricTestRunner) 的类会被 app/build.gradle.kts 自动排除；",
+            "# 剩下的纯 JVM 类也不是全部都能跑（个别依赖本机 setuid/进程能力），所以这里",
+            "# 只收录「在本机实际跑通过」的类。",
+            "#",
+            "# 刷新（会覆盖本文件，但保留本说明）：",
+            "#   1. ./gradlew :app:testDebugUnitTest --rerun   跑一轮全量",
+            "#   2. python3 tools/gate_coverage.py --write-wide",
+            "#",
+            "# 名单漏登记不会报错，只会让门禁少跑一批用例——所以改了测试或换了机器后要重刷。",
+        ]
         with open(target, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(wide) + "\n")
+            fh.write("\n".join(header + wide) + "\n")
         print(f"已写入 {target}：{len(wide)} 个类（本机一次跑通；跨版本/跨机器需重跑确认）")
     return 1 if in_gate_failed else 0
 

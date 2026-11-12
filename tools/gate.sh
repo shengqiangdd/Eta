@@ -325,7 +325,8 @@ run_test() {
   elif has_stage test-wide; then
     # 名单 = 本机能跑通的全部测试类（两轮全量跑都通过的那些）。刷新：
     #   python3 tools/gate_coverage.py --write-wide   （先自己跑一轮全量，见该脚本说明）
-    wide_args=$(grep -v '^$' tools/wide-tests.txt | sed 's/^/--tests /' | tr '\n' ' ')
+    # 去掉注释行：wide-tests.txt 带说明头，不过滤的话会被当成 --tests '#...' 传给 Gradle。
+    wide_args=$(grep -vE '^[[:space:]]*(#|$)' tools/wide-tests.txt | sed 's/^/--tests /' | tr '\n' ' ')
     # 并行上原来的白名单：wide 名单排除了「有 skip 的类」，里面有 FAST 已覆盖的用例，
     # --tests 是并集，重复不会报错。
     # shellcheck disable=SC2086  # 故意按空格拆成多个 --tests 参数
