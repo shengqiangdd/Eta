@@ -44,6 +44,29 @@ SKIP_NAMES = {
 }
 
 
+def duplicates(path: pathlib.Path) -> list[tuple[int, str]]:
+    """返回重复的 import：[(行号, 原文)]。
+
+    Kotlin 编译器对重复 import 既不报错也不警告，但手改文件（尤其是移动代码块、
+    插入新 import）时很容易弄出两份。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return []
+    seen: set[str] = set()
+    dup: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("import "):
+            continue
+        if stripped in seen:
+            dup.append((idx + 1, stripped))
+        else:
+            seen.add(stripped)
+    return dup
+
+
 def analyse(path: pathlib.Path) -> list[tuple[int, str, str]]:
     """返回 [(行号, 原始 import 行, 名字)]，都是看起来没用到的。"""
     try:
@@ -105,11 +128,32 @@ def read_baseline() -> set[str]:
     return out
 
 
+def collect_duplicates() -> dict[str, list[tuple[int, str]]]:
+    found: dict[str, list[tuple[int, str]]] = {}
+    for root in SRC_DIRS:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.kt")):
+            dup = duplicates(path)
+            if dup:
+                found[str(path.relative_to(ROOT))] = dup
+    return found
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--write-baseline", action="store_true")
     args = ap.parse_args()
+
+    # 重复 import 直接拦，不进基线：它没任何存在理由，也不存在「存量太多」。
+    dups = collect_duplicates()
+    if dups:
+        for path, items in dups.items():
+            for lineno, raw in items:
+                print(f"{path}:{lineno}: 重复的 {raw}")
+        print(f"\n重复 import：{sum(len(v) for v in dups.values())} 条")
+        return 1
 
     found = collect()
     total = sum(len(v) for v in found.values())
