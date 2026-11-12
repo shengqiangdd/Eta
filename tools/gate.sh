@@ -24,6 +24,39 @@ if [ ! -d /workspace ]; then
   exit 2
 fi
 
+# ── 并发保护 ───────────────────────────────────────────────
+# 本机 2 核 15 GB，gradle.properties 给 JVM 和 Kotlin daemon 各 -Xmx4g。
+# 两个构建同时跑就会把 swap 吃满（2026-11 实际发生过：swap 用到 93%，整机卡死）。
+# 用 mkdir 做原子互斥（环境没有 flock）。
+#
+# 判断「锁还被持有吗」不能只看 pid 是否存活：pid 会被系统复用，而且超时被 kill
+# 的进程可能来不及跑 trap。所以同时看进程命令行里是否有 gate.sh。
+LOCK_DIR="$ROOT/.git/gate.lock"
+lock_is_held() {
+  holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo 0)
+  [ "$holder" = "0" ] && return 1
+  kill -0 "$holder" 2>/dev/null || return 1
+  # pid 存活，再确认它确实在跑 gate.sh（防 pid 复用造成的假占用）
+  cmd=$(tr '\0' ' ' < "/proc/$holder/cmdline" 2>/dev/null) || return 1
+  case "$cmd" in
+    *gate.sh*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  if lock_is_held; then
+    echo "另一个门禁正在跑（pid $holder），先等它结束。"
+    echo "确实要并行：删掉 $LOCK_DIR 后重跑。"
+    exit 3
+  fi
+  echo "清掉失效锁（pid $holder 未在跑 gate.sh）。"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || { echo "取锁失败：$LOCK_DIR"; exit 3; }
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM HUP
+
 export ANDROID_HOME=${ANDROID_HOME:-/workspace/.tooling/android/sdk}
 export ANDROID_SDK_ROOT=$ANDROID_HOME
 # JDK 选择：AGP 8.x 支持到 JDK 21，JDK 25 不受支持。
