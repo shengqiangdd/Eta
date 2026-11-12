@@ -237,6 +237,9 @@ internal fun AgentAppShell(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // 全屏图片查看器的宿主：没有它，消息里的图片点了没反应。
+        // 合并 3.4.2 时这层包裹被去掉，但 import 还留着——典型的漏merge。
+        ChatImagePreviewHost {
         if (conversationPaneState != null && currentRoute is AppRoute.Home) {
             ConversationSidePaneScaffold(
                 state = conversationPaneState,
@@ -263,6 +266,7 @@ internal fun AgentAppShell(
             }
         } else {
             pageContent()
+        }
         }
     }
 }

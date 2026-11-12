@@ -4,8 +4,4 @@
     <string name="ui_description_named">查看 %1$s 的說明</string>
     <string name="skills_more_named">%1$s 的更多操作</string>
     <string name="tools_manage_permissions">管理權限</string>
-    <string name="tools_view_enhancements">查看系統增強</string>
-    <string name="tools_disable_action">停用 %1$s</string>
-    <string name="tools_enable_action">啟用 %1$s</string>
-    <string name="tools_disabled_badge">已對該助手停用</string>
 </resources>

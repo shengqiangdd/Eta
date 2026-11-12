@@ -28,9 +28,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.runtime.Composable
@@ -47,8 +49,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.itos.coui.layout.CouiPageDefaults
@@ -72,7 +76,9 @@ import io.github.mangi.eta.ui.layout.horizontalCutoutPadding
 import io.github.mangi.eta.ui.markdown.LazyStaticMarkdown
 import io.github.mangi.eta.ui.markdown.MarkdownTone
 import io.github.mangi.eta.ui.model.AgentMemoryAction
+import io.github.mangi.eta.ui.model.AgentMemorySectionUi
 import io.github.mangi.eta.ui.model.AgentMemoryUiState
+import io.github.mangi.eta.ui.model.SectionEditorUi
 import java.text.NumberFormat
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -154,6 +160,21 @@ internal fun AgentMemoryScreen(
                             .padding(top = CouiPageDefaults.groupSpacing)
                             .padding(horizontal = CouiPageDefaults.horizontalMargin),
                     )
+                    // 章节目录与单章编辑器。只有开了章节才有入口，没有章节时不占位置。
+                    val editor = state.sectionEditor
+                    if (editor != null) {
+                        MemorySectionEditor(
+                            editor = editor,
+                            onDraftChange = { onAction(AgentMemoryAction.SectionDraftChanged(it)) },
+                            onCancel = { onAction(AgentMemoryAction.CancelSection) },
+                            onSave = { onAction(AgentMemoryAction.SaveSection) },
+                        )
+                    } else {
+                        MemorySectionOutline(
+                            sections = state.sections,
+                            onOpen = { onAction(AgentMemoryAction.OpenSection(it)) },
+                        )
+                    }
                     MemorySaveBar(
                         state = state,
                         onDiscard = { onAction(AgentMemoryAction.DraftChanged(state.savedContent)) },
@@ -210,6 +231,20 @@ internal fun AgentMemoryScreen(
                             .weight(1f)
                             .padding(horizontal = 12.dp),
                     )
+                    val editor = state.sectionEditor
+                    if (editor != null) {
+                        MemorySectionEditor(
+                            editor = editor,
+                            onDraftChange = { onAction(AgentMemoryAction.SectionDraftChanged(it)) },
+                            onCancel = { onAction(AgentMemoryAction.CancelSection) },
+                            onSave = { onAction(AgentMemoryAction.SaveSection) },
+                        )
+                    } else {
+                        MemorySectionOutline(
+                            sections = state.sections,
+                            onOpen = { onAction(AgentMemoryAction.OpenSection(it)) },
+                        )
+                    }
                     MemorySaveBar(
                         state = state,
                         onDiscard = { onAction(AgentMemoryAction.DraftChanged(state.savedContent)) },
@@ -628,3 +663,127 @@ private fun formatBytes(bytes: Int): String = when {
 }
 
 private fun formatNumber(value: Int): String = NumberFormat.getIntegerInstance().format(value)
+
+/**
+ * MEMORY.md 的章节目录。
+ *
+ * 每项是一行「标题 + 行范围 + 字数」。点进去打开单章编辑器：长记忆整篇保存很容易
+ * 漏拄，章节替换把改动限定在目标范围。没有章节（整份文档没有任何标题）时不渲染。
+ */
+@Composable
+private fun MemorySectionOutline(
+    sections: List<AgentMemorySectionUi>,
+    onOpen: (String) -> Unit,
+) {
+    if (sections.isEmpty()) return
+    val colors = MiuixTheme.colorScheme
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = pluralStringResource(
+            R.plurals.memory_outline_title,
+            sections.size,
+            sections.size,
+        ),
+        style = MiuixTheme.textStyles.footnote1,
+        color = colors.onSurfaceVariantSummary,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+    )
+    sections.forEach { section ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onOpen(section.title) }
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(((section.level - 1).coerceAtLeast(0) * 12).dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = section.title,
+                    style = MiuixTheme.textStyles.body2,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.memory_outline_range,
+                        section.startLine,
+                        section.endLine,
+                        formatNumber(section.chars),
+                    ),
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = colors.onSurfaceVariantSummary,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = colors.onSurfaceVariantSummary,
+            )
+        }
+    }
+}
+
+/**
+ * 单章编辑器。标题行不在这里改，只换正文——所以顶部明说“只替换本节正文”。
+ */
+@Composable
+private fun MemorySectionEditor(
+    editor: SectionEditorUi,
+    onDraftChange: (String) -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val colors = MiuixTheme.colorScheme
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(R.string.memory_section_edit_title, editor.title),
+        style = MiuixTheme.textStyles.body1,
+        fontWeight = FontWeight.Medium,
+        color = colors.onSurface,
+        modifier = Modifier.padding(horizontal = 4.dp),
+    )
+    Text(
+        text = stringResource(R.string.memory_section_edit_summary),
+        style = MiuixTheme.textStyles.footnote2,
+        color = colors.onSurfaceVariantSummary,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+    )
+    Box(modifier = Modifier.fillMaxWidth().height(180.dp)) {
+        MemoryEditor(
+            value = editor.draft,
+            enabled = !editor.isSaving,
+            onValueChange = onDraftChange,
+        )
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.memory_section_chars, formatNumber(editor.draft.length)),
+            style = MiuixTheme.textStyles.footnote2,
+            color = colors.onSurfaceVariantSummary,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            text = stringResource(R.string.memory_discard),
+            onClick = onCancel,
+            enabled = !editor.isSaving,
+            minWidth = 44.dp,
+            minHeight = 32.dp,
+        )
+        CouiButton(
+            text = stringResource(
+                if (editor.isSaving) R.string.memory_saving else R.string.memory_section_save,
+            ),
+            enabled = !editor.isSaving,
+            onClick = onSave,
+        )
+    }
+}

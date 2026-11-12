@@ -43,9 +43,6 @@
   <string name="action_stop">停止</string>
   <string name="action_pin">置顶</string>
   <string name="action_unpin">取消置顶</string>
-  <string name="action_edit">编辑</string>
-  <string name="action_pin_conversation">置顶对话</string>
-  <string name="action_unpin_conversation">取消置顶</string>
   <string name="action_rename">重命名</string>
   <string name="action_export">导出</string>
   <string name="action_done">完成</string>
@@ -1182,9 +1179,6 @@
   <string name="mcp_refresh_tools_hint">服务器发布工具后可在此刷新</string>
   <string name="mcp_delete_server">删除服务器</string>
   <string name="mcp_delete_server_summary">移除此地址、Token 和工具设置</string>
-  <string name="mcp_enable_risky_tool">启用这个工具？</string>
-  <string name="mcp_enable_risky_tool_summary">%2$s 的 %1$s 可能修改数据或访问外部服务，请仅在信任该服务器时启用。</string>
-  <string name="mcp_enable_tool">启用</string>
   <string name="mcp_update_token_summary">输入新 Token，留空则移除身份认证</string>
   <string name="mcp_bearer_token">Bearer Token</string>
   <string name="mcp_delete_confirm">删除 %1$s？此操作无法撤销。</string>
@@ -1383,9 +1377,6 @@
   <string name="chat_previous_candidate">上一条候选回复</string>
   <string name="chat_next_candidate">下一条候选回复</string>
   <string name="chat_image_attachment">图片附件</string>
-  <string name="chat_view_image">查看图片</string>
-  <string name="reasoning_chip_off">思考</string>
-  <string name="reasoning_chip_default">深度思考</string>
   <string name="chat_edit_preserve_following">保存后原位更新这条消息，并保留后续对话</string>
   <string name="chat_save_message">保存消息</string>
   <string name="chat_character_story_start">故事从这里开始</string>
@@ -2221,7 +2212,4 @@
   <string name="usage_row_context">上下文</string>
   <string name="usage_scope_partial">仅统计已加载的消息（更早的消息尚未载入，向上滚动可纳入）。</string>
   <string name="page_clear_84fcd7">清空</string>
-  <string name="conversation_branch">在新对话中分支</string>
-  <string name="conversation_branch_title">%1$s · 分支</string>
-  <string name="conversation_branch_unavailable">无法从此处分支：仅支持上下文完整且工具调用已结束的轮次。</string>
 </resources>

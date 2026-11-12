@@ -303,6 +303,8 @@ private fun UserMessageBubble(
 ) {
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
+    // 全屏预览器由壳层的 ChatImagePreviewHost 提供；为空时（预览、isolated）图片不可点。
+    val imagePreviewer = LocalChatImagePreviewer.current
     val tooltipState = rememberTooltipState(isPersistent = true)
     // TooltipState.show() 是 suspend：显式入口必须走协程。
     val actionScope = rememberCoroutineScope()
@@ -450,7 +452,7 @@ private fun UserMessageBubble(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.padding(bottom = 8.dp)
                     ) {
-                        message.images.forEach { dataUrl ->
+                        message.images.forEachIndexed { index, dataUrl ->
                             val bitmap = rememberDataUrlBitmap(dataUrl)
                             if (bitmap != null) {
                                 Image(
@@ -458,7 +460,15 @@ private fun UserMessageBubble(
                                     contentDescription = stringResource(R.string.chat_image_attachment),
                                     modifier = Modifier
                                         .size(100.dp)
-                                        .clip(RoundedCornerShape(12.dp)),
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable(enabled = imagePreviewer != null) {
+                                            // 点开全屏：带上整组图与当前索引，查看器里可以左右翻。
+                                            imagePreviewer?.open(
+                                                images = message.images,
+                                                initialIndex = index,
+                                                groupKey = message.id,
+                                            )
+                                        },
                                     contentScale = ContentScale.Crop,
                                 )
                             }

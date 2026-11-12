@@ -362,3 +362,6 @@ io.github.mangi.eta.ui.screens.browser.AgentBrowserActivityTest  # 需要 Robole
 io.github.mangi.eta.ui.screens.browser.BrowserAddressTargetTest  # 需要 Robolectric native runtime，本机 aarch64 跑不了
 io.github.mangi.eta.agent.accessibility.AccessibilityWindowObservationTest  # Robolectric，Linux/aarch64 不支持其 native runtime
 io.github.mangi.eta.agent.device.RootUiAutomatorFallbackTest  # Robolectric，Linux/aarch64 不支持其 native runtime
+io.github.mangi.eta.ui.app.AgentConversationBranchPersistenceTest  # Robolectric，Linux/aarch64 不支持其 native runtime
+io.github.mangi.eta.ui.app.ToolCatalogPrefsTest  # Robolectric（Prefs 需真 SharedPreferences），Linux/aarch64 不支持
+io.github.mangi.eta.ui.app.UiStyleThemeAndScreensTest  # Robolectric，Linux/aarch64 不支持其 native runtime
