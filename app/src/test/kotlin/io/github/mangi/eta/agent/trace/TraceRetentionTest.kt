@@ -146,4 +146,23 @@ class TraceRetentionTest {
         assertEquals("超过字节上限后仍应保留最近一份", "run-19", AgentRunTraceStore.latestRunIdFor("conv-x"))
         assertEquals("总量应被压到配额以内", true, total <= 1_200 + 200)
     }
+
+    @Test
+    fun `mtime 并列时按 meta 的 at 取最新，不依赖文件名`() {
+        // 真实 runId 是 `run-<uuid>`，末段是十六进制而非递增序号；真机上文件系统
+        // 时间戳又是秒级。这种“同秒写入多份”的场景以前次序取决于目录遍历顺序，
+        // 而 lookup 只扫前 limit 份，排错就会漏掉目标。
+        val dir = temp.newFolder("traces-tied")
+        AgentRunTraceStore.init(dir, AgentRunTraceStore.Retention(maxRuns = 100))
+        // 故意让“更旧”的那份在字典序上更大，确保文件名帮不上忙。
+        val older = "run-ffffffff-ffff-ffff-ffff-ffffffffffff"
+        val newer = "run-00000000-0000-0000-0000-000000000000"
+        AgentRunTraceStore.begin(older, "m", "p", conversationId = "conv-tied")
+        Thread.sleep(20)
+        AgentRunTraceStore.begin(newer, "m", "p", conversationId = "conv-tied")
+        // 抹平 mtime，逼出并列分支。
+        dir.listFiles { f -> f.name.endsWith(".jsonl") }?.forEach { it.setLastModified(1_700_000_000_000) }
+
+        assertEquals("应选 meta.at 最新的那份", newer, AgentRunTraceStore.latestRunIdFor("conv-tied"))
+    }
 }

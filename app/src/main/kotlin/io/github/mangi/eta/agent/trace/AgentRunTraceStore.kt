@@ -468,25 +468,44 @@ internal object AgentRunTraceStore {
     /**
      * 按「新→旧」排。
      *
-     * 只按 mtime 不够稳：文件系统时间戳往往是毫秒甚至秒级粒度，短时间内连续写出的
-     * 多份追踪会拿到**相同**的 mtime，而 `sortedByDescending` 对并列元素的次序取决于
-     * 目录遍历顺序——换个文件系统或换次运行就会变，表现为「最新一份」有时是上一份。
-     * 真实后果：同一会话连跑多轮时，速度段可能挂到前一轮的追踪上。
-     * 所以并列时用文件名末尾的序号做次级键，保证可重现。
+     * 只按 mtime 不够稳：文件系统时间戳粒度粗（真机上是秒级），同一秒内写出的
+     * 多份追踪会拿到**相同** mtime，而 `sortedByDescending` 对并列元素的次序取决于
+     * 目录遍历顺序——换个文件系统或换次运行就会变。
+     *
+     * 不能用文件名末尾的数字做次级键：真实 runId 形如 `run-<uuid>`，末段是十六进制
+     * 而非递增序号（只有测试里才叫 run-1/run-2），取出的数字没有单调性。
+     *
+     * 所以用 meta 行里的 `at`（毫秒）做次级键。但每份文件都要开一遍读首行，
+     * 而 lookup 最多要看 512 份，全量读头太重（单份追踪可达 1.8MB，虽只读一行，
+     * 也是 512 次 open/read）。只在**确实并列**时才去读 at。
      */
-    private val newestFirst = compareByDescending<File> { it.lastModified() }
-        .thenByDescending { trailingNumber(it.nameWithoutExtension) }
+    private fun sortNewestFirst(files: List<File>): List<File> {
+        val byMtime = files.sortedByDescending { it.lastModified() }
+        if (!hasTiedMtime(byMtime)) return byMtime
+        return byMtime.sortedWith(
+            compareByDescending<File> { it.lastModified() }.thenByDescending { metaTimestamp(it) },
+        )
+    }
 
-    /** 取文件名末尾的数字（`run-19` → 19）；没有数字时返回 Long.MIN_VALUE，不影响主序。 */
-    private fun trailingNumber(name: String): Long =
-        name.takeLastWhile { it.isDigit() }.toLongOrNull() ?: Long.MIN_VALUE
+    /** 已按 mtime 降序的列表里，是否有相邻元素共用同一个 mtime。 */
+    private fun hasTiedMtime(sorted: List<File>): Boolean {
+        for (i in 1 until sorted.size) {
+            if (sorted[i].lastModified() == sorted[i - 1].lastModified()) return true
+        }
+        return false
+    }
+
+    /** 读 meta 行的 `at`（毫秒）；读不到时返回 0，不影响主序。 */
+    private fun metaTimestamp(file: File): Long =
+        runCatching { firstJson(file)?.optLong("at", 0L) ?: 0L }.getOrDefault(0L)
 
     fun lookup(conversationId: String, limit: Int = DEFAULT_LOOKUP_LIMIT): LookupResult {
         if (conversationId.isBlank()) return LookupResult(LookupStatus.NoConversation)
         val target = dirOrNull() ?: return LookupResult(LookupStatus.NoStore)
         val files = runCatching {
             target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
-                ?.sortedWith(newestFirst)
+                ?.toList()
+                ?.let { sortNewestFirst(it) }
                 ?: emptyList()
         }.getOrDefault(emptyList())
         if (files.isEmpty()) return LookupResult(LookupStatus.NoStore)
@@ -568,7 +587,8 @@ internal object AgentRunTraceStore {
         val target = dirOrNull() ?: return emptyList()
         val files = runCatching {
             target.listFiles { file -> file.isFile && file.name.endsWith(".jsonl") }
-                ?.sortedWith(newestFirst)
+                ?.toList()
+                ?.let { sortNewestFirst(it) }
                 ?: emptyList()
         }.getOrDefault(emptyList())
         return files.take(limit.coerceAtLeast(1)).mapNotNull { file ->
