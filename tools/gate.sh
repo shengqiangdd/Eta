@@ -163,6 +163,7 @@ has_stage() {
 # 压力回调里跑，平时永远不会执行到，写错了也只能等到真 OOM 时才发现——而那时它
 # 恰好是唯一的证据。用的是 AOSP 固定常量，不碰 Android 类，纯 JVM 可跑。
 FAST_TEST_FILTERS='--tests io.github.mangi.eta.core.MemoryWatermarkTest
+  --tests io.github.mangi.eta.agent.runtime.AgentCompactionLogRoutingTest
   --tests io.github.mangi.eta.agent.terminal.*
   --tests io.github.mangi.eta.agent.runtime.AgentWireHistoryHandoffTest
   --tests io.github.mangi.eta.agent.runtime.ExecutionLeaseRegistryTest

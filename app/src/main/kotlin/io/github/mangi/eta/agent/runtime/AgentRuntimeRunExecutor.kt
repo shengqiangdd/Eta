@@ -544,17 +544,13 @@ internal class AgentRuntimeRunExecutor(
                 backgroundEvents = backgroundEventsPlan,
                 toolSpill = AgentToolSpill.forApp(appContext),
                 // 摘要分批进度只在这里接真日志：库内类默认静默，否则纯 JVM 单测会撞到未实现的 android.util.Log。
-                // 两类行必须落盘：判定（为何压 / 为何没压）与分批耗时（压了几批、每批多慢）。
-                // 都走 infoPersisted（量很小）；普通 info 会被后续的 DEBUG 事件顶出 logcat 环形缓冲，事后复盘时读不到——
-                // 这正是本轮真机压缩跑完却查不到「一批慢还是多批」的原因。
-                // 判定行原样写（外部按前缀检索），分批耗时补 run= 前缀，便于与判定行对上同一轮。
+                // 哪些行必须落盘、落盘时加什么前缀，交给 AgentCompactionLogRouting——
+                // 原先这段分流写死在这里，分类时漏掉了「上下文摘要分批」等行，真机上压缩跑完查不到进度。
+                // 走 infoPersisted 而不是普通 info：后者会被后续 DEBUG 事件顶出 logcat 环形缓冲，事后复盘读不到。
                 compactionLog = { line ->
-                    when {
-                        line.startsWith("agent_context_decision") -> AndroidAgentLogger.infoPersisted(line)
-                        line.startsWith("摘要请求") ->
-                            AndroidAgentLogger.infoPersisted("agent_context_summary run=${request.runId} $line")
-                        else -> AndroidAgentLogger.info(line)
-                    }
+                    val persisted = AgentCompactionLogRouting.format(line, request.runId)
+                    if (persisted != null) AndroidAgentLogger.infoPersisted(persisted)
+                    else AndroidAgentLogger.info(line)
                 },
                 roundLog = { AndroidAgentLogger.info(it) },
                 // 压缩是嵌套的独立请求，不会走 UsageReceived；在这里直接记账，purpose 单独标出来。
