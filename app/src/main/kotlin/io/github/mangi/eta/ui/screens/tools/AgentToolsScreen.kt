@@ -93,7 +93,8 @@ fun AgentToolsScreen(
 
     val setToolEnabled: (String, Boolean) -> Unit = { toolId, enabled ->
         val canonical = Prefs.canonicalToolSwitchId(toolId)
-        val next = disabledTools.toMutableSet().apply {
+        val previous = disabledTools
+        val next = previous.toMutableSet().apply {
             if (enabled) {
                 remove(toolId)
                 remove(canonical)
@@ -102,11 +103,18 @@ fun AgentToolsScreen(
             }
         }
         disabledTools = next
-        Prefs.setToolEnabled(toolId, enabled, EtaApp.serviceInstance)
+        // 写入可能失败：localAgent 未初始化、或 commit() 抛异常/返回 false（存储满、受限）。
+        // 原先直接丢掉返回值，开关会停在用户点上去的样子，而真正生效的状态没变——
+        // 用户以为开了某个工具，实际上模型仍然用不了。失败就回滚到点击前的集合。
+        val saved = runCatching {
+            Prefs.setToolEnabled(toolId, enabled, EtaApp.serviceInstance)
+        }.getOrDefault(false)
+        if (!saved) disabledTools = previous
     }
 
     val setGroupEnabled: (Collection<String>, Boolean) -> Unit = { toolIds, enabled ->
-        val next = disabledTools.toMutableSet().apply {
+        val previous = disabledTools
+        val next = previous.toMutableSet().apply {
             toolIds.forEach { id ->
                 val canonical = Prefs.canonicalToolSwitchId(id)
                 if (enabled) {
@@ -118,7 +126,12 @@ fun AgentToolsScreen(
             }
         }
         disabledTools = next
-        Prefs.setToolsEnabled(toolIds, enabled, EtaApp.serviceInstance)
+        // 同 setToolEnabled：一次写很多工具更容易碰上 commit 失败，失败时要整组回滚，
+        // 否则会出现「组开关显示已开、但里面一部分工具实际仍被禁用」的不一致。
+        val saved = runCatching {
+            Prefs.setToolsEnabled(toolIds, enabled, EtaApp.serviceInstance)
+        }.getOrDefault(false)
+        if (!saved) disabledTools = previous
     }
 
     val capabilities = rememberDeviceCapabilities()
