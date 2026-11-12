@@ -210,11 +210,15 @@ COUI 顶栏被丢掉，选 COUI 的用户看到的是 MIUIX 顶栏」。我按�
 | 项 | 结果 |
 | --- | --- |
 | `:app:compileDebugKotlin` | 通过 |
-| `:app:testDebugUnitTest` | 3632 例，0 失败，8 跳过 |
-| `gate.sh STAGES=test-wide` | 七项静态检查全过（本次新增未使用 import 检查） |
+| `:app:compileDebugUnitTestKotlin` | 通过 |
+| `:app:testDebugUnitTest` | 3639 例，0 失败，8 跳过 |
+| `gate.sh STAGES=test-wide` | 七项静态检查全过 |
+| `gate.sh STAGES=lint` | 13 条错误 → 0 |
+| `:app:assembleRelease` | 通过（R8），APK 7.8MB，DEX 9.1MB |
+| release 产物实机 | 装包后启动成功，界面完整渲染 |
 | canary 装机 | 启动正常，顶栏三按钮渲染、视图模式菜单可弹出并切换 |
 | 图片点开全屏 | **未在真机上完整走通**（虚拟屏在系统文件选择器上会熄屏），仅代码与门禁覆盖 |
-| lint | 首次跑出 13 条错误，已全部处理，见 §4.12 |
+| 记忆章节 UI 渲染 | **未验证**，见 §7 |
 
 ## 6. 门禁为什么没拦住
 
