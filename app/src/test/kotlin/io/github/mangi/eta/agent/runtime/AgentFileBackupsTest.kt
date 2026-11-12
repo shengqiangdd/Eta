@@ -1,6 +1,5 @@
 package io.github.mangi.eta.agent.runtime
 
-import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

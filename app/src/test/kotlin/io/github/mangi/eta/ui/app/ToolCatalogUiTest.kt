@@ -16,7 +16,6 @@ import io.github.mangi.eta.ui.model.projectToolGroups
 import io.github.mangi.eta.ui.model.toolCardRequirement
 import io.github.mangi.eta.ui.screens.mcp.collapseDescriptionPreview
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 

@@ -11,7 +11,6 @@ import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
 import io.github.mangi.eta.agent.memory.AgentSelfBrief
 import io.github.mangi.eta.agent.memory.ConversationMemoryPins
-import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentConversationToolCatalog
 import io.github.mangi.eta.agent.model.AgentGoalPhase
 import io.github.mangi.eta.agent.model.AgentHttpClient

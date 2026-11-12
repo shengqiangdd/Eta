@@ -11,7 +11,6 @@ import io.github.mangi.eta.agent.roleplay.RoleplayBinding
 import io.github.mangi.eta.agent.terminal.SessionWorkspaceStore
 import io.github.mangi.eta.agent.terminal.TerminalPrivateStorage
 import io.github.mangi.eta.agent.roleplay.RoleplayMessageState
-import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMetadata
 import io.github.mangi.eta.data.db.ChunkedTextDao

@@ -620,8 +620,20 @@ fun AgentAppRoot(
                                     // 从别的会话的行内菜单点「分叉」：先切过去再分叉，
                                     // 否则 branchFromMessage 会拿当前会话的消息去找这个 id，
                                     // 找不到就静默失败。
-                                    agentState.selectConversation(action.conversationId)
-                                    agentState.branchFromMessage(action.messageId)
+                                    //
+                                    // 必须看返回值：会话还没载入时 selectConversation 只是
+                                    // 挂起请求并返回 false（真正的切换发生在载入完成后），
+                                    // 此时若照旧调 branchFromMessage，它用的还是上一个会话，
+                                    // 会把分支挂到错的源上。
+                                    if (agentState.selectConversation(action.conversationId)) {
+                                        agentState.branchFromMessage(action.messageId)
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            R.string.conversation_branch_not_ready,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
                                 }
                                 is AgentHomeAction.RegenerateMessage -> {
                                     val impact = agentState.messageRevisionImpact(action.id)

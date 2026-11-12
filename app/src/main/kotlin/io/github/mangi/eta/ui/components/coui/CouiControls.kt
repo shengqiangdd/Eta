@@ -41,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -71,7 +70,6 @@ import com.itos.coui.backdrop.rememberCouiBackdrop
 import com.itos.coui.chip.ChipTabRow
 import com.itos.coui.chip.CouiChipTabItem
 import com.itos.coui.dialog.CouiDialogAction
-import com.itos.coui.dialog.CouiDialogActionColors
 import com.itos.coui.dialog.CouiDialogActionStyle
 import com.itos.coui.dialog.CouiDialogDefaults
 import com.itos.coui.dialog.CouiDialogMaterial
@@ -100,7 +98,6 @@ import com.itos.coui.text.Text
 import com.itos.coui.text.rememberCouiTextStyle
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
-import io.github.mangi.eta.ui.app.LocalBlurEnabled
 
 enum class CouiButtonRole {
     Primary,
@@ -155,8 +152,9 @@ internal fun CouiButton(
         cancelOnConsumedMove = true,
     )
     val glow = LocalCouiContourGlowEnabled.current
+    // minSdk 已经是 33，不再判 SDK_INT（lint: ObsoleteSdkInt）。
     val contour = remember(glow) {
-        if (glow && Build.VERSION.SDK_INT >= 33) CouiContour(style = CouiContourStyle.Button) else null
+        if (glow) CouiContour(style = CouiContourStyle.Button) else null
     }
     val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
 
@@ -179,7 +177,7 @@ internal fun CouiButton(
             }
             .drawWithContent {
                 drawRect(fillColor)
-                if (Build.VERSION.SDK_INT >= 33 && contour != null) {
+                if (contour != null) {
                     val alpha = if (isPrimaryLike) {
                         if (dark) { if (enabled) 0.25f else 0.05f } else 0.3f
                     } else if (dark) {

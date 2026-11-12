@@ -5,8 +5,6 @@ import androidx.core.content.edit
 import io.github.mangi.eta.agent.acp.AcpClient
 import io.github.mangi.eta.core.AgentLogger
 import java.io.File
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * 插件运行时：持有已安装插件、生成追加的工具 schema 与提示词。

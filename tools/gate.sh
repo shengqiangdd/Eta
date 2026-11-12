@@ -500,9 +500,22 @@ run_doc_mirror() {
   python3 tools/doc_mirror.py || fail=1
 }
 
+# ---- 未使用 import（与 STAGES 无关，始终执行）-------------------------
+# 合并上游时最典型的漏 merge 特征就是「import 还在，调用被删了」：
+# 2026-11 合并 3.4.2 时 ChatImagePreviewHost 的 import 留在 AgentAppShell.kt 里，
+# 但包裹整个界面的那一层被去掉了，图片点开全屏整条链路都没了，而编译、单测、
+# lint、其它静态检查全绿（编译器对未使用 import 只给警告）。
+# 注意：它是「这里改过」的信号，不是「这里坏掉」的结论——先确认功能是否还能
+# 到达，再决定删 import 还是补回调用。
+run_unused_imports() {
+  echo "==== 未使用 import（只许减少） ===="
+  python3 tools/unused_imports.py || fail=1
+}
+
 run_ui_actions
 run_string_format
 run_dead_strings
+run_unused_imports
 run_doc_mirror
 
 if has_stage test || has_stage test-all || has_stage test-wide; then run_test; fi

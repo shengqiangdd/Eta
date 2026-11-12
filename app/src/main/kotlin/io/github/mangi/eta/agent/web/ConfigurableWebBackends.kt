@@ -7,7 +7,6 @@ import io.github.mangi.eta.data.model.WebHttpMethod
 import io.github.mangi.eta.data.model.WebToolBackend
 import java.net.URLEncoder
 import java.util.Locale
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener

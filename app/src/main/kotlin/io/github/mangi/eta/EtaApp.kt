@@ -11,7 +11,6 @@ import io.github.libxposed.service.XposedServiceHelper
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.VirtualDisplayImeRestore
-import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.terminal.BackgroundAutoResumeWatcher
 import io.github.mangi.eta.agent.terminal.DetachedTaskProbe
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
@@ -21,7 +20,6 @@ import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.BootLog
 import io.github.mangi.eta.core.DiagnosticsRetention
 import io.github.mangi.eta.core.StartupTrace
-import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository

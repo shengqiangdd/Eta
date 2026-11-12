@@ -17,11 +17,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.lifecycleScope
 import io.github.mangi.eta.agent.device.VirtualDisplayDebugHost
-import io.github.mangi.eta.agent.runtime.AgentRuntimeService
 import io.github.mangi.eta.agent.voice.EtaAssistantOverlayService
-import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.StartupTrace
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
@@ -36,9 +33,6 @@ import io.github.mangi.eta.ui.app.installStartupSplash
 import io.github.mangi.eta.ui.components.AgentComposerBridge
 import io.github.mangi.eta.ui.navigation.AppRoute
 import io.github.mangi.eta.ui.voice.ACTION_SPEECH_SETTINGS
-import java.util.Collections
-import java.util.IdentityHashMap
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var assistantConversationKey by mutableStateOf<String?>(null)

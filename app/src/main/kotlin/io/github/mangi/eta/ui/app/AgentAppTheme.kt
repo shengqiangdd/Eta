@@ -88,18 +88,26 @@ fun AgentAppTheme(
 
     LaunchedEffect(isDark) { onResolvedDarkModeChange(isDark) }
 
-    val initialDisplayDensity = remember(context) { context.resources.displayMetrics.density }
-    val baseDensity = if (configuration.densityDpi > 0) {
-        configuration.densityDpi.toFloat() / DisplayMetrics.DENSITY_DEFAULT
-    } else {
-        initialDisplayDensity
-    }
+    // 用 LocalConfiguration 而不是 context.resources.displayMetrics：后者不是配置感知的，
+    // 分屏 / 字体缩放 / 显示大小变化后会拿到旧值，lint 也会报
+    // LocalContextResourcesRead。configuration.densityDpi 总是当前配置。
+    // 注意：原先的 initialDisplayDensity 与下面的 baseDensity 算的是同一个值，
+    // 所以直接合并成一处，不再有“哪个才是初始值”的歧义。
+    val baseDensity = configuration.densityDpi.toFloat() / DisplayMetrics.DENSITY_DEFAULT
     val effectiveScale = if (applyInterfaceScale) {
         normalizeInterfaceScale(appearance.interfaceScale)
     } else {
         DEFAULT_INTERFACE_SCALE
     }
     val targetDensity = baseDensity * effectiveScale
+    //
+    // 下面这些 context.resources.displayMetrics 的读写都是**有意为之**，不是漏用
+    // LocalConfiguration：独立窗口（Dialog / Popup）的新 AndroidComposeView 从
+    // 宿主 Context.resources 读密度，只有直接改写这块 DisplayMetrics 才能让它们
+    // 跟页面缩放保持一致；用 LocalConfiguration 只能读到当前配置，改不了别人
+    // 将来读的那个值。因此对 LocalContextResourcesRead 做局部压制，
+    // 并在 DisposableEffect 里严格还原，避免泄漏到其它界面。
+    @Suppress("LocalContextResourcesRead")
     val platformDensity = remember(context, baseDensity, configuration.fontScale) {
         val saved = context.resources.displayMetrics.density
         context.resources.displayMetrics.density = baseDensity
@@ -108,19 +116,26 @@ fun AgentAppTheme(
     if (applyInterfaceScale) {
         // 独立窗口（Dialog / Popup）的新 AndroidComposeView 从宿主 Context.resources 读取密度；
         // 以 configuration.densityDpi / 160f 为 100% 尺寸基准同步写入，保证页面与独立窗口缩放一致。
-        context.resources.displayMetrics.density = targetDensity
-        @Suppress("DEPRECATION")
-        context.resources.displayMetrics.scaledDensity = targetDensity * configuration.fontScale
+        @Suppress("LocalContextResourcesRead")
+        run {
+            context.resources.displayMetrics.density = targetDensity
+            @Suppress("DEPRECATION")
+            context.resources.displayMetrics.scaledDensity = targetDensity * configuration.fontScale
+        }
     }
     DisposableEffect(context, applyInterfaceScale, baseDensity, configuration.fontScale) {
         onDispose {
             if (applyInterfaceScale) {
-                context.resources.displayMetrics.density = baseDensity
-                @Suppress("DEPRECATION")
-                context.resources.displayMetrics.scaledDensity = baseDensity * configuration.fontScale
+                @Suppress("LocalContextResourcesRead")
+                run {
+                    context.resources.displayMetrics.density = baseDensity
+                    @Suppress("DEPRECATION")
+                    context.resources.displayMetrics.scaledDensity = baseDensity * configuration.fontScale
+                }
             }
         }
     }
+    @Suppress("LocalContextResourcesRead")
     val appDensity = remember(context, targetDensity, configuration.fontScale, applyInterfaceScale) {
         if (applyInterfaceScale) {
             context.resources.displayMetrics.density = targetDensity

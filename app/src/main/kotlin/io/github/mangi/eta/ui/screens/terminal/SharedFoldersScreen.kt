@@ -2,7 +2,7 @@ package io.github.mangi.eta.ui.screens.terminal
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Environment
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -132,7 +132,7 @@ internal fun SharedFoldersScreen(
                 publicAccessLauncher.launch(
                     Intent(
                         Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:${context.packageName}"),
+                        "package:${context.packageName}".toUri(),
                     ),
                 )
             } catch (_: android.content.ActivityNotFoundException) {

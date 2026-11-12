@@ -108,11 +108,9 @@ import io.github.mangi.eta.ui.model.AgentAskUi
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentSessionUsageUi
-import io.github.mangi.eta.ui.model.RunTiming
 import io.github.mangi.eta.ui.model.TraceLookupStatus
 import io.github.mangi.eta.ui.model.TraceProbe
 import io.github.mangi.eta.ui.model.probeOf
-import io.github.mangi.eta.ui.model.runIdOf
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.ComposerQuoteUi
@@ -129,7 +127,6 @@ import io.github.mangi.eta.agent.model.AgentTaskLedger
 import io.github.mangi.eta.agent.model.AgentTodoPlan
 import io.github.mangi.eta.agent.model.AgentTranscriptPresentation
 import io.github.mangi.eta.agent.model.AgentTranscriptViewPolicy
-import io.github.mangi.eta.agent.model.AgentWorkCollapsePolicy
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi

@@ -1,7 +1,6 @@
 package io.github.mangi.eta.data.provider
 
 import io.github.mangi.eta.data.model.ModelSource
-import io.github.mangi.eta.data.model.Model
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

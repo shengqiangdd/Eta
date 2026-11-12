@@ -1,6 +1,5 @@
 package io.github.mangi.eta.ui.components
 
-import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background

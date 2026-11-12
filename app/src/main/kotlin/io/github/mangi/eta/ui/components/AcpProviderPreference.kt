@@ -35,7 +35,6 @@ import io.github.mangi.eta.data.repository.ProviderCredentialRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
 import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 「委派用它」的提供商与模型 —— **一个**选择器，而不是两项。

@@ -310,10 +310,10 @@ private fun BrowserOverflowMenu(items: List<DropdownItem>) {
 private fun BrowserControlButton(
     icon: ImageVector,
     description: String,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: () -> Unit,
     size: Dp = 40.dp,
-    modifier: Modifier = Modifier,
 ) {
     IconButton(onClick = onClick, enabled = enabled, minWidth = size, minHeight = size, modifier = modifier) {
         Icon(
