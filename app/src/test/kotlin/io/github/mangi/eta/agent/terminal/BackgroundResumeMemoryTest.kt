@@ -231,4 +231,37 @@ class BackgroundResumeMemoryTest {
         assertTrue(scope("conversation-a").resumed.isEmpty())
         assertTrue(scope("conversation-b").resumed.isEmpty())
     }
+
+    /**
+     * scopeId 就是 conversationId，所以每新建一个会话就多一个 scope，而原先
+     * 没有任何移除路径。每个 scope 带着 mutableStateListOf（Compose 快照状态），
+     * 无限累积会把快照系统与 GC 拖慢——真机三次 OOM 都发生在长时间使用后。
+     */
+    @Test
+    fun scopeCountIsBounded() {
+        BackgroundResumeMemory.reset()
+        repeat(BackgroundResumeMemory.MAX_SCOPES + 5) { i ->
+            BackgroundResumeMemory.scopeFor(store = null, scopeId = "conversation-$i")
+        }
+        assertEquals(
+            "超出上限时必须淘汰旧作用域，否则会话越多涨越多",
+            BackgroundResumeMemory.MAX_SCOPES,
+            BackgroundResumeMemory.scopeCount(),
+        )
+        BackgroundResumeMemory.reset()
+    }
+
+    @Test
+    fun evictionNeverDropsTheScopeBeingCreated() {
+        BackgroundResumeMemory.reset()
+        repeat(BackgroundResumeMemory.MAX_SCOPES) { i ->
+            BackgroundResumeMemory.scopeFor(store = null, scopeId = "conversation-$i")
+        }
+        // 再来一个新的：要淘汰的是别人，不是刚请求的这个。
+        val fresh = BackgroundResumeMemory.scopeFor(store = null, scopeId = "conversation-new")
+        fresh.markResumed("job_new")
+        assertEquals("刚拿到的 scope 必须可用", listOf("job_new"), fresh.resumed.toList())
+        assertTrue(BackgroundResumeMemory.scopeCount() <= BackgroundResumeMemory.MAX_SCOPES)
+        BackgroundResumeMemory.reset()
+    }
 }

@@ -219,6 +219,22 @@ internal object BackgroundResumeMemory {
     private val locks = HashMap<String, Mutex>()
 
     /**
+     * scopes 里最多保留多少个作用域。
+     *
+     * scopeId 就是 conversationId（见 AgentAppState.resetBackgroundResumeChain 与
+     * BackgroundAutoResumeWatcher 的 scopeFor），所以每新建一个会话就多一个，
+     * 而之前**没有任何移除路径**（reset() 只给测试用）。
+     *
+     * 为什么必须限：每个 BackgroundResumeScope 带着 mutableStateListOf——那是
+     * Compose 快照状态，会注册进全局快照系统，比普通 Map 值重得多；会话越积越多，
+     * 重组与 GC 开销都会跟着涨。真机三次 OOM 都发生在长时间使用后，这种累积正好吻合。
+     *
+     * 取 24：用户在「后台任务」卡片里能看到的会话数远小于这个量，超出的一定是
+     * 早就没再用的旧会话。
+     */
+    internal const val MAX_SCOPES = 24
+
+    /**
      * 进程级写入器（第十八批）。
      *
      * 界面侧的手动「继续」不能把落盘挂在自己的协程作用域上：`rememberCoroutineScope()`
@@ -248,8 +264,26 @@ internal object BackgroundResumeMemory {
 
     fun scopeFor(store: BackgroundResumeStore?, scopeId: String): BackgroundResumeScope =
         synchronized(scopes) {
-            scopes.getOrPut(scopeId) { BackgroundResumeScope(store, scopeId) }
+            scopes.getOrPut(scopeId) {
+                // 先腾位置再建新的：否则新会话进来时仍会把上限顶破一格。
+                evictIfNeededLocked(keep = scopeId)
+                BackgroundResumeScope(store, scopeId)
+            }
         }
+
+    /**
+     * 超过 [MAX_SCOPES] 时丢掉一个旧作用域。
+     *
+     * 不丢 [keep]（那就是刚要建的那个）。被淘汰不代表用户丢数据：状态由
+     * BackgroundResumeStore 落盘，内存副本没了下次会重新读回来，代价只是多一次读盘。
+     */
+    private fun evictIfNeededLocked(keep: String) {
+        if (scopes.size < MAX_SCOPES) return
+        val victim = scopes.keys.firstOrNull { it != keep } ?: return
+        scopes.remove(victim)
+        // 锁跟着一起丢：否则每淘汰一个 scope 就留一个永不释放的 Mutex。
+        locks.remove(victim)
+    }
 
     /**
      * 同一作用域的互斥锁。
@@ -266,4 +300,7 @@ internal object BackgroundResumeMemory {
             locks.clear()
         }
     }
+
+    /** 当前保留了多少个作用域（供测试与诊断核对上限是否生效）。 */
+    internal fun scopeCount(): Int = synchronized(scopes) { scopes.size }
 }
