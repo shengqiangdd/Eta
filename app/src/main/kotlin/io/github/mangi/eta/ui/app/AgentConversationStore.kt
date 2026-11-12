@@ -288,7 +288,7 @@ internal object AgentConversationStore {
     suspend fun loadJournalIfWithinLimit(
         context: Context,
         conversationId: String,
-        limit: Int = JOURNAL_INLINE_LIMIT,
+        limit: Int = JOURNAL_LAZY_LOAD_LIMIT,
     ): List<AgentModelClient.ConversationMessage>? =
         withContext(Dispatchers.IO) {
             val dao = EtaDatabase.get(context.applicationContext).conversationDao()
@@ -948,7 +948,33 @@ internal object AgentConversationStore {
         journalChanged: Boolean,
     ): Boolean = journalWritable && (checkpointMissing || baselineMissing || journalChanged)
 
-    internal const val JOURNAL_INLINE_LIMIT = 4_000_000
+    /**
+     * **启动时**值不值得把当前会话的 journal 一次拼进内存（字符）。
+     *
+     * 与 [JOURNAL_LAZY_LOAD_LIMIT] 分开：这个只管「启动那一瞬要不要付这笔钱」，
+     * 那个管「用户切过去时最多肯拼多少」。混用会导致调低启动预算后，
+     * 大会话在切换时也永远加载不出来。
+     *
+     * 定在 1M 的依据（真机 boot.log，2026-11-11～11-12，同一台 PKX110）：
+     * 内联还原的 6 次首帧平均 **956ms**（703/802/963/975/1053/1241），
+     * 其中 `journalDecode` 单独占 389～772ms；而延迟加载的 4 次平均 **537ms**。
+     * 差 419ms —— 用户点开应用后要干等的那一下，主要就是这个。
+     *
+     * 为什么不是更低：小会话（几百 K）内联后启动就能直接编辑/重新生成，
+     * 不必等一次异步加载，这是值得的；1M 约 2MB UTF-16，解码路径实测仍在几十毫秒量级。
+     */
+    internal const val JOURNAL_INLINE_LIMIT = 1_000_000
+
+    /**
+     * **切到某个会话时**最多肯还原多少字符的 journal。
+     *
+     * 这里必须比 [JOURNAL_INLINE_LIMIT] 宽：启动时可以省，但用户主动点进一个会话时
+     * 不能因为「超过启动预算」就让他看不到历史。沿用原来 4M 的值。
+     *
+     * 为什么不能无限大：见 [JOURNAL_REVISION_LIMIT]。拼接超大 journal 要连续堆，
+     * 本机最大 3100 万字符的会话实测申请 33MB / 67MB 连续内存都失败过。
+     */
+    internal const val JOURNAL_LAZY_LOAD_LIMIT = 4_000_000
     /** 大会话在 UI 里只保留最近这么多条消息；更早的按需载入。 */
     internal const val MESSAGE_WINDOW_SIZE = 500
     /** 超过这个条数才启用消息窗口，避免小会话多一次分页。 */
