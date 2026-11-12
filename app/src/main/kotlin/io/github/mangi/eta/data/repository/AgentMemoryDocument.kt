@@ -14,7 +14,7 @@ internal data class AgentMemorySection(
     val level: Int,
     /** 1-based，标题所在行。 */
     val startLine: Int,
-    /** 1-based，包含；等于最后一行（可能是正文最后一行，也可能只是标题行）。 */
+    /** 1-based，排他上界（replaceSection 当 subList 的 to 用）。展示行范围时需减一。 */
     val endLine: Int,
     /** 不含标题行的正文。 */
     val body: String,

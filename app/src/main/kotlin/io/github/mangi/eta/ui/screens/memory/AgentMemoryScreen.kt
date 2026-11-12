@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -150,21 +152,23 @@ internal fun AgentMemoryScreen(
                     ) {
                         MemorySettingsGroup(state = state, onAction = onAction)
                     }
+                    // 编辑单章时让卡片让出空间：否则 180dp 的编辑器会被挤到屏幕外。
+                    val sectionEditor = state.sectionEditor
                     MemoryDocumentCard(
                         state = state,
                         mode = currentMode,
                         onModeChange = { mode = it },
                         onDraftChange = { onAction(AgentMemoryAction.DraftChanged(it)) },
                         modifier = Modifier
-                            .weight(1f)
+                            .then(if (sectionEditor != null) Modifier.height(120.dp) else Modifier.weight(1f))
                             .padding(top = CouiPageDefaults.groupSpacing)
                             .padding(horizontal = CouiPageDefaults.horizontalMargin),
                     )
-                    // 章节目录与单章编辑器。只有开了章节才有入口，没有章节时不占位置。
-                    val editor = state.sectionEditor
-                    if (editor != null) {
+                    // 章节入口放在卡片下方而不是卡片内：卡片主体已经是 weight(1f)
+                    // 撑满，放外面才不会被挤出屏幕。没有章节时两个组件都不渲染。
+                    if (sectionEditor != null) {
                         MemorySectionEditor(
-                            editor = editor,
+                            editor = sectionEditor,
                             onDraftChange = { onAction(AgentMemoryAction.SectionDraftChanged(it)) },
                             onCancel = { onAction(AgentMemoryAction.CancelSection) },
                             onSave = { onAction(AgentMemoryAction.SaveSection) },
@@ -228,7 +232,7 @@ internal fun AgentMemoryScreen(
                         onModeChange = { mode = it },
                         onDraftChange = { onAction(AgentMemoryAction.DraftChanged(it)) },
                         modifier = Modifier
-                            .weight(1f)
+                            .then(if (state.sectionEditor != null) Modifier.height(120.dp) else Modifier.weight(1f))
                             .padding(horizontal = 12.dp),
                     )
                     val editor = state.sectionEditor
@@ -677,7 +681,8 @@ private fun MemorySectionOutline(
 ) {
     if (sections.isEmpty()) return
     val colors = MiuixTheme.colorScheme
-    Spacer(Modifier.height(12.dp))
+    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
+    Spacer(Modifier.height(if (isCoui) CouiPageDefaults.groupSpacing else 12.dp))
     Text(
         text = pluralStringResource(
             R.plurals.memory_outline_title,
@@ -686,43 +691,65 @@ private fun MemorySectionOutline(
         ),
         style = MiuixTheme.textStyles.footnote1,
         color = colors.onSurfaceVariantSummary,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        modifier = Modifier.padding(
+            start = if (isCoui) CouiPageDefaults.horizontalMargin else 4.dp,
+            end = if (isCoui) CouiPageDefaults.horizontalMargin else 4.dp,
+            top = 6.dp,
+            bottom = 6.dp,
+        ),
     )
-    sections.forEach { section ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { onOpen(section.title) }
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.width(((section.level - 1).coerceAtLeast(0) * 12).dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = section.title,
-                    style = MiuixTheme.textStyles.body2,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.memory_outline_range,
-                        section.startLine,
-                        section.endLine,
-                        formatNumber(section.chars),
+    // 章节数可能很多（长记忆动辄几十节），限高并内部滚动，否则会撑爆屏幕、
+    // 把下面的保存栏顶掉。
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 220.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        sections.forEach { section ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onOpen(section.title) }
+                    .padding(
+                        start = if (isCoui) CouiPageDefaults.horizontalMargin else 8.dp,
+                        // COUI 的卡片内容右侧留白比 MiuiX 宽，跟 MemoryDocumentCard 保持一致
+                        end = if (isCoui) CouiPageDefaults.rowPadding else 10.dp,
+                        top = 10.dp,
+                        bottom = 10.dp,
                     ),
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = colors.onSurfaceVariantSummary,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Spacer(Modifier.width(((section.level - 1).coerceAtLeast(0) * 12).dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = section.title,
+                        style = MiuixTheme.textStyles.body2,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        // endLine 是排他上界（replaceSection 当 subList 的 to 用），
+                        // 展示时要减一，否则会多报一行。
+                        text = stringResource(
+                            R.string.memory_outline_range,
+                            section.startLine,
+                            (section.endLine - 1).coerceAtLeast(section.startLine),
+                            formatNumber(section.chars),
+                        ),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = colors.onSurfaceVariantSummary,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = colors.onSurfaceVariantSummary,
                 )
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = colors.onSurfaceVariantSummary,
-            )
         }
     }
 }
@@ -738,19 +765,21 @@ private fun MemorySectionEditor(
     onSave: () -> Unit,
 ) {
     val colors = MiuixTheme.colorScheme
-    Spacer(Modifier.height(12.dp))
+    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
+    val sideInset = if (isCoui) CouiPageDefaults.horizontalMargin else 4.dp
+    Spacer(Modifier.height(if (isCoui) CouiPageDefaults.groupSpacing else 12.dp))
     Text(
         text = stringResource(R.string.memory_section_edit_title, editor.title),
         style = MiuixTheme.textStyles.body1,
         fontWeight = FontWeight.Medium,
         color = colors.onSurface,
-        modifier = Modifier.padding(horizontal = 4.dp),
+        modifier = Modifier.padding(horizontal = sideInset),
     )
     Text(
         text = stringResource(R.string.memory_section_edit_summary),
         style = MiuixTheme.textStyles.footnote2,
         color = colors.onSurfaceVariantSummary,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+        modifier = Modifier.padding(start = sideInset, end = sideInset, top = 4.dp, bottom = 4.dp),
     )
     Box(modifier = Modifier.fillMaxWidth().height(180.dp)) {
         MemoryEditor(

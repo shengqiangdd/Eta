@@ -48,6 +48,19 @@ class AgentMemoryDocumentTest {
     }
 
     @Test
+    fun `endLine is exclusive so outline display must subtract one`() {
+        // 固定住这个容易被「修正」坏的语义：endLine 是 replaceSection 里 subList 的
+        // 上界，不含。章节目录展示行范围时减一，否则会多报一行。
+        val content = "# 一\n甲\n\n# 二\n乙\n"
+        val first = AgentMemoryDocument.sections(content).first { it.title == "一" }
+        assertEquals(1, first.startLine)
+        assertEquals(3, first.endLine)
+        // 实际属于“一”的内容（1-based，含）是 startLine..endLine-1
+        val lines = content.split('\n')
+        assertEquals(listOf("# 一", "甲", ""), lines.subList(first.startLine - 1, first.endLine))
+    }
+
+    @Test
     fun `find prefers exact then case-insensitive then unique prefix`() {
         val sections = AgentMemoryDocument.sections(document)
         assertNotNull(AgentMemoryDocument.find(sections, "用户偏好"))
